@@ -1,0 +1,23 @@
+# YouTube Content Manager — Data Path Configuration
+#
+# Copy this file to config.yaml in the same directory and edit as needed.
+# Leave any value empty ("") to use the default path under data/.
+#
+# Relative paths are resolved from the directory containing config.yaml.
+# Absolute paths (e.g. D:\Videos) are used as-is.
+
+paths:
+  # SQLite database file
+  database: ""
+
+  # Downloaded video/audio files
+  downloads: ""
+
+  # Thumbnail image cache (scaled JPEGs, auto-managed)
+  thumbnails: ""
+
+  # Application log files
+  logs: ""
+
+  # Automatic daily database backups (keeps last 7)
+  backups: ""

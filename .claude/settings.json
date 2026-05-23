@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(python main.py:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(yt-dlp:*)"
+    ],
+    "deny": []
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true
+  }
+}
