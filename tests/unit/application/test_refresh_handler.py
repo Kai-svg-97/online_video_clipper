@@ -31,7 +31,7 @@ class TestRefreshCategoryMetadataHandler:
         agg = _make_agg()
         repo = MagicMock()
         repo.count.return_value = 1
-        repo.search.side_effect = [[agg], []]  # first call returns 1 video, second empty
+        repo.search.side_effect = [[agg]]
         repo.get_by_id.return_value = agg
         repo.get_or_create_tag.return_value = Tag(id=uuid4(), name="tag1")
 

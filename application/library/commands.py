@@ -7,7 +7,7 @@ from datetime import datetime
 from uuid import UUID
 
 from domain.library.aggregates import VideoAggregate
-from domain.library.repositories import IVideoRepository
+from domain.library.repositories import IVideoRepository, SearchQuery
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
 from infrastructure.event_bus import EventBus
 from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
@@ -407,8 +407,6 @@ class RefreshCategoryMetadataHandler:
         cmd: RefreshCategoryMetadataCommand,
         on_progress: "Callable[[int, int], None] | None" = None,
     ) -> int:
-        from domain.library.repositories import SearchQuery
-
         total = self._repo.count(SearchQuery(category_ids=cmd.category_ids))
         refreshed = 0
         offset = 0
@@ -466,7 +464,7 @@ class RefreshCategoryMetadataHandler:
                     full_agg.set_tags(tag_ids)
 
                     if thumbnail_url:
-                        thumb_path = self._ytdlp.download_thumbnail(full_agg.id, thumbnail_url)
+                        thumb_path = self._ytdlp.download_thumbnail(full_agg.id, thumbnail_url, force=True)
                         if thumb_path:
                             full_agg.update_metadata(thumbnail_path=thumb_path)
 
@@ -477,7 +475,10 @@ class RefreshCategoryMetadataHandler:
                     pass
 
             if on_progress:
-                on_progress(min(offset + len(batch), total), total)
+                try:
+                    on_progress(min(offset + len(batch), total), total)
+                except Exception:
+                    pass
             offset += self.CHUNK_SIZE
             if len(batch) < self.CHUNK_SIZE:
                 break
