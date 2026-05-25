@@ -369,6 +369,8 @@ class LibraryViewModel(QObject):
         self._refresh_videos()
 
     def refresh_category_metadata(self, category_id: UUID | None) -> None:
+        if self._refresh_metadata_workers:  # already running
+            return
         category_ids = (
             self._resolve_category_ids(category_id)
             if category_id is not None
