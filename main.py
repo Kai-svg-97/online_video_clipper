@@ -16,22 +16,41 @@ from domain.download.aggregates import DownloadQueueAggregate
 
 from application.library.commands import (
     AddVideoHandler,
+    AssignCategoryHandler,
+    CreateCategoryHandler,
+    DeleteCategoryHandler,
+    DeleteTagHandler,
     DeleteVideoHandler,
     MarkWatchedHandler,
+    MoveCategoryHandler,
+    RefreshCategoryMetadataHandler,
+    RenameCategoryHandler,
     UpdateVideoHandler,
 )
 from application.library.queries import (
     GetCategoriesHandler,
     GetTagsHandler,
+    GetVideoDetailHandler,
     GetVideosHandler,
     SearchVideosHandler,
 )
 from application.download.commands import CancelDownloadHandler, StartDownloadHandler
+from application.download.event_bridge import DownloadEventBridge
 from application.download.queries import GetDownloadHistoryHandler, GetDownloadQueueHandler
+from application.clip.commands import DeleteClipHandler, ExtractClipHandler
+from application.clip.queries import GetClipsHandler
+from application.monitoring.commands import (
+    SetMonitoringRuleHandler,
+    SubscribeChannelHandler,
+    UnsubscribeChannelHandler,
+)
+from application.monitoring.queries import GetSubscriptionsHandler
 
 from gui.main_window import MainWindow
-from gui.view_models.library_vm import LibraryViewModel
+from gui.view_models.clip_vm import ClipViewModel
 from gui.view_models.download_vm import DownloadViewModel
+from gui.view_models.library_vm import LibraryViewModel
+from gui.view_models.monitoring_vm import MonitoringViewModel
 
 
 def main() -> int:
@@ -43,10 +62,10 @@ def main() -> int:
     db.initialize()
 
     # 3. Repositories
-    video_repo     = SqliteVideoRepository(db)
-    download_repo  = SqliteDownloadRepository(db)
-    clip_repo      = SqliteClipRepository(db)
-    channel_repo   = SqliteChannelRepository(db)
+    video_repo   = SqliteVideoRepository(db)
+    download_repo = SqliteDownloadRepository(db)
+    clip_repo    = SqliteClipRepository(db)
+    channel_repo = SqliteChannelRepository(db)
 
     # 4. Infrastructure services
     event_bus = EventBus()
@@ -57,22 +76,44 @@ def main() -> int:
     dl_queue = DownloadQueueAggregate()
 
     # 6. Application handlers — Library
-    add_video    = AddVideoHandler(video_repo, event_bus, ytdlp)
-    update_video = UpdateVideoHandler(video_repo, event_bus)
-    delete_video = DeleteVideoHandler(video_repo, event_bus)
-    mark_watched = MarkWatchedHandler(video_repo, event_bus)
-    get_videos   = GetVideosHandler(video_repo)
-    search_videos = SearchVideosHandler(video_repo)
-    get_cats     = GetCategoriesHandler(video_repo)
-    get_tags     = GetTagsHandler(video_repo)
+    add_video        = AddVideoHandler(video_repo, event_bus, ytdlp)
+    update_video     = UpdateVideoHandler(video_repo, event_bus)
+    delete_video     = DeleteVideoHandler(video_repo, event_bus)
+    mark_watched     = MarkWatchedHandler(video_repo, event_bus)
+    assign_category  = AssignCategoryHandler(video_repo, event_bus)
+    create_category  = CreateCategoryHandler(video_repo)
+    rename_category  = RenameCategoryHandler(video_repo)
+    delete_category  = DeleteCategoryHandler(video_repo)
+    move_category    = MoveCategoryHandler(video_repo)
+    delete_tag_h     = DeleteTagHandler(video_repo)
+    refresh_metadata = RefreshCategoryMetadataHandler(video_repo, event_bus, ytdlp)
+    get_videos       = GetVideosHandler(video_repo)
+    search_videos    = SearchVideosHandler(video_repo)
+    get_cats         = GetCategoriesHandler(video_repo)
+    get_tags         = GetTagsHandler(video_repo)
+    get_video_detail = GetVideoDetailHandler(video_repo, download_repo)
 
     # 7. Application handlers — Download
-    start_dl   = StartDownloadHandler(dl_queue, download_repo, ytdlp, event_bus)
-    cancel_dl  = CancelDownloadHandler(dl_queue, event_bus)
-    get_queue  = GetDownloadQueueHandler(dl_queue)
-    get_hist   = GetDownloadHistoryHandler(download_repo)
+    start_dl  = StartDownloadHandler(dl_queue, download_repo, ytdlp, event_bus)
+    cancel_dl = CancelDownloadHandler(dl_queue, event_bus)
+    get_queue = GetDownloadQueueHandler(dl_queue)
+    get_hist  = GetDownloadHistoryHandler(download_repo)
 
-    # 8. ViewModels
+    # 8. Application handlers — Clip
+    extract_clip = ExtractClipHandler(clip_repo, ffmpeg, event_bus)
+    delete_clip  = DeleteClipHandler(clip_repo, event_bus)
+    get_clips    = GetClipsHandler(clip_repo)
+
+    # 9. Application handlers — Monitoring
+    subscribe_ch   = SubscribeChannelHandler(channel_repo, event_bus, ytdlp)
+    unsubscribe_ch = UnsubscribeChannelHandler(channel_repo, event_bus)
+    set_rule       = SetMonitoringRuleHandler(channel_repo)
+    get_subs       = GetSubscriptionsHandler(channel_repo)
+
+    # 10. Event bridge (translates domain events → application-level callbacks)
+    dl_bridge = DownloadEventBridge(event_bus)
+
+    # 11. ViewModels
     library_vm = LibraryViewModel(
         get_videos=get_videos,
         search_videos=search_videos,
@@ -82,19 +123,38 @@ def main() -> int:
         update_video=update_video,
         delete_video=delete_video,
         mark_watched=mark_watched,
+        create_category=create_category,
+        rename_category=rename_category,
+        delete_category=delete_category,
+        move_category=move_category,
+        delete_tag=delete_tag_h,
+        assign_category=assign_category,
+        get_video_detail=get_video_detail,
+        refresh_metadata=refresh_metadata,
     )
     download_vm = DownloadViewModel(
         start_handler=start_dl,
         cancel_handler=cancel_dl,
         queue_handler=get_queue,
         history_handler=get_hist,
-        event_bus=event_bus,
+        event_bridge=dl_bridge,
+    )
+    clip_vm = ClipViewModel(
+        extract_handler=extract_clip,
+        delete_handler=delete_clip,
+        get_clips_handler=get_clips,
+    )
+    monitoring_vm = MonitoringViewModel(
+        subscribe_handler=subscribe_ch,
+        unsubscribe_handler=unsubscribe_ch,
+        set_rule_handler=set_rule,
+        get_subs_handler=get_subs,
     )
 
-    # 9. Launch GUI
+    # 12. Launch GUI
     app = QApplication(sys.argv)
     app.setApplicationName("YouTube Content Manager")
-    window = MainWindow(library_vm, download_vm)
+    window = MainWindow(library_vm, download_vm, clip_vm, monitoring_vm)
     window.show()
     return app.exec()
 
