@@ -98,9 +98,8 @@ class AddVideoHandler:
                 raw_tags += list(info.get("categories") or [])
                 # Extract #hashtags from description; cap at 10 to prevent tag explosion.
                 # Require ≥2 chars to filter single-letter noise.
-                desc = info.get("description") or ""
-                description = desc
-                desc_tags = re.findall(r"#([\w가-힣]{2,})", desc)
+                description = info.get("description") or ""
+                desc_tags = re.findall(r"#([\w가-힣]{2,})", description)
                 raw_tags += desc_tags[:10]
                 meta_tags = list(dict.fromkeys(
                     t.strip() for t in raw_tags if isinstance(t, str) and t.strip()
