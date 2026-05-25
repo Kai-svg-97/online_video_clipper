@@ -453,6 +453,8 @@ class RefreshCategoryMetadataHandler:
                         continue
 
                     tag_ids = [self._repo.get_or_create_tag(t).id for t in tag_names]
+                    # Merge with existing tags to preserve user-added ones
+                    merged_tag_ids = list(dict.fromkeys([*full_agg.tag_ids, *tag_ids]))
                     full_agg.update_metadata(
                         title=title,
                         description=desc or None,
@@ -461,7 +463,7 @@ class RefreshCategoryMetadataHandler:
                         published_at=published_at,
                         view_count=view_count,
                     )
-                    full_agg.set_tags(tag_ids)
+                    full_agg.set_tags(merged_tag_ids)
 
                     if thumbnail_url:
                         thumb_path = self._ytdlp.download_thumbnail(full_agg.id, thumbnail_url, force=True)

@@ -28,12 +28,17 @@ def _make_handler(repo=None, bus=None, ytdlp=None):
 
 class TestRefreshCategoryMetadataHandler:
     def test_refreshes_video_metadata(self):
+        # Give the agg a pre-existing user-added tag
+        pre_tag_id = uuid4()
         agg = _make_agg()
+        agg.set_tags([pre_tag_id])
+
+        ytdlp_tag_id = uuid4()
         repo = MagicMock()
         repo.count.return_value = 1
         repo.search.side_effect = [[agg]]
         repo.get_by_id.return_value = agg
-        repo.get_or_create_tag.return_value = Tag(id=uuid4(), name="tag1")
+        repo.get_or_create_tag.return_value = Tag(id=ytdlp_tag_id, name="tag1")
 
         ytdlp = MagicMock()
         ytdlp.fetch_metadata.return_value = {
@@ -54,6 +59,10 @@ class TestRefreshCategoryMetadataHandler:
         saved = repo.save.call_args[0][0]
         assert saved.video.title == "New Title"
         assert saved.video.description == "New desc"
+        # Pre-existing user-added tag must be preserved after refresh
+        assert pre_tag_id in saved.tag_ids
+        # yt-dlp-sourced tag must also be present
+        assert ytdlp_tag_id in saved.tag_ids
 
     def test_progress_callback_called(self):
         agg = _make_agg()
