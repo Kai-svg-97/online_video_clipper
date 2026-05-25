@@ -2,7 +2,7 @@ import pytest
 from domain.library.aggregates import VideoAggregate
 from domain.library.events import VideoAdded, VideoDeleted, VideoMarkedWatched, VideoUpdated
 from domain.library.services import DuplicateDetectionService, DuplicateVideoError
-from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
+from domain.library.value_objects import Duration, VideoUrl
 
 
 class TestVideoUrl:
@@ -83,6 +83,14 @@ class TestVideoAggregate:
         events = agg.pull_events()
         assert len(events) == 1
         assert isinstance(events[0], VideoDeleted)
+
+    def test_update_metadata_description(self):
+        agg = self._make()
+        agg.pull_events()
+        agg.update_metadata(description="hello world")
+        assert agg.video.description == "hello world"
+        events = agg.pull_events()
+        assert any("description" in e.changed_fields for e in events)
 
 
 class TestDuplicateDetectionService:

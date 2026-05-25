@@ -1,17 +1,16 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from uuid import UUID
 
 from domain.library.aggregates import VideoAggregate
-from domain.library.entities import Category, Tag
 from domain.library.repositories import IVideoRepository
-from domain.library.services import DuplicateDetectionService
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
 from infrastructure.event_bus import EventBus
 from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
-
-from datetime import datetime
 
 
 @dataclass
@@ -64,39 +63,81 @@ class AddVideoHandler:
         self._repo = repo
         self._bus = event_bus
         self._ytdlp = ytdlp
-        self._dup = DuplicateDetectionService(repo)
 
     def handle(self, cmd: AddVideoCommand) -> VideoAggregate:
-        self._dup.assert_unique(cmd.url)
-
-        url = VideoUrl(cmd.url)
-        title = cmd.url
+        title: str = cmd.url
         channel: ChannelInfo | None = None
         duration: Duration | None = None
         published_at: datetime | None = None
         view_count: int | None = None
+        meta_tags: list[str] = []
+        thumbnail_url: str = ""
+        description: str = ""
 
         if cmd.fetch_metadata and self._ytdlp:
-            info = self._ytdlp.fetch_metadata(cmd.url)
-            title = info.get("title") or cmd.url
-            if info.get("uploader"):
-                channel = ChannelInfo(
-                    name=info.get("uploader", ""),
-                    url=info.get("uploader_url") or "",
-                    channel_id=info.get("channel_id") or info.get("uploader_id") or "",
-                )
-            if info.get("duration"):
-                duration = Duration(int(info["duration"]))
-            if info.get("upload_date"):
-                raw = info["upload_date"]
-                published_at = datetime(int(raw[:4]), int(raw[4:6]), int(raw[6:]))
-            view_count = info.get("view_count")
+            try:
+                info = self._ytdlp.fetch_metadata(cmd.url)
+                title = info.get("title") or cmd.url
+                if info.get("uploader"):
+                    channel = ChannelInfo(
+                        name=info.get("uploader", ""),
+                        url=info.get("uploader_url") or "",
+                        channel_id=info.get("channel_id") or info.get("uploader_id") or "",
+                    )
+                if info.get("duration"):
+                    duration = Duration(int(info["duration"]))
+                if info.get("upload_date"):
+                    raw = info["upload_date"]
+                    published_at = datetime(int(raw[:4]), int(raw[4:6]), int(raw[6:]))
+                view_count = info.get("view_count")
+                thumbnail_url = info.get("thumbnail") or ""
+                # Collect tags: only native video tags and YouTube category labels.
+                # artist/album/genre/track/creator are music metadata fields that
+                # yt-dlp may back-fill with unrelated values on regular YouTube videos.
+                raw_tags: list[str] = list(info.get("tags") or [])
+                raw_tags += list(info.get("categories") or [])
+                # Extract #hashtags from description; cap at 10 to prevent tag explosion.
+                # Require ≥2 chars to filter single-letter noise.
+                desc = info.get("description") or ""
+                description = desc
+                desc_tags = re.findall(r"#([\w가-힣]{2,})", desc)
+                raw_tags += desc_tags[:10]
+                meta_tags = list(dict.fromkeys(
+                    t.strip() for t in raw_tags if isinstance(t, str) and t.strip()
+                ))
+            except Exception:
+                pass  # proceed with URL-as-title if metadata fetch fails
 
+        # Merge caller-supplied tags with metadata tags; preserve order, deduplicate
+        all_tag_names = list(dict.fromkeys([*cmd.tags, *meta_tags]))
         tag_ids: list[UUID] = []
-        for tag_name in cmd.tags:
+        for tag_name in all_tag_names:
             tag = self._repo.get_or_create_tag(tag_name)
             tag_ids.append(tag.id)
 
+        # Upsert: update existing video if URL is already in library
+        existing = self._repo.get_by_url(cmd.url)
+        if existing is not None:
+            existing.update_metadata(
+                title=title if title != cmd.url else None,
+                description=description or None,
+                channel=channel,
+                duration=duration,
+                published_at=published_at,
+                view_count=view_count,
+            )
+            if tag_ids:
+                existing.set_tags(tag_ids)
+            if thumbnail_url and self._ytdlp and not existing.video.thumbnail_path:
+                thumb_path = self._ytdlp.download_thumbnail(existing.id, thumbnail_url)
+                if thumb_path:
+                    existing.update_metadata(thumbnail_path=thumb_path)
+            self._repo.save(existing)
+            self._bus.publish_all(existing.pull_events())
+            return existing
+
+        # New video
+        url = VideoUrl(cmd.url)
         agg = VideoAggregate.create(
             url=url,
             title=title,
@@ -107,7 +148,15 @@ class AddVideoHandler:
             favorite=cmd.favorite,
             category_id=cmd.category_id,
         )
+        if description:
+            agg.update_metadata(description=description)
         agg.set_tags(tag_ids)
+
+        if thumbnail_url and self._ytdlp:
+            thumb_path = self._ytdlp.download_thumbnail(agg.id, thumbnail_url)
+            if thumb_path:
+                agg.update_metadata(thumbnail_path=thumb_path)
+
         self._repo.save(agg)
         self._bus.publish_all(agg.pull_events())
         return agg
@@ -165,6 +214,117 @@ class MarkWatchedHandler:
         agg.mark_watched()
         self._repo.save(agg)
         self._bus.publish_all(agg.pull_events())
+
+
+# ------------------------------------------------------------------
+# Video category assignment
+# ------------------------------------------------------------------
+
+@dataclass
+class AssignCategoryCommand:
+    video_id: UUID
+    category_id: UUID | None   # None = remove from category
+
+
+class AssignCategoryHandler:
+    def __init__(self, repo: IVideoRepository, event_bus: EventBus) -> None:
+        self._repo = repo
+        self._bus = event_bus
+
+    def handle(self, cmd: AssignCategoryCommand) -> None:
+        agg = self._repo.get_by_id(cmd.video_id)
+        if agg is None:
+            raise KeyError(f"Video {cmd.video_id} not found")
+        if cmd.category_id is not None:
+            agg.assign_category(cmd.category_id)
+        else:
+            agg.assign_category(None)
+        self._repo.save(agg)
+        self._bus.publish_all(agg.pull_events())
+
+
+# ------------------------------------------------------------------
+# Category commands
+# ------------------------------------------------------------------
+
+@dataclass
+class CreateCategoryCommand:
+    name: str
+    parent_id: UUID | None = None
+
+
+@dataclass
+class RenameCategoryCommand:
+    category_id: UUID
+    new_name: str
+
+
+@dataclass
+class DeleteCategoryCommand:
+    category_id: UUID
+
+
+class CreateCategoryHandler:
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, cmd: CreateCategoryCommand) -> None:
+        from domain.library.entities import Category
+        cat = Category.create(cmd.name.strip(), parent_id=cmd.parent_id)
+        self._repo.save_category(cat)
+
+
+class RenameCategoryHandler:
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, cmd: RenameCategoryCommand) -> None:
+        cats = self._repo.list_categories()
+        target = next((c for c in cats if c.id == cmd.category_id), None)
+        if target is None:
+            raise KeyError(f"Category {cmd.category_id} not found")
+        target.name = cmd.new_name.strip()
+        self._repo.save_category(target)
+
+
+class DeleteCategoryHandler:
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, cmd: DeleteCategoryCommand) -> None:
+        self._repo.delete_category(cmd.category_id)
+
+
+@dataclass
+class MoveCategoryCommand:
+    category_id: UUID
+    new_parent_id: UUID | None
+
+
+class MoveCategoryHandler:
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, cmd: MoveCategoryCommand) -> None:
+        cats = self._repo.list_categories()
+        target = next((c for c in cats if c.id == cmd.category_id), None)
+        if target is None:
+            raise KeyError(f"Category {cmd.category_id} not found")
+        target.parent_id = cmd.new_parent_id
+        self._repo.save_category(target)
+
+
+@dataclass
+class DeleteTagCommand:
+    tag_id: UUID
+
+
+class DeleteTagHandler:
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, cmd: DeleteTagCommand) -> None:
+        self._repo.delete_tag(cmd.tag_id)
 
 
 class ImportPlaylistHandler:
