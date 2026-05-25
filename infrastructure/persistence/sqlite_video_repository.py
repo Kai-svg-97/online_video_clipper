@@ -263,6 +263,13 @@ class SqliteVideoRepository(IVideoRepository):
             )
         return tag
 
+    def delete_zero_count_tags(self) -> int:
+        with self._db.connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM video_tags)"
+            )
+            return cursor.rowcount
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

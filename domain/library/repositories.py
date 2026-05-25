@@ -12,6 +12,7 @@ from domain.library.entities import Category, Tag
 class SearchQuery:
     text: str = ""
     category_id: UUID | None = None
+    category_ids: list[UUID] = field(default_factory=list)
     tag_ids: list[UUID] = field(default_factory=list)
     favorite_only: bool = False
     watched: bool | None = None        # None = both
@@ -38,6 +39,9 @@ class IVideoRepository(ABC):
     @abstractmethod
     def exists_by_url(self, url: str) -> bool: ...
 
+    @abstractmethod
+    def get_by_url(self, url: str) -> VideoAggregate | None: ...
+
     # Category management
     @abstractmethod
     def list_categories(self) -> list[Category]: ...
@@ -53,7 +57,18 @@ class IVideoRepository(ABC):
     def list_tags(self) -> list[Tag]: ...
 
     @abstractmethod
+    def list_tags_with_counts(self) -> list[tuple[Tag, int]]: ...
+
+    @abstractmethod
     def save_tag(self, tag: Tag) -> None: ...
 
     @abstractmethod
     def get_or_create_tag(self, name: str) -> Tag: ...
+
+    @abstractmethod
+    def delete_tag(self, tag_id: UUID) -> None: ...
+
+    @abstractmethod
+    def delete_zero_count_tags(self) -> int:
+        """Delete tags not linked to any video. Returns count of deleted tags."""
+        ...
