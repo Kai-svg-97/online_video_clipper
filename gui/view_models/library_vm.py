@@ -380,7 +380,7 @@ class LibraryViewModel(QObject):
         worker = _RefreshMetadataWorker(self._refresh_metadata, cmd, self)
         worker.progress.connect(self.metadata_refresh_progress)
         worker.finished_ok.connect(self._on_refresh_metadata_ok)
-        worker.finished_err.connect(lambda err: self.error_occurred.emit(err))
+        worker.finished_err.connect(self._on_refresh_metadata_err)
         worker.finished.connect(lambda: self._refresh_metadata_workers.remove(worker))
         self._refresh_metadata_workers.append(worker)
         worker.start()
@@ -389,6 +389,10 @@ class LibraryViewModel(QObject):
         self._refresh_videos()
         self._refresh_tags()
         self.metadata_refresh_finished.emit(count)
+
+    def _on_refresh_metadata_err(self, err: str) -> None:
+        self.error_occurred.emit(err)
+        self.metadata_refresh_finished.emit(0)
 
     def _on_add_ok(self, url: str) -> None:
         self._refresh_videos()
