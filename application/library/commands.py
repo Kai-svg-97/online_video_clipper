@@ -377,3 +377,110 @@ class ImportPlaylistHandler:
                 self._on_progress(min(i + self.CHUNK_SIZE, total), total)
 
         return imported
+
+
+@dataclass
+class RefreshCategoryMetadataCommand:
+    category_ids: list[UUID]  # empty list = refresh all videos
+
+
+class RefreshCategoryMetadataHandler:
+    """Re-fetches full metadata (title, description, tags, view count, thumbnail)
+    for every video in the specified categories. Pass empty category_ids to
+    refresh all videos in the library.
+    """
+
+    CHUNK_SIZE = 50
+
+    def __init__(
+        self,
+        repo: IVideoRepository,
+        event_bus: EventBus,
+        ytdlp: YtDlpAdapter,
+    ) -> None:
+        self._repo = repo
+        self._bus = event_bus
+        self._ytdlp = ytdlp
+
+    def handle(
+        self,
+        cmd: RefreshCategoryMetadataCommand,
+        on_progress: "Callable[[int, int], None] | None" = None,
+    ) -> int:
+        from domain.library.repositories import SearchQuery
+
+        total = self._repo.count(SearchQuery(category_ids=cmd.category_ids))
+        refreshed = 0
+        offset = 0
+
+        while True:
+            batch = self._repo.search(SearchQuery(
+                category_ids=cmd.category_ids,
+                limit=self.CHUNK_SIZE,
+                offset=offset,
+            ))
+            if not batch:
+                break
+
+            for agg in batch:
+                try:
+                    info = self._ytdlp.fetch_metadata(str(agg.video.url))
+                    title = info.get("title") or agg.video.title
+                    desc = info.get("description") or ""
+                    channel = None
+                    if info.get("uploader"):
+                        channel = ChannelInfo(
+                            name=info.get("uploader", ""),
+                            url=info.get("uploader_url") or "",
+                            channel_id=info.get("channel_id") or info.get("uploader_id") or "",
+                        )
+                    duration = Duration(int(info["duration"])) if info.get("duration") else None
+                    published_at = None
+                    if info.get("upload_date"):
+                        raw = info["upload_date"]
+                        published_at = datetime(int(raw[:4]), int(raw[4:6]), int(raw[6:]))
+                    view_count = info.get("view_count")
+                    thumbnail_url = info.get("thumbnail") or ""
+
+                    raw_tags: list[str] = list(info.get("tags") or [])
+                    raw_tags += list(info.get("categories") or [])
+                    desc_tags = re.findall(r"#([\w가-힣]{2,})", desc)
+                    raw_tags += desc_tags[:10]
+                    tag_names = list(dict.fromkeys(
+                        t.strip() for t in raw_tags if isinstance(t, str) and t.strip()
+                    ))
+
+                    full_agg = self._repo.get_by_id(agg.id)
+                    if full_agg is None:
+                        continue
+
+                    tag_ids = [self._repo.get_or_create_tag(t).id for t in tag_names]
+                    full_agg.update_metadata(
+                        title=title,
+                        description=desc or None,
+                        channel=channel,
+                        duration=duration,
+                        published_at=published_at,
+                        view_count=view_count,
+                    )
+                    full_agg.set_tags(tag_ids)
+
+                    if thumbnail_url:
+                        thumb_path = self._ytdlp.download_thumbnail(full_agg.id, thumbnail_url)
+                        if thumb_path:
+                            full_agg.update_metadata(thumbnail_path=thumb_path)
+
+                    self._repo.save(full_agg)
+                    self._bus.publish_all(full_agg.pull_events())
+                    refreshed += 1
+                except Exception:
+                    pass
+
+            if on_progress:
+                on_progress(min(offset + len(batch), total), total)
+            offset += self.CHUNK_SIZE
+            if len(batch) < self.CHUNK_SIZE:
+                break
+
+        self._repo.delete_zero_count_tags()
+        return refreshed
