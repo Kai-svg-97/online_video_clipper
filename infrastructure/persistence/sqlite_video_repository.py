@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 from domain.library.aggregates import VideoAggregate
 from domain.library.entities import Category, Tag, Video
 from domain.library.repositories import IVideoRepository, SearchQuery
-from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
+from domain.library.value_objects import ChannelInfo, Duration, VideoUrl, normalize_video_url
 from infrastructure.persistence.database import Database
 
 
@@ -157,11 +156,32 @@ class SqliteVideoRepository(IVideoRepository):
             conn.execute("DELETE FROM videos WHERE id=?", (str(video_id),))
 
     def exists_by_url(self, url: str) -> bool:
+        url = normalize_video_url(url)
         with self._db.connection() as conn:
             row = conn.execute(
                 "SELECT 1 FROM videos WHERE url=?", (url,)
             ).fetchone()
             return row is not None
+
+    def get_by_url(self, url: str) -> VideoAggregate | None:
+        url = normalize_video_url(url)
+        with self._db.connection() as conn:
+            row = conn.execute("SELECT * FROM videos WHERE url=?", (url,)).fetchone()
+            if row is None:
+                return None
+            video = _row_to_video(row)
+            desc_row = conn.execute(
+                "SELECT description FROM video_descriptions WHERE video_id=?",
+                (row["id"],),
+            ).fetchone()
+            if desc_row:
+                video.description = desc_row["description"]
+            tag_rows = conn.execute(
+                "SELECT tag_id FROM video_tags WHERE video_id=?", (row["id"],)
+            ).fetchall()
+            tag_ids = [UUID(r["tag_id"]) for r in tag_rows]
+            cat_id = UUID(row["category_id"]) if row["category_id"] else None
+            return VideoAggregate(video, category_id=cat_id, tag_ids=tag_ids)
 
     # ------------------------------------------------------------------
     # Categories
@@ -169,7 +189,7 @@ class SqliteVideoRepository(IVideoRepository):
 
     def list_categories(self) -> list[Category]:
         with self._db.connection() as conn:
-            rows = conn.execute("SELECT id, name, parent_id FROM categories").fetchall()
+            rows = conn.execute("SELECT id, name, parent_id FROM categories ORDER BY name").fetchall()
         return [
             Category(
                 id=UUID(r["id"]),
@@ -206,12 +226,30 @@ class SqliteVideoRepository(IVideoRepository):
             rows = conn.execute("SELECT id, name FROM tags").fetchall()
         return [Tag(id=UUID(r["id"]), name=r["name"]) for r in rows]
 
+    def list_tags_with_counts(self) -> list[tuple[Tag, int]]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.id, t.name, COUNT(vt.video_id) AS cnt
+                FROM tags t
+                LEFT JOIN video_tags vt ON vt.tag_id = t.id
+                GROUP BY t.id
+                ORDER BY t.name
+                """
+            ).fetchall()
+        return [(Tag(id=UUID(r["id"]), name=r["name"]), r["cnt"]) for r in rows]
+
     def save_tag(self, tag: Tag) -> None:
         with self._db.connection() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO tags(id, name) VALUES (?,?)",
                 (str(tag.id), tag.name),
             )
+
+    def delete_tag(self, tag_id: UUID) -> None:
+        with self._db.connection() as conn:
+            # video_tags rows cascade automatically (ON DELETE CASCADE)
+            conn.execute("DELETE FROM tags WHERE id=?", (str(tag_id),))
 
     def get_or_create_tag(self, name: str) -> Tag:
         name = name.lower().strip()
@@ -243,14 +281,18 @@ class SqliteVideoRepository(IVideoRepository):
             where.append("videos_fts MATCH ?")
             params.append(query.text)
 
-        if query.category_id:
+        if query.category_ids:
+            placeholders = ",".join("?" * len(query.category_ids))
+            where.append(f"videos.category_id IN ({placeholders})")
+            params.extend(str(cid) for cid in query.category_ids)
+        elif query.category_id:
             where.append("videos.category_id = ?")
             params.append(str(query.category_id))
 
         if query.tag_ids:
             placeholders = ",".join("?" * len(query.tag_ids))
             joins.append(
-                f"JOIN video_tags ON video_tags.video_id = videos.id"
+                "JOIN video_tags ON video_tags.video_id = videos.id"
             )
             where.append(f"video_tags.tag_id IN ({placeholders})")
             params.extend(str(t) for t in query.tag_ids)

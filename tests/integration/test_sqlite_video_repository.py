@@ -1,6 +1,5 @@
 """Integration tests that hit a real (in-memory) SQLite database."""
 import pytest
-from pathlib import Path
 
 from domain.library.aggregates import VideoAggregate
 from domain.library.repositories import SearchQuery
@@ -71,3 +70,15 @@ class TestSqliteVideoRepository:
         results = repo.search(SearchQuery(favorite_only=True))
         assert all(a.video.favorite for a in results)
         assert any(a.id == fav.id for a in results)
+
+
+class TestCategoryOrdering:
+    def test_list_categories_sorted_by_name(self, repo):
+        """Categories must come back in alphabetical order regardless of insert order."""
+        from domain.library.entities import Category
+        repo.save_category(Category.create("Zebra"))
+        repo.save_category(Category.create("Apple"))
+        repo.save_category(Category.create("Mango"))
+        cats = repo.list_categories()
+        names = [c.name for c in cats]
+        assert names == sorted(names)
