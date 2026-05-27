@@ -126,6 +126,7 @@ class VideoDetailWidget(QWidget):
     back_requested       = pyqtSignal()
     tag_filter_requested = pyqtSignal(object, str)   # (UUID, str)
     tags_updated         = pyqtSignal(object, object)  # (UUID, list[str])
+    download_requested   = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -169,6 +170,7 @@ class VideoDetailWidget(QWidget):
 
         self._player = InlinePlayer(left_w)
         self._player.playback_failed.connect(self._on_play_failed)
+        self._player.download_requested.connect(self.download_requested.emit)
         left_layout.addWidget(self._player, stretch=1)
 
         # Single browser button (play/stop are already in InlinePlayer._Controls)

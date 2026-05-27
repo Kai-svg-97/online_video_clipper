@@ -1511,6 +1511,7 @@ class LibraryPanel(QWidget):
         self._detail_widget.back_requested.connect(self._on_back_from_detail)
         self._detail_widget.tag_filter_requested.connect(self._on_tag_filter_requested)
         self._detail_widget.tags_updated.connect(self._on_detail_tags_updated)
+        self._detail_widget.download_requested.connect(self.download_requested.emit)
 
     # ── VM → UI ────────────────────────────────────────────────────
 
