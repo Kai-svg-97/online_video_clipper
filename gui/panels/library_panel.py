@@ -1208,6 +1208,7 @@ class _PreviewPane(QWidget):
         self._show_empty()
 
     def show_video(self, dto: VideoDTO) -> None:
+        self.show()  # 영상 선택 시 패널 펼치기
         self._current_dto = dto
         detail = self._vm.get_video_detail(dto.id)
 
@@ -1251,6 +1252,11 @@ class _PreviewPane(QWidget):
     def stop_player(self) -> None:
         self._player.stop()
 
+    @property
+    def has_video(self) -> bool:
+        """선택된 영상이 있으면 True."""
+        return self._current_dto is not None
+
     def _show_empty(self) -> None:
         self._current_dto = None
         self._player.load("", [], None)
@@ -1259,6 +1265,7 @@ class _PreviewPane(QWidget):
         _clear_layout(self._tags_container_layout)
         self._btn_browser.setEnabled(False)
         self._btn_detail.setEnabled(False)
+        self.hide()  # 선택 대상 없을 때 패널 접기
 
     def _on_browser(self) -> None:
         if self._current_dto:
@@ -1700,7 +1707,8 @@ class LibraryPanel(QWidget):
     def _on_back_from_detail(self) -> None:
         self._detail_widget.stop_player()
         self._nav_stack.setCurrentIndex(0)
-        self._preview.show()
+        if self._preview.has_video:  # 선택된 영상이 있을 때만 표시
+            self._preview.show()
 
     def _on_detail_tags_updated(self, video_id: UUID, tags: list) -> None:
         """Called when user manually adds a tag in the detail view."""
