@@ -12,6 +12,26 @@ from domain.download.value_objects import DownloadProgress, DownloadSettings, Me
 from utils.resources import get_ffmpeg_path
 
 
+def _height_to_quality_label(height: int | None) -> str:
+    """픽셀 높이를 사람이 읽기 쉬운 품질 레이블로 변환한다.
+
+    예: 1080 → "FHD", 2160 → "UHD (4K)", None → ""
+    """
+    if height is None:
+        return ""
+    if height >= 2160:
+        return "UHD (4K)"
+    if height >= 1440:
+        return "QHD (2K)"
+    if height >= 1080:
+        return "FHD"
+    if height >= 720:
+        return "HD"
+    if height >= 480:
+        return "SD"
+    return f"{height}p"
+
+
 def _find_ffmpeg() -> str | None:
     """Return path to ffmpeg executable, or None if not found."""
     try:
@@ -136,6 +156,19 @@ class YtDlpAdapter:
                     or info.get("filepath")
                     or ydl.prepare_filename(info)
                 )
+                # 오디오 포맷이 아닐 때만 실제 다운로드 품질 레이블을 파일명에 삽입
+                if settings.format not in (MediaFormat.MP3, MediaFormat.M4A):
+                    actual_height = rd.get("height") or info.get("height")
+                    label = _height_to_quality_label(actual_height)
+                    if label:
+                        p = Path(self._last_filepath)
+                        new_path = p.with_name(f"{p.stem} [{label}]{p.suffix}")
+                        try:
+                            if p.exists() and not new_path.exists():
+                                p.rename(new_path)
+                                self._last_filepath = str(new_path)
+                        except OSError:
+                            pass  # 이름 변경 실패 시 원본 경로 유지
 
         return Path(self._last_filepath)
 
