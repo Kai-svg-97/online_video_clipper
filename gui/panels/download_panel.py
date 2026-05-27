@@ -13,12 +13,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from domain.download.entities import DownloadJob, JobStatus
+from application.download.dtos import DownloadJobDTO
 from gui.view_models.download_vm import DownloadViewModel
 
 
 class _JobRow(QWidget):
-    def __init__(self, job: DownloadJob, on_cancel, parent=None) -> None:
+    def __init__(self, job: DownloadJobDTO, on_cancel, parent=None) -> None:
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
@@ -38,7 +38,7 @@ class _JobRow(QWidget):
         layout.addWidget(self._speed)
         layout.addWidget(cancel_btn)
 
-    def update_job(self, job: DownloadJob) -> None:
+    def update_job(self, job: DownloadJobDTO) -> None:
         self._bar.setValue(int(job.progress.percent))
         self._speed.setText(job.progress.speed_formatted())
 
@@ -72,14 +72,12 @@ class DownloadPanel(QWidget):
         jobs = self._vm.queue
         current_ids = {j.id for j in jobs}
 
-        # Remove finished rows
         for job_id in list(self._rows):
             if job_id not in current_ids:
                 row = self._rows.pop(job_id)
                 self._container_layout.removeWidget(row)
                 row.deleteLater()
 
-        # Add or update rows
         for job in jobs:
             if job.id in self._rows:
                 self._rows[job.id].update_job(job)

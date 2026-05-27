@@ -1,11 +1,34 @@
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlparse
+
+
+def normalize_video_url(url: str) -> str:
+    """Return canonical URL form.
+
+    YouTube/youtu.be → https://www.youtube.com/watch?v=ID  (strips list=, si=, etc.)
+    Everything else  → unchanged.
+    """
+    url = url.strip()
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().lstrip("www.")
+    if host == "youtube.com":
+        params = parse_qs(parsed.query, keep_blank_values=False)
+        vid = params.get("v", [None])[0]
+        if vid:
+            return f"https://www.youtube.com/watch?v={vid}"
+    elif host == "youtu.be":
+        vid = parsed.path.lstrip("/").split("?")[0].split("/")[0]
+        if vid:
+            return f"https://www.youtube.com/watch?v={vid}"
+    return url
+
 
 class VideoUrl:
     __slots__ = ("_value",)
 
     def __init__(self, value: str) -> None:
-        value = value.strip()
+        value = normalize_video_url(value)
         if not value.startswith(("http://", "https://")):
             raise ValueError(f"Invalid URL: {value!r}")
         self._value = value

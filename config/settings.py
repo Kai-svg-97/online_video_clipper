@@ -51,8 +51,8 @@ BACKUP_DIR:    Path = _resolve("backups",    DATA_DIR / "backups")
 
 DEFAULT_PAGE_SIZE:       int = 50
 MAX_CONCURRENT_DOWNLOADS: int = 3
-THUMBNAIL_WIDTH:         int = 160
-THUMBNAIL_HEIGHT:        int = 90
+THUMBNAIL_WIDTH:         int = 320
+THUMBNAIL_HEIGHT:        int = 180
 PIXMAP_CACHE_LIMIT_KB:   int = 30_720   # 30 MB
 LRU_THUMBNAIL_MAX:       int = 100
 

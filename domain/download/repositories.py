@@ -21,3 +21,12 @@ class IDownloadRepository(ABC):
 
     @abstractmethod
     def delete(self, job_id: UUID) -> None: ...
+
+    @abstractmethod
+    def find_completed_by_url(self, url: str) -> list[DownloadJob]: ...
+
+    @abstractmethod
+    def delete_completed_duplicates(
+        self, url: str, quality: str, fmt: str, keep_job_id: "UUID"
+    ) -> None:
+        """Delete older completed records with the same url+quality+format and their files."""

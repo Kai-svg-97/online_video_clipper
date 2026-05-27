@@ -11,7 +11,7 @@ from domain.download.events import (
     DownloadProgressUpdated,
     DownloadStarted,
 )
-from domain.download.value_objects import DownloadProgress, DownloadSettings
+from domain.download.value_objects import DownloadProgress
 
 
 def _now() -> datetime:

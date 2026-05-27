@@ -20,7 +20,7 @@ if (-not (Test-Path $ffmpegExe)) {
 
 # 2. PyInstaller
 Push-Location $Root
-pyinstaller packaging/online_video_clipper.spec `
+python -m PyInstaller packaging/online_video_clipper.spec `
     --distpath dist/windows `
     --workpath build/tmp `
     --noconfirm

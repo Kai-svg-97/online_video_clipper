@@ -1,8 +1,8 @@
 import pytest
 from domain.download.aggregates import DownloadQueueAggregate
 from domain.download.entities import DownloadJob, JobStatus
-from domain.download.events import DownloadCancelled, DownloadCompleted, DownloadFailed, DownloadStarted
-from domain.download.value_objects import DownloadProgress, DownloadSettings, Quality, MediaFormat
+from domain.download.events import DownloadCancelled, DownloadCompleted, DownloadStarted
+from domain.download.value_objects import DownloadSettings, Quality, MediaFormat
 
 
 class TestDownloadSettings:

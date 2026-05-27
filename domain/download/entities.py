@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-from domain.download.value_objects import DownloadProgress, DownloadSettings, Quality, MediaFormat
+from domain.download.value_objects import DownloadProgress, DownloadSettings
 
 
 def _now() -> datetime:

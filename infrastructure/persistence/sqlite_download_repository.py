@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from uuid import UUID
 
 from domain.download.entities import DownloadJob, JobStatus
@@ -71,6 +72,38 @@ class SqliteDownloadRepository(IDownloadRepository):
     def delete(self, job_id: UUID) -> None:
         with self._db.connection() as conn:
             conn.execute("DELETE FROM download_history WHERE id=?", (str(job_id),))
+
+    def find_completed_by_url(self, url: str) -> list[DownloadJob]:
+        jobs: list[DownloadJob] = []
+        with self._db.connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM download_history WHERE url=? AND status='completed' ORDER BY created_at DESC",
+                (url,),
+            )
+            for row in cursor:
+                jobs.append(self._row_to_job(row))
+        return jobs
+
+    def delete_completed_duplicates(
+        self, url: str, quality: str, fmt: str, keep_job_id: UUID
+    ) -> None:
+        """Delete older completed records with the same url+quality+format and their files."""
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, file_path FROM download_history
+                WHERE url=? AND quality=? AND format=? AND status='completed' AND id!=?
+                """,
+                (url, quality, fmt, str(keep_job_id)),
+            ).fetchall()
+            for row in rows:
+                fp = row["file_path"]
+                if fp:
+                    try:
+                        Path(fp).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                conn.execute("DELETE FROM download_history WHERE id=?", (row["id"],))
 
     @staticmethod
     def _row_to_job(row) -> DownloadJob:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from domain.library.entities import Category, Tag, Video
+from domain.library.entities import Video
 from domain.library.events import VideoAdded, VideoDeleted, VideoMarkedWatched, VideoUpdated
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
 
@@ -92,6 +92,10 @@ class VideoAggregate:
         favorite: bool | None = None,
         thumbnail_path: str | None = None,
         description: str | None = None,
+        channel: ChannelInfo | None = None,
+        duration: Duration | None = None,
+        published_at: datetime | None = None,
+        view_count: int | None = None,
     ) -> None:
         changed: list[str] = []
         if title is not None and title != self._video.title:
@@ -109,6 +113,18 @@ class VideoAggregate:
         if description is not None and description != self._video.description:
             self._video.description = description
             changed.append("description")
+        if channel is not None and channel != self._video.channel:
+            self._video.channel = channel
+            changed.append("channel")
+        if duration is not None and duration != self._video.duration:
+            self._video.duration = duration
+            changed.append("duration")
+        if published_at is not None and published_at != self._video.published_at:
+            self._video.published_at = published_at
+            changed.append("published_at")
+        if view_count is not None and view_count != self._video.view_count:
+            self._video.view_count = view_count
+            changed.append("view_count")
         if changed:
             self._video.updated_at = _now()
             self._raise(VideoUpdated(video_id=self._video.id, changed_fields=tuple(changed)))

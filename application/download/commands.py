@@ -75,12 +75,17 @@ class StartDownloadHandler:
             file_path = adapter.download(job.url, job.settings, output_dir)
             self._queue.complete(job_id, str(file_path))
             job.file_path = str(file_path)
+            # Same url+quality+format: keep only the newest file
+            self._repo.delete_completed_duplicates(
+                job.url,
+                job.settings.quality.value,
+                job.settings.format.value,
+                job_id,
+            )
             self._repo.save(job)
         except Exception as exc:
             self._queue.fail(job_id, str(exc))
-            job_for_save = DownloadJob.create(job.url, job.title, job.settings)
-            job_for_save.id = job_id
-            self._repo.save(job_for_save)
+            self._repo.save(job)  # job already has FAILED status + error_msg set by fail()
         finally:
             self._bus.publish_all(self._queue.pull_events())
 

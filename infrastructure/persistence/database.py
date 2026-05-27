@@ -22,6 +22,42 @@ class Database:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.executescript(schema_sql)
+        self._migrate_normalize_urls()
+
+    def _migrate_normalize_urls(self) -> None:
+        """Idempotent: normalize existing YouTube URLs to canonical ?v=ID form.
+
+        When a canonical record already exists for a non-canonical duplicate,
+        the duplicate's tags are merged into the canonical record and the
+        duplicate is deleted.
+        """
+        from domain.library.value_objects import normalize_video_url
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT id, url FROM videos WHERE url LIKE '%youtube%' OR url LIKE '%youtu.be%'"
+            ).fetchall()
+            for row in rows:
+                canonical = normalize_video_url(row["url"])
+                if canonical == row["url"]:
+                    continue  # already canonical, nothing to do
+                # Check if canonical version already exists
+                existing = conn.execute(
+                    "SELECT id FROM videos WHERE url=?", (canonical,)
+                ).fetchone()
+                if existing:
+                    # Merge: transfer tags from duplicate to canonical, then delete duplicate
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO video_tags(video_id, tag_id)
+                        SELECT ?, tag_id FROM video_tags WHERE video_id=?
+                        """,
+                        (existing["id"], row["id"]),
+                    )
+                    conn.execute("DELETE FROM videos WHERE id=?", (row["id"],))
+                else:
+                    conn.execute(
+                        "UPDATE videos SET url=? WHERE id=?", (canonical, row["id"])
+                    )
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:

@@ -3,11 +3,9 @@ from __future__ import annotations
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QVBoxLayout,
 )
 
@@ -36,8 +34,8 @@ class SettingsDialog(QDialog):
         form.addRow("Logs folder:", self._log_edit)
 
         note = QLabel(
-            f"Edit <b>data/config.yaml</b> to set custom paths permanently.<br>"
-            f"Changes here are shown for reference only."
+            "Edit <b>data/config.yaml</b> to set custom paths permanently.<br>"
+            "Changes here are shown for reference only."
         )
         note.setWordWrap(True)
 

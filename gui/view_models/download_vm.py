@@ -5,16 +5,13 @@ from uuid import UUID
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from application.download.commands import CancelDownloadCommand, CancelDownloadHandler, StartDownloadCommand, StartDownloadHandler
-from application.download.queries import GetDownloadHistoryHandler, GetDownloadHistoryQuery, GetDownloadQueueHandler, GetDownloadQueueQuery
-from domain.download.entities import DownloadJob
-from domain.download.events import DownloadCompleted, DownloadFailed, DownloadProgressUpdated
+from application.download.dtos import DownloadJobDTO, DownloadProgressDTO
 from domain.download.value_objects import DownloadSettings
-from infrastructure.event_bus import EventBus
+from application.download.event_bridge import DownloadEventBridge
+from application.download.queries import GetDownloadHistoryHandler, GetDownloadHistoryQuery, GetDownloadQueueHandler, GetDownloadQueueQuery
 
 
 class _DownloadWorker(QThread):
-    """Runs a single download job on a background thread."""
-
     def __init__(
         self,
         handler: StartDownloadHandler,
@@ -40,7 +37,7 @@ class DownloadViewModel(QObject):
         cancel_handler: CancelDownloadHandler,
         queue_handler: GetDownloadQueueHandler,
         history_handler: GetDownloadHistoryHandler,
-        event_bus: EventBus,
+        event_bridge: DownloadEventBridge,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -48,19 +45,17 @@ class DownloadViewModel(QObject):
         self._cancel = cancel_handler
         self._queue_q = queue_handler
         self._history_q = history_handler
-        self._bus = event_bus
         self._workers: dict[UUID, _DownloadWorker] = {}
 
-        # Subscribe to domain events for UI refresh
-        event_bus.subscribe(DownloadProgressUpdated, self._on_progress)
-        event_bus.subscribe(DownloadCompleted, self._on_completed)
-        event_bus.subscribe(DownloadFailed, self._on_failed)
+        event_bridge.add_progress_listener(self._on_progress)
+        event_bridge.add_completed_listener(self._on_completed)
+        event_bridge.add_failed_listener(self._on_failed)
 
     @property
-    def queue(self) -> list[DownloadJob]:
+    def queue(self) -> list[DownloadJobDTO]:
         return self._queue_q.handle(GetDownloadQueueQuery())
 
-    def load_history(self, limit: int = 50) -> list[DownloadJob]:
+    def load_history(self, limit: int = 50) -> list[DownloadJobDTO]:
         return self._history_q.handle(GetDownloadHistoryQuery(limit=limit))
 
     def start_download(
@@ -85,16 +80,16 @@ class DownloadViewModel(QObject):
         except Exception as exc:
             self.error_occurred.emit(str(exc))
 
-    def _on_progress(self, event: DownloadProgressUpdated) -> None:
+    def _on_progress(self) -> None:
         self.queue_changed.emit()
 
-    def _on_completed(self, event: DownloadCompleted) -> None:
+    def _on_completed(self) -> None:
         self.queue_changed.emit()
         self.history_changed.emit()
 
-    def _on_failed(self, event: DownloadFailed) -> None:
+    def _on_failed(self, error: str) -> None:
         self.queue_changed.emit()
-        self.error_occurred.emit(f"Download failed: {event.error}")
+        self.error_occurred.emit(f"Download failed: {error}")
 
     def _cleanup_worker(self, job_id: UUID) -> None:
         self._workers.pop(job_id, None)

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import ffmpeg
 
-from config.settings import DOWNLOAD_DIR
 from domain.clip.value_objects import TimeRange
 from utils.resources import get_ffmpeg_path
 

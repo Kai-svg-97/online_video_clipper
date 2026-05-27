@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QMimeData, Qt, QUrl
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCloseEvent, QPixmapCache
 from PyQt6.QtWidgets import (
     QApplication,
-    QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -21,8 +19,10 @@ from config.settings import PIXMAP_CACHE_LIMIT_KB
 from gui.panels.download_panel import DownloadPanel
 from gui.panels.library_panel import LibraryPanel
 from gui.panels.settings_dialog import SettingsDialog
+from gui.view_models.clip_vm import ClipViewModel
 from gui.view_models.download_vm import DownloadViewModel
 from gui.view_models.library_vm import LibraryViewModel
+from gui.view_models.monitoring_vm import MonitoringViewModel
 
 
 class MainWindow(QMainWindow):
@@ -30,18 +30,21 @@ class MainWindow(QMainWindow):
         self,
         library_vm: LibraryViewModel,
         download_vm: DownloadViewModel,
+        clip_vm: ClipViewModel,
+        monitoring_vm: MonitoringViewModel,
     ) -> None:
         super().__init__()
         QPixmapCache.setCacheLimit(PIXMAP_CACHE_LIMIT_KB)
         self._library_vm = library_vm
         self._download_vm = download_vm
+        self._clip_vm = clip_vm
+        self._monitoring_vm = monitoring_vm
         self.setWindowTitle("YouTube Content Manager")
         self.setMinimumSize(1024, 680)
         self._setup_ui()
         self._setup_clipboard_monitoring()
 
     def _setup_ui(self) -> None:
-        # Toolbar with URL input
         toolbar = QToolBar("Main", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
@@ -62,23 +65,33 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addWidget(settings_btn)
 
-        # Central area: library (top) + download panel (bottom)
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
+        self._library_panel = LibraryPanel(self._library_vm)
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(LibraryPanel(self._library_vm))
+        splitter.addWidget(self._library_panel)
         splitter.addWidget(DownloadPanel(self._download_vm))
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
         main_layout.addWidget(splitter)
 
-        # Status bar
         self.setStatusBar(QStatusBar())
-        self._library_vm.error_occurred.connect(self._show_error)
+        self._library_vm.error_occurred.connect(self._show_library_error)
+        self._library_vm.video_add_started.connect(
+            lambda url: self.statusBar().showMessage(f"영상 등록 중: {url}", 0)
+        )
+        self._library_vm.video_add_finished.connect(
+            lambda url: self.statusBar().showMessage(f"등록 완료: {url}", 5000)
+        )
+        self._library_panel.download_requested.connect(
+            lambda url, title, s: self._download_vm.start_download(url, title, s)
+        )
         self._download_vm.error_occurred.connect(self._show_error)
+        self._clip_vm.error_occurred.connect(self._show_error)
+        self._monitoring_vm.error_occurred.connect(self._show_error)
 
     def _setup_clipboard_monitoring(self) -> None:
         clipboard = QApplication.clipboard()
@@ -96,7 +109,7 @@ class MainWindow(QMainWindow):
     def _on_url_submitted(self) -> None:
         url = self._url_input.text().strip()
         if url:
-            self._download_vm.start_download(url, url)
+            self._library_vm.add_video(url, self._library_panel.current_category_id())
             self._url_input.clear()
 
     def _on_paste_clicked(self) -> None:
@@ -110,7 +123,12 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _show_error(self, msg: str) -> None:
-        self.statusBar().showMessage(f"Error: {msg}", 5000)
+        self.statusBar().showMessage(f"오류: {msg}", 6000)
+
+    def _show_library_error(self, msg: str) -> None:
+        """Show library errors as a dialog so they can't be missed."""
+        self.statusBar().showMessage(f"오류: {msg}", 6000)
+        QMessageBox.warning(self, "영상 등록 오류", msg)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         event.accept()
