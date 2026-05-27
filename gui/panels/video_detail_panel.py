@@ -28,7 +28,12 @@ from PyQt6.QtWidgets import (
 )
 
 from application.library.dtos import VideoDetailDTO
+from gui.themes.manager import ThemeManager
 from gui.widgets.video_player import InlinePlayer
+
+
+def _t():
+    return ThemeManager.instance().current()
 
 
 def _fmt_dur(sec: int | None) -> str:
@@ -57,12 +62,14 @@ class _TagChip(QPushButton):
         self.tag_id = tag_id
         self.tag_name = tag_name
         self.setFlat(True)
+        tok = _t()
         self.setStyleSheet(
-            "QPushButton{"
-            "  border:1px solid #3a6a9a; border-radius:10px;"
-            "  background:#1e3a5a; color:#cde; padding:2px 8px; font-size:8pt;"
-            "}"
-            "QPushButton:hover{background:#2a5a8a;}"
+            f"QPushButton{{"
+            f"  border:1px solid {tok.border_muted}; border-radius:10px;"
+            f"  background:{tok.bg_elevated}; color:{tok.text_secondary};"
+            f"  padding:2px 8px; font-size:8pt;"
+            f"}}"
+            f"QPushButton:hover{{background:{tok.bg_overlay}; color:{tok.text_primary};}}"
         )
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -141,10 +148,11 @@ class VideoDetailWidget(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        # ── Back button ─────────────────────────────────────────────
+        # ── Back button (‹ 아이콘, Esc 키로도 동작) ──────────────────
         back_row = QHBoxLayout()
-        self._btn_back = QPushButton("← 목록으로")
-        self._btn_back.setFixedHeight(28)
+        self._btn_back = QPushButton("‹")
+        self._btn_back.setFixedSize(28, 28)
+        self._btn_back.setToolTip("목록으로 (Esc)")
         self._btn_back.clicked.connect(self.back_requested.emit)
         back_row.addWidget(self._btn_back)
         back_row.addStretch()
@@ -173,9 +181,10 @@ class VideoDetailWidget(QWidget):
         self._player.download_requested.connect(self.download_requested.emit)
         left_layout.addWidget(self._player, stretch=1)
 
-        # Single browser button (play/stop are already in InlinePlayer._Controls)
-        self._btn_browser = QPushButton("🌐  브라우저에서 보기")
-        self._btn_browser.setFixedHeight(28)
+        # 아이콘 버튼 (텍스트 없음)
+        self._btn_browser = QPushButton("🌐")
+        self._btn_browser.setFixedSize(28, 28)
+        self._btn_browser.setToolTip("브라우저에서 열기")
         self._btn_browser.clicked.connect(self._on_open_browser)
         left_layout.addWidget(self._btn_browser)
         top_split.addWidget(left_w)
@@ -315,17 +324,25 @@ class VideoDetailWidget(QWidget):
         else:
             dl_layout = QVBoxLayout(self._dl_tab)
         if detail.downloads:
-            for i, dl in enumerate(detail.downloads, 1):
-                grp = QGroupBox(f"다운로드 #{i}")
+            for dl in detail.downloads:
+                fp = Path(dl.file_path) if dl.file_path else None
+                exists = fp is not None and fp.exists()
+                filename = fp.name if fp else "—"
+                info = "  ·  ".join(filter(None, [
+                    dl.quality or None,
+                    dl.fmt.upper() if dl.fmt else None,
+                    _fmt_size(dl.file_size_bytes) if dl.file_size_bytes else None,
+                    "파일 있음 ✓" if exists else "파일 없음 ✗",
+                ]))
+                grp = QGroupBox(filename)
                 gl = QVBoxLayout(grp)
-                exists = dl.file_path and Path(dl.file_path).exists()
-                p_lbl = QLabel(f"<b>경로:</b>  {dl.file_path or '—'}")
-                p_lbl.setWordWrap(True)
-                gl.addWidget(p_lbl)
-                gl.addWidget(QLabel(f"<b>화질:</b> {dl.quality}   <b>포맷:</b> {dl.fmt}"))
-                gl.addWidget(QLabel(f"<b>크기:</b> {_fmt_size(dl.file_size_bytes)}   <b>파일:</b> {'있음 ✓' if exists else '없음 ✗'}"))
+                gl.setContentsMargins(8, 4, 8, 6)
+                info_lbl = QLabel(info)
+                info_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-size:8pt;")
+                gl.addWidget(info_lbl)
                 if exists:
                     ob = QPushButton("파일 위치 열기")
+                    ob.setFixedHeight(24)
                     ob.clicked.connect(lambda _, p=dl.file_path: _open_folder(p))
                     gl.addWidget(ob)
                 dl_layout.addWidget(grp)

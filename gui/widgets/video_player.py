@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from application.library.dtos import DownloadInfoDTO
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
+from gui.themes.manager import ThemeManager
 
 
 # ── Background worker: resolve yt-dlp stream URL ──────────────────
@@ -79,39 +80,45 @@ class _StreamWorker(QThread):
 
 # ── Control bar (overlaid at the bottom of the video area) ────────
 
-_BAR_STYLE = """
-QWidget#ctrlbar {
+def _bar_style() -> str:
+    """현재 테마 토큰을 반영한 컨트롤바 QSS를 반환한다."""
+    tok = ThemeManager.instance().current()
+    return f"""
+QWidget#ctrlbar {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 rgba(0,0,0,0), stop:1 rgba(0,0,0,200));
-}
-QToolButton {
-    color: #e0e0e0;
+}}
+QToolButton {{
+    color: {tok.text_primary};
     background: transparent;
     border: none;
     font-size: 13px;
     padding: 2px 4px;
     min-width: 24px;
     min-height: 24px;
-}
-QToolButton:hover { color: #fff; background: rgba(255,255,255,15); border-radius: 3px; }
-QLabel { color: #ccc; background: transparent; font-size: 9pt; }
-QSlider::groove:horizontal {
+}}
+QToolButton:hover {{ color: {tok.accent_hover}; background: rgba(255,255,255,15); border-radius: 3px; }}
+QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 9pt; }}
+QSlider::groove:horizontal {{
     height: 4px; background: rgba(255,255,255,60); border-radius: 2px;
-}
-QSlider::sub-page:horizontal {
-    height: 4px; background: #f00; border-radius: 2px;
-}
-QSlider::handle:horizontal {
+}}
+QSlider::sub-page:horizontal {{
+    height: 4px; background: {tok.progress_fg}; border-radius: 2px;
+}}
+QSlider::handle:horizontal {{
     width: 12px; height: 12px;
     margin: -4px 0;
-    background: #ddd; border-radius: 6px;
-}
+    background: {tok.text_primary}; border-radius: 6px;
+}}
 """
 
-_QUALITY_BADGE = (
-    "color:#fff; background:rgba(0,0,0,0.7); "
-    "font-size:8pt; padding:1px 5px; border-radius:3px;"
-)
+
+def _quality_badge_style() -> str:
+    tok = ThemeManager.instance().current()
+    return (
+        f"color:{tok.text_primary}; background:{tok.badge_bg}; "
+        "font-size:8pt; padding:1px 5px; border-radius:3px;"
+    )
 
 # (label shown in menu, format string for yt-dlp, short label for button)
 _QUALITY_OPTIONS = [
@@ -140,8 +147,11 @@ class _ControlBar(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("ctrlbar")
-        self.setStyleSheet(_BAR_STYLE)
+        self.setStyleSheet(_bar_style())
         self.setFixedHeight(self._HEIGHT)
+        ThemeManager.instance().theme_changed.connect(
+            lambda _: self.setStyleSheet(_bar_style())
+        )
         # Allow the bar to receive mouse events (needed for clicks on controls)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         self._dragging = False
@@ -187,7 +197,7 @@ class _ControlBar(QWidget):
         self._time_lbl = QLabel("0:00 / 0:00")
 
         self._quality_lbl = QLabel("")
-        self._quality_lbl.setStyleSheet(_QUALITY_BADGE)
+        self._quality_lbl.setStyleSheet(_quality_badge_style())
         self._quality_lbl.hide()
 
         self._btn_quality = QToolButton()
@@ -246,9 +256,10 @@ class _ControlBar(QWidget):
 
     def _show_quality_menu(self) -> None:
         menu = QMenu(self)
+        tok = ThemeManager.instance().current()
         menu.setStyleSheet(
-            "QMenu{background:#1e1e1e;color:#e0e0e0;border:1px solid #444;}"
-            "QMenu::item:selected{background:#333;}"
+            f"QMenu{{background:{tok.bg_elevated};color:{tok.text_primary};border:1px solid {tok.border_muted};}}"
+            f"QMenu::item:selected{{background:{tok.bg_overlay};}}"
         )
         for menu_label, fmt, short in _QUALITY_OPTIONS:
             act = menu.addAction(menu_label)
@@ -265,9 +276,10 @@ class _ControlBar(QWidget):
 
     def _show_download_menu(self) -> None:
         menu = QMenu(self)
+        tok = ThemeManager.instance().current()
         menu.setStyleSheet(
-            "QMenu{background:#1e1e1e;color:#e0e0e0;border:1px solid #444;}"
-            "QMenu::item:selected{background:#333;}"
+            f"QMenu{{background:{tok.bg_elevated};color:{tok.text_primary};border:1px solid {tok.border_muted};}}"
+            f"QMenu::item:selected{{background:{tok.bg_overlay};}}"
         )
 
         vm = menu.addMenu("🎬  동영상")
@@ -318,6 +330,7 @@ class _VideoArea(QWidget):
     def __init__(self, stack: QStackedWidget, parent=None) -> None:
         super().__init__(parent)
         self.setStyleSheet("background:#000;")
+        self.setMouseTracking(True)
         self._stack = stack
         self._bar: QWidget | None = None
         stack.setParent(self)
@@ -472,6 +485,8 @@ class InlinePlayer(QWidget):
         self._thumb_label.setStyleSheet("background:#1a1a1a;")
 
         self._visual_stack = QStackedWidget()
+        self._visual_stack.setMouseTracking(True)
+        self._video_widget.setMouseTracking(True)
         self._visual_stack.addWidget(self._thumb_label)   # index 0
         self._visual_stack.addWidget(self._video_widget)  # index 1
 

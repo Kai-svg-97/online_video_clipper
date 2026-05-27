@@ -58,8 +58,15 @@ from PyQt6.QtWidgets import (
 from application.library.dtos import CategoryDTO, VideoDTO
 from config.settings import LRU_THUMBNAIL_MAX, THUMBNAIL_DIR, THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH
 from gui.panels.video_detail_panel import VideoDetailWidget, _TagFlow, _clear_layout
+from gui.themes.manager import ThemeManager
+from gui.themes.tokens import ThemeTokens
 from gui.view_models.library_vm import LibraryViewModel
 from gui.widgets.video_player import InlinePlayer
+
+
+def _t() -> ThemeTokens:
+    """현재 테마 토큰을 반환하는 단축 함수."""
+    return ThemeManager.instance().current()
 
 # ------------------------------------------------------------------
 # Thumbnail size constants (per view type)
@@ -143,7 +150,7 @@ def _load_thumb(thumbnail_path: str, w: int, h: int) -> QPixmap:
                 return scaled
 
     pm = QPixmap(w, h)
-    pm.fill(QColor("#2a2a2a"))
+    pm.fill(QColor(_t().bg_overlay))
     _thumb_cache.put(key, pm)
     return pm
 
@@ -370,7 +377,7 @@ class _IconDelegate(QStyledItemDelegate):
         if fav:
             painter.save()
             painter.setFont(QFont("", 11))
-            painter.setPen(QColor("#f0a500"))
+            painter.setPen(QColor(_t().star_color))
             painter.drawText(
                 QRect(tx + self._TW - 22, ty + 4, 20, 20),
                 Qt.AlignmentFlag.AlignCenter, "★",
@@ -382,26 +389,25 @@ class _IconDelegate(QStyledItemDelegate):
         text_w = self._TW
         title_top = ty + self._TH + 6
 
+        tok = _t()
+
         # Title (2 lines, 10pt, elided)
         painter.save()
         painter.setFont(QFont("", 10))
-        fg = option.palette.color(
-            option.palette.ColorGroup.Normal, option.palette.ColorRole.Text
-        )
-        painter.setPen(fg)
+        painter.setPen(QColor(tok.text_primary))
         title_rect = QRect(text_x, title_top, text_w, 40)
         painter.drawText(title_rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignTop, title)
         painter.restore()
 
-        # Channel (8pt, gray)
+        # Channel (8pt, secondary)
         painter.save()
         painter.setFont(QFont("", 8))
-        painter.setPen(QColor("#888"))
+        painter.setPen(QColor(tok.text_secondary))
         ch_rect = QRect(text_x, title_top + 42, text_w, 16)
         painter.drawText(ch_rect, Qt.TextFlag.TextSingleLine, channel)
         painter.restore()
 
-        # Views + relative time (3rd row, 8pt, gray)
+        # Views + relative time (3rd row, 8pt, muted)
         views_str = _fmt_views(views)
         time_str = _relative_time(pub_at)
         meta_parts = [p for p in (views_str, time_str) if p]
@@ -416,12 +422,12 @@ class _IconDelegate(QStyledItemDelegate):
 
         painter.save()
         painter.setFont(QFont("", 8))
-        painter.setPen(QColor("#666"))
+        painter.setPen(QColor(tok.text_muted))
         row3_rect = QRect(text_x, title_top + 60, text_w, 16)
         if meta_left:
             painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft, meta_left)
         if show_cat:
-            painter.setPen(QColor("#5a8"))
+            painter.setPen(QColor(tok.accent))
             painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignRight, cat_name)
         painter.restore()
 
@@ -429,11 +435,11 @@ class _IconDelegate(QStyledItemDelegate):
         from PyQt6.QtWidgets import QStyle  # noqa: PLC0415
         if option.state & QStyle.StateFlag.State_Selected:
             painter.save()
-            pen = QPen(QColor("#1e90ff"))
-            pen.setWidth(3)
+            pen = QPen(QColor(tok.selected_border))
+            pen.setWidth(2)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRect(rect.adjusted(2, 1, -2, -1))
+            painter.drawRect(rect.adjusted(1, 1, -1, -1))
             painter.restore()
 
 
@@ -502,10 +508,12 @@ class _ListDelegate(QStyledItemDelegate):
         painter.drawText(title_rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignTop, title)
         painter.restore()
 
-        # Channel (2nd row, 8pt, gray)
+        tok = _t()
+
+        # Channel (2nd row, 8pt, secondary)
         painter.save()
         painter.setFont(QFont("", 8))
-        painter.setPen(QColor("#888"))
+        painter.setPen(QColor(tok.text_secondary))
         ch_rect = QRect(text_x, text_top + 44, text_w, 16)
         painter.drawText(ch_rect, Qt.TextFlag.TextSingleLine, channel)
         painter.restore()
@@ -524,12 +532,12 @@ class _ListDelegate(QStyledItemDelegate):
 
         painter.save()
         painter.setFont(QFont("", 8))
-        painter.setPen(QColor("#666"))
+        painter.setPen(QColor(tok.text_muted))
         row3_rect = QRect(text_x, text_top + 62, text_w, 16)
         if meta_left:
             painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft, meta_left)
         if show_cat:
-            painter.setPen(QColor("#5a8"))
+            painter.setPen(QColor(tok.accent))
             painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignRight, cat_name)
         painter.restore()
 
@@ -537,7 +545,7 @@ class _ListDelegate(QStyledItemDelegate):
         if fav:
             painter.save()
             painter.setFont(QFont("", 11))
-            painter.setPen(QColor("#f0a500"))
+            painter.setPen(QColor(tok.star_color))
             painter.drawText(
                 QRect(rect.right() - 22, rect.top() + 6, 20, 20),
                 Qt.AlignmentFlag.AlignCenter, "★",
@@ -548,11 +556,11 @@ class _ListDelegate(QStyledItemDelegate):
         from PyQt6.QtWidgets import QStyle  # noqa: PLC0415
         if option.state & QStyle.StateFlag.State_Selected:
             painter.save()
-            pen = QPen(QColor("#1e90ff"))
-            pen.setWidth(3)
+            pen = QPen(QColor(tok.selected_border))
+            pen.setWidth(2)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRect(rect.adjusted(2, 1, -3, -1))
+            painter.drawRect(rect.adjusted(1, 1, -2, -1))
             painter.restore()
 
 
@@ -1180,7 +1188,10 @@ class _PreviewPane(QWidget):
 
         self._meta_lbl = QLabel()
         self._meta_lbl.setWordWrap(True)
-        self._meta_lbl.setStyleSheet("color:#aaa;font-size:8pt;")
+        tok = _t()
+        self._meta_lbl.setStyleSheet(
+            f"color:{tok.text_secondary};font-size:8pt;"
+        )
         self._info_layout.addWidget(self._meta_lbl)
 
         self._tags_container = QWidget()
@@ -1193,16 +1204,35 @@ class _PreviewPane(QWidget):
         scroll.setWidget(info_widget)
         layout.addWidget(scroll, stretch=1)
 
+        # 아이콘 전용 액션 버튼 (텍스트 레이블 없음)
         btn_row = QHBoxLayout()
-        self._btn_browser = QPushButton("🌐  브라우저")
-        self._btn_browser.clicked.connect(self._on_browser)
-        self._btn_browser.setEnabled(False)
-        btn_row.addWidget(self._btn_browser)
+        btn_row.setContentsMargins(0, 4, 0, 0)
+        btn_row.setSpacing(6)
 
-        self._btn_detail = QPushButton("상세보기")
+        def _icon_btn(tooltip: str) -> QPushButton:
+            b = QPushButton()
+            b.setToolTip(tooltip)
+            b.setFixedSize(28, 28)
+            b.setEnabled(False)
+            return b
+
+        self._btn_download = _icon_btn("다운로드")
+        self._btn_download.setText("⬇")
+        self._btn_browser  = _icon_btn("브라우저에서 열기")
+        self._btn_browser.setText("🌐")
+        self._btn_fav      = _icon_btn("즐겨찾기 토글")
+        self._btn_fav.setText("☆")
+        self._btn_detail   = _icon_btn("상세보기 (더블클릭)")
+        self._btn_detail.setText("⊕")
+
+        self._btn_browser.clicked.connect(self._on_browser)
         self._btn_detail.clicked.connect(self._on_detail)
-        self._btn_detail.setEnabled(False)
-        btn_row.addWidget(self._btn_detail)
+        self._btn_fav.clicked.connect(self._on_fav_toggle)
+        self._btn_download.clicked.connect(self._on_download)
+
+        for b in (self._btn_download, self._btn_browser, self._btn_fav, self._btn_detail):
+            btn_row.addWidget(b)
+        btn_row.addStretch()
 
         layout.addLayout(btn_row)
         self._show_empty()
@@ -1245,6 +1275,9 @@ class _PreviewPane(QWidget):
 
         self._btn_browser.setEnabled(True)
         self._btn_detail.setEnabled(True)
+        self._btn_fav.setEnabled(True)
+        self._btn_download.setEnabled(True)
+        self._btn_fav.setText("★" if dto.favorite else "☆")
 
     def clear(self) -> None:
         self._show_empty()
@@ -1263,8 +1296,8 @@ class _PreviewPane(QWidget):
         self._title_lbl.setText("영상을 선택하세요")
         self._meta_lbl.clear()
         _clear_layout(self._tags_container_layout)
-        self._btn_browser.setEnabled(False)
-        self._btn_detail.setEnabled(False)
+        for b in (self._btn_browser, self._btn_detail, self._btn_fav, self._btn_download):
+            b.setEnabled(False)
         self.hide()  # 선택 대상 없을 때 패널 접기
 
     def _on_browser(self) -> None:
@@ -1274,6 +1307,16 @@ class _PreviewPane(QWidget):
     def _on_detail(self) -> None:
         if self._current_dto:
             self.detail_requested.emit(self._current_dto)
+
+    def _on_fav_toggle(self) -> None:
+        if self._current_dto:
+            self._vm.toggle_favorite(self._current_dto.id)
+
+    def _on_download(self) -> None:
+        if self._current_dto:
+            self.download_requested.emit(
+                self._current_dto.url, self._current_dto.title, None
+            )
 
     def _on_play_failed(self, _err: str) -> None:
         if self._current_dto:
@@ -1312,13 +1355,8 @@ class LibraryPanel(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(2)
 
-        btn_bar = QHBoxLayout()
-        btn_bar.setContentsMargins(4, 4, 4, 0)
-        self._btn_add_cat = QPushButton("+ 카테고리")
-        self._btn_add_cat.setFixedHeight(24)
-        btn_bar.addWidget(self._btn_add_cat)
-        btn_bar.addStretch()
-        left_layout.addLayout(btn_bar)
+        # 카테고리 추가는 트리 우클릭 메뉴로 이동 (버튼 제거)
+        left_layout.addSpacing(4)
 
         left_splitter = QSplitter(Qt.Orientation.Vertical)
 
@@ -1335,7 +1373,7 @@ class LibraryPanel(QWidget):
         tag_section_layout.addWidget(self._active_tags_bar)
 
         tag_hdr = QLabel("태그")
-        tag_hdr.setStyleSheet("font-size:8pt;color:#aaa;padding:2px 4px;")
+        tag_hdr.setStyleSheet(f"font-size:8pt;color:{_t().text_muted};padding:2px 4px;")
         tag_section_layout.addWidget(tag_hdr)
 
         self._tag_filter_input = QLineEdit()
@@ -1380,7 +1418,6 @@ class LibraryPanel(QWidget):
         self._view_group.addButton(self._btn_icon,  _VIEW_ICON)
         self._view_group.addButton(self._btn_list,  _VIEW_LIST)
         self._view_group.addButton(self._btn_table, _VIEW_DETAIL)
-        toolbar.addWidget(QLabel("보기:"))
         toolbar.addWidget(self._btn_icon)
         toolbar.addWidget(self._btn_list)
         toolbar.addWidget(self._btn_table)
@@ -1474,8 +1511,6 @@ class LibraryPanel(QWidget):
         self._cat_tree.refresh_metadata_req.connect(self._on_refresh_metadata)
         self._vm.metadata_refresh_progress.connect(self._on_refresh_progress)
         self._vm.metadata_refresh_finished.connect(self._on_refresh_finished)
-        self._btn_add_cat.clicked.connect(lambda: self._on_add_category(None))
-
         self._tag_list.itemClicked.connect(self._on_tag_clicked)
         self._tag_list.delete_requested.connect(self._on_tag_delete_requested)
         self._tag_filter_input.textChanged.connect(self._on_tag_filter_text_changed)

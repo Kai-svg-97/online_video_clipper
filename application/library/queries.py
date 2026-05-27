@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import UUID
 
 from application.library.dtos import (
@@ -143,15 +144,16 @@ class GetVideoDetailHandler:
 
         # Download history for this URL
         completed = self._dl_repo.find_completed_by_url(v.url.value)
-        downloads = [
-            DownloadInfoDTO(
+        downloads = []
+        for j in completed:
+            fp = Path(j.file_path) if j.file_path else None
+            size = fp.stat().st_size if fp and fp.exists() else None
+            downloads.append(DownloadInfoDTO(
                 quality=j.settings.quality.value,
                 fmt=j.settings.format.value,
                 file_path=j.file_path,
-                file_size_bytes=None,
-            )
-            for j in completed
-        ]
+                file_size_bytes=size,
+            ))
 
         published = v.published_at.strftime("%Y-%m-%d") if v.published_at else None
 
