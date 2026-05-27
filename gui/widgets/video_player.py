@@ -340,9 +340,13 @@ class _VideoArea(QWidget):
         super().resizeEvent(event)
 
     def _layout_children(self) -> None:
-        self._stack.setGeometry(self.rect())
+        # self.height() 대신 heightForWidth 를 직접 계산:
+        # resizeEvent 안에서 setFixedHeight() 직후에는 self.height()가 이전 값을 반환하므로
+        # 컨트롤바 Y 좌표가 위젯 바깥으로 밀리는 버그가 발생함.
+        h = self.heightForWidth(self.width())
+        self._stack.setGeometry(0, 0, self.width(), h)
         if self._bar is not None:
-            self._bar.setGeometry(0, self.height() - self._BAR_H, self.width(), self._BAR_H)
+            self._bar.setGeometry(0, h - self._BAR_H, self.width(), self._BAR_H)
             self._bar.raise_()
 
 
