@@ -12,6 +12,7 @@ from uuid import UUID
 from PyQt6.QtCore import (
     QAbstractListModel,
     QByteArray,
+    QEvent,
     QMimeData,
     QModelIndex,
     QPoint,
@@ -23,11 +24,12 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QAction, QBrush, QColor, QDesktopServices, QDrag, QFont, QPainter, QPen, QPixmap,
+    QAction, QBrush, QColor, QDesktopServices, QDrag, QFont, QPainter, QPainterPath, QPen, QPixmap,
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -57,6 +59,7 @@ from PyQt6.QtWidgets import (
 
 from application.library.dtos import CategoryDTO, VideoDTO
 from config.settings import LRU_THUMBNAIL_MAX, THUMBNAIL_DIR, THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH
+from gui.dialogs.batch_download_dialog import BatchDownloadDialog
 from gui.panels.video_detail_panel import VideoDetailWidget, _TagFlow, _clear_layout
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
@@ -337,6 +340,7 @@ class _IconDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, filter_cat_id: UUID | None = None) -> None:
         super().__init__(parent)
         self.filter_cat_id: UUID | None = filter_cat_id
+        self.active_tag_names: list[str] = []
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         return QSize(self._ITEM_W, self._ITEM_H)
@@ -359,18 +363,21 @@ class _IconDelegate(QStyledItemDelegate):
         cat_id: UUID | None = index.data(VideoListModel.CategoryIdRole)
         cat_name: str = index.data(VideoListModel.CategoryRole) or ""
 
-        # ── Thumbnail ──────────────────────────────────────────────
+        # ── Thumbnail (둥근 모서리) ──────────────────────────────────
         thumb = _load_thumb(path, self._TW, self._TH)
         tx = rect.left() + self._PAD
         ty = rect.top()
+        thumb_clip = QPainterPath()
+        thumb_clip.addRoundedRect(float(tx), float(ty), float(self._TW), float(self._TH), 6.0, 6.0)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setClipPath(thumb_clip)
         painter.drawPixmap(tx, ty, thumb)
-
         if watched:
-            painter.save()
             painter.setOpacity(0.4)
             painter.fillRect(QRect(tx, ty, self._TW, self._TH), QColor(0, 0, 0))
             painter.setOpacity(1.0)
-            painter.restore()
+        painter.restore()
 
         _paint_duration_badge(painter, duration, tx, ty, self._TW, self._TH)
 
@@ -420,15 +427,24 @@ class _IconDelegate(QStyledItemDelegate):
             and cat_id != self.filter_cat_id
         )
 
+        video_tag_names: tuple = index.data(VideoListModel.TagNamesRole) or ()
+        active_set = set(self.active_tag_names)
+        matching_tags = [n for n in video_tag_names if n in active_set] if active_set else []
+
         painter.save()
         painter.setFont(QFont("", 8))
-        painter.setPen(QColor(tok.text_muted))
         row3_rect = QRect(text_x, title_top + 60, text_w, 16)
-        if meta_left:
-            painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft, meta_left)
-        if show_cat:
+        if matching_tags:
+            tags_text = "  ".join(f"#{n}" for n in matching_tags[:3])
             painter.setPen(QColor(tok.accent))
-            painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignRight, cat_name)
+            painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft, tags_text)
+        else:
+            painter.setPen(QColor(tok.text_muted))
+            if meta_left:
+                painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft, meta_left)
+            if show_cat:
+                painter.setPen(QColor(tok.accent))
+                painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignRight, cat_name)
         painter.restore()
 
         # Selection border (drawn last, on top of everything)
@@ -455,6 +471,7 @@ class _ListDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, filter_cat_id: UUID | None = None) -> None:
         super().__init__(parent)
         self.filter_cat_id: UUID | None = filter_cat_id
+        self.active_tag_names: list[str] = []
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         return QSize(option.rect.width(), self._ROW_H)
@@ -477,18 +494,21 @@ class _ListDelegate(QStyledItemDelegate):
         cat_id: UUID | None = index.data(VideoListModel.CategoryIdRole)
         cat_name: str = index.data(VideoListModel.CategoryRole) or ""
 
-        # ── Thumbnail ──────────────────────────────────────────────
+        # ── Thumbnail (둥근 모서리) ──────────────────────────────────
         thumb = _load_thumb(path, self._TW, self._TH)
         tx = rect.left() + 6
         ty = rect.top() + (rect.height() - self._TH) // 2
+        thumb_clip = QPainterPath()
+        thumb_clip.addRoundedRect(float(tx), float(ty), float(self._TW), float(self._TH), 6.0, 6.0)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setClipPath(thumb_clip)
         painter.drawPixmap(tx, ty, thumb)
-
         if watched:
-            painter.save()
             painter.setOpacity(0.4)
             painter.fillRect(QRect(tx, ty, self._TW, self._TH), QColor(0, 0, 0))
             painter.setOpacity(1.0)
-            painter.restore()
+        painter.restore()
 
         _paint_duration_badge(painter, duration, tx, ty, self._TW, self._TH)
 
@@ -532,14 +552,27 @@ class _ListDelegate(QStyledItemDelegate):
 
         painter.save()
         painter.setFont(QFont("", 8))
-        painter.setPen(QColor(tok.text_muted))
         row3_rect = QRect(text_x, text_top + 62, text_w, 16)
+        painter.setPen(QColor(tok.text_muted))
         if meta_left:
             painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft, meta_left)
         if show_cat:
             painter.setPen(QColor(tok.accent))
             painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignRight, cat_name)
         painter.restore()
+
+        # 태그 필터 활성 시: 해당 영상이 가진 태그 중 선택된 것만 표시
+        video_tag_names: tuple = index.data(VideoListModel.TagNamesRole) or ()
+        active_set = set(self.active_tag_names)
+        matching_tags = [n for n in video_tag_names if n in active_set] if active_set else []
+        if matching_tags:
+            tags_text = "  ".join(f"#{n}" for n in matching_tags)
+            painter.save()
+            painter.setFont(QFont("", 8))
+            painter.setPen(QColor(tok.accent))
+            tag_rect = QRect(text_x, text_top + 82, text_w, 16)
+            painter.drawText(tag_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft, tags_text)
+            painter.restore()
 
         # Favourite star
         if fav:
@@ -581,6 +614,7 @@ class VideoListModel(QAbstractListModel):
     PublishedAtRole = Qt.ItemDataRole.UserRole + 10
     ViewCountRole   = Qt.ItemDataRole.UserRole + 11
     CategoryIdRole  = Qt.ItemDataRole.UserRole + 12
+    TagNamesRole    = Qt.ItemDataRole.UserRole + 13
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -634,6 +668,8 @@ class VideoListModel(QAbstractListModel):
             return dto.view_count
         if role == self.CategoryIdRole:
             return dto.category_id
+        if role == self.TagNamesRole:
+            return dto.tag_names
         if role == Qt.ItemDataRole.SizeHintRole:
             return QSize(_TW_ICON + _ICON_PAD * 2, _TH_ICON + _ICON_TEXT_H)
         return None
@@ -1238,7 +1274,6 @@ class _PreviewPane(QWidget):
         self._show_empty()
 
     def show_video(self, dto: VideoDTO) -> None:
-        self.show()  # 영상 선택 시 패널 펼치기
         self._current_dto = dto
         detail = self._vm.get_video_detail(dto.id)
 
@@ -1285,6 +1320,10 @@ class _PreviewPane(QWidget):
     def stop_player(self) -> None:
         self._player.stop()
 
+    def get_playback_state(self) -> tuple[bool, int]:
+        """(재생 중 여부, 현재 위치 ms) 반환."""
+        return self._player.is_playing(), self._player.position_ms
+
     @property
     def has_video(self) -> bool:
         """선택된 영상이 있으면 True."""
@@ -1298,7 +1337,6 @@ class _PreviewPane(QWidget):
         _clear_layout(self._tags_container_layout)
         for b in (self._btn_browser, self._btn_detail, self._btn_fav, self._btn_download):
             b.setEnabled(False)
-        self.hide()  # 선택 대상 없을 때 패널 접기
 
     def _on_browser(self) -> None:
         if self._current_dto:
@@ -1331,14 +1369,19 @@ class LibraryPanel(QWidget):
     video_selected     = pyqtSignal(object)
     download_requested = pyqtSignal(str, str, object)
 
-    def __init__(self, vm: LibraryViewModel, parent: QWidget | None = None) -> None:
+    def __init__(self, vm: LibraryViewModel, clip_vm=None, download_vm=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._vm = vm
+        self._clip_vm = clip_vm
+        self._download_vm = download_vm
         self._all_tags: list = []
         self._active_tag_ids: set[UUID] = set()
         self._icon_delegate = _IconDelegate()
         self._list_delegate = _ListDelegate()
         self._refresh_dlg: QProgressDialog | None = None
+        # 내비게이션 히스토리 (최대 50개 상태 보존)
+        self._nav_history: list[dict] = []
+        self._is_restoring: bool = False
         self._setup_ui()
         self._connect_signals()
         vm.load()
@@ -1360,19 +1403,37 @@ class LibraryPanel(QWidget):
 
         left_splitter = QSplitter(Qt.Orientation.Vertical)
 
+        # 카테고리 컨테이너: 트리 + 선택된 태그 바 (태그 리스트 위치 고정)
+        cat_container = QWidget()
+        cat_layout = QVBoxLayout(cat_container)
+        cat_layout.setContentsMargins(0, 0, 0, 0)
+        cat_layout.setSpacing(2)
         self._cat_tree = _CategoryTree()
         self._cat_tree.setHeaderHidden(True)
-        left_splitter.addWidget(self._cat_tree)
+        self._apply_cat_tree_style()
+        cat_layout.addWidget(self._cat_tree, stretch=1)
+        self._active_tags_bar = _ActiveTagsBar()
+        cat_layout.addWidget(self._active_tags_bar)
+        left_splitter.addWidget(cat_container)
 
         tag_section = QWidget()
         tag_section_layout = QVBoxLayout(tag_section)
         tag_section_layout.setContentsMargins(0, 0, 0, 0)
         tag_section_layout.setSpacing(4)
 
-        self._active_tags_bar = _ActiveTagsBar()
-        tag_section_layout.addWidget(self._active_tags_bar)
+        popular_hdr = QLabel("인기 태그")
+        popular_hdr.setStyleSheet(
+            f"font-size:8pt;color:{_t().text_muted};font-weight:600;padding:2px 4px;"
+        )
+        tag_section_layout.addWidget(popular_hdr)
 
-        tag_hdr = QLabel("태그")
+        self._popular_tags_widget = QWidget()
+        self._popular_tags_layout = QVBoxLayout(self._popular_tags_widget)
+        self._popular_tags_layout.setContentsMargins(4, 0, 4, 4)
+        self._popular_tags_layout.setSpacing(2)
+        tag_section_layout.addWidget(self._popular_tags_widget)
+
+        tag_hdr = QLabel("전체 태그")
         tag_hdr.setStyleSheet(f"font-size:8pt;color:{_t().text_muted};padding:2px 4px;")
         tag_section_layout.addWidget(tag_hdr)
 
@@ -1390,6 +1451,33 @@ class LibraryPanel(QWidget):
         left_splitter.setStretchFactor(1, 1)
 
         left_layout.addWidget(left_splitter)
+
+        # ── 스마트 폴더 섹션 ──
+        sf_header_row = QHBoxLayout()
+        sf_header_row.setContentsMargins(4, 4, 4, 2)
+        sf_hdr_lbl = QLabel("스마트 폴더")
+        sf_hdr_lbl.setStyleSheet(f"font-size:8pt;color:{_t().text_muted};")
+        sf_header_row.addWidget(sf_hdr_lbl)
+        sf_header_row.addStretch()
+        sf_add_btn = QPushButton("+")
+        sf_add_btn.setFixedSize(18, 18)
+        sf_add_btn.setToolTip("현재 필터를 스마트 폴더로 저장")
+        sf_add_btn.setFlat(True)
+        sf_add_btn.clicked.connect(self._on_save_smart_folder)
+        sf_header_row.addWidget(sf_add_btn)
+        left_layout.addLayout(sf_header_row)
+
+        self._sf_list = QListWidget()
+        self._sf_list.setMaximumHeight(120)
+        self._sf_list.setStyleSheet("font-size:8pt;")
+        self._sf_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._sf_list.itemClicked.connect(self._on_smart_folder_clicked)
+        self._sf_list.customContextMenuRequested.connect(self._on_sf_context_menu)
+        left_layout.addWidget(self._sf_list)
+
+        self._smart_folders: list = []
+        self._load_smart_folders_ui()
+
         outer_splitter.addWidget(left)
 
         # ── 2. Centre: nav stack ──
@@ -1427,6 +1515,30 @@ class LibraryPanel(QWidget):
         self._search_box.setPlaceholderText("검색...")
         self._search_box.setClearButtonEnabled(True)
         toolbar.addWidget(self._search_box, stretch=1)
+
+        # 정렬 옵션
+        toolbar.addSpacing(8)
+        self._sort_combo = QComboBox()
+        self._sort_combo.addItem("최신순", ("created_at", False))
+        self._sort_combo.addItem("오래된순", ("created_at", True))
+        self._sort_combo.addItem("제목순 ↑", ("title", True))
+        self._sort_combo.addItem("제목순 ↓", ("title", False))
+        self._sort_combo.addItem("채널순 ↑", ("channel_name", True))
+        self._sort_combo.addItem("채널순 ↓", ("channel_name", False))
+        self._sort_combo.addItem("길이 길순", ("duration_sec", False))
+        self._sort_combo.addItem("길이 짧순", ("duration_sec", True))
+        self._sort_combo.setFixedWidth(90)
+        toolbar.addWidget(self._sort_combo)
+
+        toolbar.addSpacing(8)
+        self._btn_preview = QToolButton()
+        self._btn_preview.setText("⊡")
+        self._btn_preview.setToolTip("미리보기 패널 열기/닫기")
+        self._btn_preview.setCheckable(True)
+        self._btn_preview.setChecked(False)
+        self._btn_preview.setFixedSize(28, 28)
+        toolbar.addWidget(self._btn_preview)
+
         centre_layout.addLayout(toolbar)
 
         self._view_stack = QStackedWidget()
@@ -1460,8 +1572,10 @@ class LibraryPanel(QWidget):
 
         # Detail table
         self._table = QTableWidget()
-        self._table.setColumnCount(6)
-        self._table.setHorizontalHeaderLabels(["제목", "채널", "재생시간", "카테고리", "★", "✓"])
+        self._table.setColumnCount(9)
+        self._table.setHorizontalHeaderLabels(
+            ["제목", "채널", "재생시간", "카테고리", "★", "✓", "등록 일시", "영상", "음원"]
+        )
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1470,7 +1584,7 @@ class LibraryPanel(QWidget):
         centre_layout.addWidget(self._view_stack, stretch=1)
         self._nav_stack.addWidget(centre_content)
 
-        self._detail_widget = VideoDetailWidget()
+        self._detail_widget = VideoDetailWidget(clip_vm=self._clip_vm)
         self._nav_stack.addWidget(self._detail_widget)
 
         outer_splitter.addWidget(self._nav_stack)
@@ -1483,7 +1597,8 @@ class LibraryPanel(QWidget):
         outer_splitter.setStretchFactor(0, 0)
         outer_splitter.setStretchFactor(1, 1)
         outer_splitter.setStretchFactor(2, 0)
-        outer_splitter.setSizes([200, 500, 400])
+        outer_splitter.setSizes([200, 700, 0])
+        self._preview.hide()
 
         self._outer_splitter = outer_splitter
 
@@ -1497,9 +1612,12 @@ class LibraryPanel(QWidget):
         self._vm.videos_changed.connect(self._on_videos_changed)
         self._vm.categories_changed.connect(self._on_categories_changed)
         self._vm.tags_changed.connect(self._on_tags_changed)
+        ThemeManager.instance().theme_changed.connect(lambda _: self._apply_cat_tree_style())
 
         self._view_group.idClicked.connect(self._switch_view)
         self._search_box.textChanged.connect(self._vm.set_search_text)
+        self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        self._btn_preview.clicked.connect(self._toggle_preview)
 
         self._cat_tree.currentItemChanged.connect(self._on_cat_selection_changed)
         self._cat_tree.url_dropped.connect(self._on_url_dropped)
@@ -1548,6 +1666,13 @@ class LibraryPanel(QWidget):
         self._detail_widget.tags_updated.connect(self._on_detail_tags_updated)
         self._detail_widget.download_requested.connect(self.download_requested.emit)
 
+        # Ctrl+휠 뷰 전환 & 마우스 BackButton 히스토리 이벤트 필터
+        for w in (self._icon_view, self._list_view, self._table):
+            viewport = getattr(w, "viewport", None)
+            if viewport:
+                viewport().installEventFilter(self)
+            w.installEventFilter(self)
+
     # ── VM → UI ────────────────────────────────────────────────────
 
     def _on_videos_changed(self) -> None:
@@ -1585,10 +1710,14 @@ class LibraryPanel(QWidget):
         self._refresh_tag_display()
 
     def _refresh_tag_display(self) -> None:
+        from config.settings import load_hidden_tag_names  # noqa: PLC0415
+        hidden_names = load_hidden_tag_names()
         filter_text = self._tag_filter_input.text().strip().lower()
         self._tag_list.blockSignals(True)
         self._tag_list.clear()
         for tag in self._all_tags:
+            if tag.name in hidden_names:
+                continue
             if filter_text and filter_text not in tag.name.lower():
                 continue
             item = QListWidgetItem(f"#{tag.name}")
@@ -1603,9 +1732,90 @@ class LibraryPanel(QWidget):
     def _on_tag_filter_text_changed(self) -> None:
         self._refresh_tag_display()
 
+    def _apply_cat_tree_style(self) -> None:
+        tok = _t()
+        self._cat_tree.setStyleSheet(f"""
+            QTreeWidget {{
+                background: transparent;
+                border: none;
+                outline: none;
+            }}
+            QTreeWidget::item {{
+                padding: 4px 6px;
+                border-radius: 4px;
+            }}
+            QTreeWidget::item:selected {{
+                background: {tok.accent};
+                color: {tok.text_on_accent};
+                font-weight: 700;
+                border-radius: 4px;
+                border: 1px solid {tok.accent_hover};
+                padding-left: 8px;
+            }}
+            QTreeWidget::item:hover:!selected {{
+                background: {tok.bg_overlay};
+            }}
+        """)
+
     def _refresh_active_tags_bar(self) -> None:
         tags = [(t.id, t.name) for t in self._all_tags if t.id in self._active_tag_ids]
         self._active_tags_bar.refresh(tags)
+        self._refresh_popular_tags()
+
+    def _refresh_popular_tags(self) -> None:
+        from config.settings import load_hidden_tag_names  # noqa: PLC0415
+        hidden_names = load_hidden_tag_names()
+        while self._popular_tags_layout.count():
+            item = self._popular_tags_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        top_tags = sorted(
+            (t for t in self._all_tags if t.name not in hidden_names),
+            key=lambda t: -t.count,
+        )[:5]
+        for tag in top_tags:
+            selected = tag.id in self._active_tag_ids
+            color = _TAG_PALETTE[hash(tag.name) % len(_TAG_PALETTE)]
+            bg = color if selected else "#2a3a4a"
+            fg = "#fff" if selected else "#ccc"
+            btn = QPushButton(f"#{tag.name}  {tag.count}")
+            btn.setFixedHeight(26)
+            btn.setStyleSheet(
+                f"QPushButton{{border:none;border-radius:10px;"
+                f"background:{bg};color:{fg};"
+                f"padding:2px 10px;font-size:9pt;text-align:left;}}"
+                f"QPushButton:hover{{background:{color};color:#fff;}}"
+            )
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _, tid=tag.id: self._on_popular_tag_clicked(tid))
+            self._popular_tags_layout.addWidget(btn)
+
+    def _on_popular_tag_clicked(self, tag_id: UUID) -> None:
+        if not self._is_restoring:
+            self._push_nav_state()
+        if tag_id in self._active_tag_ids:
+            self._active_tag_ids.discard(tag_id)
+        else:
+            self._active_tag_ids.add(tag_id)
+        self._tag_list.blockSignals(True)
+        for i in range(self._tag_list.count()):
+            item = self._tag_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == tag_id:
+                item.setSelected(tag_id in self._active_tag_ids)
+                break
+        self._tag_list.blockSignals(False)
+        self._vm.set_tag_filter(list(self._active_tag_ids))
+        self._refresh_active_tags_bar()
+        self._update_delegate_tags()
+        if self._active_tag_ids:
+            self._cat_tree.clearSelection()
+
+    def _update_delegate_tags(self) -> None:
+        names = [t.name for t in self._all_tags if t.id in self._active_tag_ids]
+        self._icon_delegate.active_tag_names = names
+        self._list_delegate.active_tag_names = names
+        self._icon_view.viewport().update()
+        self._list_view.viewport().update()
 
     def _on_tag_delete_requested(self, tag_id: UUID) -> None:
         tag = next((t for t in self._vm.tags if t.id == tag_id), None)
@@ -1634,6 +1844,8 @@ class LibraryPanel(QWidget):
         return " > ".join(parts)
 
     def _refresh_table(self) -> None:
+        _AUDIO_FMTS = frozenset(("mp3", "m4a", "aac", "flac", "opus", "wav", "ogg"))
+
         def _fmt(s):
             if s is None:
                 return "—"
@@ -1656,12 +1868,33 @@ class LibraryPanel(QWidget):
             wtc = QTableWidgetItem("✓" if dto.watched else "")
             wtc.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, 5, wtc)
+            # 등록 일시
+            self._table.setItem(row, 6, QTableWidgetItem(dto.created_at or "—"))
+            # 영상/음원 다운로드 여부 (lazy: 개별 detail 조회)
+            detail = self._vm.get_video_detail(dto.id)
+            has_video = has_audio = False
+            if detail:
+                for dl in detail.downloads:
+                    fmt_lower = (dl.fmt or "").lower()
+                    if fmt_lower in _AUDIO_FMTS:
+                        has_audio = True
+                    elif fmt_lower:
+                        has_video = True
+            v_item = QTableWidgetItem("✓" if has_video else "—")
+            v_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(row, 7, v_item)
+            a_item = QTableWidgetItem("✓" if has_audio else "—")
+            a_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(row, 8, a_item)
         self._table.resizeColumnsToContents()
 
     # ── View mode ──────────────────────────────────────────────────
 
     def _switch_view(self, view_id: int) -> None:
         self._view_stack.setCurrentIndex(view_id)
+        btn = self._view_group.button(view_id)
+        if btn is not None and not btn.isChecked():
+            btn.setChecked(True)
 
     # ── Category / tag selection ───────────────────────────────────
 
@@ -1674,12 +1907,15 @@ class LibraryPanel(QWidget):
     def _on_cat_selection_changed(self, current, _previous) -> None:
         if current is None:
             return
+        if not self._is_restoring:
+            self._push_nav_state()
         cat_id = current.data(0, Qt.ItemDataRole.UserRole)
         self._active_tag_ids.clear()
         self._tag_list.blockSignals(True)
         self._tag_list.clearSelection()
         self._tag_list.blockSignals(False)
         self._refresh_active_tags_bar()
+        self._update_delegate_tags()
         self._vm.set_category_filter(cat_id)  # also clears tag filter internally
         # Update delegates so they know which category is selected (for subcategory label)
         self._icon_delegate.filter_cat_id = cat_id
@@ -1688,6 +1924,8 @@ class LibraryPanel(QWidget):
         self._list_view.viewport().update()
 
     def _on_tag_clicked(self, item: QListWidgetItem) -> None:
+        if not self._is_restoring:
+            self._push_nav_state()
         tag_id: UUID = item.data(Qt.ItemDataRole.UserRole)
         # With MultiSelection, isSelected() already reflects post-click state
         if item.isSelected():
@@ -1696,11 +1934,14 @@ class LibraryPanel(QWidget):
             self._active_tag_ids.discard(tag_id)
         self._vm.set_tag_filter(list(self._active_tag_ids))
         self._refresh_active_tags_bar()
+        self._update_delegate_tags()
         if self._active_tag_ids:
             self._cat_tree.clearSelection()
 
     def _on_active_tag_removed(self, tag_id: UUID) -> None:
         """Called when ✕ is clicked on a chip in the active tags bar."""
+        if not self._is_restoring:
+            self._push_nav_state()
         self._active_tag_ids.discard(tag_id)
         self._vm.set_tag_filter(list(self._active_tag_ids))
         self._tag_list.blockSignals(True)
@@ -1711,9 +1952,12 @@ class LibraryPanel(QWidget):
                 break
         self._tag_list.blockSignals(False)
         self._refresh_active_tags_bar()
+        self._update_delegate_tags()
 
     def _on_tag_filter_requested(self, tag_id: UUID, _tag_name: str) -> None:
         """Called when a tag chip is clicked in the preview pane or detail view."""
+        if not self._is_restoring:
+            self._push_nav_state()
         self._active_tag_ids = {tag_id}
         self._vm.set_tag_filter([tag_id])
         self._tag_list.blockSignals(True)
@@ -1725,6 +1969,7 @@ class LibraryPanel(QWidget):
                 break
         self._tag_list.blockSignals(False)
         self._refresh_active_tags_bar()
+        self._update_delegate_tags()
         self._cat_tree.clearSelection()
         if self._nav_stack.currentIndex() == 1:
             self._on_back_from_detail()
@@ -1735,15 +1980,27 @@ class LibraryPanel(QWidget):
         detail = self._vm.get_video_detail(video_id)
         if detail is None:
             return
+        if not self._is_restoring:
+            self._push_nav_state()
         tag_ids = {t.name: t.id for t in self._vm.tags}
-        self._detail_widget.load(detail, tag_ids)
+        # Bug A: 미리보기 재생 상태를 캡처한 뒤 중지하고, 상세보기에서 이어서 재생
+        was_playing, pos_ms = self._preview.get_playback_state()
+        self._preview.stop_player()
+        resume = pos_ms if was_playing else 0
+        self._detail_widget.load(detail, tag_ids, resume_ms=resume)
         self._preview.hide()
         self._nav_stack.setCurrentIndex(1)
 
     def _on_back_from_detail(self) -> None:
         self._detail_widget.stop_player()
         self._nav_stack.setCurrentIndex(0)
-        if self._preview.has_video:  # 선택된 영상이 있을 때만 표시
+        if self._preview.has_video and self._btn_preview.isChecked():
+            sizes = self._outer_splitter.sizes()
+            if sizes[-1] == 0:
+                saved = getattr(self._outer_splitter, "_saved_preview_size", 400)
+                sizes[1] = max(100, sizes[1] - saved)
+                sizes[-1] = saved
+                self._outer_splitter.setSizes(sizes)
             self._preview.show()
 
     def _on_detail_tags_updated(self, video_id: UUID, tags: list) -> None:
@@ -1755,13 +2012,195 @@ class LibraryPanel(QWidget):
                 tag_ids = {t.name: t.id for t in self._vm.tags}
                 self._detail_widget.load(detail, tag_ids)
 
+    def _on_sort_changed(self, index: int) -> None:
+        sort_by, sort_asc = self._sort_combo.itemData(index)
+        self._vm.set_sort(sort_by, sort_asc)
+
+    # ── Smart Folders ──────────────────────────────────────────────
+
+    def _load_smart_folders_ui(self) -> None:
+        from application.library.smart_folders import load_smart_folders  # noqa: PLC0415
+        self._smart_folders = load_smart_folders()
+        self._sf_list.clear()
+        for sf in self._smart_folders:
+            item = QListWidgetItem(sf.name)
+            item.setData(Qt.ItemDataRole.UserRole, sf.id)
+            self._sf_list.addItem(item)
+
+    def _on_save_smart_folder(self) -> None:
+        from application.library.smart_folders import SmartFolder, load_smart_folders, save_smart_folders  # noqa: PLC0415
+        name, ok = QInputDialog.getText(self, "스마트 폴더 저장", "폴더 이름:")
+        if not ok or not name.strip():
+            return
+        sf = SmartFolder(
+            name=name.strip(),
+            tag_ids=[str(tid) for tid in self._active_tag_ids],
+            min_duration_sec=getattr(self._vm, "_min_duration_sec", None),
+            max_duration_sec=getattr(self._vm, "_max_duration_sec", None),
+        )
+        folders = load_smart_folders()
+        folders.append(sf)
+        save_smart_folders(folders)
+        self._load_smart_folders_ui()
+
+    def _on_smart_folder_clicked(self, item: QListWidgetItem) -> None:
+        sf_id = item.data(Qt.ItemDataRole.UserRole)
+        sf = next((f for f in self._smart_folders if f.id == sf_id), None)
+        if sf is None:
+            return
+        if not self._is_restoring:
+            self._push_nav_state()
+        self._active_tag_ids.clear()
+        self._tag_list.clearSelection()
+        if sf.tag_ids:
+            for tid_str in sf.tag_ids:
+                try:
+                    from uuid import UUID  # noqa: PLC0415
+                    tid = UUID(tid_str)
+                    self._active_tag_ids.add(tid)
+                    for i in range(self._tag_list.count()):
+                        tw_item = self._tag_list.item(i)
+                        if tw_item.data(Qt.ItemDataRole.UserRole) == tid:
+                            tw_item.setSelected(True)
+                            break
+                except Exception:
+                    pass
+        self._vm.set_tag_filter(list(self._active_tag_ids))
+        self._vm.set_duration_filter(sf.min_duration_sec, sf.max_duration_sec)
+        self._vm.set_favorite_filter(sf.favorite_only)
+        self._refresh_active_tags_bar()
+
+    def _on_sf_context_menu(self, pos) -> None:
+        from application.library.smart_folders import load_smart_folders, save_smart_folders  # noqa: PLC0415
+        item = self._sf_list.itemAt(pos)
+        if item is None:
+            return
+        sf_id = item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self)
+        rename_act = QAction("이름 변경", self)
+        rename_act.triggered.connect(lambda: self._rename_smart_folder(sf_id))
+        delete_act = QAction("삭제", self)
+        delete_act.triggered.connect(lambda: self._delete_smart_folder(sf_id))
+        menu.addAction(rename_act)
+        menu.addAction(delete_act)
+        menu.exec(self._sf_list.viewport().mapToGlobal(pos))
+
+    def _rename_smart_folder(self, sf_id: str) -> None:
+        from application.library.smart_folders import load_smart_folders, save_smart_folders  # noqa: PLC0415
+        sf = next((f for f in self._smart_folders if f.id == sf_id), None)
+        if sf is None:
+            return
+        name, ok = QInputDialog.getText(self, "이름 변경", "새 폴더 이름:", text=sf.name)
+        if not ok or not name.strip():
+            return
+        sf.name = name.strip()
+        folders = load_smart_folders()
+        for i, f in enumerate(folders):
+            if f.id == sf_id:
+                folders[i] = sf
+                break
+        save_smart_folders(folders)
+        self._load_smart_folders_ui()
+
+    def _delete_smart_folder(self, sf_id: str) -> None:
+        from application.library.smart_folders import load_smart_folders, save_smart_folders  # noqa: PLC0415
+        folders = [f for f in load_smart_folders() if f.id != sf_id]
+        save_smart_folders(folders)
+        self._load_smart_folders_ui()
+
     def _on_preview_detail_requested(self, dto: VideoDTO) -> None:
         self._open_detail(dto.id)
 
-    # ── Empty space click → clear preview ─────────────────────────
+    # ── Empty space click ────────────────────────────────────────────
 
     def _on_empty_clicked(self) -> None:
-        self._preview.clear()
+        pass  # 빈 공간 클릭 시 미리보기 패널 상태 유지
+
+    # ── 이벤트 필터: Ctrl+휠 뷰 전환 & 마우스 BackButton 히스토리 ────────
+
+    def eventFilter(self, obj, event) -> bool:
+        etype = event.type()
+        if etype == QEvent.Type.Wheel:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                delta = event.angleDelta().y()
+                self._cycle_view(1 if delta > 0 else -1)
+                return True
+        elif etype == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.BackButton:
+                self._go_back()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _cycle_view(self, direction: int) -> None:
+        """Ctrl+휠로 뷰 타입을 순환 전환한다. direction=1: 이전, -1: 다음."""
+        views = [_VIEW_ICON, _VIEW_LIST, _VIEW_DETAIL]
+        current = self._view_stack.currentIndex()
+        idx = views.index(current) if current in views else 0
+        new_id = views[(idx - direction) % len(views)]
+        self._switch_view(new_id)
+
+    # ── 내비게이션 히스토리 ────────────────────────────────────────────
+
+    def _push_nav_state(self) -> None:
+        """현재 카테고리·태그·화면 상태를 히스토리 스택에 저장한다."""
+        state = {
+            "cat_id": self.current_category_id(),
+            "tag_ids": frozenset(self._active_tag_ids),
+            "nav_idx": self._nav_stack.currentIndex(),
+        }
+        self._nav_history.append(state)
+        if len(self._nav_history) > 50:
+            self._nav_history.pop(0)
+
+    def _go_back(self) -> None:
+        """히스토리에서 직전 상태를 꺼내 복원한다."""
+        if not self._nav_history:
+            return
+        state = self._nav_history.pop()
+        self._is_restoring = True
+        try:
+            # 상세 화면이면 목록으로 먼저 복귀
+            if self._nav_stack.currentIndex() == 1:
+                self._on_back_from_detail()
+
+            # 태그 필터 복원
+            saved_tags: frozenset = state.get("tag_ids", frozenset())
+            self._active_tag_ids = set(saved_tags)
+            self._vm.set_tag_filter(list(self._active_tag_ids))
+            self._tag_list.blockSignals(True)
+            self._tag_list.clearSelection()
+            for i in range(self._tag_list.count()):
+                item = self._tag_list.item(i)
+                if item.data(Qt.ItemDataRole.UserRole) in self._active_tag_ids:
+                    item.setSelected(True)
+            self._tag_list.blockSignals(False)
+            self._refresh_active_tags_bar()
+            self._update_delegate_tags()
+
+            # 카테고리 복원
+            cat_id = state.get("cat_id")
+            self._vm.set_category_filter(cat_id)
+            self._icon_delegate.filter_cat_id = cat_id
+            self._list_delegate.filter_cat_id = cat_id
+            self._cat_tree.blockSignals(True)
+            if cat_id is None:
+                top = self._cat_tree.topLevelItem(0)
+                if top:
+                    self._cat_tree.setCurrentItem(top)
+            else:
+                item = self._cat_tree._find_item(cat_id)
+                if item:
+                    self._cat_tree.setCurrentItem(item)
+            self._cat_tree.blockSignals(False)
+            self._icon_view.viewport().update()
+            self._list_view.viewport().update()
+        finally:
+            self._is_restoring = False
+
+    def _on_hidden_tags_changed(self) -> None:
+        """설정에서 숨김 태그가 변경되면 태그 표시 목록을 즉시 갱신한다."""
+        self._refresh_tag_display()
+        self._refresh_popular_tags()
 
     # ── URL dropped onto video list ────────────────────────────────
 
@@ -1821,13 +2260,30 @@ class LibraryPanel(QWidget):
 
     # ── Item click / double-click ──────────────────────────────────
 
+    def _toggle_preview(self, checked: bool) -> None:
+        sizes = self._outer_splitter.sizes()
+        if checked:
+            saved = getattr(self._outer_splitter, "_saved_preview_size", 400)
+            if sizes[-1] == 0:
+                sizes[1] = max(100, sizes[1] - saved)
+                sizes[-1] = saved
+                self._outer_splitter.setSizes(sizes)
+            self._preview.show()
+        else:
+            if sizes[-1] > 0:
+                self._outer_splitter._saved_preview_size = sizes[-1]
+            sizes[-1] = 0
+            self._outer_splitter.setSizes(sizes)
+            self._preview.hide()
+
     def _on_item_clicked(self, index: QModelIndex, view: QListView) -> None:
         # Only update preview when exactly one item is selected
         if len(view.selectedIndexes()) != 1:
             return
         dto: VideoDTO | None = self._model.data(index, VideoListModel.DtoRole)
         if dto:
-            self._preview.show_video(dto)
+            if self._preview.isVisible():
+                self._preview.show_video(dto)
             self.video_selected.emit(dto)
 
     def _on_double_click(self, index: QModelIndex) -> None:
@@ -1840,7 +2296,8 @@ class LibraryPanel(QWidget):
         if item:
             vid_id = item.data(Qt.ItemDataRole.UserRole)
             if vid_id and index.row() < len(self._vm.videos):
-                self._preview.show_video(self._vm.videos[index.row()])
+                if self._preview.isVisible():
+                    self._preview.show_video(self._vm.videos[index.row()])
 
     def _on_table_double_click(self, index: QModelIndex) -> None:
         item = self._table.item(index.row(), 0)
@@ -1878,13 +2335,18 @@ class LibraryPanel(QWidget):
         self._build_video_menu(self._vm.videos[row], self._table.viewport().mapToGlobal(pos))
 
     def _build_bulk_menu(self, indexes: list[QModelIndex], global_pos: QPoint) -> None:
-        video_ids = [
-            self._model.data(idx, VideoListModel.VideoIdRole)
+        dtos = [
+            self._model.data(idx, VideoListModel.DtoRole)
             for idx in indexes
-            if self._model.data(idx, VideoListModel.VideoIdRole) is not None
+            if self._model.data(idx, VideoListModel.DtoRole) is not None
         ]
+        video_ids = [d.id for d in dtos]
         menu = QMenu(self)
         menu.addSection(f"{len(video_ids)}개 영상 선택됨")
+
+        dl_act = QAction("일괄 다운로드", self)
+        dl_act.triggered.connect(lambda: self._on_batch_download(dtos))
+        menu.addAction(dl_act)
 
         tag_act = QAction("태그 추가", self)
         tag_act.triggered.connect(lambda: self._on_bulk_add_tags(video_ids))
@@ -1900,6 +2362,26 @@ class LibraryPanel(QWidget):
         self._add_bulk_cat_actions(cat_menu, self._vm.categories, None, video_ids)
 
         menu.exec(global_pos)
+
+    def _on_batch_download(self, dtos: list[VideoDTO]) -> None:
+        dlg = BatchDownloadDialog(len(dtos), self)
+        if dlg.exec() != BatchDownloadDialog.DialogCode.Accepted:
+            return
+        settings = dlg.build_settings()
+        skip = dlg.skip_existing
+        skipped_urls: set[str] = set()
+        if skip:
+            try:
+                from gui.view_models.download_vm import DownloadViewModel  # noqa: PLC0415
+                history = getattr(self, "_download_vm", None)
+                if history is not None and hasattr(history, "load_history"):
+                    skipped_urls = {j.url for j in history.load_history(200) if j.status == "COMPLETED"}
+            except Exception:
+                pass
+        for dto in dtos:
+            if skip and dto.url in skipped_urls:
+                continue
+            self.download_requested.emit(dto.url, dto.title, settings)
 
     def _on_bulk_add_tags(self, video_ids: list[UUID]) -> None:
         tag_str, ok = QInputDialog.getText(

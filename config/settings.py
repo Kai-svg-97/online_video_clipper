@@ -59,11 +59,33 @@ BACKUP_DIR:    Path = _resolve("backups",    DATA_DIR / "backups")
 # ---------------------------------------------------------------------------
 
 DEFAULT_PAGE_SIZE:       int = 50
-MAX_CONCURRENT_DOWNLOADS: int = 3
 THUMBNAIL_WIDTH:         int = 320
 THUMBNAIL_HEIGHT:        int = 180
 PIXMAP_CACHE_LIMIT_KB:   int = 30_720   # 30 MB
 LRU_THUMBNAIL_MAX:       int = 100
+
+# ---------------------------------------------------------------------------
+# 사용자 설정 (config.yaml에서 로드, 런타임에 변경 가능)
+# ---------------------------------------------------------------------------
+
+def _load_int(key: str, default: int) -> int:
+    try:
+        return int(_load_config().get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_bool(key: str, default: bool) -> bool:
+    v = _load_config().get(key)
+    if v is None:
+        return default
+    return bool(v)
+
+
+MAX_CONCURRENT_DOWNLOADS: int = _load_int("max_concurrent_downloads", 3)
+CLIPBOARD_MONITORING: bool = _load_bool("clipboard_monitoring", True)
+DEFAULT_QUALITY: str = _resolve_str("default_quality", "best[ext=mp4]/best")
+DEFAULT_FORMAT: str = _resolve_str("default_format", "mp4")
 
 # ---------------------------------------------------------------------------
 # 테마 설정
@@ -72,18 +94,77 @@ LRU_THUMBNAIL_MAX:       int = 100
 THEME: str = _resolve_str("theme", "slate")
 
 
-def save_theme(name: str) -> None:
-    """선택한 테마 이름을 config.yaml에 저장한다."""
+def save_setting(key: str, value) -> None:
+    """단일 설정 키-값을 config.yaml에 저장하고 모듈 변수를 갱신한다."""
+    import config.settings as _self  # noqa: PLC0415
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     cfg: dict = {}
     if _CONFIG_FILE.exists():
         with open(_CONFIG_FILE, encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
-    cfg["theme"] = name
+    cfg[key] = value
     with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
         yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
-    # lru_cache 무효화 — 다음 조회 시 갱신
     _load_config.cache_clear()
+    # 모듈 변수 즉시 갱신
+    mapping = {
+        "max_concurrent_downloads": "MAX_CONCURRENT_DOWNLOADS",
+        "clipboard_monitoring": "CLIPBOARD_MONITORING",
+        "default_quality": "DEFAULT_QUALITY",
+        "default_format": "DEFAULT_FORMAT",
+        "theme": "THEME",
+    }
+    if key in mapping:
+        setattr(_self, mapping[key], value)
+
+
+def save_path_setting(key: str, path_str: str) -> None:
+    """경로 설정(paths.*)을 config.yaml의 paths 섹션에 저장하고 모듈 변수를 갱신한다."""
+    import config.settings as _self  # noqa: PLC0415
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    cfg: dict = {}
+    if _CONFIG_FILE.exists():
+        with open(_CONFIG_FILE, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    if "paths" not in cfg:
+        cfg["paths"] = {}
+    cfg["paths"][key] = path_str
+    with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+    _load_config.cache_clear()
+    p = Path(path_str)
+    path_mapping = {
+        "database": "DATABASE_PATH",
+        "downloads": "DOWNLOAD_DIR",
+        "thumbnails": "THUMBNAIL_DIR",
+        "logs": "LOG_DIR",
+        "backups": "BACKUP_DIR",
+    }
+    if key in path_mapping:
+        setattr(_self, path_mapping[key], p)
+
+
+def save_theme(name: str) -> None:
+    """선택한 테마 이름을 config.yaml에 저장한다."""
+    save_setting("theme", name)
+
+
+# ---------------------------------------------------------------------------
+# 숨김 태그 관리
+# ---------------------------------------------------------------------------
+
+_HIDDEN_TAGS_KEY = "hidden_tag_names"
+
+
+def load_hidden_tag_names() -> set[str]:
+    """태그 목록에서 숨길 태그 이름 집합을 반환한다."""
+    raw = _load_config().get(_HIDDEN_TAGS_KEY, [])
+    return set(raw) if isinstance(raw, list) else set()
+
+
+def save_hidden_tag_names(names: set[str]) -> None:
+    """숨길 태그 이름 집합을 config.yaml에 저장하고 캐시를 갱신한다."""
+    save_setting(_HIDDEN_TAGS_KEY, sorted(names))
 
 
 def ensure_data_dirs() -> None:

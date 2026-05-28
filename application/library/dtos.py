@@ -32,6 +32,8 @@ class VideoDTO:
     category_name: str = ""
     published_at: str | None = None
     view_count: int | None = None
+    tag_names: tuple[str, ...] = ()
+    created_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,23 @@ class DownloadInfoDTO:
     fmt: str
     file_path: str
     file_size_bytes: int | None
+
+
+@dataclass(frozen=True)
+class CategoryStatDTO:
+    name: str
+    count: int
+
+
+@dataclass(frozen=True)
+class LibraryStatsDTO:
+    total_videos: int
+    total_duration_sec: int
+    watched_count: int
+    favorite_count: int
+    category_stats: list[CategoryStatDTO]
+    total_downloads: int
+    total_download_bytes: int
 
 
 @dataclass(frozen=True)

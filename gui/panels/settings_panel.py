@@ -1,26 +1,40 @@
 """설정 패널 — 인라인 QWidget (다이얼로그 아님).
 
 사이드바 ⚙ 아이콘 클릭 시 메인 콘텐츠 스택에 표시된다.
-테마 프리셋 선택 + 저장 경로 표시.
+테마 프리셋 선택 + 일반/다운로드 설정 + 저장 경로 표시 + 숨김 태그 관리.
 """
 from __future__ import annotations
 
-import dataclasses
+from typing import Callable
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPainter, QPainterPath
+from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
 
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import PRESETS, ThemeTokens
+
+
+def _t():
+    return ThemeManager.instance().current()
 
 
 class _ThemeCard(QWidget):
@@ -131,11 +145,237 @@ class _ThemePreview(QWidget):
         p.end()
 
 
+# ---------------------------------------------------------------------------
+# 태그 이동 목록 (드래그 앤 드롭 지원)
+# ---------------------------------------------------------------------------
+
+_MOVE_MIME = "application/x-settings-tag-name"
+
+
+class _TagMoveDelegate(QStyledItemDelegate):
+    """태그 이름(왼쪽)과 영상 수(오른쪽)를 나란히 그리는 델리게이트."""
+
+    def sizeHint(self, option, index) -> QSize:
+        return QSize(max(option.rect.width(), 160), 26)
+
+    def paint(self, painter, option, index) -> None:
+        from PyQt6.QtWidgets import QApplication, QStyle  # noqa: PLC0415
+        QApplication.style().drawPrimitive(
+            QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget
+        )
+        name  = index.data(Qt.ItemDataRole.UserRole + 2) or ""
+        count = index.data(Qt.ItemDataRole.UserRole + 1) or 0
+        tok   = _t()
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # 태그명
+        painter.setFont(QFont("", 9))
+        painter.setPen(QColor(tok.text_on_accent if selected else tok.text_primary))
+        name_rect = option.rect.adjusted(8, 0, -44, 0)
+        painter.drawText(
+            name_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
+            f"#{name}",
+        )
+
+        # 영상 수 뱃지
+        painter.setFont(QFont("", 8))
+        painter.setPen(QColor(tok.text_on_accent if selected else tok.text_muted))
+        count_rect = option.rect.adjusted(0, 0, -6, 0)
+        painter.drawText(
+            count_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
+            str(count),
+        )
+
+        painter.restore()
+
+
+class _TagMoveList(QListWidget):
+    """다른 _TagMoveList로부터의 드래그 드롭을 수락하는 태그 목록."""
+
+    drop_received = pyqtSignal(list)  # list[str] — tag names
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setItemDelegate(_TagMoveDelegate(self))
+        self.setSpacing(1)
+
+    def mimeTypes(self) -> list[str]:
+        return [_MOVE_MIME]
+
+    def mimeData(self, items) -> QMimeData:
+        mime = QMimeData()
+        names = [i.data(Qt.ItemDataRole.UserRole + 2) for i in items
+                 if i.data(Qt.ItemDataRole.UserRole + 2)]
+        mime.setData(_MOVE_MIME, QByteArray("|".join(names).encode()))
+        return mime
+
+    def dragEnterEvent(self, event) -> None:
+        if event.source() is not self and event.mimeData().hasFormat(_MOVE_MIME):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        if event.source() is not self and event.mimeData().hasFormat(_MOVE_MIME):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:
+        if event.source() is not self and event.mimeData().hasFormat(_MOVE_MIME):
+            raw   = bytes(event.mimeData().data(_MOVE_MIME)).decode()
+            names = [n for n in raw.split("|") if n]
+            if names:
+                self.drop_received.emit(names)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+
+class _HiddenTagsSection(QWidget):
+    """태그 숨김 관리 섹션 — 표시 태그 ↔ 숨긴 태그 두 목록."""
+
+    changed = pyqtSignal()
+
+    def __init__(
+        self,
+        get_tags_fn: Callable,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._get_tags = get_tags_fn
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(6)
+
+        # 안내 문구
+        hint = QLabel(
+            "표시 태그를 더블클릭하거나 오른쪽으로 드래그하면 태그 목록에서 숨겨집니다."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("font-size: 10px; color: #666; margin-bottom: 4px;")
+        root.addWidget(hint)
+
+        lists_row = QHBoxLayout()
+        lists_row.setSpacing(12)
+
+        # ── 표시 태그 ──────────────────────────────────
+        vis_col = QVBoxLayout()
+        vis_col.setSpacing(4)
+        vis_lbl = QLabel("표시 태그  (더블클릭 → 숨기기)")
+        vis_lbl.setStyleSheet("font-size: 10px; font-weight: 600;")
+        self._vis_list = _TagMoveList()
+        self._vis_list.setMinimumHeight(200)
+        self._vis_list.itemDoubleClicked.connect(
+            lambda item: self._move_to_hidden([item.data(Qt.ItemDataRole.UserRole + 2)])
+        )
+        self._vis_list.drop_received.connect(self._move_to_visible)
+        vis_col.addWidget(vis_lbl)
+        vis_col.addWidget(self._vis_list)
+        lists_row.addLayout(vis_col)
+
+        # ── 화살표 힌트 ───────────────────────────────
+        arrow_col = QVBoxLayout()
+        arrow_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        lbl_r = QLabel("→")
+        lbl_l = QLabel("←")
+        for lbl in (lbl_r, lbl_l):
+            lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            lbl.setStyleSheet("font-size: 14px; color: #666;")
+        arrow_col.addStretch()
+        arrow_col.addWidget(lbl_r)
+        arrow_col.addSpacing(8)
+        arrow_col.addWidget(lbl_l)
+        arrow_col.addStretch()
+        lists_row.addLayout(arrow_col)
+
+        # ── 숨긴 태그 ──────────────────────────────────
+        hid_col = QVBoxLayout()
+        hid_col.setSpacing(4)
+        hid_lbl = QLabel("숨긴 태그  (더블클릭 → 표시)")
+        hid_lbl.setStyleSheet("font-size: 10px; font-weight: 600;")
+        self._hid_list = _TagMoveList()
+        self._hid_list.setMinimumHeight(200)
+        self._hid_list.itemDoubleClicked.connect(
+            lambda item: self._move_to_visible([item.data(Qt.ItemDataRole.UserRole + 2)])
+        )
+        self._hid_list.drop_received.connect(self._move_to_hidden)
+        hid_col.addWidget(hid_lbl)
+        hid_col.addWidget(self._hid_list)
+        lists_row.addLayout(hid_col)
+
+        root.addLayout(lists_row)
+
+    # ------------------------------------------------------------------
+    def refresh(self) -> None:
+        """태그 목록을 새로 불러와 두 목록을 재구성한다."""
+        from config.settings import load_hidden_tag_names  # noqa: PLC0415
+        hidden_names = load_hidden_tag_names()
+        all_tags = sorted(self._get_tags(), key=lambda t: t.name)
+
+        self._vis_list.clear()
+        self._hid_list.clear()
+
+        for tag in all_tags:
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole,     tag.id)
+            item.setData(Qt.ItemDataRole.UserRole + 1, tag.count)
+            item.setData(Qt.ItemDataRole.UserRole + 2, tag.name)
+            if tag.name in hidden_names:
+                self._hid_list.addItem(item)
+            else:
+                self._vis_list.addItem(item)
+
+    # ------------------------------------------------------------------
+    def _move_to_hidden(self, names: list[str]) -> None:
+        from config.settings import load_hidden_tag_names, save_hidden_tag_names  # noqa: PLC0415
+        hidden = load_hidden_tag_names()
+        for n in names:
+            hidden.add(n)
+        save_hidden_tag_names(hidden)
+        self.refresh()
+        self.changed.emit()
+
+    def _move_to_visible(self, names: list[str]) -> None:
+        from config.settings import load_hidden_tag_names, save_hidden_tag_names  # noqa: PLC0415
+        hidden = load_hidden_tag_names()
+        for n in names:
+            hidden.discard(n)
+        save_hidden_tag_names(hidden)
+        self.refresh()
+        self.changed.emit()
+
+
+# ---------------------------------------------------------------------------
+# 설정 패널
+# ---------------------------------------------------------------------------
+
+
 class SettingsPanel(QWidget):
     """설정 패널 (인라인, QDialog 아님)."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    hidden_tags_changed = pyqtSignal()
+
+    def __init__(
+        self,
+        get_tags_fn: Callable | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._get_tags_fn = get_tags_fn
         self._theme_cards: dict[str, _ThemeCard] = {}
         self._build_ui()
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
@@ -241,8 +481,209 @@ class SettingsPanel(QWidget):
         note = QLabel("경로를 변경하려면 data/config.yaml 을 편집하세요.")
         note.setStyleSheet("font-size: 10px; color: #444; margin-top: 8px;")
         layout.addWidget(note)
+        layout.addSpacing(28)
+
+        # ── 구분선 ──
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #1a1a1a;")
+        layout.addWidget(sep2)
+        layout.addSpacing(24)
+
+        # ── 일반 섹션 ──
+        gen_label = QLabel("일반")
+        gen_label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+        )
+        layout.addWidget(gen_label)
+        layout.addSpacing(10)
+
+        try:
+            from config import settings as s
+            cur_concurrent = s.MAX_CONCURRENT_DOWNLOADS
+            cur_clipboard = s.CLIPBOARD_MONITORING
+        except Exception:
+            cur_concurrent = 3
+            cur_clipboard = True
+
+        # 동시 다운로드 수
+        concurrent_row = QHBoxLayout()
+        concurrent_row.setContentsMargins(0, 0, 0, 0)
+        concurrent_lbl = QLabel("동시 다운로드 수")
+        concurrent_lbl.setFixedWidth(130)
+        concurrent_lbl.setStyleSheet("font-size: 11px;")
+        self._concurrent_spin = QSpinBox()
+        self._concurrent_spin.setRange(1, 8)
+        self._concurrent_spin.setValue(cur_concurrent)
+        self._concurrent_spin.setFixedWidth(64)
+        self._concurrent_spin.valueChanged.connect(self._on_concurrent_changed)
+        concurrent_row.addWidget(concurrent_lbl)
+        concurrent_row.addWidget(self._concurrent_spin)
+        concurrent_row.addStretch()
+        layout.addLayout(concurrent_row)
+        layout.addSpacing(10)
+
+        # 클립보드 URL 자동 감지
+        self._clipboard_check = QCheckBox("클립보드 URL 자동 감지")
+        self._clipboard_check.setChecked(cur_clipboard)
+        self._clipboard_check.checkStateChanged.connect(self._on_clipboard_changed)
+        layout.addWidget(self._clipboard_check)
+        layout.addSpacing(28)
+
+        # ── 구분선 ──
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.HLine)
+        sep3.setStyleSheet("color: #1a1a1a;")
+        layout.addWidget(sep3)
+        layout.addSpacing(24)
+
+        # ── 다운로드 섹션 ──
+        dl_label = QLabel("다운로드")
+        dl_label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+        )
+        layout.addWidget(dl_label)
+        layout.addSpacing(10)
+
+        try:
+            from config import settings as s
+            cur_dl_dir = str(s.DOWNLOAD_DIR)
+            cur_quality = s.DEFAULT_QUALITY
+            cur_format = s.DEFAULT_FORMAT
+        except Exception:
+            cur_dl_dir = ""
+            cur_quality = "best[ext=mp4]/best"
+            cur_format = "mp4"
+
+        # 다운로드 폴더
+        folder_row = QHBoxLayout()
+        folder_row.setContentsMargins(0, 0, 0, 0)
+        folder_lbl = QLabel("다운로드 폴더")
+        folder_lbl.setFixedWidth(100)
+        folder_lbl.setStyleSheet("font-size: 11px;")
+        self._folder_edit = QLineEdit(cur_dl_dir)
+        self._folder_edit.setReadOnly(True)
+        self._folder_edit.setStyleSheet("font-size: 10px; font-family: monospace;")
+        browse_btn = QPushButton("찾아보기")
+        browse_btn.setFixedWidth(72)
+        browse_btn.clicked.connect(self._on_browse_folder)
+        folder_row.addWidget(folder_lbl)
+        folder_row.addWidget(self._folder_edit, 1)
+        folder_row.addWidget(browse_btn)
+        layout.addLayout(folder_row)
+        layout.addSpacing(10)
+
+        # 기본 품질
+        quality_row = QHBoxLayout()
+        quality_row.setContentsMargins(0, 0, 0, 0)
+        quality_lbl = QLabel("기본 품질")
+        quality_lbl.setFixedWidth(100)
+        quality_lbl.setStyleSheet("font-size: 11px;")
+        self._quality_combo = QComboBox()
+        quality_options = [
+            ("자동 (최고 품질)", "best[ext=mp4]/best"),
+            ("4K / UHD (2160p)", "bestvideo[height<=2160][ext=mp4]+bestaudio/best[height<=2160]"),
+            ("1440p / QHD", "bestvideo[height<=1440][ext=mp4]+bestaudio/best[height<=1440]"),
+            ("1080p / FHD", "bestvideo[height<=1080][ext=mp4]+bestaudio/best[height<=1080]"),
+            ("720p / HD", "bestvideo[height<=720][ext=mp4]+bestaudio/best[height<=720]"),
+            ("480p", "bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480]"),
+            ("360p", "bestvideo[height<=360][ext=mp4]+bestaudio/best[height<=360]"),
+        ]
+        for label, fmt in quality_options:
+            self._quality_combo.addItem(label, fmt)
+        matched = next((i for i, (_, f) in enumerate(quality_options) if f == cur_quality), 0)
+        self._quality_combo.setCurrentIndex(matched)
+        self._quality_combo.currentIndexChanged.connect(self._on_quality_changed)
+        quality_row.addWidget(quality_lbl)
+        quality_row.addWidget(self._quality_combo)
+        quality_row.addStretch()
+        layout.addLayout(quality_row)
+        layout.addSpacing(10)
+
+        # 기본 포맷
+        format_row = QHBoxLayout()
+        format_row.setContentsMargins(0, 0, 0, 0)
+        format_lbl = QLabel("기본 포맷")
+        format_lbl.setFixedWidth(100)
+        format_lbl.setStyleSheet("font-size: 11px;")
+        self._format_combo = QComboBox()
+        for fmt in ("mp4", "mkv", "webm", "mp3", "m4a"):
+            self._format_combo.addItem(fmt)
+        fmt_idx = self._format_combo.findText(cur_format)
+        self._format_combo.setCurrentIndex(fmt_idx if fmt_idx >= 0 else 0)
+        self._format_combo.currentIndexChanged.connect(self._on_format_changed)
+        format_row.addWidget(format_lbl)
+        format_row.addWidget(self._format_combo)
+        format_row.addStretch()
+        layout.addLayout(format_row)
+        layout.addSpacing(28)
+
+        # ── 구분선 ──
+        sep4 = QFrame()
+        sep4.setFrameShape(QFrame.Shape.HLine)
+        sep4.setStyleSheet("color: #1a1a1a;")
+        layout.addWidget(sep4)
+        layout.addSpacing(24)
+
+        # ── 숨김 태그 관리 섹션 ──
+        hidden_label = QLabel("숨김 태그 관리")
+        hidden_label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+        )
+        layout.addWidget(hidden_label)
+        layout.addSpacing(10)
+
+        if self._get_tags_fn is not None:
+            self._hidden_tags_section = _HiddenTagsSection(self._get_tags_fn)
+            self._hidden_tags_section.changed.connect(self.hidden_tags_changed.emit)
+            layout.addWidget(self._hidden_tags_section)
+        else:
+            no_tags_lbl = QLabel("태그 목록을 불러올 수 없습니다.")
+            no_tags_lbl.setStyleSheet("font-size: 10px; color: #555;")
+            layout.addWidget(no_tags_lbl)
+            self._hidden_tags_section = None
 
         layout.addStretch()
+
+    # ------------------------------------------------------------------
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        """설정 패널이 표시될 때 숨김 태그 목록을 최신 상태로 갱신한다."""
+        super().showEvent(event)
+        if self._hidden_tags_section is not None:
+            self._hidden_tags_section.refresh()
+
+    # ------------------------------------------------------------------
+    def _on_concurrent_changed(self, value: int) -> None:
+        from config import settings as s
+        s.save_setting("max_concurrent_downloads", value)
+
+    def _on_clipboard_changed(self, state) -> None:
+        from config import settings as s
+        checked = (state == Qt.CheckState.Checked)
+        s.save_setting("clipboard_monitoring", checked)
+
+    def _on_browse_folder(self) -> None:
+        from config import settings as s
+        folder = QFileDialog.getExistingDirectory(
+            self, "다운로드 폴더 선택", self._folder_edit.text()
+        )
+        if folder:
+            self._folder_edit.setText(folder)
+            s.save_path_setting("downloads", folder)
+
+    def _on_quality_changed(self, index: int) -> None:
+        from config import settings as s
+        fmt = self._quality_combo.itemData(index)
+        if fmt:
+            s.save_setting("default_quality", fmt)
+
+    def _on_format_changed(self, index: int) -> None:
+        from config import settings as s
+        fmt = self._format_combo.currentText()
+        s.save_setting("default_format", fmt)
 
     # ------------------------------------------------------------------
     def _on_theme_changed(self, tokens: ThemeTokens) -> None:

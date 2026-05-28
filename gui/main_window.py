@@ -1,7 +1,7 @@
 """메인 윈도우 — 아이콘 사이드바 + 콘텐츠 스택 레이아웃."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QCloseEvent, QColor, QIcon, QPainter, QPixmap, QPixmapCache
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -22,7 +23,9 @@ from PyQt6.QtWidgets import (
 from config.settings import PIXMAP_CACHE_LIMIT_KB, THEME
 from gui.panels.download_panel import DownloadPanel
 from gui.panels.library_panel import LibraryPanel
-from gui.panels.settings_panel import SettingsPanel
+from gui.panels.monitoring_panel import MonitoringPanel
+from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
+from gui.panels.stats_panel import StatsPanel
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
 from gui.view_models.clip_vm import ClipViewModel
@@ -51,6 +54,12 @@ _SVG_MONITOR = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
   fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
   <path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.9L15 14"/>
   <rect x="3" y="6" width="12" height="12" rx="2"/>
+</svg>"""
+
+_SVG_STATS = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+  <rect x="3" y="12" width="4" height="9"/><rect x="10" y="7" width="4" height="14"/>
+  <rect x="17" y="3" width="4" height="18"/>
 </svg>"""
 
 _SVG_SETTINGS = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
@@ -92,7 +101,8 @@ def _make_svg_icon(svg_bytes: bytes, color: str, size: int = 16) -> QIcon:
 _PAGE_LIBRARY  = 0
 _PAGE_DOWNLOAD = 1
 _PAGE_MONITOR  = 2
-_PAGE_SETTINGS = 3
+_PAGE_STATS    = 3
+_PAGE_SETTINGS = 4
 
 
 class _NavButton(QPushButton):
@@ -174,6 +184,7 @@ class _SideBar(QWidget):
             (_SVG_LIBRARY,  "라이브러리",        _PAGE_LIBRARY),
             (_SVG_DOWNLOAD, "다운로드",          _PAGE_DOWNLOAD),
             (_SVG_MONITOR,  "채널 모니터링",      _PAGE_MONITOR),
+            (_SVG_STATS,    "통계",              _PAGE_STATS),
         ]
         for svg, tip, page in nav_defs:
             btn = _NavButton(svg, tip)
@@ -198,7 +209,8 @@ class _SideBar(QWidget):
             _PAGE_LIBRARY:  0,
             _PAGE_DOWNLOAD: 1,
             _PAGE_MONITOR:  2,
-            _PAGE_SETTINGS: 3,
+            _PAGE_STATS:    3,
+            _PAGE_SETTINGS: 4,
         }
         for i, btn in enumerate(self._buttons):
             btn.setChecked(i == page_to_btn.get(page, 0))
@@ -334,6 +346,7 @@ class _LibraryPage(QWidget):
         self,
         library_vm: LibraryViewModel,
         download_vm: DownloadViewModel,
+        clip_vm: ClipViewModel,
         stack: QStackedWidget,
         parent: QWidget | None = None,
     ) -> None:
@@ -345,7 +358,7 @@ class _LibraryPage(QWidget):
         self._url_bar = _UrlBar()
         layout.addWidget(self._url_bar)
 
-        self._library_panel = LibraryPanel(library_vm)
+        self._library_panel = LibraryPanel(library_vm, clip_vm=clip_vm, download_vm=download_vm)
         layout.addWidget(self._library_panel, 1)
 
         self._dl_bar = _DownloadBar(stack, download_vm)
@@ -359,20 +372,6 @@ class _LibraryPage(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# 모니터링 페이지 (stub)
-# ---------------------------------------------------------------------------
-
-class _MonitoringPage(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        lbl = QLabel("채널 모니터링 (준비 중)")
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setStyleSheet("font-size: 14px; color: #444;")
-        layout = QVBoxLayout(self)
-        layout.addWidget(lbl)
-
-
-# ---------------------------------------------------------------------------
 # 메인 윈도우
 # ---------------------------------------------------------------------------
 
@@ -383,6 +382,7 @@ class MainWindow(QMainWindow):
         download_vm: DownloadViewModel,
         clip_vm: ClipViewModel,
         monitoring_vm: MonitoringViewModel,
+        stats_handler=None,
     ) -> None:
         super().__init__()
         QPixmapCache.setCacheLimit(PIXMAP_CACHE_LIMIT_KB)
@@ -390,6 +390,7 @@ class MainWindow(QMainWindow):
         self._download_vm = download_vm
         self._clip_vm = clip_vm
         self._monitoring_vm = monitoring_vm
+        self._stats_handler = stats_handler
 
         self.setWindowTitle("YouTube Content Manager")
         self.setMinimumSize(1024, 680)
@@ -415,18 +416,30 @@ class MainWindow(QMainWindow):
 
         # 페이지 0: 라이브러리
         self._library_page = _LibraryPage(
-            self._library_vm, self._download_vm, self._stack
+            self._library_vm, self._download_vm, self._clip_vm, self._stack
         )
         self._stack.addWidget(self._library_page)                  # 0
 
         # 페이지 1: 다운로드
         self._stack.addWidget(DownloadPanel(self._download_vm))    # 1
 
-        # 페이지 2: 채널 모니터링 (stub)
-        self._stack.addWidget(_MonitoringPage())                   # 2
+        # 페이지 2: 채널 모니터링
+        self._stack.addWidget(MonitoringPanel(self._monitoring_vm))  # 2
 
-        # 페이지 3: 설정
-        self._stack.addWidget(SettingsPanel())                     # 3
+        # 페이지 3: 통계 대시보드
+        if self._stats_handler is not None:
+            self._stack.addWidget(StatsPanel(self._stats_handler))   # 3
+        else:
+            from PyQt6.QtWidgets import QLabel  # noqa: PLC0415
+            stub = QWidget()
+            QVBoxLayout(stub).addWidget(QLabel("통계 기능 준비 중"))
+            self._stack.addWidget(stub)                              # 3
+
+        # 페이지 4: 설정 (library_vm.tags 를 lazy 하게 공급)
+        self._settings_panel = SettingsPanel(
+            get_tags_fn=lambda: self._library_vm.tags
+        )
+        self._stack.addWidget(self._settings_panel)                  # 4
 
         # 사이드바 (스택 생성 후)
         sidebar = _SideBar(self._stack)
@@ -437,21 +450,27 @@ class MainWindow(QMainWindow):
         # 상태 표시줄
         self.setStatusBar(QStatusBar())
 
+        # 영상 등록 중 마퀴 진행 바 (상태바 우측 고정)
+        self._add_progress = QProgressBar()
+        self._add_progress.setRange(0, 0)  # 마퀴(indeterminate) 모드
+        self._add_progress.setFixedWidth(120)
+        self._add_progress.setFixedHeight(14)
+        self._add_progress.hide()
+        self.statusBar().addPermanentWidget(self._add_progress)
+
     def _setup_signals(self) -> None:
         lp = self._library_page.library_panel()
         url_bar = self._library_page.url_bar()
+
+        self._pending_url: str = ""
 
         # URL 입력
         url_bar.input().returnPressed.connect(self._on_url_submitted)
 
         # 라이브러리 VM 이벤트
         self._library_vm.error_occurred.connect(self._show_library_error)
-        self._library_vm.video_add_started.connect(
-            lambda url: self.statusBar().showMessage(f"영상 등록 중: {url}", 0)
-        )
-        self._library_vm.video_add_finished.connect(
-            lambda url: self.statusBar().showMessage(f"등록 완료: {url}", 5000)
-        )
+        self._library_vm.video_add_started.connect(self._on_add_started)
+        self._library_vm.video_add_finished.connect(self._on_add_finished)
 
         # 다운로드
         lp.download_requested.connect(
@@ -461,10 +480,28 @@ class MainWindow(QMainWindow):
         self._clip_vm.error_occurred.connect(self._show_error)
         self._monitoring_vm.error_occurred.connect(self._show_error)
 
+        # 숨김 태그 변경 → 라이브러리 패널 즉시 갱신
+        self._settings_panel.hidden_tags_changed.connect(
+            lp._on_hidden_tags_changed
+        )
+
     def _setup_clipboard_monitoring(self) -> None:
         clipboard = QApplication.clipboard()
         if clipboard:
             clipboard.dataChanged.connect(self._on_clipboard_changed)
+
+    # ------------------------------------------------------------------
+    def _on_add_started(self, url: str) -> None:
+        self._pending_url = url
+        short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
+        self.statusBar().showMessage(f"등록 중: {short}", 0)
+        self._add_progress.show()
+
+    def _on_add_finished(self, url: str) -> None:
+        self._pending_url = ""
+        self._add_progress.hide()
+        short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
+        self.statusBar().showMessage(f"등록 완료: {short}", 5000)
 
     # ------------------------------------------------------------------
     def _on_clipboard_changed(self) -> None:
@@ -487,8 +524,21 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"오류: {msg}", 6000)
 
     def _show_library_error(self, msg: str) -> None:
-        self.statusBar().showMessage(f"오류: {msg}", 6000)
-        QMessageBox.warning(self, "영상 등록 오류", msg)
+        self._add_progress.hide()
+        url = self._pending_url
+        self._pending_url = ""
+        short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
+        detail = f"{short} 등록 실패: {msg}" if url else msg
+        self.statusBar().showMessage(f"오류: {detail}", 6000)
+
+        dlg = QMessageBox(QMessageBox.Icon.Warning, "영상 등록 오류", detail, parent=self)
+        dlg.addButton(QMessageBox.StandardButton.Ok)
+        if url:
+            copy_btn = dlg.addButton("URL 복사", QMessageBox.ButtonRole.ActionRole)
+            copy_btn.clicked.connect(
+                lambda: QApplication.clipboard().setText(url)
+            )
+        dlg.exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         event.accept()

@@ -1,8 +1,10 @@
 import sys
 
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
 from config.settings import ensure_data_dirs
+from utils.resources import get_resource_path
 from infrastructure.event_bus import EventBus
 from infrastructure.persistence.database import Database
 from infrastructure.persistence.sqlite_video_repository import SqliteVideoRepository
@@ -32,6 +34,7 @@ from application.library.queries import (
     GetTagsHandler,
     GetVideoDetailHandler,
     GetVideosHandler,
+    LibraryStatsHandler,
     SearchVideosHandler,
 )
 from application.download.commands import CancelDownloadHandler, StartDownloadHandler
@@ -92,6 +95,7 @@ def main() -> int:
     get_cats         = GetCategoriesHandler(video_repo)
     get_tags         = GetTagsHandler(video_repo)
     get_video_detail = GetVideoDetailHandler(video_repo, download_repo)
+    stats_handler    = LibraryStatsHandler(video_repo, download_repo)
 
     # 7. Application handlers — Download
     start_dl  = StartDownloadHandler(dl_queue, download_repo, ytdlp, event_bus)
@@ -154,7 +158,23 @@ def main() -> int:
     # 12. Launch GUI
     app = QApplication(sys.argv)
     app.setApplicationName("YouTube Content Manager")
-    window = MainWindow(library_vm, download_vm, clip_vm, monitoring_vm)
+
+    # 태스크바·윈도우 아이콘 설정
+    _icon_path = get_resource_path("assets/icon.ico")
+    if _icon_path.exists():
+        _app_icon = QIcon(str(_icon_path))
+        app.setWindowIcon(_app_icon)
+    # Windows: 태스크바 그룹핑 AppUserModelID 설정
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "YTContentManager.App.1.0"
+            )
+        except Exception:
+            pass
+
+    window = MainWindow(library_vm, download_vm, clip_vm, monitoring_vm, stats_handler)
     window.show()
     return app.exec()
 
