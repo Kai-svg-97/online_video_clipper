@@ -1,14 +1,13 @@
 """메인 윈도우 — 아이콘 사이드바 + 콘텐츠 스택 레이아웃."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt, QTimer
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QColor, QIcon, QPainter, QPixmap, QPixmapCache
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -21,7 +20,9 @@ from PyQt6.QtWidgets import (
 )
 
 from config.settings import PIXMAP_CACHE_LIMIT_KB, THEME
+# YouTubeAuthDialog는 단독 다이얼로그 대신 Settings 패널로 통합됨
 from gui.panels.download_panel import DownloadPanel
+from gui.panels.feed_panel import FeedPanel
 from gui.panels.library_panel import LibraryPanel
 from gui.panels.monitoring_panel import MonitoringPanel
 from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
@@ -30,8 +31,11 @@ from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
 from gui.view_models.clip_vm import ClipViewModel
 from gui.view_models.download_vm import DownloadViewModel
+from gui.view_models.feed_vm import FeedViewModel
 from gui.view_models.library_vm import LibraryViewModel
 from gui.view_models.monitoring_vm import MonitoringViewModel
+from gui.view_models.playlist_vm import PlaylistViewModel
+from infrastructure.auth.youtube_auth import YouTubeAuthService
 
 # ---------------------------------------------------------------------------
 # SVG 아이콘 정의 (인라인)
@@ -60,6 +64,18 @@ _SVG_STATS = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
   fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
   <rect x="3" y="12" width="4" height="9"/><rect x="10" y="7" width="4" height="14"/>
   <rect x="17" y="3" width="4" height="18"/>
+</svg>"""
+
+_SVG_FEED = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+  <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+  <polyline points="9 22 9 12 15 12 15 22"/>
+</svg>"""
+
+_SVG_ACCOUNT = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+  <circle cx="12" cy="8" r="4"/>
+  <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
 </svg>"""
 
 _SVG_SETTINGS = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
@@ -102,7 +118,8 @@ _PAGE_LIBRARY  = 0
 _PAGE_DOWNLOAD = 1
 _PAGE_MONITOR  = 2
 _PAGE_STATS    = 3
-_PAGE_SETTINGS = 4
+_PAGE_FEED     = 4
+_PAGE_SETTINGS = 5
 
 
 class _NavButton(QPushButton):
@@ -185,6 +202,7 @@ class _SideBar(QWidget):
             (_SVG_DOWNLOAD, "다운로드",          _PAGE_DOWNLOAD),
             (_SVG_MONITOR,  "채널 모니터링",      _PAGE_MONITOR),
             (_SVG_STATS,    "통계",              _PAGE_STATS),
+            (_SVG_FEED,     "구독 피드",          _PAGE_FEED),
         ]
         for svg, tip, page in nav_defs:
             btn = _NavButton(svg, tip)
@@ -193,6 +211,12 @@ class _SideBar(QWidget):
             self._buttons.append(btn)
 
         layout.addStretch()
+
+        # 계정 버튼 → 설정 페이지의 YouTube 연동 섹션으로 이동
+        self._account_btn = _NavButton(_SVG_ACCOUNT, "YouTube 연동 설정")
+        self._account_btn.setCheckable(False)
+        self._account_btn.clicked.connect(lambda: self._navigate(_PAGE_SETTINGS))
+        layout.addWidget(self._account_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # 설정 버튼 (하단)
         settings_btn = _NavButton(_SVG_SETTINGS, "설정")
@@ -203,6 +227,11 @@ class _SideBar(QWidget):
         # 첫 번째(라이브러리) 선택
         self._buttons[0].setChecked(True)
 
+    def update_account_status(self, is_connected: bool) -> None:
+        """YouTube 연동 상태에 따라 계정 버튼 tooltip을 갱신한다."""
+        tip = "YouTube 연결됨 — 설정에서 관리" if is_connected else "YouTube 미연결 — 설정에서 연동"
+        self._account_btn.setToolTip(tip)
+
     def _navigate(self, page: int) -> None:
         self._stack.setCurrentIndex(page)
         page_to_btn = {
@@ -210,7 +239,8 @@ class _SideBar(QWidget):
             _PAGE_DOWNLOAD: 1,
             _PAGE_MONITOR:  2,
             _PAGE_STATS:    3,
-            _PAGE_SETTINGS: 4,
+            _PAGE_FEED:     4,
+            _PAGE_SETTINGS: 5,
         }
         for i, btn in enumerate(self._buttons):
             btn.setChecked(i == page_to_btn.get(page, 0))
@@ -227,44 +257,40 @@ class _SideBar(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# URL 입력 바
+# 경로 표시 바 (브레드크럼)
 # ---------------------------------------------------------------------------
 
-class _UrlBar(QWidget):
-    """상단 URL 입력 바."""
+class _PathBar(QWidget):
+    """영상 목록 상단 현재 위치 경로 표시 바."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedHeight(40)
+        self.setFixedHeight(32)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
-        self._input = QLineEdit()
-        self._input.setPlaceholderText("URL 붙여넣기 후 Enter…")
-        self._input.setMaximumWidth(480)
-        layout.addWidget(self._input)
-
-        hint = QLabel("클립보드 자동 감지")
-        hint.setStyleSheet("font-size: 10px; color: #333;")
-        layout.addWidget(hint)
+        self._path_lbl = QLabel("라이브러리")
+        self._path_lbl.setStyleSheet("font-size: 11px;")
+        layout.addWidget(self._path_lbl)
         layout.addStretch()
 
         self._apply_theme(ThemeManager.instance().current())
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
 
-    def input(self) -> QLineEdit:
-        return self._input
+    def set_path(self, path: str) -> None:
+        self._path_lbl.setText(path)
 
     def _apply_theme(self, tokens: ThemeTokens) -> None:
+        self.setObjectName("pathbar")
+        self.setAutoFillBackground(True)
         self.setStyleSheet(f"""
-            _UrlBar {{
+            #pathbar {{
                 background-color: {tokens.bg_surface};
                 border-bottom: 1px solid {tokens.border};
             }}
         """)
-        self.setObjectName("urlbar")
-        self.setAutoFillBackground(True)
+        self._path_lbl.setStyleSheet(f"font-size:11px; color:{tokens.text_secondary};")
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +374,7 @@ class _LibraryPage(QWidget):
         download_vm: DownloadViewModel,
         clip_vm: ClipViewModel,
         stack: QStackedWidget,
+        playlist_vm: PlaylistViewModel | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -355,17 +382,23 @@ class _LibraryPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._url_bar = _UrlBar()
-        layout.addWidget(self._url_bar)
+        self._path_bar = _PathBar()
+        layout.addWidget(self._path_bar)
 
-        self._library_panel = LibraryPanel(library_vm, clip_vm=clip_vm, download_vm=download_vm)
+        self._library_panel = LibraryPanel(
+            library_vm,
+            clip_vm=clip_vm,
+            download_vm=download_vm,
+            playlist_vm=playlist_vm,
+        )
+        self._library_panel.path_changed.connect(self._path_bar.set_path)
         layout.addWidget(self._library_panel, 1)
 
         self._dl_bar = _DownloadBar(stack, download_vm)
         layout.addWidget(self._dl_bar)
 
-    def url_bar(self) -> _UrlBar:
-        return self._url_bar
+    def path_bar(self) -> _PathBar:
+        return self._path_bar
 
     def library_panel(self) -> LibraryPanel:
         return self._library_panel
@@ -383,6 +416,10 @@ class MainWindow(QMainWindow):
         clip_vm: ClipViewModel,
         monitoring_vm: MonitoringViewModel,
         stats_handler=None,
+        playlist_vm: PlaylistViewModel | None = None,
+        feed_vm: FeedViewModel | None = None,
+        auth_service: YouTubeAuthService | None = None,
+        yt_oauth=None,   # YouTubeOAuthAdapter | None
     ) -> None:
         super().__init__()
         QPixmapCache.setCacheLimit(PIXMAP_CACHE_LIMIT_KB)
@@ -391,6 +428,10 @@ class MainWindow(QMainWindow):
         self._clip_vm = clip_vm
         self._monitoring_vm = monitoring_vm
         self._stats_handler = stats_handler
+        self._playlist_vm = playlist_vm
+        self._feed_vm = feed_vm
+        self._yt_oauth = yt_oauth
+        self._auth_service = auth_service or YouTubeAuthService()
 
         self.setWindowTitle("YouTube Content Manager")
         self.setMinimumSize(1024, 680)
@@ -416,7 +457,11 @@ class MainWindow(QMainWindow):
 
         # 페이지 0: 라이브러리
         self._library_page = _LibraryPage(
-            self._library_vm, self._download_vm, self._clip_vm, self._stack
+            self._library_vm,
+            self._download_vm,
+            self._clip_vm,
+            self._stack,
+            playlist_vm=self._playlist_vm,
         )
         self._stack.addWidget(self._library_page)                  # 0
 
@@ -435,16 +480,33 @@ class MainWindow(QMainWindow):
             QVBoxLayout(stub).addWidget(QLabel("통계 기능 준비 중"))
             self._stack.addWidget(stub)                              # 3
 
-        # 페이지 4: 설정 (library_vm.tags 를 lazy 하게 공급)
+        # 페이지 4: 구독 피드
+        if self._feed_vm is not None:
+            self._feed_panel = FeedPanel(
+                self._feed_vm,
+                library_vm=self._library_vm,
+                playlist_vm=self._playlist_vm,
+            )
+            self._stack.addWidget(self._feed_panel)                  # 4
+        else:
+            from PyQt6.QtWidgets import QLabel  # noqa: PLC0415
+            stub2 = QWidget()
+            stub2_lbl = QLabel("구독 피드: main.py에서 FeedViewModel을 주입하세요.")
+            stub2_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            QVBoxLayout(stub2).addWidget(stub2_lbl)
+            self._stack.addWidget(stub2)                             # 4
+
+        # 페이지 5: 설정 (library_vm.tags 를 lazy 하게 공급)
         self._settings_panel = SettingsPanel(
-            get_tags_fn=lambda: self._library_vm.tags
+            get_tags_fn=lambda: self._library_vm.tags,
+            yt_oauth=self._yt_oauth,
         )
-        self._stack.addWidget(self._settings_panel)                  # 4
+        self._stack.addWidget(self._settings_panel)                  # 5
 
         # 사이드바 (스택 생성 후)
-        sidebar = _SideBar(self._stack)
+        self._sidebar = _SideBar(self._stack)
 
-        root.addWidget(sidebar)
+        root.addWidget(self._sidebar)
         root.addWidget(self._stack, 1)
 
         # 상태 표시줄
@@ -460,12 +522,8 @@ class MainWindow(QMainWindow):
 
     def _setup_signals(self) -> None:
         lp = self._library_page.library_panel()
-        url_bar = self._library_page.url_bar()
 
         self._pending_url: str = ""
-
-        # URL 입력
-        url_bar.input().returnPressed.connect(self._on_url_submitted)
 
         # 라이브러리 VM 이벤트
         self._library_vm.error_occurred.connect(self._show_library_error)
@@ -484,6 +542,17 @@ class MainWindow(QMainWindow):
         self._settings_panel.hidden_tags_changed.connect(
             lp._on_hidden_tags_changed
         )
+
+        # 구독 피드 → 카테고리/재생목록 추가 + 다운로드
+        if self._feed_vm is not None and hasattr(self, "_feed_panel"):
+            self._feed_panel.video_to_category.connect(
+                lambda url, cat_id: self._library_vm.add_video(url, category_id=cat_id)
+            )
+            self._feed_panel.video_to_playlist.connect(
+                lambda url, pl_id: self._playlist_vm.add_url_to_playlist(url, pl_id)
+                if self._playlist_vm is not None else None
+            )
+            self._feed_panel.download_requested.connect(self._on_feed_download)
 
     def _setup_clipboard_monitoring(self) -> None:
         clipboard = QApplication.clipboard()
@@ -505,20 +574,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def _on_clipboard_changed(self) -> None:
-        clipboard = QApplication.clipboard()
-        if clipboard is None:
-            return
-        text = clipboard.text().strip()
-        if text.startswith(("https://www.youtube.com/", "https://youtu.be/")):
-            self._library_page.url_bar().input().setText(text)
-
-    def _on_url_submitted(self) -> None:
-        inp = self._library_page.url_bar().input()
-        url = inp.text().strip()
-        if url:
-            lp = self._library_page.library_panel()
-            self._library_vm.add_video(url, lp.current_category_id())
-            inp.clear()
+        pass  # URL 바 제거 후 클립보드 자동 감지 비활성화
 
     def _show_error(self, msg: str) -> None:
         self.statusBar().showMessage(f"오류: {msg}", 6000)
@@ -539,6 +595,11 @@ class MainWindow(QMainWindow):
                 lambda: QApplication.clipboard().setText(url)
             )
         dlg.exec()
+
+    def _on_feed_download(self, url: str, title: str) -> None:
+        from domain.download.value_objects import DownloadSettings  # noqa: PLC0415
+        self._download_vm.start_download(url, title, DownloadSettings())
+        self._stack.setCurrentIndex(_PAGE_DOWNLOAD)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         event.accept()

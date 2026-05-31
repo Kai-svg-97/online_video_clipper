@@ -173,6 +173,223 @@ class YtDlpAdapter:
         return Path(self._last_filepath)
 
     # ------------------------------------------------------------------
+    # YouTube 계정 연동 (브라우저 쿠키 인증)
+    # ------------------------------------------------------------------
+
+    def fetch_user_playlists(self, cookie_opts: dict | None = None) -> list[dict]:
+        """인증된 YouTube 계정의 재생목록 목록 반환.
+
+        Watch Later(WL) 플레이리스트에서 채널 URL을 얻은 뒤,
+        채널 /playlists 탭을 조회한다.
+
+        반환: [{"id": "PLxxx", "title": "...", "count": N}, ...]
+        """
+        opts = cookie_opts or {}
+        if not opts:
+            return []
+
+        base_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+            "extractor_args": {"youtubetab": {"skip": ["authcheck"]}},
+            **opts,
+        }
+
+        # 1단계: Watch Later에서 사용자 채널 URL 추출
+        channel_url = ""
+        try:
+            with yt_dlp.YoutubeDL({**base_opts, "playlistend": 1}) as ydl:
+                wl_info = ydl.extract_info(
+                    "https://www.youtube.com/playlist?list=WL", download=False
+                ) or {}
+            channel_url = (
+                wl_info.get("uploader_url")
+                or wl_info.get("channel_url")
+                or ""
+            )
+        except Exception:
+            return []
+
+        if not channel_url:
+            return []
+
+        # 2단계: 채널 /playlists 탭에서 재생목록 목록 가져오기
+        pl_url = channel_url.rstrip("/") + "/playlists"
+        try:
+            with yt_dlp.YoutubeDL(base_opts) as ydl:
+                info = ydl.extract_info(pl_url, download=False) or {}
+        except Exception:
+            return []
+
+        return [
+            {
+                "id": e.get("id") or "",
+                "title": e.get("title") or "",
+                "count": e.get("playlist_count") or 0,
+            }
+            for e in (info.get("entries") or [])
+            if e.get("id")
+        ]
+
+    def fetch_playlist_videos(
+        self,
+        playlist_id: str,
+        cookie_opts: dict | None = None,
+    ) -> tuple[str, list[dict]]:
+        """재생목록 제목과 영상 목록 반환 (순서 보장).
+
+        반환: (playlist_title, [{"url": "...", "title": "...", "position": N, "yt_video_id": "..."}, ...])
+        """
+        url = f"https://www.youtube.com/playlist?list={playlist_id}"
+        base_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+        }
+
+        # 공개 재생목록은 쿠키 없이 가져올 수 있으므로 먼저 시도한다.
+        info: dict = {}
+        try:
+            with yt_dlp.YoutubeDL(base_opts) as ydl:
+                info = ydl.extract_info(url, download=False) or {}
+        except Exception as first_exc:
+            # 인증이 필요한 오류 패턴 (비공개 재생목록 포함)
+            first_msg = str(first_exc).lower()
+            needs_auth = any(p in first_msg for p in (
+                "sign in", "login", "private",
+                "does not exist", "not exist",
+                "unavailable", "403",
+            ))
+
+            if not needs_auth:
+                # 인증과 무관한 오류는 그대로 전파
+                raise
+
+            if not cookie_opts:
+                raise RuntimeError(
+                    "비공개 재생목록을 가져오려면 YouTube 계정 인증이 필요합니다.\n"
+                    "설정 > YouTube 계정에서 브라우저 프로필을 선택하거나\n"
+                    "쿠키 파일(.txt)을 등록해 주세요."
+                ) from first_exc
+
+            # 쿠키 포함 재시도
+            try:
+                with yt_dlp.YoutubeDL({**base_opts, **cookie_opts}) as ydl:
+                    info = ydl.extract_info(url, download=False) or {}
+            except Exception as cookie_exc:
+                err_str = str(cookie_exc)
+                if "could not copy" in err_str.lower() and "cookie" in err_str.lower():
+                    raise RuntimeError(
+                        "브라우저 쿠키를 읽을 수 없습니다.\n"
+                        "Chrome이 실행 중이면 종료 후 재시도하거나,\n"
+                        "설정 > YouTube 계정에서 쿠키 파일을 직접 등록하세요."
+                    ) from cookie_exc
+                raise
+        # info.get("title") = 재생목록 제목 (e.g. "AI-Agent")
+        playlist_title = info.get("title") or playlist_id
+        entries = []
+        for i, e in enumerate(info.get("entries") or []):
+            url = e.get("url") or e.get("webpage_url") or ""
+            if not url:
+                continue
+            yt_vid = e.get("id") or ""
+            # extract_flat 모드에서 thumbnail이 없으면 YouTube CDN fallback
+            thumb = e.get("thumbnail") or (
+                f"https://i.ytimg.com/vi/{yt_vid}/mqdefault.jpg" if yt_vid else ""
+            )
+            entries.append({
+                "url": url,
+                "title": e.get("title") or "",
+                "position": i,
+                "yt_video_id": yt_vid,
+                "channel_name": e.get("uploader") or e.get("channel") or "",
+                "duration_sec": e.get("duration"),
+                "thumbnail_url": thumb,
+                "upload_date": e.get("upload_date") or "",
+                "view_count": e.get("view_count"),
+            })
+        return playlist_title, entries
+
+    def fetch_subscription_feed(
+        self,
+        limit: int = 100,
+        cookie_opts: dict | None = None,
+    ) -> list[dict]:
+        """구독 채널 최신 영상 목록 반환.
+
+        반환: [{"url", "title", "channel_name", "thumbnail",
+                "published_at", "view_count", "duration_sec"}, ...]
+        """
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+            "playlistend": limit,
+            **(cookie_opts or {}),
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(
+                "https://www.youtube.com/feed/subscriptions", download=False
+            ) or {}
+        result = []
+        for e in (info.get("entries") or [])[:limit]:
+            yt_id = e.get("id") or ""
+            url_val = e.get("url") or e.get("webpage_url") or (
+                f"https://www.youtube.com/watch?v={yt_id}" if yt_id else ""
+            )
+            if not url_val:
+                continue
+            # extract_flat에서 thumbnail이 없을 때 YouTube 표준 URL fallback
+            thumb = e.get("thumbnail") or (
+                f"https://i.ytimg.com/vi/{yt_id}/mqdefault.jpg" if yt_id else ""
+            )
+            result.append(
+                {
+                    "url": url_val,
+                    "yt_video_id": yt_id,
+                    "title": e.get("title") or "",
+                    "channel_name": e.get("uploader") or e.get("channel") or "",
+                    "channel_id": e.get("channel_id") or "",
+                    "thumbnail": thumb,
+                    "published_at": e.get("upload_date") or "",
+                    "view_count": e.get("view_count"),
+                    "duration_sec": e.get("duration"),
+                }
+            )
+        return result
+
+    def fetch_subscribed_channels(self, cookie_opts: dict | None = None) -> list[dict]:
+        """YouTube 구독 채널 목록 반환.
+
+        반환: [{"id": "UCxxx", "name": "...", "url": "..."}, ...]
+        """
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+            **(cookie_opts or {}),
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(
+                "https://www.youtube.com/feed/channels", download=False
+            ) or {}
+        result = []
+        for e in (info.get("entries") or []):
+            ch_id = e.get("id") or e.get("channel_id") or ""
+            ch_name = e.get("title") or e.get("uploader") or e.get("channel") or ""
+            ch_url = e.get("url") or e.get("webpage_url") or ""
+            if not ch_url and ch_id:
+                ch_url = f"https://www.youtube.com/channel/{ch_id}"
+            if ch_url:
+                result.append({"id": ch_id, "name": ch_name, "url": ch_url})
+        return result
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

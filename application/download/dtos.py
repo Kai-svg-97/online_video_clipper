@@ -25,3 +25,5 @@ class DownloadJobDTO:
     title: str
     status: str
     progress: DownloadProgressDTO = field(default_factory=DownloadProgressDTO)
+    file_path: str | None = None
+    error_msg: str | None = None

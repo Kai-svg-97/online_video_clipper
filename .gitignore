@@ -4,6 +4,7 @@ data/*
 !data/config.yaml.example
 temp/*
 .claude/worktrees/
+logs/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

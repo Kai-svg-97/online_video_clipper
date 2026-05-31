@@ -17,6 +17,8 @@ from application.library.commands import (
     DeleteTagHandler,
     DeleteVideoCommand,
     DeleteVideoHandler,
+    ImportYouTubePlaylistToCategoryCommand,
+    ImportYouTubePlaylistToCategoryHandler,
     MarkWatchedCommand,
     MarkWatchedHandler,
     MoveCategoryCommand,
@@ -25,12 +27,17 @@ from application.library.commands import (
     RefreshCategoryMetadataHandler,
     RenameCategoryCommand,
     RenameCategoryHandler,
+    SetCategoryVideoOrderCommand,
+    SetCategoryVideoOrderHandler,
     UpdateVideoCommand,
     UpdateVideoHandler,
 )
 from application.library.dtos import CategoryDTO, TagDTO, VideoDTO, VideoDetailDTO
+from application.library.playlist_queries import GetPlaylistItemsHandler, GetPlaylistItemsQuery
 from application.library.queries import (
     GetCategoriesHandler,
+    GetCategoryVideoOrderHandler,
+    GetCategoryVideoOrderQuery,
     GetTagsHandler,
     GetVideoDetailHandler,
     GetVideosHandler,
@@ -59,6 +66,30 @@ class _AddVideoWorker(QThread):
         try:
             self._handler.handle(self._cmd)
             self.finished_ok.emit()
+        except Exception as exc:
+            self.finished_err.emit(str(exc))
+
+
+class _ImportYTToCatWorker(QThread):
+    progress    = pyqtSignal(int, int)  # current, total
+    finished_ok = pyqtSignal(int)       # 처리된 영상 수
+    finished_err = pyqtSignal(str)
+
+    def __init__(
+        self,
+        handler: ImportYouTubePlaylistToCategoryHandler,
+        cmd: ImportYouTubePlaylistToCategoryCommand,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._handler = handler
+        self._cmd = cmd
+
+    def run(self) -> None:
+        try:
+            self._cmd.on_progress = lambda cur, tot: self.progress.emit(cur, tot)
+            count = self._handler.handle(self._cmd)
+            self.finished_ok.emit(count)
         except Exception as exc:
             self.finished_err.emit(str(exc))
 
@@ -98,6 +129,8 @@ class LibraryViewModel(QObject):
     video_add_finished = pyqtSignal(str)
     metadata_refresh_progress = pyqtSignal(int, int)  # current, total
     metadata_refresh_finished = pyqtSignal(int)        # count refreshed
+    yt_import_progress  = pyqtSignal(int, int)         # current, total
+    yt_import_finished  = pyqtSignal(int)              # 처리된 영상 수
 
     def __init__(
         self,
@@ -117,6 +150,10 @@ class LibraryViewModel(QObject):
         assign_category: AssignCategoryHandler,
         get_video_detail: GetVideoDetailHandler,
         refresh_metadata: RefreshCategoryMetadataHandler,
+        get_playlist_items: GetPlaylistItemsHandler | None = None,
+        get_category_order: GetCategoryVideoOrderHandler | None = None,
+        set_category_order: SetCategoryVideoOrderHandler | None = None,
+        import_yt_to_category: ImportYouTubePlaylistToCategoryHandler | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -136,7 +173,12 @@ class LibraryViewModel(QObject):
         self._assign_category = assign_category
         self._get_video_detail = get_video_detail
         self._refresh_metadata = refresh_metadata
+        self._get_playlist_items = get_playlist_items
+        self._get_category_order = get_category_order
+        self._set_category_order = set_category_order
+        self._import_yt_to_category = import_yt_to_category
         self._refresh_metadata_workers: list[_RefreshMetadataWorker] = []
+        self._yt_import_workers: list[_ImportYTToCatWorker] = []
 
         self._videos: list[VideoDTO] = []
         self._categories: list[CategoryDTO] = []
@@ -146,7 +188,13 @@ class LibraryViewModel(QObject):
         self._filter_category_id: UUID | None = None
         self._filter_tag_ids: list[UUID] = []
         self._filter_favorite_only: bool = False
+        self._filter_playlist_id: UUID | None = None
+        self._filter_playlist_video_ids: list[UUID] = []
         self._add_workers: list[_AddVideoWorker] = []
+        self._sort_by: str = "created_at"
+        self._sort_asc: bool = False
+        self._min_duration_sec: int | None = None
+        self._max_duration_sec: int | None = None
 
     @property
     def videos(self) -> list[VideoDTO]:
@@ -178,7 +226,64 @@ class LibraryViewModel(QObject):
     def set_category_filter(self, category_id: UUID | None) -> None:
         self._filter_category_id = category_id
         self._filter_tag_ids = []
+        self._filter_playlist_id = None
+        self._filter_playlist_video_ids = []
         self._current_page = 0
+        self._refresh_videos()
+        if category_id is not None:
+            self._apply_category_order(category_id)
+
+    def _apply_category_order(self, category_id: UUID) -> None:
+        """저장된 카테고리 순서가 있으면 영상 목록을 그 순서로 재정렬한다."""
+        if self._get_category_order is None or not self._videos:
+            return
+        try:
+            ordered_ids = self._get_category_order.handle(
+                GetCategoryVideoOrderQuery(category_id=category_id)
+            )
+            if not ordered_ids:
+                return
+            order_map = {vid: pos for pos, vid in enumerate(ordered_ids)}
+            unordered_fallback = len(ordered_ids)
+            self._videos = sorted(
+                self._videos,
+                key=lambda dto: order_map.get(dto.id, unordered_fallback),
+            )
+            self.videos_changed.emit()
+        except Exception:
+            pass
+
+    def reorder_category_videos(self, category_id: UUID, video_ids: list[UUID]) -> None:
+        """카테고리 내 영상 순서를 저장하고 현재 목록에 즉시 반영한다."""
+        if self._set_category_order is None:
+            return
+        try:
+            self._set_category_order.handle(
+                SetCategoryVideoOrderCommand(category_id=category_id, video_ids=video_ids)
+            )
+            self._apply_category_order(category_id)
+        except Exception as exc:
+            self.error_occurred.emit(str(exc))
+
+    @property
+    def active_playlist_id(self) -> "UUID | None":
+        return self._filter_playlist_id
+
+    def set_playlist_filter(self, playlist_id: UUID | None) -> None:
+        """재생목록 필터 — None이면 필터 해제."""
+        self._filter_playlist_id = playlist_id
+        self._filter_playlist_video_ids = []
+        self._filter_category_id = None
+        self._filter_tag_ids = []
+        self._current_page = 0
+        if playlist_id is not None and self._get_playlist_items is not None:
+            try:
+                items = self._get_playlist_items.handle(
+                    GetPlaylistItemsQuery(playlist_id=playlist_id, limit=500)
+                )
+                self._filter_playlist_video_ids = [item.video_id for item in items]
+            except Exception as exc:
+                self.error_occurred.emit(str(exc))
         self._refresh_videos()
 
     def set_tag_filter(self, tag_ids: list[UUID]) -> None:
@@ -200,6 +305,19 @@ class LibraryViewModel(QObject):
         self._add_workers.append(worker)
         worker.start()
         self.video_add_started.emit(url)
+
+    def get_playlist_first_item(self, playlist_id: "UUID"):
+        """재생목록의 첫 번째 영상 아이템을 반환한다 (폴더 카드 썸네일용)."""
+        if self._get_playlist_items is None:
+            return None
+        try:
+            from application.library.playlist_queries import GetPlaylistItemsQuery  # noqa: PLC0415
+            items = self._get_playlist_items.handle(
+                GetPlaylistItemsQuery(playlist_id=playlist_id, limit=1, offset=0)
+            )
+            return items[0] if items else None
+        except Exception:
+            return None
 
     def delete_video(self, video_id: UUID) -> None:
         try:
@@ -300,6 +418,20 @@ class LibraryViewModel(QObject):
                     queue.append(c.id)
         return result
 
+    def set_sort(self, sort_by: str, sort_asc: bool) -> None:
+        """정렬 기준을 변경하고 영상 목록을 갱신한다."""
+        self._sort_by = sort_by
+        self._sort_asc = sort_asc
+        self._current_page = 0
+        self._refresh_videos()
+
+    def set_duration_filter(self, min_sec: int | None, max_sec: int | None) -> None:
+        """재생시간 필터를 변경하고 영상 목록을 갱신한다."""
+        self._min_duration_sec = min_sec
+        self._max_duration_sec = max_sec
+        self._current_page = 0
+        self._refresh_videos()
+
     def _refresh_videos(self, append: bool = False) -> None:
         offset = self._current_page * DEFAULT_PAGE_SIZE
         category_ids: list[UUID] = (
@@ -314,9 +446,14 @@ class LibraryViewModel(QObject):
                         text=self._search_text,
                         category_ids=category_ids,
                         tag_ids=self._filter_tag_ids,
+                        video_ids=self._filter_playlist_video_ids,
                         favorite_only=self._filter_favorite_only,
                         limit=DEFAULT_PAGE_SIZE,
                         offset=offset,
+                        sort_by=self._sort_by,
+                        sort_asc=self._sort_asc,
+                        min_duration_sec=self._min_duration_sec,
+                        max_duration_sec=self._max_duration_sec,
                     )
                 )
             else:
@@ -324,9 +461,14 @@ class LibraryViewModel(QObject):
                     GetVideosQuery(
                         category_ids=category_ids,
                         tag_ids=self._filter_tag_ids,
+                        video_ids=self._filter_playlist_video_ids,
                         favorite_only=self._filter_favorite_only,
                         limit=DEFAULT_PAGE_SIZE,
                         offset=offset,
+                        sort_by=self._sort_by,
+                        sort_asc=self._sort_asc,
+                        min_duration_sec=self._min_duration_sec,
+                        max_duration_sec=self._max_duration_sec,
                     )
                 )
             if append:
@@ -393,6 +535,39 @@ class LibraryViewModel(QObject):
     def _on_refresh_metadata_err(self, err: str) -> None:
         self.error_occurred.emit(err)
         self.metadata_refresh_finished.emit(0)
+
+    def import_youtube_to_category(
+        self,
+        yt_playlist_id: str,
+        category_id: UUID | None,
+        cookie_opts: dict,
+    ) -> None:
+        """YouTube 재생목록의 영상들을 지정 카테고리로 가져온다 (비동기)."""
+        if self._import_yt_to_category is None:
+            self.error_occurred.emit("ImportYouTubePlaylistToCategoryHandler가 초기화되지 않았습니다.")
+            return
+        cmd = ImportYouTubePlaylistToCategoryCommand(
+            yt_playlist_id=yt_playlist_id,
+            category_id=category_id,
+            cookie_opts=cookie_opts,
+        )
+        worker = _ImportYTToCatWorker(self._import_yt_to_category, cmd, self)
+        worker.progress.connect(self.yt_import_progress)
+        worker.finished_ok.connect(self._on_yt_import_ok)
+        worker.finished_err.connect(self._on_yt_import_err)
+        worker.finished.connect(lambda: self._yt_import_workers.remove(worker))
+        self._yt_import_workers.append(worker)
+        worker.start()
+
+    def _on_yt_import_ok(self, count: int) -> None:
+        self._refresh_videos()
+        self._refresh_categories()
+        self._refresh_tags()
+        self.yt_import_finished.emit(count)
+
+    def _on_yt_import_err(self, err: str) -> None:
+        self.error_occurred.emit(err)
+        self.yt_import_finished.emit(0)
 
     def _on_add_ok(self, url: str) -> None:
         self._refresh_videos()

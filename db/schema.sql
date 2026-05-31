@@ -124,6 +124,67 @@ CREATE INDEX IF NOT EXISTS idx_clips_video ON clips(source_video_id);
 -- Monitoring context
 -- =========================================================
 
+-- =========================================================
+-- Playlist context (YouTube 재생목록 + 로컬 재생목록)
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS playlists (
+    id              TEXT PRIMARY KEY,
+    title           TEXT NOT NULL,
+    yt_playlist_id  TEXT,                  -- NULL = 로컬 전용; "PLxxxxxxx" = YouTube 연동
+    source          TEXT NOT NULL DEFAULT 'local',  -- 'local' | 'youtube'
+    item_count      INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_playlists_yt_id
+    ON playlists(yt_playlist_id)
+    WHERE yt_playlist_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS playlist_items (
+    playlist_id  TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    video_id     TEXT NOT NULL REFERENCES videos(id)    ON DELETE CASCADE,
+    position     INTEGER NOT NULL DEFAULT 0,
+    added_at     TEXT NOT NULL,
+    PRIMARY KEY (playlist_id, video_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_playlist_items_order
+    ON playlist_items(playlist_id, position);
+
+-- 재생목록 폴더 (앱 내 조직 구조 — YouTube에는 미반영)
+CREATE TABLE IF NOT EXISTS playlist_folders (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'local',  -- 'local' | 'youtube'
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+-- YouTube OAuth2 토큰 저장 (Phase 2용 — 지금은 테이블만 생성)
+CREATE TABLE IF NOT EXISTS yt_oauth_tokens (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- =========================================================
+-- Monitoring context
+-- =========================================================
+
+-- 카테고리 내 영상 수동 순서 (없으면 기본 정렬 적용)
+CREATE TABLE IF NOT EXISTS category_video_order (
+    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    video_id    TEXT NOT NULL REFERENCES videos(id)    ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    PRIMARY KEY (category_id, video_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cat_video_order ON category_video_order(category_id, position);
+
+-- =========================================================
+-- Monitoring context
+-- =========================================================
+
 CREATE TABLE IF NOT EXISTS channel_subscriptions (
     id              TEXT PRIMARY KEY,
     channel_id      TEXT NOT NULL UNIQUE,

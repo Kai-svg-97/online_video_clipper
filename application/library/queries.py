@@ -23,6 +23,7 @@ class GetVideosQuery:
     category_id: UUID | None = None
     category_ids: list[UUID] = field(default_factory=list)
     tag_ids: list[UUID] = field(default_factory=list)
+    video_ids: list[UUID] = field(default_factory=list)
     favorite_only: bool = False
     watched: bool | None = None
     limit: int = 50
@@ -39,6 +40,7 @@ class SearchVideosQuery:
     category_id: UUID | None = None
     category_ids: list[UUID] = field(default_factory=list)
     tag_ids: list[UUID] = field(default_factory=list)
+    video_ids: list[UUID] = field(default_factory=list)
     favorite_only: bool = False
     limit: int = 50
     offset: int = 0
@@ -107,6 +109,7 @@ class GetVideosHandler:
                     category_id=query.category_id,
                     category_ids=query.category_ids,
                     tag_ids=query.tag_ids,
+                    video_ids=query.video_ids,
                     favorite_only=query.favorite_only,
                     watched=query.watched,
                     limit=query.limit,
@@ -135,6 +138,7 @@ class SearchVideosHandler:
                     category_id=query.category_id,
                     category_ids=query.category_ids,
                     tag_ids=query.tag_ids,
+                    video_ids=query.video_ids,
                     favorite_only=query.favorite_only,
                     limit=query.limit,
                     offset=query.offset,
@@ -216,8 +220,12 @@ class GetCategoriesHandler:
         self._repo = repo
 
     def handle(self) -> list[CategoryDTO]:
+        try:
+            counts = self._repo.list_category_video_counts()
+        except Exception:
+            counts = {}
         return [
-            CategoryDTO(id=c.id, name=c.name, parent_id=c.parent_id)
+            CategoryDTO(id=c.id, name=c.name, parent_id=c.parent_id, video_count=counts.get(c.id, 0))
             for c in self._repo.list_categories()
         ]
 
@@ -228,6 +236,19 @@ class GetTagsHandler:
 
     def handle(self) -> list[TagDTO]:
         return [TagDTO(id=t.id, name=t.name, count=c) for t, c in self._repo.list_tags_with_counts()]
+
+
+@dataclass
+class GetCategoryVideoOrderQuery:
+    category_id: UUID
+
+
+class GetCategoryVideoOrderHandler:
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, query: GetCategoryVideoOrderQuery) -> list[UUID]:
+        return self._repo.get_category_video_order(query.category_id)
 
 
 class LibraryStatsHandler:

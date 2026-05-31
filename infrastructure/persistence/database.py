@@ -23,6 +23,20 @@ class Database:
             conn.execute("PRAGMA foreign_keys=ON")
             conn.executescript(schema_sql)
         self._migrate_normalize_urls()
+        self._migrate_playlist_schema()
+
+    def _migrate_playlist_schema(self) -> None:
+        """플레이리스트 스키마 컬럼 추가 (idempotent ALTER TABLE)."""
+        migrations = [
+            "ALTER TABLE playlists ADD COLUMN folder_id TEXT REFERENCES playlist_folders(id) ON DELETE SET NULL",
+            "ALTER TABLE playlist_items ADD COLUMN yt_item_id TEXT",
+        ]
+        with self.connection() as conn:
+            for sql in migrations:
+                try:
+                    conn.execute(sql)
+                except Exception:
+                    pass  # 이미 컬럼이 존재하면 무시
 
     def _migrate_normalize_urls(self) -> None:
         """Idempotent: normalize existing YouTube URLs to canonical ?v=ID form.

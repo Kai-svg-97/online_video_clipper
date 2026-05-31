@@ -30,6 +30,8 @@ def _to_dto(job: DownloadJob) -> DownloadJobDTO:
             speed_bps=job.progress.speed_bps,
             eta_sec=job.progress.eta_sec,
         ),
+        file_path=job.file_path,
+        error_msg=job.error_msg,
     )
 
 

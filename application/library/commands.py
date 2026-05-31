@@ -20,6 +20,13 @@ class AddVideoCommand:
     category_id: UUID | None = None
     tags: list[str] = field(default_factory=list)
     fetch_metadata: bool = True
+    # 플레이리스트 일괄 가져오기용 사전 수집 메타데이터 (설정 시 yt-dlp 개별 조회 생략)
+    prefetched_title: str | None = None
+    prefetched_channel: str | None = None
+    prefetched_duration_sec: int | None = None
+    prefetched_thumbnail_url: str | None = None
+    prefetched_upload_date: str | None = None
+    prefetched_view_count: int | None = None
 
 
 @dataclass
@@ -74,7 +81,25 @@ class AddVideoHandler:
         thumbnail_url: str = ""
         description: str = ""
 
-        if cmd.fetch_metadata and self._ytdlp:
+        # 사전 수집 메타데이터가 있으면 yt-dlp 개별 조회를 생략한다
+        _has_prefetch = bool(cmd.prefetched_title or cmd.prefetched_thumbnail_url)
+        if _has_prefetch:
+            title = cmd.prefetched_title or cmd.url
+            thumbnail_url = cmd.prefetched_thumbnail_url or ""
+            if cmd.prefetched_channel:
+                channel = ChannelInfo(name=cmd.prefetched_channel, url="", channel_id="")
+            if cmd.prefetched_duration_sec is not None:
+                duration = Duration(int(cmd.prefetched_duration_sec))
+            if cmd.prefetched_upload_date:
+                raw = cmd.prefetched_upload_date
+                try:
+                    if len(raw) == 8:
+                        published_at = datetime(int(raw[:4]), int(raw[4:6]), int(raw[6:]))
+                except (ValueError, TypeError):
+                    pass
+            view_count = cmd.prefetched_view_count
+
+        if not _has_prefetch and cmd.fetch_metadata and self._ytdlp:
             try:
                 info = self._ytdlp.fetch_metadata(cmd.url)
                 title = info.get("title") or cmd.url
@@ -384,6 +409,20 @@ class RefreshCategoryMetadataCommand:
     category_ids: list[UUID]  # empty list = refresh all videos
 
 
+@dataclass
+class SetCategoryVideoOrderCommand:
+    category_id: UUID
+    video_ids: list[UUID]
+
+
+class SetCategoryVideoOrderHandler:
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, cmd: SetCategoryVideoOrderCommand) -> None:
+        self._repo.set_category_video_order(cmd.category_id, cmd.video_ids)
+
+
 class RefreshCategoryMetadataHandler:
     """Re-fetches full metadata (title, description, tags, view count, thumbnail)
     for every video in the specified categories. Pass empty category_ids to
@@ -487,3 +526,69 @@ class RefreshCategoryMetadataHandler:
 
         self._repo.delete_zero_count_tags()
         return refreshed
+
+
+# ── YouTube 재생목록 → 카테고리 가져오기 ──────────────────────────────────────
+
+@dataclass
+class ImportYouTubePlaylistToCategoryCommand:
+    yt_playlist_id: str
+    category_id: UUID | None
+    cookie_opts: dict = field(default_factory=dict)
+    on_progress: Callable[[int, int], None] | None = None
+
+
+class ImportYouTubePlaylistToCategoryHandler:
+    """YouTube 재생목록의 영상들을 라이브러리의 특정 카테고리로 가져온다.
+
+    재생목록 entry에 포함된 메타데이터를 최대한 활용해 빠르게 upsert한다.
+    이미 라이브러리에 있는 영상은 카테고리만 재할당된다.
+    """
+
+    def __init__(
+        self,
+        video_repo: IVideoRepository,
+        event_bus: EventBus,
+        ytdlp: YtDlpAdapter,
+        add_video_handler: "AddVideoHandler",
+    ) -> None:
+        self._repo = video_repo
+        self._bus = event_bus
+        self._ytdlp = ytdlp
+        self._add_video = add_video_handler
+
+    def handle(self, cmd: ImportYouTubePlaylistToCategoryCommand) -> int:
+        """처리된 영상 수 반환."""
+        _, entries = self._ytdlp.fetch_playlist_videos(
+            cmd.yt_playlist_id, cmd.cookie_opts or {}
+        )
+        total = len(entries)
+        count = 0
+        for i, entry in enumerate(entries):
+            url = entry.get("url") or ""
+            if not url:
+                continue
+            try:
+                existing = self._repo.get_by_url(url)
+                if existing is not None:
+                    existing.assign_category(cmd.category_id)
+                    self._repo.save(existing)
+                    self._bus.publish_all(existing.pull_events())
+                else:
+                    add_cmd = AddVideoCommand(
+                        url=url,
+                        category_id=cmd.category_id,
+                        prefetched_title=entry.get("title"),
+                        prefetched_channel=entry.get("channel_name"),
+                        prefetched_duration_sec=entry.get("duration_sec"),
+                        prefetched_thumbnail_url=entry.get("thumbnail_url"),
+                        prefetched_upload_date=entry.get("upload_date"),
+                        prefetched_view_count=entry.get("view_count"),
+                    )
+                    self._add_video.handle(add_cmd)
+                count += 1
+            except Exception:
+                pass
+            if cmd.on_progress:
+                cmd.on_progress(i + 1, total)
+        return count

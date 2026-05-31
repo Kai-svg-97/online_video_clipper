@@ -11,12 +11,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QPoint, QThread, QTimer, QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QSizeF, QThread, QTimer, QUrl, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QCursor, QKeyEvent
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PyQt6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtMultimediaWidgets import QGraphicsVideoItem
 from PyQt6.QtWidgets import (
     QApplication,
+    QFrame,
+    QGraphicsScene,
+    QGraphicsView,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -100,15 +103,16 @@ QToolButton {{
 QToolButton:hover {{ color: {tok.accent_hover}; background: rgba(255,255,255,15); border-radius: 3px; }}
 QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 9pt; }}
 QSlider::groove:horizontal {{
-    height: 4px; background: rgba(255,255,255,60); border-radius: 2px;
+    height: 3px; background: transparent; border-radius: 1px;
+    border: 1px solid rgba(255,255,255,40);
 }}
 QSlider::sub-page:horizontal {{
-    height: 4px; background: {tok.progress_fg}; border-radius: 2px;
+    height: 3px; background: {tok.progress_fg}; border-radius: 1px;
 }}
 QSlider::handle:horizontal {{
-    width: 12px; height: 12px;
+    width: 10px; height: 10px;
     margin: -4px 0;
-    background: {tok.text_primary}; border-radius: 6px;
+    background: {tok.text_primary}; border-radius: 5px;
 }}
 """
 
@@ -363,6 +367,53 @@ class _VideoArea(QWidget):
             self._bar.raise_()
 
 
+# ── Video view (QGraphicsView + QGraphicsVideoItem) ───────────────
+# QVideoWidget은 Windows에서 네이티브 D3D HWND를 생성하며
+# 이 D3D 렌더링이 Qt 위젯을 덮어써 컨트롤바 오버레이가 불가능함.
+# QGraphicsVideoItem은 Qt 텍스처 시스템으로 렌더링하므로 오버레이가 정상 동작.
+
+class _VideoView(QGraphicsView):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet("background: #000; border: none;")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setMouseTracking(True)
+        self.setInteractive(False)
+
+        scene = QGraphicsScene(self)
+        scene.setBackgroundBrush(QBrush(QColor("#000000")))
+        self.setScene(scene)
+
+        self._item = QGraphicsVideoItem()
+        scene.addItem(self._item)
+        self._item.nativeSizeChanged.connect(lambda _: self._fit())
+
+    @property
+    def video_item(self) -> QGraphicsVideoItem:
+        return self._item
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.setSceneRect(0, 0, self.width(), self.height())
+        self._fit()
+
+    def _fit(self) -> None:
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        native = self._item.nativeSize()
+        if native.isValid() and native.width() > 0 and native.height() > 0:
+            scale = min(w / native.width(), h / native.height())
+            vw, vh = native.width() * scale, native.height() * scale
+            self._item.setPos(QPointF((w - vw) / 2, (h - vh) / 2))
+            self._item.setSize(QSizeF(vw, vh))
+        else:
+            self._item.setPos(QPointF(0, 0))
+            self._item.setSize(QSizeF(w, h))
+
+
 # ── Dedicated fullscreen window ───────────────────────────────────
 
 class _FullscreenWindow(QWidget):
@@ -389,7 +440,7 @@ class _FullscreenWindow(QWidget):
         self._player = player
         self._key_handler = key_handler
 
-        self._vw = QVideoWidget(self)
+        self._vw = _VideoView(self)
         self._fs_bar = _ControlBar(self)
 
         lay = QVBoxLayout(self)
@@ -397,7 +448,7 @@ class _FullscreenWindow(QWidget):
         lay.setSpacing(0)
         lay.addWidget(self._vw)
 
-        player.setVideoOutput(self._vw)
+        player.setVideoOutput(self._vw.video_item)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         QTimer.singleShot(0, self._position_bar)
@@ -446,7 +497,9 @@ class InlinePlayer(QWidget):
     playback_failed    = pyqtSignal(str)
     download_requested = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
 
-    _HIDE_MS = 3_000
+    _HIDE_MS = 2_000   # 2초 비활성 후 숨김
+    _SHOW_MS = 1_000   # 마우스 감지 1초 후 표시
+    _last_quality_fmt: str = _DEFAULT_QUALITY_FMT  # 세션 내 품질 선택 공유
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -458,14 +511,28 @@ class InlinePlayer(QWidget):
         self._volume    = 100
         self._is_muted  = False
         self._filter_on = False
-        self._current_quality_fmt = _DEFAULT_QUALITY_FMT
+        self._current_quality_fmt = InlinePlayer._last_quality_fmt
+        self._resume_ms: int = 0
+        self._stream_quality_label: str = ""  # yt-dlp 보고 품질 레이블
         self._setup()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMouseTracking(True)
 
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.setInterval(self._HIDE_MS)
         self._hide_timer.timeout.connect(self._auto_hide_bar)
+
+        # 마우스 감지 후 1초 딜레이로 컨트롤바 표시
+        self._show_timer = QTimer(self)
+        self._show_timer.setSingleShot(True)
+        self._show_timer.setInterval(self._SHOW_MS)
+        self._show_timer.timeout.connect(self._do_show_bar_delayed)
+
+        # 100ms마다 커서 위치를 확인해 컨트롤바 표시/raise
+        self._cursor_poll = QTimer(self)
+        self._cursor_poll.setInterval(100)
+        self._cursor_poll.timeout.connect(self._poll_cursor)
 
     def _setup(self) -> None:
         outer = QVBoxLayout(self)
@@ -477,8 +544,8 @@ class InlinePlayer(QWidget):
         self._player.setAudioOutput(self._audio)
         self._audio.setVolume(1.0)
 
-        self._video_widget = QVideoWidget()
-        self._player.setVideoOutput(self._video_widget)
+        self._video_view = _VideoView()
+        self._player.setVideoOutput(self._video_view.video_item)
 
         self._thumb_label = QLabel()
         self._thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -486,11 +553,12 @@ class InlinePlayer(QWidget):
 
         self._visual_stack = QStackedWidget()
         self._visual_stack.setMouseTracking(True)
-        self._video_widget.setMouseTracking(True)
         self._visual_stack.addWidget(self._thumb_label)   # index 0
-        self._visual_stack.addWidget(self._video_widget)  # index 1
+        self._visual_stack.addWidget(self._video_view)    # index 1
 
         # Control bar is an overlay inside _video_area
+        # _VideoView renders via Qt texture system (no native D3D HWND),
+        # so the control bar overlay is composited correctly by Qt.
         self._bar = _ControlBar()
         self._video_area = _VideoArea(self._visual_stack)
         self._video_area.set_overlay_bar(self._bar)
@@ -521,6 +589,11 @@ class InlinePlayer(QWidget):
         self._player.errorOccurred.connect(self._on_error)
         self._player.metaDataChanged.connect(self._on_metadata_changed)
 
+        # 개별 위젯에도 이벤트 필터 설치 (앱 레벨 필터 보완)
+        self._video_area.installEventFilter(self)
+        self._visual_stack.installEventFilter(self)
+        self._video_view.installEventFilter(self)
+
     # ── Mouse-activity tracking ────────────────────────────────────
 
     def showEvent(self, event) -> None:
@@ -548,6 +621,11 @@ class InlinePlayer(QWidget):
                 except RuntimeError:
                     pass
             self._filter_on = False
+        for w in (self._video_area, self._visual_stack, self._video_view):
+            try:
+                w.removeEventFilter(self)
+            except RuntimeError:
+                pass
 
     def eventFilter(self, obj, event) -> bool:
         if event.type() == QEvent.Type.MouseMove:
@@ -562,16 +640,56 @@ class InlinePlayer(QWidget):
         return False
 
     def _on_mouse_activity(self) -> None:
+        playing = self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        if self._bar.isVisible():
+            # 이미 표시 중: z-order 유지 + 숨김 타이머 리셋
+            self._bar.raise_()
+            if playing:
+                self._hide_timer.start()
+        else:
+            # 숨겨진 상태: 1초 딜레이 후 표시
+            if not self._show_timer.isActive():
+                self._show_timer.start()
+
+    def _do_show_bar_delayed(self) -> None:
+        """_show_timer 만료 시 컨트롤바 표시."""
         self._bar.show()
         self._bar.raise_()
         if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self._hide_timer.start()
 
     def _auto_hide_bar(self) -> None:
-        if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+        if self._player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            return
+        # 커서가 비디오 영역 안에 있으면 숨기지 않고 타이머를 재시작
+        gpos = QCursor.pos()
+        va_local = self._video_area.mapFromGlobal(gpos)
+        if self._video_area.rect().contains(va_local):
+            self._hide_timer.start()
+        else:
             self._bar.hide()
+            self._show_timer.stop()
+
+    def _poll_cursor(self) -> None:
+        if self._player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            return
+        gpos = QCursor.pos()
+        va_local = self._video_area.mapFromGlobal(gpos)
+        if self._video_area.rect().contains(va_local):
+            if self._bar.isVisible():
+                self._bar.raise_()
+            else:
+                if not self._show_timer.isActive():
+                    self._show_timer.start()
+        else:
+            self._show_timer.stop()
 
     # ── Public API ─────────────────────────────────────────────────
+
+    @property
+    def position_ms(self) -> int:
+        """현재 재생 위치(ms). 재생 전이면 0."""
+        return self._player.position()
 
     def load(
         self,
@@ -579,11 +697,15 @@ class InlinePlayer(QWidget):
         downloads: list[DownloadInfoDTO],
         thumbnail_pixmap=None,
         title: str = "",
+        resume_ms: int = 0,
     ) -> None:
         self.stop()
         self._video_url   = video_url
         self._video_title = title
         self._downloads   = downloads
+        self._resume_ms   = resume_ms
+        self._current_quality_fmt = InlinePlayer._last_quality_fmt
+        self._stream_quality_label = ""
         self._visual_stack.setCurrentIndex(0)
         if thumbnail_pixmap and not thumbnail_pixmap.isNull():
             self._thumb_label.setPixmap(thumbnail_pixmap)
@@ -702,7 +824,7 @@ class InlinePlayer(QWidget):
         self._fs_win.setFocus()
 
     def _exit_fullscreen(self) -> None:
-        self._player.setVideoOutput(self._video_widget)
+        self._player.setVideoOutput(self._video_view.video_item)
         if self._fs_win:
             self._fs_win.exit_requested.disconnect()
             self._fs_win.close()
@@ -729,19 +851,33 @@ class InlinePlayer(QWidget):
             self._bar.show()
             self._bar.raise_()
             self._hide_timer.start()
+            self._cursor_poll.start()
         else:
             self._hide_timer.stop()
+            self._show_timer.stop()
+            self._cursor_poll.stop()
             self._bar.show()
             self._bar.raise_()
         if state == QMediaPlayer.PlaybackState.StoppedState:
             self._visual_stack.setCurrentIndex(0)
+
+    def _do_play_start(self) -> None:
+        """재생 시작 공통 처리. resume_ms가 있으면 해당 위치부터 재생."""
+        self._player.play()
+        if self._resume_ms > 0:
+            QTimer.singleShot(80, lambda: self._seek_resume())
+
+    def _seek_resume(self) -> None:
+        if self._resume_ms > 0:
+            self._player.setPosition(self._resume_ms)
+            self._resume_ms = 0
 
     def _start_local(self, path: str) -> None:
         self._player.setSource(QUrl.fromLocalFile(path))
         self._visual_stack.setCurrentIndex(1)
         self._bar.show()
         self._bar.raise_()
-        QTimer.singleShot(50, self._player.play)
+        QTimer.singleShot(50, self._do_play_start)
 
     def _fetch_stream(self) -> None:
         if not self._video_url:
@@ -760,9 +896,12 @@ class InlinePlayer(QWidget):
         self._visual_stack.setCurrentIndex(1)
         self._bar.show()
         self._bar.raise_()
+        self._stream_quality_label = quality  # metadata 업데이트 기준으로 사용
         if quality:
             self._bar.set_quality(quality)
-        QTimer.singleShot(50, self._player.play)
+        else:
+            self._bar.set_quality("")
+        QTimer.singleShot(50, self._do_play_start)
 
     def _on_stream_failed(self, err: str) -> None:
         self._status_lbl.hide()
@@ -773,16 +912,21 @@ class InlinePlayer(QWidget):
             self.stop()
             self.playback_failed.emit(error_string)
 
-    def _on_quality_changed(self, fmt: str, _label: str) -> None:
+    def _on_quality_changed(self, fmt: str, short: str) -> None:
         self._current_quality_fmt = fmt
+        InlinePlayer._last_quality_fmt = fmt
         state = self._player.playbackState()
         if state != QMediaPlayer.PlaybackState.StoppedState:
+            self._resume_ms = self._player.position()
+            self._bar.set_quality("전환 중…")
             self._player.stop()
             self._visual_stack.setCurrentIndex(0)
             self._fetch_stream()
 
     def _on_metadata_changed(self) -> None:
-        """Update quality badge with actual video resolution once media loads."""
+        """yt-dlp 보고 품질이 없을 때만 Qt 메타데이터 해상도로 뱃지를 보완한다."""
+        if self._stream_quality_label:
+            return
         try:
             from PyQt6.QtMultimedia import QMediaMetaData  # noqa: PLC0415
             meta = self._player.metaData()

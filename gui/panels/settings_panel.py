@@ -372,14 +372,16 @@ class SettingsPanel(QWidget):
     def __init__(
         self,
         get_tags_fn: Callable | None = None,
+        yt_oauth=None,   # YouTubeOAuthAdapter | None
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._get_tags_fn = get_tags_fn
+        self._yt_oauth = yt_oauth
         self._theme_cards: dict[str, _ThemeCard] = {}
+        self._yt_auth_worker = None
         self._build_ui()
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
-        # 현재 테마 반영
         self._on_theme_changed(ThemeManager.instance().current())
 
     # ------------------------------------------------------------------
@@ -646,6 +648,128 @@ class SettingsPanel(QWidget):
             layout.addWidget(no_tags_lbl)
             self._hidden_tags_section = None
 
+        # ── YouTube API 연동 섹션 ──
+        layout.addSpacing(20)
+        yt_label = QLabel("YouTube API 연동")
+        yt_label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+        )
+        layout.addWidget(yt_label)
+        layout.addSpacing(10)
+
+        yt_desc = QLabel(
+            "Google Cloud Console에서 YouTube Data API v3 OAuth2 자격증명을 발급 후\n"
+            "아래에 입력하고 인증하세요. 무료 — 일 10,000 유닛 할당.\n"
+            "인증 완료 시 재생목록 동기화(읽기+쓰기) + 구독 채널 가져오기가 활성화됩니다."
+        )
+        yt_desc.setStyleSheet("font-size: 9pt; color: #888;")
+        yt_desc.setWordWrap(True)
+        layout.addWidget(yt_desc)
+        layout.addSpacing(8)
+
+        cid_row = QHBoxLayout()
+        cid_lbl = QLabel("Client ID")
+        cid_lbl.setFixedWidth(100)
+        self._yt_client_id_edit = QLineEdit()
+        self._yt_client_id_edit.setPlaceholderText("xxxx.apps.googleusercontent.com")
+        cid_row.addWidget(cid_lbl)
+        cid_row.addWidget(self._yt_client_id_edit, 1)
+        layout.addLayout(cid_row)
+
+        csec_row = QHBoxLayout()
+        csec_lbl = QLabel("Client Secret")
+        csec_lbl.setFixedWidth(100)
+        self._yt_client_secret_edit = QLineEdit()
+        self._yt_client_secret_edit.setPlaceholderText("GOCSPX-…")
+        self._yt_client_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        csec_row.addWidget(csec_lbl)
+        csec_row.addWidget(self._yt_client_secret_edit, 1)
+        layout.addLayout(csec_row)
+        layout.addSpacing(8)
+
+        yt_btn_row = QHBoxLayout()
+        self._yt_auth_btn = QPushButton("OAuth 인증하기")
+        self._yt_auth_btn.setFixedWidth(130)
+        self._yt_auth_btn.clicked.connect(self._on_yt_auth)
+        yt_btn_row.addWidget(self._yt_auth_btn)
+
+        self._yt_disconnect_btn = QPushButton("연결 해제")
+        self._yt_disconnect_btn.setFixedWidth(80)
+        self._yt_disconnect_btn.clicked.connect(self._on_yt_disconnect)
+        yt_btn_row.addWidget(self._yt_disconnect_btn)
+        yt_btn_row.addStretch()
+        layout.addLayout(yt_btn_row)
+        layout.addSpacing(6)
+
+        self._yt_status_lbl = QLabel()
+        self._yt_status_lbl.setWordWrap(True)
+        layout.addWidget(self._yt_status_lbl)
+        self._refresh_yt_status()
+
+        # ── 구독 피드 브라우저 쿠키 (YouTube API에는 피드 엔드포인트 없음) ──
+        layout.addSpacing(16)
+        feed_label = QLabel("구독 피드 — 브라우저 쿠키 (선택)")
+        feed_label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.5px; color: #666;"
+        )
+        layout.addWidget(feed_label)
+        feed_hint = QLabel(
+            "YouTube API는 구독 피드(최신 영상 목록) 엔드포인트를 제공하지 않아\n"
+            "브라우저 쿠키가 필요합니다. Firefox 권장 (Chrome 실행 중 오류 발생)."
+        )
+        feed_hint.setWordWrap(True)
+        feed_hint.setStyleSheet("font-size: 8pt; color: #888;")
+        layout.addWidget(feed_hint)
+        layout.addSpacing(6)
+
+        browser_row = QHBoxLayout()
+        b_lbl = QLabel("브라우저")
+        b_lbl.setFixedWidth(100)
+        self._feed_browser_combo = QComboBox()
+        self._feed_browser_combo.addItems(["firefox", "chrome", "edge", "chromium"])
+        self._feed_browser_combo.setFixedWidth(120)
+        self._feed_browser_combo.currentTextChanged.connect(self._on_feed_browser_changed)
+        browser_row.addWidget(b_lbl)
+        browser_row.addWidget(self._feed_browser_combo)
+        browser_row.addStretch()
+        layout.addLayout(browser_row)
+
+        profile_row = QHBoxLayout()
+        p_lbl = QLabel("프로필")
+        p_lbl.setFixedWidth(100)
+        self._feed_profile_combo = QComboBox()
+        self._feed_profile_combo.setFixedWidth(220)
+        self._feed_profile_combo.setToolTip("브라우저 프로필을 선택하세요")
+        self._feed_profile_combo.currentIndexChanged.connect(self._on_feed_profile_changed)
+        profile_row.addWidget(p_lbl)
+        profile_row.addWidget(self._feed_profile_combo, 1)
+        layout.addLayout(profile_row)
+
+        cookie_row = QHBoxLayout()
+        ck_lbl = QLabel("또는 쿠키 파일")
+        ck_lbl.setFixedWidth(100)
+        self._feed_cookie_edit = QLineEdit()
+        self._feed_cookie_edit.setPlaceholderText("Netscape 포맷 쿠키 파일 경로 (선택)")
+        ck_browse = QPushButton("찾기…")
+        ck_browse.setFixedWidth(48)
+        ck_browse.clicked.connect(self._on_browse_cookie_file)
+        cookie_row.addWidget(ck_lbl)
+        cookie_row.addWidget(self._feed_cookie_edit, 1)
+        cookie_row.addWidget(ck_browse)
+        layout.addLayout(cookie_row)
+
+        ck_apply = QPushButton("쿠키 파일 적용")
+        ck_apply.setFixedWidth(110)
+        ck_apply.clicked.connect(self._on_apply_cookie_file)
+        layout.addWidget(ck_apply)
+
+        self._feed_status_lbl = QLabel()
+        self._feed_status_lbl.setWordWrap(True)
+        self._feed_status_lbl.setStyleSheet("font-size: 8pt; color: #888;")
+        layout.addWidget(self._feed_status_lbl)
+        self._refresh_feed_auth_ui()
+
         layout.addStretch()
 
     # ------------------------------------------------------------------
@@ -654,6 +778,8 @@ class SettingsPanel(QWidget):
         super().showEvent(event)
         if self._hidden_tags_section is not None:
             self._hidden_tags_section.refresh()
+        self._refresh_yt_status()
+        self._refresh_feed_auth_ui()
 
     # ------------------------------------------------------------------
     def _on_concurrent_changed(self, value: int) -> None:
@@ -690,3 +816,159 @@ class SettingsPanel(QWidget):
         """테마 변경 시 선택 상태를 업데이트한다."""
         for name, card in self._theme_cards.items():
             card.set_selected(name == tokens.name)
+
+    # ── YouTube API OAuth ──────────────────────────────────────────────────
+
+    def _refresh_yt_status(self) -> None:
+        if self._yt_oauth is None:
+            self._yt_status_lbl.setText("○ YouTube API 미초기화")
+            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+            return
+        if self._yt_oauth.is_authenticated():
+            name = self._yt_oauth.get_channel_name() or "인증됨"
+            self._yt_status_lbl.setText(f"● 연결됨: {name}")
+            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #4caf50;")
+        else:
+            self._yt_status_lbl.setText("○ 미연결 — OAuth 인증이 필요합니다")
+            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #f44336;")
+
+    def _on_yt_auth(self) -> None:
+        if self._yt_oauth is None:
+            return
+        client_id = self._yt_client_id_edit.text().strip()
+        client_secret = self._yt_client_secret_edit.text().strip()
+        if not client_id or not client_secret:
+            self._yt_status_lbl.setText("Client ID와 Client Secret을 입력하세요.")
+            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #f4a336;")
+            return
+
+        from PyQt6.QtCore import QThread, pyqtSignal as _sig  # noqa: PLC0415
+
+        class _AuthWorker(QThread):
+            done = _sig(str)   # channel_name or ""
+            err  = _sig(str)
+
+            def __init__(self, oauth, cid, csec, parent=None):
+                super().__init__(parent)
+                self._oauth = oauth
+                self._cid   = cid
+                self._csec  = csec
+
+            def run(self):
+                try:
+                    self._oauth.run_auth_flow(self._cid, self._csec)
+                    name = self._oauth.get_channel_name() or "인증됨"
+                    self.done.emit(name)
+                except Exception as exc:
+                    self.err.emit(str(exc))
+
+        self._yt_auth_btn.setEnabled(False)
+        self._yt_auth_btn.setText("인증 중…")
+        self._yt_status_lbl.setText("브라우저에서 Google 계정으로 승인하세요…")
+        self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+
+        worker = _AuthWorker(self._yt_oauth, client_id, client_secret, self)
+
+        def _on_done(name: str) -> None:
+            self._yt_auth_btn.setEnabled(True)
+            self._yt_auth_btn.setText("OAuth 인증하기")
+            self._yt_status_lbl.setText(f"● 연결됨: {name}")
+            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #4caf50;")
+            self._yt_auth_worker = None
+
+        def _on_err(msg: str) -> None:
+            self._yt_auth_btn.setEnabled(True)
+            self._yt_auth_btn.setText("OAuth 인증하기")
+            self._yt_status_lbl.setText(f"인증 실패: {msg[:120]}")
+            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #f44336;")
+            self._yt_auth_worker = None
+
+        worker.done.connect(_on_done)
+        worker.err.connect(_on_err)
+        self._yt_auth_worker = worker
+        worker.start()
+
+    def _on_yt_disconnect(self) -> None:
+        if self._yt_oauth is None:
+            return
+        self._yt_oauth.clear()
+        self._refresh_yt_status()
+
+    # ── 브라우저 쿠키 (구독 피드) ──────────────────────────────────────────────
+
+    def _refresh_feed_auth_ui(self) -> None:
+        """현재 저장된 브라우저 쿠키 설정을 UI에 반영한다."""
+        try:
+            from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
+            import config.settings as s  # noqa: PLC0415
+            svc = YouTubeAuthService()
+            browser = getattr(s, "YT_AUTH_BROWSER", "firefox") or "firefox"
+            idx = self._feed_browser_combo.findText(browser)
+            if idx >= 0:
+                self._feed_browser_combo.setCurrentIndex(idx)
+            self._reload_profiles(browser)
+            cookiefile = getattr(s, "YT_AUTH_COOKIEFILE", None)
+            if cookiefile:
+                self._feed_cookie_edit.setText(cookiefile)
+            profile = getattr(s, "YT_AUTH_PROFILE", None)
+            self._feed_status_lbl.setText(
+                f"프로필: {profile}" if profile else
+                (f"쿠키 파일: {cookiefile}" if cookiefile else "미설정")
+            )
+        except Exception:
+            pass
+
+    def _reload_profiles(self, browser: str) -> None:
+        from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
+        import config.settings as s  # noqa: PLC0415
+        self._feed_profile_combo.blockSignals(True)
+        self._feed_profile_combo.clear()
+        self._feed_profile_combo.addItem("(선택 안 함)", None)
+        try:
+            profiles = YouTubeAuthService().detect_profiles(browser)
+            for p in profiles:
+                self._feed_profile_combo.addItem(p.display_name, p.profile_key)
+            # 현재 저장된 프로필 선택
+            saved = getattr(s, "YT_AUTH_PROFILE", None)
+            if saved:
+                for i in range(self._feed_profile_combo.count()):
+                    if self._feed_profile_combo.itemData(i) == saved:
+                        self._feed_profile_combo.setCurrentIndex(i)
+                        break
+        except Exception:
+            pass
+        finally:
+            self._feed_profile_combo.blockSignals(False)
+
+    def _on_feed_browser_changed(self, browser: str) -> None:
+        self._reload_profiles(browser)
+
+    def _on_feed_profile_changed(self, _index: int) -> None:
+        profile_key = self._feed_profile_combo.currentData()
+        if profile_key is None:
+            return
+        from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
+        browser = self._feed_browser_combo.currentText()
+        YouTubeAuthService().save_auth(browser=browser, profile_key=profile_key, cookiefile=None)
+        self._feed_status_lbl.setText(
+            f"저장됨: {self._feed_profile_combo.currentText()}"
+        )
+        self._feed_status_lbl.setStyleSheet("font-size: 8pt; color: #4caf50;")
+
+    def _on_browse_cookie_file(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog  # noqa: PLC0415
+        path, _ = QFileDialog.getOpenFileName(
+            self, "쿠키 파일 선택", "", "텍스트 파일 (*.txt);;모든 파일 (*)"
+        )
+        if path:
+            self._feed_cookie_edit.setText(path)
+
+    def _on_apply_cookie_file(self) -> None:
+        cookiefile = self._feed_cookie_edit.text().strip()
+        if not cookiefile:
+            return
+        from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
+        browser = self._feed_browser_combo.currentText()
+        YouTubeAuthService().save_auth(browser=browser, profile_key=None, cookiefile=cookiefile)
+        self._feed_status_lbl.setText("쿠키 파일이 설정되었습니다.")
+        self._feed_status_lbl.setStyleSheet("font-size: 8pt; color: #4caf50;")

@@ -93,6 +93,15 @@ DEFAULT_FORMAT: str = _resolve_str("default_format", "mp4")
 
 THEME: str = _resolve_str("theme", "slate")
 
+# ---------------------------------------------------------------------------
+# YouTube 인증 설정
+# ---------------------------------------------------------------------------
+
+YT_AUTH_BROWSER: str = _resolve_str("yt_auth_browser", "chrome")
+YT_AUTH_PROFILE: str | None = _load_config().get("yt_auth_profile")
+YT_AUTH_COOKIEFILE: str | None = _load_config().get("yt_auth_cookiefile")
+YT_AUTH_ACCOUNT_NAME: str | None = _load_config().get("yt_auth_account_name")
+
 
 def save_setting(key: str, value) -> None:
     """단일 설정 키-값을 config.yaml에 저장하고 모듈 변수를 갱신한다."""
@@ -113,6 +122,10 @@ def save_setting(key: str, value) -> None:
         "default_quality": "DEFAULT_QUALITY",
         "default_format": "DEFAULT_FORMAT",
         "theme": "THEME",
+        "yt_auth_browser": "YT_AUTH_BROWSER",
+        "yt_auth_profile": "YT_AUTH_PROFILE",
+        "yt_auth_cookiefile": "YT_AUTH_COOKIEFILE",
+        "yt_auth_account_name": "YT_AUTH_ACCOUNT_NAME",
     }
     if key in mapping:
         setattr(_self, mapping[key], value)

@@ -137,12 +137,23 @@ class SqliteVideoRepository(IVideoRepository):
         sql, params = self._build_search_sql(query, count_only=False)
         results: list[VideoAggregate] = []
         with self._db.connection() as conn:
-            # Use cursor to avoid fetchall on large tables
-            cursor = conn.execute(sql, params)
-            for row in cursor:
+            rows = conn.execute(sql, params).fetchall()  # page size = 50, acceptable
+            if not rows:
+                return results
+            video_ids = [row["id"] for row in rows]
+            # Bulk-load tags for all result videos in a single query
+            placeholders = ",".join("?" * len(video_ids))
+            tag_rows = conn.execute(
+                f"SELECT video_id, tag_id FROM video_tags WHERE video_id IN ({placeholders})",
+                video_ids,
+            ).fetchall()
+            tag_map: dict[str, list[UUID]] = {}
+            for tr in tag_rows:
+                tag_map.setdefault(tr["video_id"], []).append(UUID(tr["tag_id"]))
+            for row in rows:
                 video = _row_to_video(row)
                 cat_id = UUID(row["category_id"]) if row["category_id"] else None
-                results.append(VideoAggregate(video, category_id=cat_id))
+                results.append(VideoAggregate(video, category_id=cat_id, tag_ids=tag_map.get(row["id"], [])))
         return results
 
     def count(self, query: SearchQuery) -> int:
@@ -152,8 +163,18 @@ class SqliteVideoRepository(IVideoRepository):
             return row[0] if row else 0
 
     def delete(self, video_id: UUID) -> None:
+        vid = str(video_id)
         with self._db.connection() as conn:
-            conn.execute("DELETE FROM videos WHERE id=?", (str(video_id),))
+            # CASCADE 삭제 전에 이 영상이 속한 재생목록의 item_count를 먼저 감소
+            conn.execute(
+                """UPDATE playlists
+                   SET item_count = MAX(0, item_count - 1)
+                   WHERE id IN (
+                       SELECT playlist_id FROM playlist_items WHERE video_id = ?
+                   )""",
+                (vid,),
+            )
+            conn.execute("DELETE FROM videos WHERE id=?", (vid,))
 
     def exists_by_url(self, url: str) -> bool:
         url = normalize_video_url(url)
@@ -198,6 +219,13 @@ class SqliteVideoRepository(IVideoRepository):
             )
             for r in rows
         ]
+
+    def list_category_video_counts(self) -> dict[UUID, int]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT category_id, COUNT(*) AS cnt FROM videos WHERE category_id IS NOT NULL GROUP BY category_id"
+            ).fetchall()
+        return {UUID(r["category_id"]): r["cnt"] for r in rows}
 
     def save_category(self, category: Category) -> None:
         with self._db.connection() as conn:
@@ -271,6 +299,54 @@ class SqliteVideoRepository(IVideoRepository):
             return cursor.rowcount
 
     # ------------------------------------------------------------------
+    # Category video order
+    # ------------------------------------------------------------------
+
+    def get_category_video_order(self, category_id: UUID) -> list[UUID]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT video_id FROM category_video_order "
+                "WHERE category_id=? ORDER BY position",
+                (str(category_id),),
+            ).fetchall()
+        return [UUID(r["video_id"]) for r in rows]
+
+    def set_category_video_order(self, category_id: UUID, video_ids: list[UUID]) -> None:
+        cid = str(category_id)
+        with self._db.connection() as conn:
+            conn.execute("DELETE FROM category_video_order WHERE category_id=?", (cid,))
+            conn.executemany(
+                "INSERT INTO category_video_order (category_id, video_id, position) VALUES (?,?,?)",
+                [(cid, str(vid), pos) for pos, vid in enumerate(video_ids)],
+            )
+
+    def get_library_stats(self) -> dict:
+        """통계 집계: total, watched, favorite, duration, category counts."""
+        with self._db.connection() as conn:
+            row = conn.execute(
+                """SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN watched=1 THEN 1 ELSE 0 END) as watched,
+                    SUM(CASE WHEN favorite=1 THEN 1 ELSE 0 END) as favorite,
+                    COALESCE(SUM(duration_sec), 0) as total_dur
+                FROM videos"""
+            ).fetchone()
+            cat_rows = conn.execute(
+                """SELECT COALESCE(c.name, '미분류') as name, COUNT(v.id) as cnt
+                FROM categories c
+                LEFT JOIN videos v ON v.category_id = c.id
+                GROUP BY c.id
+                ORDER BY cnt DESC LIMIT 15"""
+            ).fetchall()
+        return {
+            "total_videos": row["total"] or 0,
+            "watched_count": row["watched"] or 0,
+            "favorite_count": row["favorite"] or 0,
+            "total_duration_sec": row["total_dur"] or 0,
+            "category_stats": [(r["name"], r["cnt"]) for r in cat_rows],
+        }
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -304,6 +380,11 @@ class SqliteVideoRepository(IVideoRepository):
             where.append(f"video_tags.tag_id IN ({placeholders})")
             params.extend(str(t) for t in query.tag_ids)
 
+        if query.video_ids:
+            placeholders = ",".join("?" * len(query.video_ids))
+            where.append(f"videos.id IN ({placeholders})")
+            params.extend(str(vid) for vid in query.video_ids)
+
         if query.favorite_only:
             where.append("videos.favorite = 1")
 
@@ -311,15 +392,28 @@ class SqliteVideoRepository(IVideoRepository):
             where.append("videos.watched = ?")
             params.append(int(query.watched))
 
+        if query.min_duration_sec is not None:
+            where.append("videos.duration_sec >= ?")
+            params.append(query.min_duration_sec)
+
+        if query.max_duration_sec is not None:
+            where.append("videos.duration_sec <= ?")
+            params.append(query.max_duration_sec)
+
         where_clause = ("WHERE " + " AND ".join(where)) if where else ""
         join_clause = " ".join(joins)
 
+        # SQL 인젝션 방지: 허용된 컬럼명만 사용
+        from domain.library.repositories import _ALLOWED_SORT_COLUMNS  # noqa: PLC0415
+        sort_col = query.sort_by if query.sort_by in _ALLOWED_SORT_COLUMNS else "created_at"
+        sort_dir = "ASC" if query.sort_asc else "DESC"
+
         if count_only:
-            sql = f"SELECT COUNT(*) FROM videos {join_clause} {where_clause}"
+            sql = f"SELECT COUNT(DISTINCT videos.id) FROM videos {join_clause} {where_clause}"
         else:
             sql = (
-                f"SELECT videos.* FROM videos {join_clause} {where_clause} "
-                f"ORDER BY videos.created_at DESC "
+                f"SELECT DISTINCT videos.* FROM videos {join_clause} {where_clause} "
+                f"ORDER BY videos.{sort_col} {sort_dir} "
                 f"LIMIT ? OFFSET ?"
             )
             params.extend([query.limit, query.offset])

@@ -9,6 +9,7 @@ class CategoryDTO:
     id: UUID
     name: str
     parent_id: UUID | None = None
+    video_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,50 @@ class LibraryStatsDTO:
     category_stats: list[CategoryStatDTO]
     total_downloads: int
     total_download_bytes: int
+
+
+@dataclass(frozen=True)
+class PlaylistFolderDTO:
+    id: UUID
+    name: str
+    source: str    # "local" | "youtube"
+
+
+@dataclass(frozen=True)
+class PlaylistDTO:
+    id: UUID
+    title: str
+    yt_playlist_id: str | None
+    source: str       # "local" | "youtube"
+    item_count: int
+    folder_id: UUID | None = None
+    updated_at: str | None = None   # ISO 8601 문자열
+
+
+@dataclass(frozen=True)
+class PlaylistItemDTO:
+    playlist_id: UUID
+    video_id: UUID
+    position: int
+    video_title: str = ""
+    thumbnail_path: str = ""
+    channel_name: str = ""
+    duration_sec: int | None = None
+
+
+@dataclass(frozen=True)
+class FeedVideoDTO:
+    url: str
+    title: str
+    channel_name: str
+    channel_id: str
+    thumbnail_url: str     # 원격 URL (미캐시)
+    thumbnail_path: str    # 로컬 캐시 경로 ("" if not cached)
+    published_at: str
+    view_count: int | None
+    duration_sec: int | None
+    in_library: bool       # 이미 라이브러리에 등록된 영상이면 True
+    yt_video_id: str = ""  # YouTube 영상 ID (썸네일 URL 생성용)
 
 
 @dataclass(frozen=True)

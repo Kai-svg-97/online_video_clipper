@@ -10,9 +10,10 @@ import sys
 from pathlib import Path
 from uuid import UUID
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QTime, QTimer, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -23,6 +24,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QTabWidget,
+    QTimeEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -135,10 +137,13 @@ class VideoDetailWidget(QWidget):
     tags_updated         = pyqtSignal(object, object)  # (UUID, list[str])
     download_requested   = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, clip_vm=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._detail: VideoDetailDTO | None = None
         self._tag_add_input: QLineEdit | None = None
+        self._clip_vm = clip_vm
+        self._clip_source_file: str | None = None
+        self._filter_on = False
         self._setup_skeleton()
 
     # ── Skeleton (built once) ──────────────────────────────────────
@@ -241,16 +246,53 @@ class VideoDetailWidget(QWidget):
         note_layout.addWidget(note_grp)
         self._tabs.addTab(_wrap(note_tab), "내 메모")
 
+        # Tab: 클립
+        self._clip_tab_widget = QWidget()
+        self._clip_tab_layout = QVBoxLayout(self._clip_tab_widget)
+        self._clip_tab_layout.setContentsMargins(8, 8, 8, 8)
+        self._tabs.addTab(_wrap(self._clip_tab_widget), "클립")
+
+        self._tabs.currentChanged.connect(self._on_tab_changed)
         root.addWidget(self._tabs)
+
+    # ── 이벤트 필터 (마우스 뒤로가기 버튼 감지) ───────────────────────
+
+    def showEvent(self, event) -> None:
+        if not self._filter_on:
+            app = QApplication.instance()
+            if app:
+                app.installEventFilter(self)
+                self._filter_on = True
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:
+        if self._filter_on:
+            app = QApplication.instance()
+            if app:
+                try:
+                    app.removeEventFilter(self)
+                except RuntimeError:
+                    pass
+            self._filter_on = False
+        super().hideEvent(event)
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.BackButton:
+                self.back_requested.emit()
+                return True
+        return False
 
     # ── Populate ───────────────────────────────────────────────────
 
-    def load(self, detail: VideoDetailDTO, tag_ids: dict[str, UUID]) -> None:
-        """Populate all fields from *detail*."""
+    def load(self, detail: VideoDetailDTO, tag_ids: dict[str, UUID], resume_ms: int = 0) -> None:
+        """Populate all fields from *detail*. resume_ms > 0이면 해당 위치부터 이어서 재생."""
         self._detail = detail
         self._tag_ids = tag_ids
 
-        self._player.load(detail.url, detail.downloads)
+        self._player.load(detail.url, detail.downloads, resume_ms=resume_ms)
+        if resume_ms > 0:
+            QTimer.singleShot(150, self._player.play)
         self._title_top.setText(detail.title)
 
         # Rebuild metadata area
@@ -323,6 +365,8 @@ class VideoDetailWidget(QWidget):
             dl_layout = self._dl_tab.layout()
         else:
             dl_layout = QVBoxLayout(self._dl_tab)
+        dl_layout.setContentsMargins(8, 8, 8, 4)
+        dl_layout.setSpacing(8)
         if detail.downloads:
             for dl in detail.downloads:
                 fp = Path(dl.file_path) if dl.file_path else None
@@ -335,16 +379,29 @@ class VideoDetailWidget(QWidget):
                     "파일 있음 ✓" if exists else "파일 없음 ✗",
                 ]))
                 grp = QGroupBox(filename)
+                grp.setMinimumHeight(90)
                 gl = QVBoxLayout(grp)
-                gl.setContentsMargins(8, 4, 8, 6)
+                gl.setContentsMargins(10, 8, 10, 10)
+                gl.setSpacing(6)
                 info_lbl = QLabel(info)
-                info_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-size:8pt;")
+                info_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-size:9pt;")
+                info_lbl.setMinimumHeight(22)
                 gl.addWidget(info_lbl)
                 if exists:
-                    ob = QPushButton("파일 위치 열기")
-                    ob.setFixedHeight(24)
-                    ob.clicked.connect(lambda _, p=dl.file_path: _open_folder(p))
-                    gl.addWidget(ob)
+                    btn_row = QHBoxLayout()
+                    btn_row.setSpacing(6)
+                    folder_btn = QPushButton("폴더 열기")
+                    folder_btn.setFixedHeight(28)
+                    folder_btn.setToolTip("파일 위치를 탐색기에서 열기")
+                    folder_btn.clicked.connect(lambda _, p=dl.file_path: _open_folder(p))
+                    btn_row.addWidget(folder_btn)
+                    open_btn = QPushButton("파일 열기")
+                    open_btn.setFixedHeight(28)
+                    open_btn.setToolTip("기본 앱으로 파일 열기 / 재생")
+                    open_btn.clicked.connect(lambda _, p=dl.file_path: _open_file(p))
+                    btn_row.addWidget(open_btn)
+                    btn_row.addStretch()
+                    gl.addLayout(btn_row)
                 dl_layout.addWidget(grp)
         else:
             dl_layout.addWidget(QLabel("다운로드된 파일이 없습니다."))
@@ -352,6 +409,176 @@ class VideoDetailWidget(QWidget):
 
         # Notes
         self._notes_edit.setPlainText(detail.notes)
+
+        # Clip tab — 로컬 파일 탐색 및 탭 초기화
+        self._clip_source_file = None
+        if detail.downloads:
+            for dl in detail.downloads:
+                if dl.file_path and Path(dl.file_path).exists():
+                    self._clip_source_file = dl.file_path
+                    break
+        self._build_clip_tab()
+
+    # ── Clip tab ───────────────────────────────────────────────────
+
+    def _build_clip_tab(self) -> None:
+        _clear_layout(self._clip_tab_layout)
+
+        if self._clip_vm is None or self._detail is None:
+            self._clip_tab_layout.addWidget(QLabel("클립 기능을 사용할 수 없습니다."))
+            self._clip_tab_layout.addStretch()
+            return
+
+        if not self._clip_source_file:
+            info = QLabel("로컬 파일이 있어야 클립 추출이 가능합니다.\n다운로드 후 다시 시도해 주세요.")
+            info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            info.setStyleSheet("color: #888; font-size: 10pt; padding: 24px;")
+            self._clip_tab_layout.addWidget(info)
+            self._clip_tab_layout.addStretch()
+            return
+
+        # ── 구간 설정 영역 ──────────────────────────────────────────
+        range_grp = QGroupBox("구간 설정")
+        range_layout = QVBoxLayout(range_grp)
+        range_layout.setSpacing(8)
+
+        time_row = QHBoxLayout()
+        time_row.setSpacing(12)
+        start_lbl = QLabel("시작")
+        start_lbl.setFixedWidth(30)
+        self._start_edit = QTimeEdit(QTime(0, 0, 0))
+        self._start_edit.setDisplayFormat("HH:mm:ss")
+        end_lbl = QLabel("끝")
+        end_lbl.setFixedWidth(20)
+        self._end_edit = QTimeEdit(QTime(0, 0, 0))
+        self._end_edit.setDisplayFormat("HH:mm:ss")
+        time_row.addWidget(start_lbl)
+        time_row.addWidget(self._start_edit)
+        time_row.addWidget(end_lbl)
+        time_row.addWidget(self._end_edit)
+        time_row.addStretch()
+        range_layout.addLayout(time_row)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        set_start_btn = QPushButton("현재 위치 → 시작")
+        set_start_btn.clicked.connect(self._set_start_from_player)
+        set_end_btn = QPushButton("현재 위치 → 끝")
+        set_end_btn.clicked.connect(self._set_end_from_player)
+        btn_row.addWidget(set_start_btn)
+        btn_row.addWidget(set_end_btn)
+        btn_row.addStretch()
+        range_layout.addLayout(btn_row)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addWidget(QLabel("클립 제목"))
+        self._clip_title_edit = QLineEdit()
+        self._clip_title_edit.setPlaceholderText("클립 제목 입력…")
+        title_row.addWidget(self._clip_title_edit, 1)
+        range_layout.addLayout(title_row)
+
+        extract_btn = QPushButton("클립 추출")
+        extract_btn.setFixedHeight(28)
+        extract_btn.clicked.connect(self._on_extract_clip)
+        range_layout.addWidget(extract_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        self._clip_status_lbl = QLabel("")
+        self._clip_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+        range_layout.addWidget(self._clip_status_lbl)
+
+        self._clip_tab_layout.addWidget(range_grp)
+
+        # ── 클립 목록 ──────────────────────────────────────────────
+        list_grp = QGroupBox("추출된 클립 목록")
+        self._clip_list_layout = QVBoxLayout(list_grp)
+        self._clip_tab_layout.addWidget(list_grp)
+
+        self._clip_tab_layout.addStretch()
+
+        # 클립 VM 연결 (중복 연결 방지)
+        try:
+            self._clip_vm.clips_changed.disconnect(self._refresh_clip_list)
+        except Exception:
+            pass
+        self._clip_vm.clips_changed.connect(self._refresh_clip_list)
+
+    def _set_start_from_player(self) -> None:
+        ms = self._player.position_ms
+        t = QTime(0, 0, 0).addMSecs(ms)
+        self._start_edit.setTime(t)
+
+    def _set_end_from_player(self) -> None:
+        ms = self._player.position_ms
+        t = QTime(0, 0, 0).addMSecs(ms)
+        self._end_edit.setTime(t)
+
+    def _on_extract_clip(self) -> None:
+        if self._clip_vm is None or self._detail is None or not self._clip_source_file:
+            return
+        start_t = self._start_edit.time()
+        end_t = self._end_edit.time()
+        start_sec = start_t.hour() * 3600 + start_t.minute() * 60 + start_t.second()
+        end_sec = end_t.hour() * 3600 + end_t.minute() * 60 + end_t.second()
+        if end_sec <= start_sec:
+            self._clip_status_lbl.setText("끝 시간은 시작 시간보다 커야 합니다.")
+            return
+        title = self._clip_title_edit.text().strip() or f"clip_{start_sec}_{end_sec}"
+        self._clip_status_lbl.setText("추출 중…")
+        self._clip_vm.extract_clip(
+            self._detail.id,
+            self._clip_source_file,
+            title,
+            float(start_sec),
+            float(end_sec),
+        )
+
+    def _on_tab_changed(self, index: int) -> None:
+        if index == 3 and self._clip_vm is not None and self._detail is not None:
+            self._clip_vm.load_clips(self._detail.id)
+
+    def _refresh_clip_list(self) -> None:
+        if not hasattr(self, "_clip_list_layout"):
+            return
+        _clear_layout(self._clip_list_layout)
+        self._clip_status_lbl.setText("")
+        clips = self._clip_vm.clips if self._clip_vm else []
+        if not clips:
+            self._clip_list_layout.addWidget(QLabel("추출된 클립이 없습니다."))
+            return
+        for clip in clips:
+            row = QHBoxLayout()
+            dur = clip.end_sec - clip.start_sec
+            m, s = divmod(int(dur), 60)
+            size_str = "—"
+            fp = Path(clip.file_path) if clip.file_path else None
+            if fp and fp.exists():
+                size_str = _fmt_size(fp.stat().st_size)
+            title_lbl = QLabel(clip.title)
+            title_lbl.setMinimumWidth(120)
+            dur_lbl = QLabel(f"{m}:{s:02d}")
+            dur_lbl.setFixedWidth(48)
+            size_lbl = QLabel(size_str)
+            size_lbl.setFixedWidth(72)
+            folder_btn = QPushButton("📂")
+            folder_btn.setFixedSize(28, 28)
+            folder_btn.setToolTip("파일 위치 열기")
+            if fp and fp.exists():
+                folder_btn.clicked.connect(lambda _, p=str(fp): _open_folder(p))
+            else:
+                folder_btn.setEnabled(False)
+            del_btn = QPushButton("삭제")
+            del_btn.setFixedWidth(48)
+            cid = clip.id
+            del_btn.clicked.connect(lambda _, i=cid: self._clip_vm.delete_clip(i, delete_file=True))
+            row.addWidget(title_lbl, 1)
+            row.addWidget(dur_lbl)
+            row.addWidget(size_lbl)
+            row.addWidget(folder_btn)
+            row.addWidget(del_btn)
+            container = QWidget()
+            container.setLayout(row)
+            self._clip_list_layout.addWidget(container)
 
     # ── Actions ────────────────────────────────────────────────────
 
@@ -430,3 +657,7 @@ def _open_folder(file_path: str) -> None:
         subprocess.Popen(["open", "-R", str(p)])
     else:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(p.parent)))
+
+
+def _open_file(file_path: str) -> None:
+    QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))

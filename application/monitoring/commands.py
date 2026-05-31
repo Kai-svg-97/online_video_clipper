@@ -84,3 +84,50 @@ class SetMonitoringRuleHandler:
             raise KeyError(f"Subscription {cmd.subscription_id} not found")
         agg.update_rule(cmd.rule)
         self._repo.save(agg)
+
+
+@dataclass
+class ImportYouTubeSubscriptionsCommand:
+    cookie_opts: dict | None = None
+
+
+class ImportYouTubeSubscriptionsHandler:
+    """YouTube 구독 채널을 일괄 모니터링 등록.
+
+    OAuth API가 설정된 경우 YouTube Data API v3 우선 사용;
+    미설정 시 yt-dlp 브라우저 쿠키 fallback.
+    """
+
+    def __init__(
+        self,
+        subscribe_handler: SubscribeChannelHandler,
+        ytdlp_adapter=None,
+        yt_api=None,   # YouTubeApiAdapter | None
+    ) -> None:
+        self._subscribe = subscribe_handler
+        self._ytdlp = ytdlp_adapter
+        self._yt_api = yt_api
+
+    def handle(self, cmd: ImportYouTubeSubscriptionsCommand) -> int:
+        # OAuth API 우선
+        if self._yt_api is not None:
+            try:
+                channels = self._yt_api.list_subscriptions()
+            except Exception:
+                channels = []
+        elif self._ytdlp is not None:
+            channels = self._ytdlp.fetch_subscribed_channels(cmd.cookie_opts)
+        else:
+            return 0
+
+        count = 0
+        for ch in channels:
+            url = ch.get("url") or ""
+            if not url:
+                continue
+            try:
+                self._subscribe.handle(SubscribeChannelCommand(channel_url=url))
+                count += 1
+            except Exception:
+                pass  # 중복 구독 등 오류 무시
+        return count
