@@ -1,10 +1,9 @@
 """Unit tests for RefreshCategoryMetadataHandler."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 from uuid import uuid4
 
-import pytest
 
 from application.library.commands import (
     RefreshCategoryMetadataCommand,

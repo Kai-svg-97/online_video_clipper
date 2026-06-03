@@ -1,8 +1,10 @@
 """메인 윈도우 — 아이콘 사이드바 + 콘텐츠 스택 레이아웃."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QColor, QIcon, QPainter, QPixmap, QPixmapCache
+import logging
+
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QCloseEvent, QIcon, QPainter, QPixmap, QPixmapCache
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
     QApplication,
@@ -12,7 +14,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QSizePolicy,
     QStackedWidget,
     QStatusBar,
     QVBoxLayout,
@@ -36,6 +37,8 @@ from gui.view_models.library_vm import LibraryViewModel
 from gui.view_models.monitoring_vm import MonitoringViewModel
 from gui.view_models.playlist_vm import PlaylistViewModel
 from infrastructure.auth.youtube_auth import YouTubeAuthService
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # SVG 아이콘 정의 (인라인)
@@ -145,7 +148,6 @@ class _NavButton(QPushButton):
         icon_color = tokens.text_secondary
         active_color = tokens.text_primary
         bg_overlay = tokens.bg_overlay
-        border = tokens.border
         self._update_icons(icon_color, active_color)
         self.setStyleSheet(f"""
             QPushButton {{
@@ -382,23 +384,16 @@ class _LibraryPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._path_bar = _PathBar()
-        layout.addWidget(self._path_bar)
-
         self._library_panel = LibraryPanel(
             library_vm,
             clip_vm=clip_vm,
             download_vm=download_vm,
             playlist_vm=playlist_vm,
         )
-        self._library_panel.path_changed.connect(self._path_bar.set_path)
         layout.addWidget(self._library_panel, 1)
 
         self._dl_bar = _DownloadBar(stack, download_vm)
         layout.addWidget(self._dl_bar)
-
-    def path_bar(self) -> _PathBar:
-        return self._path_bar
 
     def library_panel(self) -> LibraryPanel:
         return self._library_panel
@@ -602,4 +597,14 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(_PAGE_DOWNLOAD)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        # 백그라운드 QThread 워커를 정리한 뒤 종료한다.
+        # 정리하지 않으면 워커가 살아남아 이미 파괴된 위젯으로 시그널을
+        # 방출하거나, 파일 핸들/DB 커넥션이 닫히지 않을 수 있다.
+        for vm in (self._download_vm, self._library_vm):
+            shutdown = getattr(vm, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown()
+                except Exception:
+                    logger.exception("뷰모델 shutdown 실패")
         event.accept()

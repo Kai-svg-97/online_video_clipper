@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, pyqtSignal
@@ -31,6 +32,8 @@ from PyQt6.QtWidgets import (
 
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import PRESETS, ThemeTokens
+
+logger = logging.getLogger(__name__)
 
 
 def _t():
@@ -458,6 +461,7 @@ class SettingsPanel(QWidget):
                 "로그 폴더": str(s.LOG_DIR),
             }
         except Exception:
+            logger.exception("설정 경로 로드 실패")
             paths = {}
 
         for label_text, path_text in paths.items():
@@ -506,6 +510,7 @@ class SettingsPanel(QWidget):
             cur_concurrent = s.MAX_CONCURRENT_DOWNLOADS
             cur_clipboard = s.CLIPBOARD_MONITORING
         except Exception:
+            logger.exception("일반 설정 로드 실패")
             cur_concurrent = 3
             cur_clipboard = True
 
@@ -555,6 +560,7 @@ class SettingsPanel(QWidget):
             cur_quality = s.DEFAULT_QUALITY
             cur_format = s.DEFAULT_FORMAT
         except Exception:
+            logger.exception("다운로드 설정 로드 실패")
             cur_dl_dir = ""
             cur_quality = "best[ext=mp4]/best"
             cur_format = "mp4"
@@ -899,9 +905,7 @@ class SettingsPanel(QWidget):
     def _refresh_feed_auth_ui(self) -> None:
         """현재 저장된 브라우저 쿠키 설정을 UI에 반영한다."""
         try:
-            from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
             import config.settings as s  # noqa: PLC0415
-            svc = YouTubeAuthService()
             browser = getattr(s, "YT_AUTH_BROWSER", "firefox") or "firefox"
             idx = self._feed_browser_combo.findText(browser)
             if idx >= 0:
@@ -916,7 +920,7 @@ class SettingsPanel(QWidget):
                 (f"쿠키 파일: {cookiefile}" if cookiefile else "미설정")
             )
         except Exception:
-            pass
+            logger.exception("브라우저 쿠키 설정 UI 반영 실패")
 
     def _reload_profiles(self, browser: str) -> None:
         from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
@@ -936,7 +940,7 @@ class SettingsPanel(QWidget):
                         self._feed_profile_combo.setCurrentIndex(i)
                         break
         except Exception:
-            pass
+            logger.exception("브라우저 프로필 목록 로드 실패")
         finally:
             self._feed_profile_combo.blockSignals(False)
 

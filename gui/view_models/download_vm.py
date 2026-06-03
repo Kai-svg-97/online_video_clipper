@@ -5,7 +5,7 @@ from uuid import UUID
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from application.download.commands import CancelDownloadCommand, CancelDownloadHandler, StartDownloadCommand, StartDownloadHandler
-from application.download.dtos import DownloadJobDTO, DownloadProgressDTO
+from application.download.dtos import DownloadJobDTO
 from domain.download.value_objects import DownloadSettings
 from application.download.event_bridge import DownloadEventBridge
 from application.download.queries import GetDownloadHistoryHandler, GetDownloadHistoryQuery, GetDownloadQueueHandler, GetDownloadQueueQuery
@@ -72,8 +72,13 @@ class DownloadViewModel(QObject):
             self.error_occurred.emit(str(exc))
 
     def cancel_download(self, job_id: UUID) -> None:
-        if job_id in self._workers:
-            self._workers[job_id].terminate()
+        worker = self._workers.get(job_id)
+        if worker is not None:
+            # yt-dlp 다운로드에 협조적 취소 훅이 없어 terminate가 불가피하다.
+            # terminate 후 반드시 wait()로 스레드 종료를 보장해, 죽은 객체로의
+            # 시그널 방출이나 리소스 정리 누락을 막는다.
+            worker.terminate()
+            worker.wait(3000)
         try:
             self._cancel.handle(CancelDownloadCommand(job_id))
             self.queue_changed.emit()
@@ -93,3 +98,15 @@ class DownloadViewModel(QObject):
 
     def _cleanup_worker(self, job_id: UUID) -> None:
         self._workers.pop(job_id, None)
+
+    def shutdown(self) -> None:
+        """앱 종료 시 호출 — 실행 중인 다운로드 워커를 정리한다.
+
+        진행 중인 다운로드는 협조적 취소가 없어 terminate로 중단하고
+        wait()로 스레드 종료를 보장한다. 죽은 객체로 시그널이 가는 것을 막는다.
+        """
+        for worker in list(self._workers.values()):
+            if worker.isRunning():
+                worker.terminate()
+                worker.wait(3000)
+        self._workers.clear()

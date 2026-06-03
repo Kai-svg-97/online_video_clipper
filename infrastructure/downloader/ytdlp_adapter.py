@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Callable
 from uuid import UUID
@@ -10,6 +11,8 @@ import yt_dlp
 from config.settings import DOWNLOAD_DIR, THUMBNAIL_DIR
 from domain.download.value_objects import DownloadProgress, DownloadSettings, MediaFormat, Quality
 from utils.resources import get_ffmpeg_path
+
+logger = logging.getLogger(__name__)
 
 
 def _height_to_quality_label(height: int | None) -> str:
@@ -91,6 +94,7 @@ class YtDlpAdapter:
             dest.write_bytes(resp.content)
             return filename
         except Exception:
+            logger.exception("썸네일 다운로드 실패")
             return None
 
     def download(
@@ -210,6 +214,7 @@ class YtDlpAdapter:
                 or ""
             )
         except Exception:
+            logger.exception("Watch Later에서 사용자 채널 URL 추출 실패")
             return []
 
         if not channel_url:
@@ -221,6 +226,7 @@ class YtDlpAdapter:
             with yt_dlp.YoutubeDL(base_opts) as ydl:
                 info = ydl.extract_info(pl_url, download=False) or {}
         except Exception:
+            logger.exception("채널 재생목록 탭 조회 실패")
             return []
 
         return [

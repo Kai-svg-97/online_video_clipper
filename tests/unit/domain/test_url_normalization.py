@@ -1,5 +1,4 @@
 """URL normalization correctness tests."""
-import pytest
 from domain.library.value_objects import VideoUrl, normalize_video_url
 
 

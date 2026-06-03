@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 try:
     from platformdirs import user_data_dir
@@ -50,6 +53,7 @@ def load_favorites() -> list[FavoriteItem]:
         items = [FavoriteItem.from_dict(d) for d in data]
         return sorted(items, key=lambda x: x.order)
     except Exception:
+        logger.exception("즐겨찾기 로드 실패")
         return []
 
 

@@ -1,10 +1,11 @@
 """구독 피드 패널 — 라이브러리 아이콘 카드와 동일한 크기·스타일."""
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 import requests
-from PyQt6.QtCore import QRect, QSize, Qt, QThread, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QDesktopServices, QFont, QImage, QPainter, QPainterPath, QPixmap,
 )
@@ -18,7 +19,6 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from gui.view_models.library_vm import LibraryViewModel
     from gui.view_models.playlist_vm import PlaylistViewModel
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +115,7 @@ class _ThumbLoader(QThread):
                     Qt.TransformationMode.SmoothTransformation,
                 ))
         except Exception:
-            pass
+            logger.exception("피드 썸네일 다운로드/디코딩 실패")
 
 
 # ---------------------------------------------------------------------------

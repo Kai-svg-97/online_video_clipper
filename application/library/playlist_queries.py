@@ -5,7 +5,7 @@ from uuid import UUID
 
 from application.library.dtos import FeedVideoDTO, PlaylistDTO, PlaylistFolderDTO, PlaylistItemDTO
 from domain.library.repositories import IPlaylistFolderRepository, IPlaylistRepository, IVideoRepository
-from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
+from domain.shared.ports import IMediaSource
 
 
 # ── Query 데이터클래스 ───────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ class GetYouTubePlaylistsHandler:
     미설정 시 yt-dlp 브라우저 쿠키 fallback.
     """
 
-    def __init__(self, ytdlp: YtDlpAdapter, yt_api=None) -> None:
+    def __init__(self, ytdlp: IMediaSource, yt_api=None) -> None:
         self._ytdlp = ytdlp
         self._yt_api = yt_api
 
@@ -124,7 +124,7 @@ class GetSubscriptionFeedHandler:
 
     def __init__(
         self,
-        ytdlp: YtDlpAdapter,
+        ytdlp: IMediaSource,
         video_repo: IVideoRepository,
     ) -> None:
         self._ytdlp = ytdlp

@@ -5,6 +5,7 @@ a video replaces the list area with VideoDetailWidget inline (no modal dialog).
 """
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from pathlib import Path
 from uuid import UUID
@@ -50,7 +51,6 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QStyledItemDelegate,
     QStyleOptionViewItem,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -68,6 +68,8 @@ from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
 from gui.view_models.library_vm import LibraryViewModel
 from gui.widgets.video_player import InlinePlayer
+
+logger = logging.getLogger(__name__)
 
 
 def _t() -> ThemeTokens:
@@ -123,6 +125,7 @@ def _fmt_elapsed(iso: str | None) -> str:
             return f"{int(s // (86400 * 30))}개월 전"
         return f"{int(s // (86400 * 365))}년 전"
     except Exception:
+        logger.exception("경과 시간 포맷 변환 실패")
         return ""
 _TAG_COUNT_W = 28   # width reserved for the count badge in tag chips (also the delete hit area)
 
@@ -162,7 +165,11 @@ class _ThumbnailCache:
             self._cache.popitem(last=False)
 
 
-_thumb_cache = _ThumbnailCache(LRU_THUMBNAIL_MAX * 3)
+# 캐시 키에 렌더 크기(아이콘 그리드 / 리스트 / 상세뷰 3종)가 포함되므로,
+# "썸네일 LRU 최대 100개" 규칙은 *렌더 크기당* 100개를 의미한다.
+# 따라서 전체 상한은 LRU_THUMBNAIL_MAX × 렌더 크기 종류 수.
+_THUMB_RENDER_SIZE_KINDS = 3
+_thumb_cache = _ThumbnailCache(LRU_THUMBNAIL_MAX * _THUMB_RENDER_SIZE_KINDS)
 
 
 def _load_thumb(thumbnail_path: str, w: int, h: int) -> QPixmap:
@@ -218,7 +225,7 @@ def _url_from_mime(mime: QMimeData) -> str:
                     if line.startswith(("http://", "https://")):
                         return line
             except Exception:
-                pass
+                logger.exception("MIME 데이터에서 URL 추출 실패")
     return ""
 
 
@@ -324,7 +331,7 @@ class _VideoListView(QListView):
         )
         drag = QDrag(self)
         drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.MoveAction)
+        drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasFormat(_MIME_VIDEO_ID):
@@ -480,7 +487,6 @@ class _IconDelegate(QStyledItemDelegate):
         watched: bool= bool(index.data(VideoListModel.WatchedRole))
         pub_at: str  = index.data(VideoListModel.PublishedAtRole) or ""
         views: int | None = index.data(VideoListModel.ViewCountRole)
-        cat_id: UUID | None = index.data(VideoListModel.CategoryIdRole)
         cat_name: str = index.data(VideoListModel.CategoryRole) or ""
 
         # ── Thumbnail (둥근 모서리) ──────────────────────────────────
@@ -606,7 +612,6 @@ class _ListDelegate(QStyledItemDelegate):
         watched: bool= bool(index.data(VideoListModel.WatchedRole))
         pub_at: str  = index.data(VideoListModel.PublishedAtRole) or ""
         views: int | None = index.data(VideoListModel.ViewCountRole)
-        cat_id: UUID | None = index.data(VideoListModel.CategoryIdRole)
         cat_name: str = index.data(VideoListModel.CategoryRole) or ""
 
         # ── Thumbnail (둥근 모서리) ──────────────────────────────────
@@ -1289,6 +1294,8 @@ class _PlaylistTree(QTreeWidget):
     category_reparented           = pyqtSignal(object, object) # (cat_id, new_parent_id | None)
     yt_playlist_to_category_req   = pyqtSignal(str, object)    # (yt_playlist_id, cat_id UUID)
     favorite_toggle_req           = pyqtSignal(str, str, str)  # (type, id, name)
+    video_assign_category_req     = pyqtSignal(object, object) # (video_id UUID, cat_id UUID | None)
+    local_playlist_to_category_req = pyqtSignal(object, object) # (playlist_id UUID, parent_cat_id UUID | None)
 
     def __init__(self, section: str | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1303,6 +1310,8 @@ class _PlaylistTree(QTreeWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self.currentItemChanged.connect(self._on_selection_changed)
+        self.itemExpanded.connect(self._on_item_expanded)
+        self.itemCollapsed.connect(self._on_item_collapsed)
 
     # ── 로드 ─────────────────────────────────────────────────────────────────
 
@@ -1336,10 +1345,11 @@ class _PlaylistTree(QTreeWidget):
 
     def _load_local_section(self, playlists, folders, categories) -> None:
         if categories:
+            child_parent_ids = {c.parent_id for c in categories if c.parent_id is not None}
             cat_by_id: dict = {}
             roots = [c for c in categories if c.parent_id is None]
             for c in roots:
-                ci = self._make_category(c.name, c.id, getattr(c, "video_count", 0))
+                ci = self._make_category(c.name, c.id, getattr(c, "video_count", 0), has_children=c.id in child_parent_ids)
                 self.addTopLevelItem(ci)
                 cat_by_id[c.id] = ci
             queue = list(roots)
@@ -1347,7 +1357,7 @@ class _PlaylistTree(QTreeWidget):
                 parent_cat = queue.pop(0)
                 for c in categories:
                     if c.parent_id == parent_cat.id:
-                        ci = self._make_category(c.name, c.id, getattr(c, "video_count", 0))
+                        ci = self._make_category(c.name, c.id, getattr(c, "video_count", 0), has_children=c.id in child_parent_ids)
                         cat_by_id[parent_cat.id].addChild(ci)
                         cat_by_id[c.id] = ci
                         queue.append(c)
@@ -1399,10 +1409,11 @@ class _PlaylistTree(QTreeWidget):
         self.addTopLevelItem(local_root)
 
         if categories:
+            child_parent_ids = {c.parent_id for c in categories if c.parent_id is not None}
             cat_by_id: dict = {}
             roots = [c for c in categories if c.parent_id is None]
             for c in roots:
-                ci = self._make_category(c.name, c.id, getattr(c, "video_count", 0))
+                ci = self._make_category(c.name, c.id, getattr(c, "video_count", 0), has_children=c.id in child_parent_ids)
                 local_root.addChild(ci)
                 cat_by_id[c.id] = ci
             queue = list(roots)
@@ -1410,7 +1421,7 @@ class _PlaylistTree(QTreeWidget):
                 parent_cat = queue.pop(0)
                 for c in categories:
                     if c.parent_id == parent_cat.id:
-                        ci = self._make_category(c.name, c.id, getattr(c, "video_count", 0))
+                        ci = self._make_category(c.name, c.id, getattr(c, "video_count", 0), has_children=c.id in child_parent_ids)
                         cat_by_id[parent_cat.id].addChild(ci)
                         cat_by_id[c.id] = ci
                         queue.append(c)
@@ -1506,15 +1517,20 @@ class _PlaylistTree(QTreeWidget):
         item.setFont(0, f)
         return item
 
-    def _make_category(self, name: str, cat_id, video_count: int = 0) -> QTreeWidgetItem:
+    def _make_category(self, name: str, cat_id, video_count: int = 0, has_children: bool = False) -> QTreeWidgetItem:
         starred = ("category", str(cat_id)) in self._favs
-        prefix = "★ " if starred else ""
-        label = f"{prefix}🏷  {name}  ({video_count})" if video_count > 0 else f"{prefix}🏷  {name}"
+        arrow = "▸ " if has_children else "  "
+        label = f"{arrow}🏷  {name}  ({video_count})" if video_count > 0 else f"{arrow}🏷  {name}"
         item = QTreeWidgetItem([label])
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_CATEGORY)
         item.setData(0, _CAT_ID_ROLE, cat_id)
         item.setData(0, _SECTION_ROLE, "local")
         item.setToolTip(0, name)
+        if starred:
+            from PyQt6.QtGui import QBrush, QColor  # noqa: PLC0415
+            c = QColor(_t().star_color)
+            c.setAlpha(50)
+            item.setBackground(0, QBrush(c))
         item.setFlags(
             Qt.ItemFlag.ItemIsEnabled
             | Qt.ItemFlag.ItemIsSelectable
@@ -1525,10 +1541,14 @@ class _PlaylistTree(QTreeWidget):
 
     def _make_playlist(self, title: str, count: int, pl_id, yt_id) -> QTreeWidgetItem:
         starred = ("playlist", str(pl_id)) in self._favs
-        prefix = "★ " if starred else "  "
-        item = QTreeWidgetItem([f"{prefix}{title}  ({count})"])
+        item = QTreeWidgetItem([f"{title}  ({count})"])
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_PLAYLIST)
         item.setData(0, _PLAYLIST_ID_ROLE, pl_id)
+        if starred:
+            from PyQt6.QtGui import QBrush, QColor  # noqa: PLC0415
+            c = QColor(_t().star_color)
+            c.setAlpha(50)
+            item.setBackground(0, QBrush(c))
         if yt_id:
             item.setToolTip(0, f"{title}\nYouTube: {yt_id}")
         else:
@@ -1557,7 +1577,8 @@ class _PlaylistTree(QTreeWidget):
             if fid:
                 self.folder_selected.emit(fid)
         elif itype == _ITYPE_ROOT:
-            pass  # 루트 클릭은 영상 목록에 영향 없음
+            if current.data(0, _SECTION_ROLE) == "local":
+                self.category_selected.emit(None)  # 전체 영상
 
     def _restore_selection(self, pl_id) -> None:
         def _find(item: QTreeWidgetItem) -> bool:
@@ -1571,6 +1592,20 @@ class _PlaylistTree(QTreeWidget):
         for i in range(self.topLevelItemCount()):
             if _find(self.topLevelItem(i)):
                 break
+
+    # ── 아이템 확장/축소 화살표 갱신 ────────────────────────────────────────────
+
+    def _on_item_expanded(self, item: QTreeWidgetItem) -> None:
+        if item.data(0, _ITEM_TYPE_ROLE) == _ITYPE_CATEGORY:
+            text = item.text(0)
+            if text.startswith("▸ "):
+                item.setText(0, "▾ " + text[2:])
+
+    def _on_item_collapsed(self, item: QTreeWidgetItem) -> None:
+        if item.data(0, _ITEM_TYPE_ROLE) == _ITYPE_CATEGORY:
+            text = item.text(0)
+            if text.startswith("▾ "):
+                item.setText(0, "▸ " + text[2:])
 
     # ── 드래그 앤 드롭 ────────────────────────────────────────────────────────
 
@@ -1614,8 +1649,8 @@ class _PlaylistTree(QTreeWidget):
         mime = event.mimeData()
 
         if mime.hasFormat(_MIME_VIDEO_ID):
-            # 영상 드롭: 재생목록 항목 위에서만 허용
-            if target and target.data(0, _ITEM_TYPE_ROLE) == _ITYPE_PLAYLIST:
+            # 영상 드롭: 재생목록 또는 카테고리 항목 위에서 허용
+            if target and target.data(0, _ITEM_TYPE_ROLE) in (_ITYPE_PLAYLIST, _ITYPE_CATEGORY):
                 event.acceptProposedAction()
             else:
                 event.ignore()
@@ -1635,6 +1670,9 @@ class _PlaylistTree(QTreeWidget):
                 event.acceptProposedAction()
             elif drag_section == "youtube" and target_type in (_ITYPE_FOLDER, _ITYPE_ROOT) and target_section == "local":
                 # YouTube 재생목록 → 로컬 폴더/루트 (재생목록 복사)
+                event.acceptProposedAction()
+            elif drag_section == "local" and target_type in (_ITYPE_CATEGORY, _ITYPE_ROOT):
+                # 로컬 재생목록 → 카테고리/루트 (영상 복사 + 새 카테고리 생성)
                 event.acceptProposedAction()
             elif drag_section == target_section and target_type in (_ITYPE_FOLDER, _ITYPE_ROOT):
                 # 같은 섹션 내 폴더 이동
@@ -1661,19 +1699,38 @@ class _PlaylistTree(QTreeWidget):
         mime   = event.mimeData()
         target = self.itemAt(event.position().toPoint())
 
-        # ── 영상 → 재생목록 드롭 ─────────────────────────────────────────
+        # ── 영상 → 재생목록 / 카테고리 드롭 ────────────────────────────────
         if mime.hasFormat(_MIME_VIDEO_ID):
-            if target is None or target.data(0, _ITEM_TYPE_ROLE) != _ITYPE_PLAYLIST:
+            if target is None:
                 event.ignore()
                 return
-            tgt_pl_id = target.data(0, _PLAYLIST_ID_ROLE)
+            target_type = target.data(0, _ITEM_TYPE_ROLE)
             raw_vids = mime.data(_MIME_VIDEO_ID).data()
-            raw_src  = mime.data("application/x-source-playlist-id").data()
-            src_pl_str = raw_src.decode() if raw_src else ""
-            for vid_str in raw_vids.decode().split(","):
-                if vid_str:
-                    self.video_move_to_playlist_req.emit(vid_str, src_pl_str, tgt_pl_id)
-            event.accept()
+
+            if target_type == _ITYPE_PLAYLIST:
+                tgt_pl_id = target.data(0, _PLAYLIST_ID_ROLE)
+                raw_src   = mime.data("application/x-source-playlist-id").data()
+                src_pl_str = raw_src.decode() if raw_src else ""
+                for vid_str in raw_vids.decode().split(","):
+                    if vid_str:
+                        self.video_move_to_playlist_req.emit(vid_str, src_pl_str, tgt_pl_id)
+                event.accept()
+                return
+
+            if target_type == _ITYPE_CATEGORY:
+                cat_id = target.data(0, _CAT_ID_ROLE)
+                for vid_str in raw_vids.decode().split(","):
+                    vid_str = vid_str.strip()
+                    if vid_str:
+                        try:
+                            self.video_assign_category_req.emit(UUID(vid_str), cat_id)
+                        except (ValueError, AttributeError):
+                            pass
+                event.setDropAction(Qt.DropAction.CopyAction)
+                event.accept()
+                return
+
+            event.ignore()
             return
 
         # ── 재생목록 드래그 (커스텀 MIME) ─────────────────────────────────
@@ -1705,6 +1762,19 @@ class _PlaylistTree(QTreeWidget):
                 # YouTube 재생목록 → 로컬 폴더/루트 (재생목록 복사)
                 if yt_playlist_id:
                     self.copy_yt_to_local_req.emit(yt_playlist_id)
+                event.setDropAction(Qt.DropAction.CopyAction)
+                event.accept()
+                return
+
+            if drag_section == "local" and target_type in (_ITYPE_CATEGORY, _ITYPE_ROOT):
+                # 로컬 재생목록 → 카테고리/루트 (새 카테고리 생성 + 영상 복사)
+                try:
+                    pl_id = UUID(pl_id_str)
+                except (ValueError, AttributeError):
+                    event.ignore()
+                    return
+                parent_cat_id = target.data(0, _CAT_ID_ROLE) if target_type == _ITYPE_CATEGORY else None
+                self.local_playlist_to_category_req.emit(pl_id, parent_cat_id)
                 event.setDropAction(Qt.DropAction.CopyAction)
                 event.accept()
                 return
@@ -1890,7 +1960,7 @@ class _PlaylistTree(QTreeWidget):
 class _PlaylistThumbLabel(QLabel):
     """재생목록 카드 썸네일 — 영상 개수 배지를 우하단에 오버레이."""
 
-    _W, _H = 160, 90
+    _W, _H = 213, 120
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -1948,7 +2018,7 @@ class _PlaylistCard(QFrame):
     def __init__(self, pl, get_first_item, parent=None) -> None:
         super().__init__(parent)
         self._pl_id = pl.id
-        self.setFixedWidth(184)
+        self.setFixedWidth(221)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFrameShape(QFrame.Shape.StyledPanel)
 
@@ -2005,7 +2075,7 @@ class _FolderContentsView(QScrollArea):
         grid = QGridLayout(self._container)
         grid.setSpacing(12)
         grid.setContentsMargins(12, 12, 12, 12)
-        cols = 4
+        cols = 3
         for i, pl in enumerate(playlists):
             card = _PlaylistCard(pl, get_first_item, self._container)
             card.clicked.connect(self.playlist_selected)
@@ -2016,13 +2086,98 @@ class _FolderContentsView(QScrollArea):
             grid.setRowStretch((len(playlists) - 1) // cols + 1, 1)
         self._grid = grid
 
-        title_row = len(playlists) // cols + (1 if len(playlists) % cols else 0)
         if not playlists:
-            from PyQt6.QtWidgets import QGridLayout as _GL  # noqa: PLC0415
             lbl = QLabel("이 폴더에 재생목록이 없습니다.")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet("color:#888; font-size:11pt;")
             grid.addWidget(lbl, 0, 0)
+
+
+class _BreadcrumbBar(QWidget):
+    """경로 탐색 바 — 즐겨찾기 바 위. 각 세그먼트는 클릭 가능하고 선택된 태그를 우측에 ✕ 칩으로 표시."""
+
+    segment_clicked = pyqtSignal(object)  # category_id UUID | None
+    tag_removed     = pyqtSignal(object)  # tag UUID
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(26)
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(8, 0, 8, 0)
+        self._row.setSpacing(0)
+        self.hide()
+
+    def update_path(
+        self,
+        segments: list,    # list[tuple[str, click_val]] — click_val=None → 비클릭(마지막)
+        tag_pairs: list,   # list[tuple[UUID, str]]
+    ) -> None:
+        while self._row.count():
+            item = self._row.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        if not segments:
+            self.hide()
+            return
+
+        tok = _t()
+        n = len(segments)
+        for i, (name, click_val) in enumerate(segments):
+            is_last = (i == n - 1)
+            is_clickable = not is_last and click_val is not None
+            btn = QPushButton(name)
+            btn.setFlat(True)
+            if is_last:
+                btn.setStyleSheet(
+                    f"color:{tok.text_primary};font-size:9pt;font-weight:600;"
+                    "background:transparent;border:none;padding:0 3px;"
+                )
+                btn.setCursor(Qt.CursorShape.ArrowCursor)
+            elif is_clickable:
+                btn.setStyleSheet(
+                    f"color:{tok.accent};font-size:9pt;"
+                    "background:transparent;border:none;padding:0 3px;"
+                    "text-decoration:underline;"
+                )
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                _cv = click_val
+                btn.clicked.connect(lambda _, cv=_cv: self.segment_clicked.emit(cv))
+            else:
+                btn.setStyleSheet(
+                    f"color:{tok.text_secondary};font-size:9pt;"
+                    "background:transparent;border:none;padding:0 3px;"
+                )
+                btn.setCursor(Qt.CursorShape.ArrowCursor)
+            self._row.addWidget(btn)
+
+            if not is_last:
+                sep = QLabel(" › ")
+                sep.setStyleSheet(f"color:{tok.text_muted};font-size:9pt;")
+                self._row.addWidget(sep)
+
+        if tag_pairs:
+            div = QLabel("  :  ")
+            div.setStyleSheet(f"color:{tok.text_muted};font-size:9pt;")
+            self._row.addWidget(div)
+            for tag_id, tname in tag_pairs:
+                color = _TAG_PALETTE[hash(tname) % len(_TAG_PALETTE)]
+                chip = QPushButton(f"#{tname}  ✕")
+                chip.setFlat(True)
+                chip.setStyleSheet(
+                    f"color:#ffffff;font-size:8pt;"
+                    f"background:{color};border-radius:4px;padding:2px 8px;"
+                    "border:none;"
+                )
+                chip.setCursor(Qt.CursorShape.PointingHandCursor)
+                chip.setToolTip(f"#{tname} 태그 필터 제거")
+                _tid = tag_id
+                chip.clicked.connect(lambda _, tid=_tid: self.tag_removed.emit(tid))
+                self._row.addWidget(chip)
+
+        self._row.addStretch()
+        self.show()
 
 
 class _PlaylistPanel(QWidget):
@@ -2050,6 +2205,8 @@ class _PlaylistPanel(QWidget):
     category_reparented           = pyqtSignal(object, object) # (cat_id, new_parent_id | None)
     yt_playlist_to_category_req   = pyqtSignal(str, object)    # (yt_playlist_id, cat_id UUID)
     favorite_toggle_req           = pyqtSignal(str, str, str)  # (type, id, name)
+    video_assign_category_req      = pyqtSignal(object, object) # (video_id UUID, cat_id UUID | None)
+    local_playlist_to_category_req = pyqtSignal(object, object) # (playlist_id UUID, parent_cat_id UUID | None)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -2067,8 +2224,12 @@ class _PlaylistPanel(QWidget):
         local_layout.setSpacing(2)
         local_hdr_row = QHBoxLayout()
         local_hdr_row.setContentsMargins(0, 0, 0, 0)
-        local_hdr = QLabel("📁  로컬")
-        local_hdr.setObjectName("playlist_section_header")
+        local_hdr = QPushButton("📁  로컬")
+        local_hdr.setObjectName("playlist_section_header_local")
+        local_hdr.setFlat(True)
+        local_hdr.setCursor(Qt.CursorShape.PointingHandCursor)
+        local_hdr.setToolTip("클릭: 카테고리 전체 영상 표시")
+        local_hdr.clicked.connect(lambda: self.category_selected.emit(None))
         local_hdr_row.addWidget(local_hdr, stretch=1)
         local_cat_btn = QToolButton()
         local_cat_btn.setText("🏷+")
@@ -2143,6 +2304,8 @@ class _PlaylistPanel(QWidget):
         tree.category_reparented.connect(self.category_reparented)
         tree.yt_playlist_to_category_req.connect(self.yt_playlist_to_category_req)
         tree.favorite_toggle_req.connect(self.favorite_toggle_req)
+        tree.video_assign_category_req.connect(self.video_assign_category_req)
+        tree.local_playlist_to_category_req.connect(self.local_playlist_to_category_req)
 
     @property
     def trees(self) -> list:
@@ -2671,6 +2834,8 @@ class LibraryPanel(QWidget):
         self._all_tags: list = []
         self._active_tag_ids: set[UUID] = set()
         self._current_cat_id: UUID | None = None
+        self._current_playlist_id: UUID | None = None
+        self._current_folder_id: UUID | None = None
         self._icon_delegate = _IconDelegate()
         self._list_delegate = _ListDelegate()
         self._refresh_dlg: QProgressDialog | None = None
@@ -2705,8 +2870,6 @@ class LibraryPanel(QWidget):
         self._playlist_panel = _PlaylistPanel()
         self._apply_sidebar_tree_style()
         unified_layout.addWidget(self._playlist_panel, stretch=1)
-        self._active_tags_bar = _ActiveTagsBar()
-        unified_layout.addWidget(self._active_tags_bar)
         left_splitter.addWidget(unified_container)
 
         tag_section = QWidget()
@@ -2781,7 +2944,11 @@ class LibraryPanel(QWidget):
         centre_layout.setContentsMargins(0, 0, 0, 0)
         centre_layout.setSpacing(0)
 
-        # ── 즐겨찾기 바 (영상 검색 툴바 위) ──
+        # ── 경로 탐색 바 (즐겨찾기 바 위) ──
+        self._breadcrumb_bar = _BreadcrumbBar()
+        centre_layout.addWidget(self._breadcrumb_bar)
+
+        # ── 즐겨찾기 바 ──
         self._favorites_bar = _FavoritesBar()
         centre_layout.addWidget(self._favorites_bar)
 
@@ -2965,13 +3132,16 @@ class LibraryPanel(QWidget):
         self._playlist_panel.category_reparented.connect(self._on_category_reparented)
         self._playlist_panel.yt_playlist_to_category_req.connect(self._on_yt_playlist_to_category)
         self._playlist_panel.favorite_toggle_req.connect(self._toggle_favorite)
+        self._playlist_panel.video_assign_category_req.connect(self._on_video_moved)
+        self._playlist_panel.local_playlist_to_category_req.connect(self._on_local_playlist_to_category)
+        self._breadcrumb_bar.segment_clicked.connect(self._on_breadcrumb_nav)
+        self._breadcrumb_bar.tag_removed.connect(self._on_active_tag_removed)
         self._vm.metadata_refresh_progress.connect(self._on_refresh_progress)
         self._vm.metadata_refresh_finished.connect(self._on_refresh_finished)
         self._tag_list.itemClicked.connect(self._on_tag_clicked)
         self._tag_list.delete_requested.connect(self._on_tag_delete_requested)
         self._tag_list.favorite_toggled.connect(self._toggle_favorite)
         self._tag_filter_input.textChanged.connect(self._on_tag_filter_text_changed)
-        self._active_tags_bar.tag_removed.connect(self._on_active_tag_removed)
         self._favorites_bar.item_clicked.connect(self._on_favorite_clicked)
         self._favorites_bar.unfav_requested.connect(self._on_fav_unfav_requested)
         self._favorites_bar.refresh()
@@ -3098,15 +3268,15 @@ class LibraryPanel(QWidget):
             }}
         """
         # 로컬 트리에만 branch indicator 적용 (CSS로 이미지 override 없이 Qt 기본 indicator 사용)
-        branch_style = style + f"""
+        branch_style = style + """
             QTreeWidget::branch:has-children:!has-siblings:closed,
-            QTreeWidget::branch:closed:has-children:has-siblings  {{
+            QTreeWidget::branch:closed:has-children:has-siblings  {
                 background: transparent;
-            }}
+            }
             QTreeWidget::branch:open:has-children:!has-siblings,
-            QTreeWidget::branch:open:has-children:has-siblings {{
+            QTreeWidget::branch:open:has-children:has-siblings {
                 background: transparent;
-            }}
+            }
         """
         hdr_style = f"""
             QLabel#playlist_section_header {{
@@ -3114,6 +3284,19 @@ class LibraryPanel(QWidget):
                 font-weight: 700;
                 color: {tok.text_secondary};
                 padding: 4px 6px 2px 4px;
+                background: transparent;
+            }}
+            QPushButton#playlist_section_header_local {{
+                font-size: 9pt;
+                font-weight: 700;
+                color: {tok.text_secondary};
+                padding: 4px 6px 2px 4px;
+                background: transparent;
+                border: none;
+                text-align: left;
+            }}
+            QPushButton#playlist_section_header_local:hover {{
+                color: {tok.text_primary};
                 background: transparent;
             }}
             QPushButton#playlist_section_header_yt_btn {{
@@ -3136,8 +3319,7 @@ class LibraryPanel(QWidget):
         self._playlist_panel.setStyleSheet(hdr_style)
 
     def _refresh_active_tags_bar(self) -> None:
-        tags = [(t.id, t.name) for t in self._all_tags if t.id in self._active_tag_ids]
-        self._active_tags_bar.refresh(tags)
+        self._refresh_breadcrumb()
         self._refresh_popular_tags()
 
     def _refresh_popular_tags(self) -> None:
@@ -3180,7 +3362,8 @@ class LibraryPanel(QWidget):
         self._refresh_active_tags_bar()
         self._update_delegate_tags()
         if self._active_tag_ids:
-            for _t_ in self._playlist_panel.trees: _t_.clearSelection()
+            for _t_ in self._playlist_panel.trees:
+                _t_.clearSelection()
 
     def _show_popular_tag_context_menu(self, pos, btn, tag_id: UUID, tag_name: str) -> None:
         from application.library.favorites import is_favorite  # noqa: PLC0415
@@ -3365,8 +3548,76 @@ class LibraryPanel(QWidget):
         parts.reverse()
         return "로컬 > " + " > ".join(parts) if parts else "라이브러리"
 
+    def _build_breadcrumb_segments(self, cat_id) -> list:
+        """(이름, cat_id|None) 리스트 반환. 루트 '로컬'은 항상 포함."""
+        segments: list = [("로컬", None)]
+        if cat_id is None:
+            return segments
+        cats_by_id = {c.id: c for c in self._vm.categories}
+        parts: list = []
+        current = cat_id
+        while current:
+            c = cats_by_id.get(current)
+            if c is None:
+                break
+            parts.append((c.name, c.id))
+            current = c.parent_id
+        parts.reverse()
+        return segments + parts
+
+    def _build_playlist_breadcrumb_segments(self, playlist_id) -> list:
+        """재생목록 ID로부터 클릭 가능한 경로 세그먼트 리스트를 생성한다.
+        click_val: "root" → 전체, ("folder", uuid) → 폴더 뷰, None → 비클릭(마지막)"""
+        if not self._playlist_vm:
+            return []
+        pl = next((p for p in self._playlist_vm.playlists if p.id == playlist_id), None)
+        if not pl:
+            return []
+        prefix = "YouTube" if pl.source == "youtube" else "로컬"
+        segs = [(prefix, "root")]
+        if pl.folder_id:
+            folder = next((f for f in self._playlist_vm.folders if f.id == pl.folder_id), None)
+            if folder:
+                segs.append((folder.name, ("folder", folder.id)))
+        segs.append((pl.title, None))
+        return segs
+
+    def _build_folder_breadcrumb_segments(self, folder_id) -> list:
+        """폴더 ID로부터 클릭 가능한 경로 세그먼트 리스트를 생성한다."""
+        if not self._playlist_vm:
+            return []
+        folder = next((f for f in self._playlist_vm.folders if f.id == folder_id), None)
+        if not folder:
+            return []
+        prefix = "YouTube" if folder.source == "youtube" else "로컬"
+        return [(prefix, "root"), (folder.name, None)]
+
+    def _refresh_breadcrumb(self) -> None:
+        if self._current_playlist_id is not None:
+            segments = self._build_playlist_breadcrumb_segments(self._current_playlist_id)
+            self._breadcrumb_bar.update_path(segments, [])
+        elif self._current_folder_id is not None:
+            segments = self._build_folder_breadcrumb_segments(self._current_folder_id)
+            self._breadcrumb_bar.update_path(segments, [])
+        else:
+            segments = self._build_breadcrumb_segments(self._current_cat_id)
+            tag_pairs = [(t.id, t.name) for t in self._all_tags if t.id in self._active_tag_ids]
+            self._breadcrumb_bar.update_path(segments, tag_pairs)
+
+    def _on_breadcrumb_nav(self, val) -> None:
+        """브레드크럼 세그먼트 클릭 → 카테고리·폴더·루트 분기 처리."""
+        if isinstance(val, tuple) and len(val) == 2 and val[0] == "folder":
+            self._on_folder_selected(val[1])
+        elif isinstance(val, UUID):
+            self._on_cat_filter_changed(val)
+        else:
+            # "root" 또는 None → 전체 영상 (카테고리 없음)
+            self._on_cat_filter_changed(None)
+
     def _on_cat_filter_changed(self, cat_id) -> None:
         self._current_cat_id = cat_id
+        self._current_playlist_id = None
+        self._current_folder_id = None
         if not self._is_restoring:
             self._push_nav_state()
         self._active_tag_ids.clear()
@@ -3388,6 +3639,7 @@ class LibraryPanel(QWidget):
             self._btn_reorder.hide()
             self._model.set_reorder_mode(False)
             self.path_changed.emit("라이브러리")
+        self._refresh_breadcrumb()
 
     def _on_reorder_toggled(self, checked: bool) -> None:
         self._model.set_reorder_mode(checked)
@@ -3415,8 +3667,10 @@ class LibraryPanel(QWidget):
         self._vm.set_tag_filter(list(self._active_tag_ids))
         self._refresh_active_tags_bar()
         self._update_delegate_tags()
+        self._refresh_breadcrumb()
         if self._active_tag_ids:
-            for _t_ in self._playlist_panel.trees: _t_.clearSelection()
+            for _t_ in self._playlist_panel.trees:
+                _t_.clearSelection()
 
     def _on_active_tag_removed(self, tag_id: UUID) -> None:
         """Called when ✕ is clicked on a chip in the active tags bar."""
@@ -3433,6 +3687,7 @@ class LibraryPanel(QWidget):
         self._tag_list.blockSignals(False)
         self._refresh_active_tags_bar()
         self._update_delegate_tags()
+        self._refresh_breadcrumb()
 
     def _on_tag_filter_requested(self, tag_id: UUID, _tag_name: str) -> None:
         """Called when a tag chip is clicked in the preview pane or detail view."""
@@ -3450,7 +3705,8 @@ class LibraryPanel(QWidget):
         self._tag_list.blockSignals(False)
         self._refresh_active_tags_bar()
         self._update_delegate_tags()
-        for _t_ in self._playlist_panel.trees: _t_.clearSelection()
+        for _t_ in self._playlist_panel.trees:
+            _t_.clearSelection()
         if self._nav_stack.currentIndex() == 1:
             self._on_back_from_detail()
 
@@ -3544,14 +3800,13 @@ class LibraryPanel(QWidget):
                             tw_item.setSelected(True)
                             break
                 except Exception:
-                    pass
+                    logger.exception("스마트폴더 태그 선택 복원 실패")
         self._vm.set_tag_filter(list(self._active_tag_ids))
         self._vm.set_duration_filter(sf.min_duration_sec, sf.max_duration_sec)
         self._vm.set_favorite_filter(sf.favorite_only)
         self._refresh_active_tags_bar()
 
     def _on_sf_context_menu(self, pos) -> None:
-        from application.library.smart_folders import load_smart_folders, save_smart_folders  # noqa: PLC0415
         item = self._sf_list.itemAt(pos)
         if item is None:
             return
@@ -3876,12 +4131,11 @@ class LibraryPanel(QWidget):
         skipped_urls: set[str] = set()
         if skip:
             try:
-                from gui.view_models.download_vm import DownloadViewModel  # noqa: PLC0415
                 history = getattr(self, "_download_vm", None)
                 if history is not None and hasattr(history, "load_history"):
                     skipped_urls = {j.url for j in history.load_history(200) if j.status == "COMPLETED"}
             except Exception:
-                pass
+                logger.exception("기존 다운로드 이력 조회 실패 (중복 건너뛰기)")
         for dto in dtos:
             if skip and dto.url in skipped_urls:
                 continue
@@ -4109,6 +4363,38 @@ class LibraryPanel(QWidget):
         cookie_opts = self._playlist_vm.get_ytdlp_cookie_opts() if self._playlist_vm else {}
         self._vm.import_youtube_to_category(yt_playlist_id, cat_id, cookie_opts)
 
+    def _on_local_playlist_to_category(self, playlist_id, parent_cat_id) -> None:
+        """로컬 재생목록의 영상 전체를 재생목록 이름의 새 카테고리로 복사한다."""
+        if self._playlist_vm is None:
+            return
+        try:
+            playlist_id = UUID(str(playlist_id)) if not isinstance(playlist_id, UUID) else playlist_id
+        except (ValueError, AttributeError):
+            return
+
+        playlist = next((pl for pl in self._playlist_vm.playlists if pl.id == playlist_id), None)
+        if playlist is None:
+            return
+
+        video_ids = self._vm.get_playlist_video_ids(playlist_id)
+        if not video_ids:
+            QMessageBox.information(
+                self, "재생목록 복사",
+                f"재생목록 '{playlist.title}'에 영상이 없습니다.",
+            )
+            return
+
+        self._vm.create_category(playlist.title, parent_id=parent_cat_id)
+
+        new_cat = next(
+            (c for c in self._vm.categories if c.name == playlist.title and c.parent_id == parent_cat_id),
+            None,
+        )
+        if new_cat is None:
+            return
+
+        self._vm.assign_category_bulk(video_ids, new_cat.id)
+
     def _on_copy_yt_to_local(self, yt_playlist_id: str) -> None:
         """YouTube 재생목록의 영상들을 선택한 카테고리로 가져온다."""
         if not yt_playlist_id:
@@ -4161,7 +4447,6 @@ class LibraryPanel(QWidget):
         )
 
         # BFS로 메인 카테고리 트리와 동일한 순서로 구축
-        cats_by_id = {c.id: c for c in categories}
         tw_items: dict = {}
 
         def _child_count(cat_id) -> int:
@@ -4207,6 +4492,29 @@ class LibraryPanel(QWidget):
         if sel is None:
             return
         category_id = sel.data(0, Qt.ItemDataRole.UserRole)
+
+        # 로컬에 이미 가져온 재생목록 데이터를 사용 (YouTube 재다운로드 없음)
+        if self._playlist_vm is not None:
+            local_pl = next(
+                (pl for pl in self._playlist_vm.playlists if pl.yt_playlist_id == yt_playlist_id),
+                None,
+            )
+            if local_pl is not None:
+                video_ids = self._vm.get_playlist_video_ids(local_pl.id)
+                if video_ids:
+                    self._vm.assign_category_bulk(video_ids, category_id)
+                    QMessageBox.information(
+                        self, "복사 완료",
+                        f"영상 {len(video_ids)}개를 카테고리로 복사했습니다.",
+                    )
+                    return
+                QMessageBox.information(
+                    self, "알림",
+                    f"재생목록 '{local_pl.title}'에 영상이 없습니다.",
+                )
+                return
+
+        # 로컬 캐시 없으면 YouTube에서 가져오기
         cookie_opts = self._playlist_vm.get_ytdlp_cookie_opts() if self._playlist_vm else {}
         self._vm.import_youtube_to_category(yt_playlist_id, category_id, cookie_opts)
 
@@ -4284,22 +4592,9 @@ class LibraryPanel(QWidget):
         self._list_view.set_playlist_context(playlist_id)
         if self._view_stack.currentIndex() == _VIEW_FOLDER:
             self._switch_view(self._view_group.checkedId())
-        # 경로 표시 업데이트
-        if playlist_id and self._playlist_vm:
-            pl = next((p for p in self._playlist_vm.playlists if p.id == playlist_id), None)
-            if pl:
-                prefix = "YouTube" if pl.source == "youtube" else "로컬"
-                folder_name = ""
-                if pl.folder_id:
-                    folder = next((f for f in self._playlist_vm.folders if f.id == pl.folder_id), None)
-                    if folder:
-                        folder_name = folder.name
-                path = f"{prefix} > {folder_name} > {pl.title}" if folder_name else f"{prefix} > {pl.title}"
-                self.path_changed.emit(path)
-            else:
-                self.path_changed.emit("라이브러리")
-        else:
-            self.path_changed.emit("라이브러리")
+        self._current_playlist_id = playlist_id
+        self._current_folder_id = None
+        self._refresh_breadcrumb()
 
     def _on_folder_selected(self, folder_id) -> None:
         """폴더 클릭 — 폴더 내 재생목록을 카드 그리드로 표시한다."""
@@ -4309,13 +4604,9 @@ class LibraryPanel(QWidget):
         self._folder_view.load(folder_pls, get_first_item=self._vm.get_playlist_first_item)
         self._view_stack.setCurrentIndex(_VIEW_FOLDER)
         self._vm.set_playlist_filter(None)   # 영상 목록 필터 해제
-        # 경로 표시 업데이트
-        folder = next((f for f in self._playlist_vm.folders if f.id == folder_id), None)
-        if folder:
-            prefix = "YouTube" if folder.source == "youtube" else "로컬"
-            self.path_changed.emit(f"{prefix} > {folder.name}")
-        else:
-            self.path_changed.emit("라이브러리")
+        self._current_folder_id = folder_id
+        self._current_playlist_id = None
+        self._refresh_breadcrumb()
 
     def _on_folder_playlist_selected(self, playlist_id) -> None:
         """폴더 뷰에서 카드 클릭 — 해당 재생목록을 선택하고 정상 뷰로 돌아간다."""
@@ -4324,6 +4615,9 @@ class LibraryPanel(QWidget):
         self._icon_view.set_playlist_context(playlist_id)
         self._list_view.set_playlist_context(playlist_id)
         self._switch_view(self._view_group.checkedId())   # 이전 뷰 모드로 복귀
+        self._current_playlist_id = playlist_id
+        self._current_folder_id = None
+        self._refresh_breadcrumb()
 
     # ── 다중 선택 일괄 처리 ────────────────────────────────────────────
 
@@ -4344,7 +4638,7 @@ class LibraryPanel(QWidget):
             try:
                 self._playlist_vm.remove_video_from_playlist(playlist_id, vid_id)
             except Exception:
-                pass
+                logger.exception("재생목록에서 영상 일괄 제거 실패")
         self._vm.set_playlist_filter(playlist_id)
 
     def _on_bulk_copy_to_playlist(self, video_ids: list, playlist_id) -> None:
@@ -4357,7 +4651,7 @@ class LibraryPanel(QWidget):
                 self._playlist_vm.add_video_to_playlist(playlist_id, vid_id)
                 count += 1
             except Exception:
-                pass
+                logger.exception("재생목록으로 영상 일괄 복사 실패")
         if count > 0:
             QMessageBox.information(self, "복사 완료", f"{count}개 영상을 재생목록에 복사했습니다.")
 

@@ -6,26 +6,16 @@ httplib2는 TLS 핸드셰이크 자체가 실패하므로, requests + verify=Fal
 """
 from __future__ import annotations
 
-import re
+import logging
+
+from domain.library.value_objects import extract_youtube_video_id
+
+logger = logging.getLogger(__name__)
 
 _BASE = "https://www.googleapis.com/youtube/v3"
 
-
-def _extract_yt_video_id(url) -> str:
-    """YouTube URL에서 영상 ID를 추출한다. VideoUrl 값 객체도 허용한다."""
-    url = str(url) if url else ""
-    if not url:
-        return ""
-    m = re.search(r"youtu\.be/([A-Za-z0-9_-]{11})", url)
-    if m:
-        return m.group(1)
-    m = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", url)
-    if m:
-        return m.group(1)
-    m = re.search(r"/shorts/([A-Za-z0-9_-]{11})", url)
-    if m:
-        return m.group(1)
-    return ""
+# 파싱 로직은 도메인으로 이동했다. 기존 참조 호환을 위한 얇은 별칭.
+_extract_yt_video_id = extract_youtube_video_id
 
 
 class YouTubeApiAdapter:
@@ -135,6 +125,14 @@ class YouTubeApiAdapter:
         """YouTube 재생목록 삭제."""
         self._delete("playlists", {"id": yt_playlist_id})
 
+    def update_playlist_title(self, yt_playlist_id: str, new_title: str) -> None:
+        """YouTube 재생목록 제목 변경."""
+        self._put(
+            "playlists",
+            {"part": "snippet"},
+            {"id": yt_playlist_id, "snippet": {"title": new_title}},
+        )
+
     # ── 재생목록 아이템 관리 ──────────────────────────────────────────────────
 
     def add_video(self, yt_playlist_id: str, yt_video_id: str) -> str:
@@ -241,7 +239,7 @@ class YouTubeApiAdapter:
             if items:
                 return items[0].get("snippet", {}).get("title")
         except Exception:
-            pass
+            logger.exception("YouTube 채널명 조회 실패")
         return None
 
     def list_items(self, yt_playlist_id: str) -> list[dict]:
@@ -327,4 +325,5 @@ class YouTubeApiAdapter:
             items = resp.get("items") or []
             return items[0]["snippet"]["title"] if items else None
         except Exception:
+            logger.exception("재생목록 제목 조회 실패")
             return None

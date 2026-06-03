@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -9,8 +10,9 @@ from uuid import UUID
 from domain.library.aggregates import VideoAggregate
 from domain.library.repositories import IVideoRepository, SearchQuery
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
-from infrastructure.event_bus import EventBus
-from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
+from domain.shared.ports import IEventBus, IMediaSource
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,8 +66,8 @@ class AddVideoHandler:
     def __init__(
         self,
         repo: IVideoRepository,
-        event_bus: EventBus,
-        ytdlp: YtDlpAdapter | None = None,
+        event_bus: IEventBus,
+        ytdlp: IMediaSource | None = None,
     ) -> None:
         self._repo = repo
         self._bus = event_bus
@@ -130,7 +132,7 @@ class AddVideoHandler:
                     t.strip() for t in raw_tags if isinstance(t, str) and t.strip()
                 ))
             except Exception:
-                pass  # proceed with URL-as-title if metadata fetch fails
+                logger.exception("유튜브 메타데이터 조회 실패")  # proceed with URL-as-title if metadata fetch fails
 
         # Merge caller-supplied tags with metadata tags; preserve order, deduplicate
         all_tag_names = list(dict.fromkeys([*cmd.tags, *meta_tags]))
@@ -187,7 +189,7 @@ class AddVideoHandler:
 
 
 class UpdateVideoHandler:
-    def __init__(self, repo: IVideoRepository, event_bus: EventBus) -> None:
+    def __init__(self, repo: IVideoRepository, event_bus: IEventBus) -> None:
         self._repo = repo
         self._bus = event_bus
 
@@ -213,7 +215,7 @@ class UpdateVideoHandler:
 
 
 class DeleteVideoHandler:
-    def __init__(self, repo: IVideoRepository, event_bus: EventBus) -> None:
+    def __init__(self, repo: IVideoRepository, event_bus: IEventBus) -> None:
         self._repo = repo
         self._bus = event_bus
 
@@ -227,7 +229,7 @@ class DeleteVideoHandler:
 
 
 class MarkWatchedHandler:
-    def __init__(self, repo: IVideoRepository, event_bus: EventBus) -> None:
+    def __init__(self, repo: IVideoRepository, event_bus: IEventBus) -> None:
         self._repo = repo
         self._bus = event_bus
 
@@ -251,7 +253,7 @@ class AssignCategoryCommand:
 
 
 class AssignCategoryHandler:
-    def __init__(self, repo: IVideoRepository, event_bus: EventBus) -> None:
+    def __init__(self, repo: IVideoRepository, event_bus: IEventBus) -> None:
         self._repo = repo
         self._bus = event_bus
 
@@ -359,7 +361,7 @@ class ImportPlaylistHandler:
     def __init__(
         self,
         add_handler: AddVideoHandler,
-        ytdlp: YtDlpAdapter,
+        ytdlp: IMediaSource,
         on_progress: "Callable[[int, int], None] | None" = None,
     ) -> None:
         self._add = add_handler
@@ -397,7 +399,7 @@ class ImportPlaylistHandler:
                     self._add.handle(add_cmd)
                     imported += 1
                 except Exception:
-                    pass  # duplicate or fetch error — skip silently
+                    logger.exception("재생목록 영상 추가 실패")  # duplicate or fetch error — skip silently
             if self._on_progress:
                 self._on_progress(min(i + self.CHUNK_SIZE, total), total)
 
@@ -434,8 +436,8 @@ class RefreshCategoryMetadataHandler:
     def __init__(
         self,
         repo: IVideoRepository,
-        event_bus: EventBus,
-        ytdlp: YtDlpAdapter,
+        event_bus: IEventBus,
+        ytdlp: IMediaSource,
     ) -> None:
         self._repo = repo
         self._bus = event_bus
@@ -513,13 +515,13 @@ class RefreshCategoryMetadataHandler:
                     self._bus.publish_all(full_agg.pull_events())
                     refreshed += 1
                 except Exception:
-                    pass
+                    logger.exception("영상 메타데이터 갱신 실패")
 
             if on_progress:
                 try:
                     on_progress(min(offset + len(batch), total), total)
                 except Exception:
-                    pass
+                    logger.exception("진행률 콜백 실행 실패")
             offset += self.CHUNK_SIZE
             if len(batch) < self.CHUNK_SIZE:
                 break
@@ -548,8 +550,8 @@ class ImportYouTubePlaylistToCategoryHandler:
     def __init__(
         self,
         video_repo: IVideoRepository,
-        event_bus: EventBus,
-        ytdlp: YtDlpAdapter,
+        event_bus: IEventBus,
+        ytdlp: IMediaSource,
         add_video_handler: "AddVideoHandler",
     ) -> None:
         self._repo = video_repo
@@ -588,7 +590,7 @@ class ImportYouTubePlaylistToCategoryHandler:
                     self._add_video.handle(add_cmd)
                 count += 1
             except Exception:
-                pass
+                logger.exception("재생목록 영상 카테고리 가져오기 실패")
             if cmd.on_progress:
                 cmd.on_progress(i + 1, total)
         return count

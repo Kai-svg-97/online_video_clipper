@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from domain.download.events import DownloadCompleted, DownloadFailed, DownloadProgressUpdated
-from infrastructure.event_bus import EventBus
+from domain.shared.ports import IEventBus
 
 
 class DownloadEventBridge:
@@ -12,7 +12,7 @@ class DownloadEventBridge:
     Lives in the application layer so gui/ never needs to import domain events.
     """
 
-    def __init__(self, event_bus: EventBus) -> None:
+    def __init__(self, event_bus: IEventBus) -> None:
         self._progress_cbs: list[Callable[[], None]] = []
         self._completed_cbs: list[Callable[[], None]] = []
         self._failed_cbs: list[Callable[[str], None]] = []

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import configparser
 import json
+import logging
 import os
 import sys
 import time
@@ -12,6 +13,8 @@ from pathlib import Path
 import yt_dlp
 
 from config.settings import DATA_DIR, save_setting
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -36,7 +39,7 @@ class YouTubeAuthService:
             if browser == "firefox":
                 return self._firefox_profiles()
         except Exception:
-            pass
+            logger.exception("브라우저 프로필 감지 실패")
         return []
 
     def _chromium_profiles(self, vendor: str, app: str) -> list[BrowserProfile]:
@@ -165,7 +168,7 @@ class YouTubeAuthService:
             if name:
                 return {"name": name, "channel_url": ch_url}
         except Exception:
-            pass
+            logger.exception("YouTube 채널 정보 조회 실패")
         return None
 
     def check_login_status(self) -> str | None:
@@ -204,7 +207,7 @@ class YouTubeAuthService:
             try:
                 Path(cookiefile).unlink(missing_ok=True)
             except Exception:
-                pass
+                logger.exception("저장된 쿠키 파일 삭제 실패")
         # Playwright 로그인으로 생성된 쿠키 파일 삭제
         playwright_cookie = DATA_DIR / "auth" / "youtube_cookies.txt"
         playwright_cookie.unlink(missing_ok=True)

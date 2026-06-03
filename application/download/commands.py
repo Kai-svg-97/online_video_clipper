@@ -8,8 +8,7 @@ from domain.download.aggregates import DownloadQueueAggregate
 from domain.download.entities import DownloadJob
 from domain.download.repositories import IDownloadRepository
 from domain.download.value_objects import DownloadSettings
-from infrastructure.event_bus import EventBus
-from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
+from domain.shared.ports import IEventBus, IMediaSource, MediaSourceFactory
 
 
 @dataclass
@@ -39,13 +38,17 @@ class StartDownloadHandler:
         self,
         queue: DownloadQueueAggregate,
         repo: IDownloadRepository,
-        ytdlp: YtDlpAdapter,
-        event_bus: EventBus,
+        ytdlp: IMediaSource,
+        event_bus: IEventBus,
+        make_downloader: MediaSourceFactory | None = None,
     ) -> None:
         self._queue = queue
         self._repo = repo
         self._ytdlp = ytdlp
         self._bus = event_bus
+        # 다운로드는 작업별 진행률 훅이 필요해 새 인스턴스를 만들어야 한다.
+        # composition root가 팩토리를 주입하지 않으면 진행률 없이 주입된 소스를 쓴다.
+        self._make_downloader = make_downloader
 
     def handle(self, cmd: StartDownloadCommand) -> DownloadJob:
         job = DownloadJob.create(
@@ -70,7 +73,11 @@ class StartDownloadHandler:
             self._queue.update_progress(job_id, progress)
             self._bus.publish_all(self._queue.pull_events())
 
-        adapter = YtDlpAdapter(on_progress=on_progress)
+        adapter = (
+            self._make_downloader(on_progress)
+            if self._make_downloader is not None
+            else self._ytdlp
+        )
         try:
             file_path = adapter.download(job.url, job.settings, output_dir)
             self._queue.complete(job_id, str(file_path))
@@ -91,7 +98,7 @@ class StartDownloadHandler:
 
 
 class CancelDownloadHandler:
-    def __init__(self, queue: DownloadQueueAggregate, event_bus: EventBus) -> None:
+    def __init__(self, queue: DownloadQueueAggregate, event_bus: IEventBus) -> None:
         self._queue = queue
         self._bus = event_bus
 

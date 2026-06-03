@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 try:
     from platformdirs import user_data_dir
@@ -49,6 +52,7 @@ def load_smart_folders() -> list[SmartFolder]:
             data = json.load(f)
         return [SmartFolder.from_dict(d) for d in data]
     except Exception:
+        logger.exception("스마트 폴더 로드 실패")
         return []
 
 

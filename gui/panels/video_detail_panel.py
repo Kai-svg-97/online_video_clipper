@@ -5,6 +5,7 @@ It includes a back button, inline player, metadata, and clickable tags.
 """
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +33,8 @@ from PyQt6.QtWidgets import (
 from application.library.dtos import VideoDetailDTO
 from gui.themes.manager import ThemeManager
 from gui.widgets.video_player import InlinePlayer
+
+logger = logging.getLogger(__name__)
 
 
 def _t():
@@ -500,7 +503,7 @@ class VideoDetailWidget(QWidget):
         try:
             self._clip_vm.clips_changed.disconnect(self._refresh_clip_list)
         except Exception:
-            pass
+            logger.exception("클립 시그널 중복 연결 해제 실패")
         self._clip_vm.clips_changed.connect(self._refresh_clip_list)
 
     def _set_start_from_player(self) -> None:

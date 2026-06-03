@@ -6,7 +6,10 @@ google-auth-oauthlib InstalledAppFlow 기반.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
@@ -54,6 +57,7 @@ class YouTubeOAuthAdapter:
                 self.save_credentials(creds)
             return creds
         except Exception:
+            logger.exception("OAuth 자격증명 로드/갱신 실패")
             return None
 
     def run_auth_flow(self, client_id: str, client_secret: str) -> Any:
@@ -112,7 +116,7 @@ class YouTubeOAuthAdapter:
             from infrastructure.youtube.youtube_api_adapter import YouTubeApiAdapter  # noqa: PLC0415
             return YouTubeApiAdapter(creds).get_channel_name()
         except Exception:
-            pass
+            logger.exception("YouTube 채널명 조회 실패")
         return None
 
     # ── 내부 헬퍼 ────────────────────────────────────────────────────────────
@@ -126,5 +130,5 @@ class YouTubeOAuthAdapter:
             try:
                 return json.loads(row["value"])
             except Exception:
-                pass
+                logger.exception("저장된 OAuth 토큰 JSON 파싱 실패")
         return None

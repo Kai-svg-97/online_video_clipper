@@ -5,9 +5,7 @@ so there is no real network I/O.
 """
 import pytest
 from unittest.mock import MagicMock
-from uuid import uuid4
 
-from domain.library.value_objects import VideoUrl
 from infrastructure.event_bus import EventBus
 from infrastructure.persistence.database import Database
 from infrastructure.persistence.sqlite_video_repository import SqliteVideoRepository

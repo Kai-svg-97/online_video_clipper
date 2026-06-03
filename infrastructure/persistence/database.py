@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Generator
 
 from config.settings import DATABASE_PATH
 from utils.resources import get_resource_path
+
+logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -36,6 +39,7 @@ class Database:
                 try:
                     conn.execute(sql)
                 except Exception:
+                    logger.debug("플레이리스트 스키마 마이그레이션 건너뜀 (이미 컬럼 존재 가능)")
                     pass  # 이미 컬럼이 존재하면 무시
 
     def _migrate_normalize_urls(self) -> None:

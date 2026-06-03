@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -46,6 +47,8 @@ from application.library.queries import (
     SearchVideosQuery,
 )
 from config.settings import DEFAULT_PAGE_SIZE
+
+logger = logging.getLogger(__name__)
 
 
 class _AddVideoWorker(QThread):
@@ -196,6 +199,24 @@ class LibraryViewModel(QObject):
         self._min_duration_sec: int | None = None
         self._max_duration_sec: int | None = None
 
+    def shutdown(self) -> None:
+        """앱 종료 시 호출 — 실행 중인 백그라운드 워커(메타데이터 갱신·YouTube
+        가져오기·영상 추가)를 정리해 죽은 객체로의 시그널 방출을 막는다.
+
+        finished 시그널이 리스트를 변형하므로 사본을 순회한다.
+        """
+        for worker in [
+            *self._refresh_metadata_workers,
+            *self._yt_import_workers,
+            *self._add_workers,
+        ]:
+            if worker.isRunning():
+                worker.terminate()
+                worker.wait(3000)
+        self._refresh_metadata_workers.clear()
+        self._yt_import_workers.clear()
+        self._add_workers.clear()
+
     @property
     def videos(self) -> list[VideoDTO]:
         return self._videos
@@ -251,7 +272,7 @@ class LibraryViewModel(QObject):
             )
             self.videos_changed.emit()
         except Exception:
-            pass
+            logger.exception("카테고리 영상 순서 적용 실패")
 
     def reorder_category_videos(self, category_id: UUID, video_ids: list[UUID]) -> None:
         """카테고리 내 영상 순서를 저장하고 현재 목록에 즉시 반영한다."""
@@ -286,6 +307,19 @@ class LibraryViewModel(QObject):
                 self.error_occurred.emit(str(exc))
         self._refresh_videos()
 
+    def get_playlist_video_ids(self, playlist_id: UUID) -> list[UUID]:
+        """재생목록에 속한 영상 ID 목록을 반환한다."""
+        if self._get_playlist_items is None:
+            return []
+        try:
+            items = self._get_playlist_items.handle(
+                GetPlaylistItemsQuery(playlist_id=playlist_id, limit=500)
+            )
+            return [item.video_id for item in items]
+        except Exception:
+            logger.exception("재생목록 영상 ID 조회 실패")
+            return []
+
     def set_tag_filter(self, tag_ids: list[UUID]) -> None:
         self._filter_tag_ids = tag_ids
         self._current_page = 0
@@ -317,6 +351,7 @@ class LibraryViewModel(QObject):
             )
             return items[0] if items else None
         except Exception:
+            logger.exception("재생목록 첫 영상 조회 실패")
             return None
 
     def delete_video(self, video_id: UUID) -> None:

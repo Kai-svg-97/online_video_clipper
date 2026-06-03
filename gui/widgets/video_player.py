@@ -9,6 +9,7 @@ player, redirects QMediaPlayer output there, and restores on exit.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QSizeF, QThread, QTimer, QUrl, Qt, pyqtSignal
@@ -34,6 +35,8 @@ from PyQt6.QtWidgets import (
 from application.library.dtos import DownloadInfoDTO
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
 from gui.themes.manager import ThemeManager
+
+logger = logging.getLogger(__name__)
 
 
 # ── Background worker: resolve yt-dlp stream URL ──────────────────
@@ -936,7 +939,7 @@ class InlinePlayer(QWidget):
                 if h > 0:
                     self._bar.set_quality(f"{h}p")
         except Exception:
-            pass
+            logger.exception("Qt 메타데이터 해상도 뱃지 보완 실패")
 
     def _on_download_requested(self, settings: DownloadSettings) -> None:
         self.download_requested.emit(self._video_url, self._video_title, settings)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
@@ -16,6 +17,8 @@ from application.library.dtos import (
 from domain.download.repositories import IDownloadRepository
 from domain.library.aggregates import VideoAggregate
 from domain.library.repositories import IVideoRepository, SearchQuery
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -223,6 +226,7 @@ class GetCategoriesHandler:
         try:
             counts = self._repo.list_category_video_counts()
         except Exception:
+            logger.exception("카테고리별 영상 수 조회 실패")
             counts = {}
         return [
             CategoryDTO(id=c.id, name=c.name, parent_id=c.parent_id, video_count=counts.get(c.id, 0))
@@ -274,6 +278,7 @@ class LibraryStatsHandler:
                     if p.exists():
                         total_bytes += p.stat().st_size
         except Exception:
+            logger.exception("다운로드 통계 집계 실패")
             total_dl = 0
             total_bytes = 0
 

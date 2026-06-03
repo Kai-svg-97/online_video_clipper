@@ -9,6 +9,7 @@ from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import QApplication
 
 from config.settings import ensure_data_dirs
+from utils.logging_config import setup_logging
 from utils.resources import get_resource_path
 from infrastructure.event_bus import EventBus
 from infrastructure.persistence.database import Database
@@ -75,6 +76,7 @@ from application.library.playlist_commands import (
 )
 from application.monitoring.commands import ImportYouTubeSubscriptionsHandler
 from infrastructure.youtube.oauth_adapter import YouTubeOAuthAdapter
+from infrastructure.youtube.youtube_api_adapter import YouTubeApiAdapter
 from application.library.playlist_queries import (
     GetPlaylistFoldersHandler,
     GetPlaylistItemsHandler,
@@ -100,6 +102,7 @@ from gui.view_models.playlist_vm import PlaylistViewModel
 def main() -> int:
     # 1. Bootstrap data directories
     ensure_data_dirs()
+    setup_logging()
 
     # 2. Initialize database
     db = Database()
@@ -148,7 +151,10 @@ def main() -> int:
     )
 
     # 7. Application handlers — Download
-    start_dl  = StartDownloadHandler(dl_queue, download_repo, ytdlp, event_bus)
+    start_dl  = StartDownloadHandler(
+        dl_queue, download_repo, ytdlp, event_bus,
+        make_downloader=lambda cb: YtDlpAdapter(on_progress=cb),
+    )
     cancel_dl = CancelDownloadHandler(dl_queue, event_bus)
     get_queue = GetDownloadQueueHandler(dl_queue)
     get_hist  = GetDownloadHistoryHandler(download_repo)
@@ -169,7 +175,6 @@ def main() -> int:
     _yt_creds      = yt_oauth.get_credentials()
     _yt_api        = None
     if _yt_creds is not None:
-        from infrastructure.youtube.youtube_api_adapter import YouTubeApiAdapter  # noqa: PLC0415
         _yt_api = YouTubeApiAdapter(_yt_creds)
 
     create_playlist_h  = CreatePlaylistHandler(playlist_repo)
@@ -182,6 +187,7 @@ def main() -> int:
         add_video_handler=add_video,
         yt_api=_yt_api,
         yt_oauth=yt_oauth,
+        yt_api_factory=lambda creds: YouTubeApiAdapter(creds),
     )
     get_playlists_h    = GetPlaylistsHandler(playlist_repo)
     get_pl_items_h     = GetPlaylistItemsHandler(playlist_repo, video_repo)
@@ -189,7 +195,7 @@ def main() -> int:
     add_url_to_pl_h    = AddUrlToPlaylistHandler(add_video, playlist_repo)
 
     # 9c. Playlist folder + YouTube API handlers
-    rename_playlist_h  = RenamePlaylistHandler(playlist_repo)
+    rename_playlist_h  = RenamePlaylistHandler(playlist_repo, yt_api=_yt_api)
     create_folder_h    = CreatePlaylistFolderHandler(folder_repo)
     rename_folder_h    = RenamePlaylistFolderHandler(folder_repo)
     delete_folder_h    = DeletePlaylistFolderHandler(folder_repo)

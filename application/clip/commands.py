@@ -8,8 +8,7 @@ from config.settings import DOWNLOAD_DIR
 from domain.clip.aggregates import ClipAggregate
 from domain.clip.repositories import IClipRepository
 from domain.clip.value_objects import TimeRange
-from infrastructure.event_bus import EventBus
-from infrastructure.ffmpeg.ffmpeg_adapter import FfmpegAdapter
+from domain.shared.ports import IClipExtractor, IEventBus
 
 
 @dataclass
@@ -32,8 +31,8 @@ class ExtractClipHandler:
     def __init__(
         self,
         repo: IClipRepository,
-        ffmpeg: FfmpegAdapter,
-        event_bus: EventBus,
+        ffmpeg: IClipExtractor,
+        event_bus: IEventBus,
     ) -> None:
         self._repo = repo
         self._ffmpeg = ffmpeg
@@ -59,7 +58,7 @@ class ExtractClipHandler:
 
 
 class DeleteClipHandler:
-    def __init__(self, repo: IClipRepository, event_bus: EventBus) -> None:
+    def __init__(self, repo: IClipRepository, event_bus: IEventBus) -> None:
         self._repo = repo
         self._bus = event_bus
 

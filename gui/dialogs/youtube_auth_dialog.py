@@ -1,24 +1,20 @@
 """YouTube 통합 인증 다이얼로그."""
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QButtonGroup,
     QDialog,
     QFileDialog,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QRadioButton,
-    QSizePolicy,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -26,7 +22,9 @@ from PyQt6.QtWidgets import (
 )
 
 from config.settings import DATA_DIR
-from infrastructure.auth.youtube_auth import BrowserProfile, YouTubeAuthService, write_netscape_cookies
+from infrastructure.auth.youtube_auth import YouTubeAuthService, write_netscape_cookies
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +46,6 @@ def _find_system_chromium_exe() -> str | None:
     """시스템에 설치된 Chrome / Edge 실행 파일 경로를 반환한다."""
     import os
     import shutil
-    from pathlib import Path
 
     if sys.platform == "win32":
         lad  = os.environ.get("LOCALAPPDATA", "")
@@ -106,17 +103,24 @@ class _PlaywrightLoginWorker(QThread):
                 if exe:
                     kwargs["executable_path"] = exe
                 browser = p.chromium.launch(**kwargs)
-                context = browser.new_context()
-                page = context.new_page()
-                page.goto(
-                    "https://accounts.google.com/signin/v2/identifier?service=youtube",
-                    timeout=30_000,
-                )
-                # 로그인 완료 후 YouTube 메인으로 리디렉션될 때까지 대기 (최대 5분)
-                page.wait_for_url("*://www.youtube.com/**", timeout=300_000)
-                cookies = context.cookies("https://www.youtube.com")
-                write_netscape_cookies(cookie_path, cookies)
-                browser.close()
+                try:
+                    context = browser.new_context()
+                    page = context.new_page()
+                    page.goto(
+                        "https://accounts.google.com/signin/v2/identifier?service=youtube",
+                        timeout=30_000,
+                    )
+                    # 로그인 완료 후 YouTube 메인으로 리디렉션될 때까지 대기 (최대 5분)
+                    page.wait_for_url("*://www.youtube.com/**", timeout=300_000)
+                    cookies = context.cookies("https://www.youtube.com")
+                    write_netscape_cookies(cookie_path, cookies)
+                finally:
+                    # 타임아웃·사용자 취소 등 예외 시에도 브라우저 프로세스를
+                    # 반드시 종료해 좀비 chromium이 남지 않게 한다.
+                    try:
+                        browser.close()
+                    except Exception:
+                        logger.exception("playwright 브라우저 종료 실패")
             self.login_success.emit(str(cookie_path))
         except Exception as exc:
             error = str(exc)

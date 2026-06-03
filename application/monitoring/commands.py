@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from uuid import UUID
 
 from domain.monitoring.aggregates import ChannelMonitorAggregate
 from domain.monitoring.repositories import IChannelRepository
 from domain.monitoring.value_objects import MonitoringRule
-from infrastructure.event_bus import EventBus
+from domain.shared.ports import IEventBus
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,7 +33,7 @@ class SubscribeChannelHandler:
     def __init__(
         self,
         repo: IChannelRepository,
-        event_bus: EventBus,
+        event_bus: IEventBus,
         ytdlp_adapter=None,
     ) -> None:
         self._repo = repo
@@ -47,7 +50,7 @@ class SubscribeChannelHandler:
                 channel_id = info.get("channel_id") or info.get("uploader_id") or cmd.channel_url
                 channel_name = info.get("uploader") or info.get("channel") or cmd.channel_url
             except Exception:
-                pass
+                logger.exception("채널 메타데이터 조회 실패")
 
         agg = ChannelMonitorAggregate.create(
             channel_id=channel_id,
@@ -61,7 +64,7 @@ class SubscribeChannelHandler:
 
 
 class UnsubscribeChannelHandler:
-    def __init__(self, repo: IChannelRepository, event_bus: EventBus) -> None:
+    def __init__(self, repo: IChannelRepository, event_bus: IEventBus) -> None:
         self._repo = repo
         self._bus = event_bus
 
@@ -114,6 +117,7 @@ class ImportYouTubeSubscriptionsHandler:
             try:
                 channels = self._yt_api.list_subscriptions()
             except Exception:
+                logger.exception("구독 채널 목록 API 조회 실패")
                 channels = []
         elif self._ytdlp is not None:
             channels = self._ytdlp.fetch_subscribed_channels(cmd.cookie_opts)
@@ -129,5 +133,5 @@ class ImportYouTubeSubscriptionsHandler:
                 self._subscribe.handle(SubscribeChannelCommand(channel_url=url))
                 count += 1
             except Exception:
-                pass  # 중복 구독 등 오류 무시
+                logger.exception("채널 구독 등록 실패")  # 중복 구독 등 오류 무시
         return count

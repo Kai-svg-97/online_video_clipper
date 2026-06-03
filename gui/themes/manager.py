@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -22,6 +23,8 @@ from PyQt6.QtWidgets import QApplication
 
 from gui.themes.tokens import DEFAULT_PRESET, PRESETS, ThemeTokens
 from gui.themes.stylesheet import build_qss
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
@@ -95,4 +98,4 @@ class ThemeManager(QObject):
             from config import settings as _s
             _s.save_theme(name)
         except Exception:
-            pass  # 저장 실패 시 무시 (비필수 기능)
+            logger.debug("테마 저장 실패 (비필수 기능)", exc_info=True)  # 저장 실패 시 무시

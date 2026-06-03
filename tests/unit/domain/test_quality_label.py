@@ -1,5 +1,4 @@
 """ytdlp_adapter 의 _height_to_quality_label 단위 테스트."""
-import pytest
 from infrastructure.downloader.ytdlp_adapter import _height_to_quality_label
 
 

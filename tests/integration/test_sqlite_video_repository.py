@@ -87,7 +87,7 @@ class TestCategoryOrdering:
 class TestDeleteZeroCountTags:
     def test_deletes_tags_with_no_videos(self, repo):
         tag_a = repo.get_or_create_tag("used-tag")
-        tag_b = repo.get_or_create_tag("orphan-tag")
+        repo.get_or_create_tag("orphan-tag")  # 고아 태그 — delete_zero_count_tags로 삭제되는지 검증용
         # Associate tag_a with a video
         agg = _make_agg(url="https://youtu.be/zzz111", title="Test")
         agg.set_tags([tag_a.id])
