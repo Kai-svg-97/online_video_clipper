@@ -1276,6 +1276,7 @@ class _PlaylistTree(QTreeWidget):
 
     playlist_selected             = pyqtSignal(object)         # UUID | None
     folder_selected               = pyqtSignal(object)         # folder UUID
+    unfiled_selected              = pyqtSignal(object)         # source str ("local"|"youtube") — 미분류 디렉토리
     category_selected             = pyqtSignal(object)         # category UUID
     playlist_delete_req           = pyqtSignal(object)         # playlist UUID
     playlist_rename_req           = pyqtSignal(object)         # playlist UUID
@@ -1336,6 +1337,9 @@ class _PlaylistTree(QTreeWidget):
 
         if self._section == "youtube":
             self.expandAll()
+        elif self._section == "local":
+            # 카테고리는 기본 2단계까지만 펼친다 (최상위 + 직속 자식만 보이고 그 아래는 접음)
+            self.expandToDepth(0)
         else:
             self.expandToDepth(1)   # 폴더/카테고리는 펼치되 하위 재귀 항목은 접음
         self.blockSignals(False)
@@ -1504,7 +1508,8 @@ class _PlaylistTree(QTreeWidget):
         return item
 
     def _make_unfiled(self, source: str) -> QTreeWidgetItem:
-        item = QTreeWidgetItem(["  미분류"])
+        # 미분류도 디렉토리로 기능하므로 폴더 아이콘을 앞에 표시한다.
+        item = QTreeWidgetItem(["📂  미분류"])
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_FOLDER)
         item.setData(0, _FOLDER_ID_ROLE, None)   # None = 미분류
         item.setData(0, _SECTION_ROLE, source)
@@ -1518,9 +1523,10 @@ class _PlaylistTree(QTreeWidget):
         return item
 
     def _make_category(self, name: str, cat_id, video_count: int = 0, has_children: bool = False) -> QTreeWidgetItem:
+        # 펼침/접힘 세모는 트리 branch 컬럼(들여쓰기 영역)에 네이티브 인디케이터로 표시한다.
+        # 라벨에는 더 이상 세모(▸)를 넣지 않는다. (has_children 인자는 호환을 위해 유지)
         starred = ("category", str(cat_id)) in self._favs
-        arrow = "▸ " if has_children else "  "
-        label = f"{arrow}🏷  {name}  ({video_count})" if video_count > 0 else f"{arrow}🏷  {name}"
+        label = f"🏷  {name}  ({video_count})" if video_count > 0 else f"🏷  {name}"
         item = QTreeWidgetItem([label])
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_CATEGORY)
         item.setData(0, _CAT_ID_ROLE, cat_id)
@@ -1576,6 +1582,9 @@ class _PlaylistTree(QTreeWidget):
             fid = current.data(0, _FOLDER_ID_ROLE)
             if fid:
                 self.folder_selected.emit(fid)
+            else:
+                # 미분류 디렉토리 — 해당 섹션의 미분류 재생목록을 표시
+                self.unfiled_selected.emit(current.data(0, _SECTION_ROLE))
         elif itype == _ITYPE_ROOT:
             if current.data(0, _SECTION_ROLE) == "local":
                 self.category_selected.emit(None)  # 전체 영상
@@ -2010,6 +2019,64 @@ class _PlaylistThumbLabel(QLabel):
         painter.end()
 
 
+class _FolderCard(QFrame):
+    """섹션 루트 뷰의 폴더 디렉터리 카드."""
+
+    clicked = pyqtSignal(object)   # folder UUID
+
+    def __init__(self, folder, parent=None) -> None:
+        super().__init__(parent)
+        self._folder_id = folder.id
+        self.setFixedWidth(221)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+        icon_lbl = QLabel("📂")
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setStyleSheet("font-size:36pt;")
+        layout.addWidget(icon_lbl)
+        name_lbl = QLabel(folder.name)
+        name_lbl.setWordWrap(True)
+        name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name_lbl.setStyleSheet("font-size:9pt; font-weight:600;")
+        layout.addWidget(name_lbl)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self._folder_id)
+        super().mousePressEvent(event)
+
+
+class _UnfiledCard(QFrame):
+    """섹션 루트 뷰의 '미분류' 디렉터리 카드."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, count: int, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedWidth(221)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+        icon_lbl = QLabel("📂")
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setStyleSheet("font-size:36pt;")
+        layout.addWidget(icon_lbl)
+        name_lbl = QLabel(f"미분류  ({count})" if count else "미분류")
+        name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name_lbl.setStyleSheet("font-size:9pt; font-weight:600; color:#aaa;")
+        layout.addWidget(name_lbl)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class _PlaylistCard(QFrame):
     """폴더 뷰의 재생목록 카드 한 장."""
 
@@ -2049,9 +2116,10 @@ class _PlaylistCard(QFrame):
 
 
 class _FolderContentsView(QScrollArea):
-    """폴더 선택 시 폴더 내 재생목록을 카드 그리드로 표시한다."""
+    """폴더/섹션 루트 선택 시 하위 폴더·미분류·재생목록을 카드 그리드로 표시한다."""
 
     playlist_selected = pyqtSignal(object)   # playlist UUID
+    folder_selected   = pyqtSignal(object)   # folder UUID
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -2060,7 +2128,15 @@ class _FolderContentsView(QScrollArea):
         self._grid = None   # QGridLayout — 카드 로드 시 생성
         self.setWidget(self._container)
 
-    def load(self, playlists: list, get_first_item) -> None:
+    def load(
+        self,
+        playlists: list,
+        get_first_item,
+        folders: list | None = None,
+        show_unfiled: bool = False,
+        unfiled_count: int = 0,
+    ) -> None:
+        """폴더 카드(선택적) + 미분류 카드(선택적) + 재생목록 카드를 그리드로 표시한다."""
         # 이전 카드 전부 제거
         old_layout = self._container.layout()
         if old_layout is not None:
@@ -2069,28 +2145,95 @@ class _FolderContentsView(QScrollArea):
                 w = item.widget()
                 if w:
                     w.deleteLater()
-            QWidget().setLayout(old_layout)  # 레이아웃 분리
+            QWidget().setLayout(old_layout)
 
         from PyQt6.QtWidgets import QGridLayout  # noqa: PLC0415
         grid = QGridLayout(self._container)
         grid.setSpacing(12)
         grid.setContentsMargins(12, 12, 12, 12)
         cols = 3
-        for i, pl in enumerate(playlists):
+        idx = 0
+
+        # ── 폴더 카드 ──
+        for f in (folders or []):
+            card = _FolderCard(f, self._container)
+            card.clicked.connect(self.folder_selected)
+            grid.addWidget(card, idx // cols, idx % cols)
+            idx += 1
+
+        # ── 미분류 카드 ──
+        if show_unfiled:
+            card = _UnfiledCard(unfiled_count, self._container)
+            card.clicked.connect(lambda: self.folder_selected.emit(None))
+            grid.addWidget(card, idx // cols, idx % cols)
+            idx += 1
+
+        # ── 재생목록 카드 ──
+        for pl in playlists:
             card = _PlaylistCard(pl, get_first_item, self._container)
             card.clicked.connect(self.playlist_selected)
-            grid.addWidget(card, i // cols, i % cols)
-        # 빈 공간을 오른쪽·아래로 밀어내는 스트레치
-        if playlists:
+            grid.addWidget(card, idx // cols, idx % cols)
+            idx += 1
+
+        if idx > 0:
             grid.setColumnStretch(cols, 1)
-            grid.setRowStretch((len(playlists) - 1) // cols + 1, 1)
+            grid.setRowStretch((idx - 1) // cols + 1, 1)
         self._grid = grid
 
-        if not playlists:
+        if idx == 0:
             lbl = QLabel("이 폴더에 재생목록이 없습니다.")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet("color:#888; font-size:11pt;")
             grid.addWidget(lbl, 0, 0)
+
+
+# ── 브랜치 인디케이터 화살표 픽스맵 헬퍼 ─────────────────────────────────────
+
+_arrow_cache: dict[str, str] = {}   # (state+color) → 임시 png 경로
+
+
+def _write_branch_arrow_pixmap(state: str, color: str) -> str:
+    """QSS image:url() 에 주입할 화살표 PNG를 생성해 임시 파일 경로를 반환한다.
+
+    state: "closed" → ▶(오른쪽), "open" → ▼(아래쪽)
+    결과를 _arrow_cache에 캐싱해 동일 색상 재호출을 방지한다.
+    """
+    import tempfile, os  # noqa: PLC0415
+    from PyQt6.QtGui import QPainter, QColor, QPolygonF  # noqa: PLC0415
+    from PyQt6.QtCore import QPointF  # noqa: PLC0415
+
+    key = f"{state}:{color}"
+    if key in _arrow_cache and os.path.exists(_arrow_cache[key]):
+        return _arrow_cache[key]
+
+    size = 12
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    c = QColor(color)
+    painter.setBrush(c)
+    painter.setPen(Qt.PenStyle.NoPen)
+
+    half = size / 2
+    if state == "closed":
+        # ▶ 오른쪽 삼각형
+        poly = QPolygonF([
+            QPointF(3, 2), QPointF(size - 3, half), QPointF(3, size - 2),
+        ])
+    else:
+        # ▼ 아래쪽 삼각형
+        poly = QPolygonF([
+            QPointF(2, 3), QPointF(size - 2, 3), QPointF(half, size - 3),
+        ])
+    painter.drawPolygon(poly)
+    painter.end()
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    tmp.close()
+    pm.save(tmp.name, "PNG")
+    _arrow_cache[key] = tmp.name
+    return tmp.name
 
 
 class _BreadcrumbBar(QWidget):
@@ -2185,6 +2328,7 @@ class _PlaylistPanel(QWidget):
 
     playlist_selected             = pyqtSignal(object)         # UUID | None
     folder_selected               = pyqtSignal(object)         # folder UUID
+    unfiled_selected              = pyqtSignal(object)         # source str — 미분류 디렉토리
     category_selected             = pyqtSignal(object)         # category UUID
     delete_playlist_req           = pyqtSignal(object)         # playlist UUID
     rename_playlist_req           = pyqtSignal(object)         # playlist UUID
@@ -2286,6 +2430,7 @@ class _PlaylistPanel(QWidget):
     def _connect_tree(self, tree: _PlaylistTree) -> None:
         tree.playlist_selected.connect(self.playlist_selected)
         tree.folder_selected.connect(self.folder_selected)
+        tree.unfiled_selected.connect(self.unfiled_selected)
         tree.category_selected.connect(self.category_selected)
         tree.playlist_delete_req.connect(self.delete_playlist_req)
         tree.playlist_rename_req.connect(self.rename_playlist_req)
@@ -3109,7 +3254,9 @@ class LibraryPanel(QWidget):
         self._playlist_panel.push_to_yt_req.connect(self._on_push_to_youtube)
         self._playlist_panel.video_move_to_playlist_req.connect(self._on_video_move_to_playlist_from_dnd)
         self._playlist_panel.folder_selected.connect(self._on_folder_selected)
+        self._playlist_panel.unfiled_selected.connect(self._on_unfiled_selected)
         self._folder_view.playlist_selected.connect(self._on_folder_playlist_selected)
+        self._folder_view.folder_selected.connect(self._on_folder_selected)
         if self._playlist_vm is not None:
             self._playlist_vm.playlists_changed.connect(self._on_playlists_changed)
             self._playlist_vm.folders_changed.connect(self._on_playlists_changed)
@@ -3267,16 +3414,20 @@ class LibraryPanel(QWidget):
                 border-radius: 3px;
             }}
         """
-        # 로컬 트리에만 branch indicator 적용 (CSS로 이미지 override 없이 Qt 기본 indicator 사용)
-        branch_style = style + """
+        # 로컬 트리 branch 컬럼에 화살표 인디케이터를 픽스맵으로 그린다.
+        # 테마 accent 색상 기반 ▶(접힘) / ▼(펼침) 아이콘을 임시 파일에 저장해 QSS에 주입.
+        arrow_color = tok.accent
+        arrow_closed_path = _write_branch_arrow_pixmap("closed", arrow_color)
+        arrow_open_path   = _write_branch_arrow_pixmap("open",   arrow_color)
+        branch_style = style + f"""
             QTreeWidget::branch:has-children:!has-siblings:closed,
-            QTreeWidget::branch:closed:has-children:has-siblings  {
-                background: transparent;
-            }
+            QTreeWidget::branch:closed:has-children:has-siblings {{
+                image: url({arrow_closed_path});
+            }}
             QTreeWidget::branch:open:has-children:!has-siblings,
-            QTreeWidget::branch:open:has-children:has-siblings {
-                background: transparent;
-            }
+            QTreeWidget::branch:open:has-children:has-siblings {{
+                image: url({arrow_open_path});
+            }}
         """
         hdr_style = f"""
             QLabel#playlist_section_header {{
@@ -3549,10 +3700,13 @@ class LibraryPanel(QWidget):
         return "로컬 > " + " > ".join(parts) if parts else "라이브러리"
 
     def _build_breadcrumb_segments(self, cat_id) -> list:
-        """(이름, cat_id|None) 리스트 반환. 루트 '로컬'은 항상 포함."""
-        segments: list = [("로컬", None)]
+        """(이름, click_val) 리스트 반환. 루트 '로컬'은 항상 포함.
+        cat_id가 있을 때 '로컬' click_val="root" → 클릭 시 카테고리 root(전체) 이동.
+        이미 root에 있으면(cat_id=None) 마지막 세그먼트라 비클릭."""
         if cat_id is None:
-            return segments
+            # 이미 루트 → "로컬"은 마지막이므로 click_val=None (비클릭)
+            return [("로컬", None)]
+        segments: list = [("로컬", "root")]
         cats_by_id = {c.id: c for c in self._vm.categories}
         parts: list = []
         current = cat_id
@@ -3573,8 +3727,11 @@ class LibraryPanel(QWidget):
         pl = next((p for p in self._playlist_vm.playlists if p.id == playlist_id), None)
         if not pl:
             return []
-        prefix = "YouTube" if pl.source == "youtube" else "로컬"
-        segs = [(prefix, "root")]
+        if pl.source == "youtube":
+            prefix, root_val = "YouTube", "section:youtube"
+        else:
+            prefix, root_val = "로컬", "root"
+        segs = [(prefix, root_val)]
         if pl.folder_id:
             folder = next((f for f in self._playlist_vm.folders if f.id == pl.folder_id), None)
             if folder:
@@ -3589,8 +3746,11 @@ class LibraryPanel(QWidget):
         folder = next((f for f in self._playlist_vm.folders if f.id == folder_id), None)
         if not folder:
             return []
-        prefix = "YouTube" if folder.source == "youtube" else "로컬"
-        return [(prefix, "root"), (folder.name, None)]
+        if folder.source == "youtube":
+            prefix, root_val = "YouTube", "section:youtube"
+        else:
+            prefix, root_val = "로컬", "root"
+        return [(prefix, root_val), (folder.name, None)]
 
     def _refresh_breadcrumb(self) -> None:
         if self._current_playlist_id is not None:
@@ -3605,13 +3765,16 @@ class LibraryPanel(QWidget):
             self._breadcrumb_bar.update_path(segments, tag_pairs)
 
     def _on_breadcrumb_nav(self, val) -> None:
-        """브레드크럼 세그먼트 클릭 → 카테고리·폴더·루트 분기 처리."""
+        """브레드크럼 세그먼트 클릭 → 카테고리·폴더·섹션루트 분기 처리."""
         if isinstance(val, tuple) and len(val) == 2 and val[0] == "folder":
             self._on_folder_selected(val[1])
         elif isinstance(val, UUID):
             self._on_cat_filter_changed(val)
+        elif isinstance(val, str) and val.startswith("section:"):
+            # "section:youtube" 또는 "section:local" → 섹션 루트 뷰 (폴더+미분류 카드)
+            self._on_section_root_selected(val.split(":", 1)[1])
         else:
-            # "root" 또는 None → 전체 영상 (카테고리 없음)
+            # "root" → 로컬 카테고리 전체 영상 (카테고리 필터 해제)
             self._on_cat_filter_changed(None)
 
     def _on_cat_filter_changed(self, cat_id) -> None:
@@ -4597,16 +4760,46 @@ class LibraryPanel(QWidget):
         self._refresh_breadcrumb()
 
     def _on_folder_selected(self, folder_id) -> None:
-        """폴더 클릭 — 폴더 내 재생목록을 카드 그리드로 표시한다."""
+        """폴더 클릭 — 폴더 내 재생목록을 카드 그리드로 표시한다.
+        folder_id=None이면 '미분류' 디렉터리 뷰."""
         if self._playlist_vm is None:
             return
         folder_pls = [pl for pl in self._playlist_vm.playlists if pl.folder_id == folder_id]
         self._folder_view.load(folder_pls, get_first_item=self._vm.get_playlist_first_item)
         self._view_stack.setCurrentIndex(_VIEW_FOLDER)
-        self._vm.set_playlist_filter(None)   # 영상 목록 필터 해제
+        self._vm.set_playlist_filter(None)
         self._current_folder_id = folder_id
         self._current_playlist_id = None
         self._refresh_breadcrumb()
+
+    def _on_unfiled_selected(self, source: str) -> None:
+        """미분류 클릭 — 해당 섹션의 폴더 없는 재생목록을 카드 그리드로 표시한다."""
+        self._on_folder_selected(None)
+
+    def _on_section_root_selected(self, source: str) -> None:
+        """섹션 루트('로컬'/'YouTube') 클릭 — 해당 섹션의 폴더 + 미분류 카드를 표시한다.
+        (경로 바에서 'YouTube' 세그먼트 클릭 시 호출)"""
+        if self._playlist_vm is None:
+            return
+        folders = [f for f in self._playlist_vm.folders if f.source == source]
+        unfiled_pls = [pl for pl in self._playlist_vm.playlists
+                       if pl.source == source and pl.folder_id is None]
+        self._folder_view.load(
+            playlists=[],
+            get_first_item=self._vm.get_playlist_first_item,
+            folders=folders,
+            show_unfiled=True,
+            unfiled_count=len(unfiled_pls),
+        )
+        self._view_stack.setCurrentIndex(_VIEW_FOLDER)
+        self._vm.set_playlist_filter(None)
+        # 섹션 루트 — 폴더도 재생목록도 아닌 상태
+        self._current_folder_id = None
+        self._current_playlist_id = None
+        # 경로 바: "YouTube" 또는 "로컬" 단독 (클릭 안 되는 마지막 세그먼트)
+        label = "YouTube" if source == "youtube" else "로컬"
+        self._breadcrumb_bar.update_path([(label, None)], [])
+        self._breadcrumb_bar.show()
 
     def _on_folder_playlist_selected(self, playlist_id) -> None:
         """폴더 뷰에서 카드 클릭 — 해당 재생목록을 선택하고 정상 뷰로 돌아간다."""
