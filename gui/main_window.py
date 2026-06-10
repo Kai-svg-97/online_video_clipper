@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
 from config.settings import PIXMAP_CACHE_LIMIT_KB, THEME
 # YouTubeAuthDialog는 단독 다이얼로그 대신 Settings 패널로 통합됨
 from gui.panels.download_panel import DownloadPanel
-from gui.panels.feed_panel import FeedPanel
 from gui.panels.library_panel import LibraryPanel
 from gui.panels.monitoring_panel import MonitoringPanel
 from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
@@ -121,8 +120,7 @@ _PAGE_LIBRARY  = 0
 _PAGE_DOWNLOAD = 1
 _PAGE_MONITOR  = 2
 _PAGE_STATS    = 3
-_PAGE_FEED     = 4
-_PAGE_SETTINGS = 5
+_PAGE_SETTINGS = 4
 
 
 class _NavButton(QPushButton):
@@ -204,7 +202,6 @@ class _SideBar(QWidget):
             (_SVG_DOWNLOAD, "다운로드",          _PAGE_DOWNLOAD),
             (_SVG_MONITOR,  "채널 모니터링",      _PAGE_MONITOR),
             (_SVG_STATS,    "통계",              _PAGE_STATS),
-            (_SVG_FEED,     "구독 피드",          _PAGE_FEED),
         ]
         for svg, tip, page in nav_defs:
             btn = _NavButton(svg, tip)
@@ -241,8 +238,7 @@ class _SideBar(QWidget):
             _PAGE_DOWNLOAD: 1,
             _PAGE_MONITOR:  2,
             _PAGE_STATS:    3,
-            _PAGE_FEED:     4,
-            _PAGE_SETTINGS: 5,
+            _PAGE_SETTINGS: 4,
         }
         for i, btn in enumerate(self._buttons):
             btn.setChecked(i == page_to_btn.get(page, 0))
@@ -377,6 +373,8 @@ class _LibraryPage(QWidget):
         clip_vm: ClipViewModel,
         stack: QStackedWidget,
         playlist_vm: PlaylistViewModel | None = None,
+        feed_vm: FeedViewModel | None = None,
+        monitoring_vm: MonitoringViewModel | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -389,6 +387,8 @@ class _LibraryPage(QWidget):
             clip_vm=clip_vm,
             download_vm=download_vm,
             playlist_vm=playlist_vm,
+            feed_vm=feed_vm,
+            monitoring_vm=monitoring_vm,
         )
         layout.addWidget(self._library_panel, 1)
 
@@ -450,13 +450,15 @@ class MainWindow(QMainWindow):
         # 콘텐츠 스택
         self._stack = QStackedWidget()
 
-        # 페이지 0: 라이브러리
+        # 페이지 0: 라이브러리 (구독 채널 트리·피드 그리드 포함 — feed_vm 주입)
         self._library_page = _LibraryPage(
             self._library_vm,
             self._download_vm,
             self._clip_vm,
             self._stack,
             playlist_vm=self._playlist_vm,
+            feed_vm=self._feed_vm,
+            monitoring_vm=self._monitoring_vm,
         )
         self._stack.addWidget(self._library_page)                  # 0
 
@@ -475,28 +477,15 @@ class MainWindow(QMainWindow):
             QVBoxLayout(stub).addWidget(QLabel("통계 기능 준비 중"))
             self._stack.addWidget(stub)                              # 3
 
-        # 페이지 4: 구독 피드
-        if self._feed_vm is not None:
-            self._feed_panel = FeedPanel(
-                self._feed_vm,
-                library_vm=self._library_vm,
-                playlist_vm=self._playlist_vm,
-            )
-            self._stack.addWidget(self._feed_panel)                  # 4
-        else:
-            from PyQt6.QtWidgets import QLabel  # noqa: PLC0415
-            stub2 = QWidget()
-            stub2_lbl = QLabel("구독 피드: main.py에서 FeedViewModel을 주입하세요.")
-            stub2_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            QVBoxLayout(stub2).addWidget(stub2_lbl)
-            self._stack.addWidget(stub2)                             # 4
+        # (구독 피드는 별도 페이지를 두지 않고 라이브러리 좌측 트리의
+        #  "구독" 노드로 통합됨 — _LibraryPage에 feed_vm을 주입한다.)
 
-        # 페이지 5: 설정 (library_vm.tags 를 lazy 하게 공급)
+        # 페이지 4: 설정 (library_vm.tags 를 lazy 하게 공급)
         self._settings_panel = SettingsPanel(
             get_tags_fn=lambda: self._library_vm.tags,
             yt_oauth=self._yt_oauth,
         )
-        self._stack.addWidget(self._settings_panel)                  # 5
+        self._stack.addWidget(self._settings_panel)                  # 4
 
         # 사이드바 (스택 생성 후)
         self._sidebar = _SideBar(self._stack)
@@ -510,6 +499,7 @@ class MainWindow(QMainWindow):
         # 영상 등록 중 마퀴 진행 바 (상태바 우측 고정)
         self._add_progress = QProgressBar()
         self._add_progress.setRange(0, 0)  # 마퀴(indeterminate) 모드
+        self._add_progress.setTextVisible(False)  # 얇은 바라 퍼센트 텍스트 숨김
         self._add_progress.setFixedWidth(120)
         self._add_progress.setFixedHeight(14)
         self._add_progress.hide()
@@ -538,16 +528,9 @@ class MainWindow(QMainWindow):
             lp._on_hidden_tags_changed
         )
 
-        # 구독 피드 → 카테고리/재생목록 추가 + 다운로드
-        if self._feed_vm is not None and hasattr(self, "_feed_panel"):
-            self._feed_panel.video_to_category.connect(
-                lambda url, cat_id: self._library_vm.add_video(url, category_id=cat_id)
-            )
-            self._feed_panel.video_to_playlist.connect(
-                lambda url, pl_id: self._playlist_vm.add_url_to_playlist(url, pl_id)
-                if self._playlist_vm is not None else None
-            )
-            self._feed_panel.download_requested.connect(self._on_feed_download)
+        # 구독 피드는 라이브러리 패널 좌측 트리의 "구독" 노드로 통합됨.
+        # 피드 카드 신호(카테고리/재생목록 추가·다운로드)는 LibraryPanel 내부에서
+        # 기존 핸들러에 연결되므로 여기서 별도 배선하지 않는다.
 
     def _setup_clipboard_monitoring(self) -> None:
         clipboard = QApplication.clipboard()
@@ -591,16 +574,13 @@ class MainWindow(QMainWindow):
             )
         dlg.exec()
 
-    def _on_feed_download(self, url: str, title: str) -> None:
-        from domain.download.value_objects import DownloadSettings  # noqa: PLC0415
-        self._download_vm.start_download(url, title, DownloadSettings())
-        self._stack.setCurrentIndex(_PAGE_DOWNLOAD)
-
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.
         # 정리하지 않으면 워커가 살아남아 이미 파괴된 위젯으로 시그널을
         # 방출하거나, 파일 핸들/DB 커넥션이 닫히지 않을 수 있다.
-        for vm in (self._download_vm, self._library_vm):
+        for vm in (self._download_vm, self._library_vm, self._feed_vm):
+            if vm is None:
+                continue
             shutdown = getattr(vm, "shutdown", None)
             if callable(shutdown):
                 try:

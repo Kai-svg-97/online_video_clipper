@@ -372,12 +372,17 @@ class YtDlpAdapter:
         """YouTube 구독 채널 목록 반환.
 
         반환: [{"id": "UCxxx", "name": "...", "url": "..."}, ...]
+
+        ``youtube.com/feed/channels``는 지연 로딩(continuation) 페이지로 구성되므로,
+        큰 ``playlistend``를 지정하고 ``entries`` 제너레이터를 끝까지 소진해
+        전체 구독 채널을 가져온다. (이전에는 첫 페이지만 반환되는 버그가 있었다.)
         """
         opts = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
             "extract_flat": True,
+            "playlistend": 1000,
             **(cookie_opts or {}),
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -385,7 +390,8 @@ class YtDlpAdapter:
                 "https://www.youtube.com/feed/channels", download=False
             ) or {}
         result = []
-        for e in (info.get("entries") or []):
+        # 지연 제너레이터를 list로 완전히 소진해 continuation을 끝까지 따라간다.
+        for e in list(info.get("entries") or []):
             ch_id = e.get("id") or e.get("channel_id") or ""
             ch_name = e.get("title") or e.get("uploader") or e.get("channel") or ""
             ch_url = e.get("url") or e.get("webpage_url") or ""
@@ -393,6 +399,56 @@ class YtDlpAdapter:
                 ch_url = f"https://www.youtube.com/channel/{ch_id}"
             if ch_url:
                 result.append({"id": ch_id, "name": ch_name, "url": ch_url})
+        return result
+
+    def fetch_channel_videos(
+        self,
+        channel_url: str,
+        limit: int = 30,
+        cookie_opts: dict | None = None,
+    ) -> list[dict]:
+        """특정 채널의 최신 영상 목록 반환.
+
+        반환 키 집합은 ``fetch_subscription_feed``와 동일해 DTO 매핑을 공유한다.
+        """
+        url = channel_url.rstrip("/")
+        if not url.endswith("/videos"):
+            url = f"{url}/videos"
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+            "playlistend": limit,
+            **(cookie_opts or {}),
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+        channel_name = info.get("channel") or info.get("uploader") or info.get("title") or ""
+        result = []
+        for e in (info.get("entries") or [])[:limit]:
+            yt_id = e.get("id") or ""
+            url_val = e.get("url") or e.get("webpage_url") or (
+                f"https://www.youtube.com/watch?v={yt_id}" if yt_id else ""
+            )
+            if not url_val:
+                continue
+            thumb = e.get("thumbnail") or (
+                f"https://i.ytimg.com/vi/{yt_id}/mqdefault.jpg" if yt_id else ""
+            )
+            result.append(
+                {
+                    "url": url_val,
+                    "yt_video_id": yt_id,
+                    "title": e.get("title") or "",
+                    "channel_name": e.get("uploader") or e.get("channel") or channel_name,
+                    "channel_id": e.get("channel_id") or info.get("channel_id") or "",
+                    "thumbnail": thumb,
+                    "published_at": e.get("upload_date") or "",
+                    "view_count": e.get("view_count"),
+                    "duration_sec": e.get("duration"),
+                }
+            )
         return result
 
     # ------------------------------------------------------------------
