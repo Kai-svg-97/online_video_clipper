@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from uuid import UUID
+
+from typing import TYPE_CHECKING
 
 from application.library.dtos import FeedVideoDTO, PlaylistDTO, PlaylistFolderDTO, PlaylistItemDTO
 from domain.library.repositories import IPlaylistFolderRepository, IPlaylistRepository, IVideoRepository
 from domain.shared.ports import IMediaSource
+
+if TYPE_CHECKING:
+    from application.library.dtos import ChannelInfoDTO
+    from domain.monitoring.repositories import IChannelRepository
+
+logger = logging.getLogger(__name__)
 
 
 # ── Query 데이터클래스 ───────────────────────────────────────────────────────
@@ -25,6 +34,13 @@ class GetPlaylistItemsQuery:
 @dataclass
 class GetSubscriptionFeedQuery:
     limit: int = 100
+    cookie_opts: dict | None = None
+
+
+@dataclass
+class GetChannelVideosQuery:
+    channel_url: str
+    limit: int = 30
     cookie_opts: dict | None = None
 
 
@@ -126,12 +142,86 @@ class GetSubscriptionFeedHandler:
         self,
         ytdlp: IMediaSource,
         video_repo: IVideoRepository,
+        channel_repo: "IChannelRepository | None" = None,
+        yt_api=None,  # YouTubeApiAdapter | None
+    ) -> None:
+        self._ytdlp = ytdlp
+        self._video_repo = video_repo
+        # yt-dlp 플랫 추출은 구독 피드에서 채널 정보를 전혀 주지 않고 영상 ID만 준다.
+        # 영상 ID로 YouTube API(videos.list)를 역조회해 채널명을 채우고,
+        # API 미설정 시 구독 저장소의 channel_id→채널명 매핑으로 보강한다.
+        self._channel_repo = channel_repo
+        self._yt_api = yt_api
+
+    def handle(self, query: GetSubscriptionFeedQuery) -> list[FeedVideoDTO]:
+        entries = self._ytdlp.fetch_subscription_feed(
+            limit=query.limit,
+            cookie_opts=query.cookie_opts,
+        )
+        # 영상 ID → 채널 정보 (YouTube API 역조회)
+        ch_by_vid: dict[str, dict] = {}
+        if self._yt_api is not None:
+            vids = [e.get("yt_video_id") or e.get("id") or "" for e in entries]
+            vids = [v for v in vids if v]
+            if vids:
+                try:
+                    ch_by_vid = self._yt_api.get_videos_channels(vids)
+                except Exception:
+                    logger.exception("피드 영상 채널 정보 조회 실패")
+        # channel_id → 채널명 (구독 저장소 fallback)
+        name_by_id: dict[str, str] = {}
+        if self._channel_repo is not None:
+            for agg in self._channel_repo.list_active():
+                sub = agg.subscription
+                if sub.channel_id and sub.channel_name:
+                    name_by_id[sub.channel_id] = sub.channel_name
+        result: list[FeedVideoDTO] = []
+        for e in entries:
+            url = e.get("url") or ""
+            in_library = self._video_repo.exists_by_url(url) if url else False
+            vid = e.get("yt_video_id") or e.get("id") or ""
+            api = ch_by_vid.get(vid, {})
+            ch_id = e.get("channel_id") or api.get("channel_id") or ""
+            ch_name = (
+                e.get("channel_name")
+                or api.get("channel_name")
+                or name_by_id.get(ch_id, "")
+            )
+            result.append(
+                FeedVideoDTO(
+                    url=url,
+                    title=e.get("title") or "",
+                    channel_name=ch_name,
+                    channel_id=ch_id,
+                    thumbnail_url=e.get("thumbnail") or "",
+                    thumbnail_path="",
+                    published_at=e.get("published_at") or "",
+                    view_count=e.get("view_count"),
+                    duration_sec=e.get("duration_sec"),
+                    in_library=in_library,
+                    yt_video_id=e.get("yt_video_id") or "",
+                )
+            )
+        return result
+
+
+class GetChannelVideosHandler:
+    """yt-dlp로 특정 채널의 최신 영상을 가져오고 라이브러리 등록 여부를 표시.
+
+    구독 피드 핸들러와 동일하게 ``FeedVideoDTO``를 반환해 렌더링을 공유한다.
+    """
+
+    def __init__(
+        self,
+        ytdlp: IMediaSource,
+        video_repo: IVideoRepository,
     ) -> None:
         self._ytdlp = ytdlp
         self._video_repo = video_repo
 
-    def handle(self, query: GetSubscriptionFeedQuery) -> list[FeedVideoDTO]:
-        entries = self._ytdlp.fetch_subscription_feed(
+    def handle(self, query: GetChannelVideosQuery) -> list[FeedVideoDTO]:
+        entries = self._ytdlp.fetch_channel_videos(
+            channel_url=query.channel_url,
             limit=query.limit,
             cookie_opts=query.cookie_opts,
         )
@@ -152,6 +242,51 @@ class GetSubscriptionFeedHandler:
                     duration_sec=e.get("duration_sec"),
                     in_library=in_library,
                     yt_video_id=e.get("yt_video_id") or "",
+                )
+            )
+        return result
+
+
+@dataclass
+class GetSubscribedChannelInfosQuery:
+    # (channel_id, channel_name, channel_url) 튜플 목록 — GUI가 구독 목록에서 전달
+    channels: list[tuple[str, str, str]]
+
+
+class GetSubscribedChannelInfosHandler:
+    """구독 채널 카드 정보 조회.
+
+    YouTube API(channels.list)로 아바타·구독자수·영상수를 보강한다.
+    API 미설정/실패 시에도 입력한 모든 채널을 이름·URL만으로 반환한다(graceful).
+    """
+
+    def __init__(self, yt_api=None) -> None:  # YouTubeApiAdapter | None
+        self._yt_api = yt_api
+
+    def handle(self, query: GetSubscribedChannelInfosQuery) -> list["ChannelInfoDTO"]:
+        from application.library.dtos import ChannelInfoDTO  # noqa: PLC0415
+
+        info_by_id: dict[str, dict] = {}
+        if self._yt_api is not None:
+            ids = [cid for cid, _, _ in query.channels if cid.startswith("UC")]
+            if ids:
+                try:
+                    info_by_id = self._yt_api.list_channels(ids)
+                except Exception:
+                    logger.exception("구독 채널 정보 조회 실패")
+                    info_by_id = {}
+
+        result: list[ChannelInfoDTO] = []
+        for cid, name, url in query.channels:
+            info = info_by_id.get(cid, {})
+            result.append(
+                ChannelInfoDTO(
+                    channel_id=cid,
+                    channel_name=info.get("title") or name,
+                    channel_url=url,
+                    thumbnail_url=info.get("thumbnail") or "",
+                    subscriber_count=info.get("subscriber_count"),
+                    video_count=info.get("video_count"),
                 )
             )
         return result

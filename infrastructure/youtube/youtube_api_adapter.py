@@ -18,6 +18,14 @@ _BASE = "https://www.googleapis.com/youtube/v3"
 _extract_yt_video_id = extract_youtube_video_id
 
 
+def _to_int(value) -> int | None:
+    """YouTube API statistics의 문자열 카운트를 정수로 변환 (실패 시 None)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class YouTubeApiAdapter:
     """YouTube Data API v3 래퍼.
 
@@ -205,6 +213,79 @@ class YouTubeApiAdapter:
             page_token = resp.get("nextPageToken")
             if not page_token:
                 break
+        return result
+
+    def get_videos_channels(self, video_ids: list[str]) -> dict[str, dict]:
+        """영상 ID 목록의 채널 정보를 videos.list로 일괄 조회.
+
+        구독 피드의 yt-dlp 플랫 추출은 영상 ID만 주고 채널 정보를 주지 않으므로,
+        영상 ID로 채널을 역조회한다. 한 번에 최대 50개씩 배치 호출한다.
+        Returns: {video_id: {"channel_id", "channel_name"}, ...}
+        """
+        result: dict[str, dict] = {}
+        ids = [v for v in video_ids if v]
+        for i in range(0, len(ids), 50):
+            batch = ids[i:i + 50]
+            try:
+                resp = self._get(
+                    "videos",
+                    {"part": "snippet", "id": ",".join(batch), "maxResults": 50},
+                )
+            except Exception:
+                logger.exception("영상 채널 정보 일괄 조회 실패")
+                continue
+            for item in resp.get("items", []):
+                vid = item.get("id", "")
+                if not vid:
+                    continue
+                snippet = item.get("snippet", {})
+                result[vid] = {
+                    "channel_id": snippet.get("channelId", ""),
+                    "channel_name": snippet.get("channelTitle", ""),
+                }
+        return result
+
+    def list_channels(self, channel_ids: list[str]) -> dict[str, dict]:
+        """채널 ID 목록의 메타데이터를 channels.list로 일괄 조회.
+
+        Returns: {channel_id: {"title", "thumbnail", "subscriber_count",
+                               "video_count", "hidden_subscriber_count"}, ...}
+        한 번에 최대 50개씩 배치 호출한다.
+        """
+        result: dict[str, dict] = {}
+        ids = [c for c in channel_ids if c]
+        for i in range(0, len(ids), 50):
+            batch = ids[i:i + 50]
+            try:
+                resp = self._get(
+                    "channels",
+                    {"part": "snippet,statistics", "id": ",".join(batch),
+                     "maxResults": 50},
+                )
+            except Exception:
+                logger.exception("채널 메타데이터 일괄 조회 실패")
+                continue
+            for item in resp.get("items", []):
+                cid = item.get("id", "")
+                if not cid:
+                    continue
+                snippet = item.get("snippet", {})
+                stats = item.get("statistics", {})
+                thumbs = snippet.get("thumbnails", {})
+                thumb = (
+                    (thumbs.get("medium") or thumbs.get("default") or {}).get("url")
+                    or ""
+                )
+                hidden = bool(stats.get("hiddenSubscriberCount"))
+                result[cid] = {
+                    "title": snippet.get("title", ""),
+                    "thumbnail": thumb,
+                    "subscriber_count": (
+                        None if hidden else _to_int(stats.get("subscriberCount"))
+                    ),
+                    "video_count": _to_int(stats.get("videoCount")),
+                    "hidden_subscriber_count": hidden,
+                }
         return result
 
     def list_playlists(self) -> list[dict]:

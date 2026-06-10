@@ -100,6 +100,8 @@ _VIEW_ICON   = 0
 _VIEW_LIST   = 1
 _VIEW_DETAIL = 2
 _VIEW_FOLDER = 3   # 폴더 내 재생목록 카드 그리드
+_VIEW_FEED   = 4   # 구독 채널/전체 피드 카드 그리드
+_VIEW_CHANNELS = 5 # 구독 채널 목록(아바타 카드) 그리드
 
 
 def _fmt_elapsed(iso: str | None) -> str:
@@ -1261,14 +1263,17 @@ class _ActiveTagsBar(QWidget):
 
 _PLAYLIST_ID_ROLE = Qt.ItemDataRole.UserRole + 200
 _FOLDER_ID_ROLE   = Qt.ItemDataRole.UserRole + 201
-_ITEM_TYPE_ROLE   = Qt.ItemDataRole.UserRole + 202  # "root" | "folder" | "playlist" | "category"
+_ITEM_TYPE_ROLE   = Qt.ItemDataRole.UserRole + 202  # "root" | "folder" | "playlist" | "category" | "channel" | "feed_all"
 _SECTION_ROLE     = Qt.ItemDataRole.UserRole + 203  # "local" | "youtube"
 _CAT_ID_ROLE      = Qt.ItemDataRole.UserRole + 204  # category UUID
+_CHANNEL_URL_ROLE = Qt.ItemDataRole.UserRole + 205  # 구독 채널 URL
 
 _ITYPE_ROOT     = "root"
 _ITYPE_FOLDER   = "folder"
 _ITYPE_PLAYLIST = "playlist"
 _ITYPE_CATEGORY = "category"
+_ITYPE_CHANNEL  = "channel"    # 구독 채널 노드 (클릭 시 채널 영상 피드)
+_ITYPE_FEED_ALL = "feed_all"   # 전체 구독 피드 노드
 
 
 class _PlaylistTree(QTreeWidget):
@@ -1278,6 +1283,9 @@ class _PlaylistTree(QTreeWidget):
     folder_selected               = pyqtSignal(object)         # folder UUID
     unfiled_selected              = pyqtSignal(object)         # source str ("local"|"youtube") — 미분류 디렉토리
     category_selected             = pyqtSignal(object)         # category UUID
+    channel_selected              = pyqtSignal(str)            # 구독 채널 URL
+    feed_all_selected             = pyqtSignal()               # 전체 구독 피드
+    channels_root_selected        = pyqtSignal()               # "구독 채널" 노드 — 채널 목록 그리드
     playlist_delete_req           = pyqtSignal(object)         # playlist UUID
     playlist_rename_req           = pyqtSignal(object)         # playlist UUID
     playlist_move_req             = pyqtSignal(object, object) # (playlist_id, folder_id|None)
@@ -1316,27 +1324,34 @@ class _PlaylistTree(QTreeWidget):
 
     # ── 로드 ─────────────────────────────────────────────────────────────────
 
-    def load(self, playlists, folders, categories=None) -> None:
-        """playlists: list[PlaylistDTO], folders: list[PlaylistFolderDTO], categories: list[CategoryDTO]"""
+    def load(self, playlists, folders, categories=None, subscriptions=None) -> None:
+        """playlists: list[PlaylistDTO], folders: list[PlaylistFolderDTO], categories: list[CategoryDTO],
+        subscriptions: list[SubscriptionDTO] (YouTube 섹션에서만 사용)"""
         from application.library.favorites import load_favorites  # noqa: PLC0415
         self._favs = {(f.type, f.id) for f in load_favorites()}
         self.blockSignals(True)
         prev_pl = None
+        prev_cat = None
         cur = self.currentItem()
         if cur:
             prev_pl = cur.data(0, _PLAYLIST_ID_ROLE)
+            prev_cat = cur.data(0, _CAT_ID_ROLE)
 
         self.clear()
+        self._sub_group_item = None
 
         if self._section == "local":
             self._load_local_section(playlists, folders, categories)
         elif self._section == "youtube":
-            self._load_youtube_section(playlists, folders)
+            self._load_youtube_section(playlists, folders, subscriptions or [])
         else:
             self._load_both_sections(playlists, folders, categories)
 
         if self._section == "youtube":
             self.expandAll()
+            # 구독 채널 그룹은 항목이 많을 수 있으므로 기본 접힘 상태로 둔다.
+            if self._sub_group_item is not None:
+                self._sub_group_item.setExpanded(False)
         elif self._section == "local":
             # 카테고리는 기본 2단계까지만 펼친다 (최상위 + 직속 자식만 보이고 그 아래는 접음)
             self.expandToDepth(0)
@@ -1346,6 +1361,10 @@ class _PlaylistTree(QTreeWidget):
 
         if prev_pl:
             self._restore_selection(prev_pl)
+        elif prev_cat:
+            # 카테고리 선택 유지 — 하위 카테고리 추가 등으로 트리가 재구성돼도
+            # 작업 대상 카테고리가 선택된 채 보이도록 복원한다.
+            self._restore_category_selection(prev_cat)
 
     def _load_local_section(self, playlists, folders, categories) -> None:
         if categories:
@@ -1386,7 +1405,28 @@ class _PlaylistTree(QTreeWidget):
             else:
                 local_unfiled.addChild(pi)
 
-    def _load_youtube_section(self, playlists, folders) -> None:
+    def _load_youtube_section(self, playlists, folders, subscriptions=None) -> None:
+        # ── 구독 섹션 (피드 통합) ──
+        # "전체 구독 피드" + 구독 채널 폴더 트리. 채널 클릭 시 해당 채널 영상을
+        # 메인 영역에 카드로 표시한다.
+        feed_all = QTreeWidgetItem(["📡  전체 구독 피드"])
+        feed_all.setData(0, _ITEM_TYPE_ROLE, _ITYPE_FEED_ALL)
+        feed_all.setData(0, _SECTION_ROLE, "youtube")
+        feed_all.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        self.addTopLevelItem(feed_all)
+
+        sub_group = QTreeWidgetItem(["📡  구독 채널"])
+        sub_group.setData(0, _ITEM_TYPE_ROLE, _ITYPE_ROOT)
+        sub_group.setData(0, _SECTION_ROLE, "youtube")
+        sub_group.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        gf = sub_group.font(0)
+        gf.setWeight(QFont.Weight.Bold)
+        sub_group.setFont(0, gf)
+        self.addTopLevelItem(sub_group)
+        self._sub_group_item = sub_group
+        for sub in (subscriptions or []):
+            sub_group.addChild(self._make_channel(sub.channel_name, sub.channel_url))
+
         yt_folders_by_id: dict = {}
         for f in folders:
             if f.source != "youtube":
@@ -1567,6 +1607,15 @@ class _PlaylistTree(QTreeWidget):
         )
         return item
 
+    def _make_channel(self, name: str, channel_url: str) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([f"📺  {name}"])
+        item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_CHANNEL)
+        item.setData(0, _CHANNEL_URL_ROLE, channel_url)
+        item.setData(0, _SECTION_ROLE, "youtube")
+        item.setToolTip(0, f"{name}\n{channel_url}")
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        return item
+
     # ── 선택 이벤트 ────────────────────────────────────────────────────────────
 
     def _on_selection_changed(self, current, _prev) -> None:
@@ -1576,6 +1625,10 @@ class _PlaylistTree(QTreeWidget):
         itype = current.data(0, _ITEM_TYPE_ROLE)
         if itype == _ITYPE_PLAYLIST:
             self.playlist_selected.emit(current.data(0, _PLAYLIST_ID_ROLE))
+        elif itype == _ITYPE_CHANNEL:
+            self.channel_selected.emit(current.data(0, _CHANNEL_URL_ROLE) or "")
+        elif itype == _ITYPE_FEED_ALL:
+            self.feed_all_selected.emit()
         elif itype == _ITYPE_CATEGORY:
             self.category_selected.emit(current.data(0, _CAT_ID_ROLE))
         elif itype == _ITYPE_FOLDER:
@@ -1588,6 +1641,8 @@ class _PlaylistTree(QTreeWidget):
         elif itype == _ITYPE_ROOT:
             if current.data(0, _SECTION_ROLE) == "local":
                 self.category_selected.emit(None)  # 전체 영상
+            elif current.data(0, _SECTION_ROLE) == "youtube":
+                self.channels_root_selected.emit()  # 구독 채널 목록 그리드
 
     def _restore_selection(self, pl_id) -> None:
         def _find(item: QTreeWidgetItem) -> bool:
@@ -1601,6 +1656,30 @@ class _PlaylistTree(QTreeWidget):
         for i in range(self.topLevelItemCount()):
             if _find(self.topLevelItem(i)):
                 break
+
+    def _restore_category_selection(self, cat_id) -> None:
+        def _find(item: QTreeWidgetItem) -> QTreeWidgetItem | None:
+            if item.data(0, _CAT_ID_ROLE) == cat_id:
+                return item
+            for i in range(item.childCount()):
+                found = _find(item.child(i))
+                if found is not None:
+                    return found
+            return None
+        target = None
+        for i in range(self.topLevelItemCount()):
+            target = _find(self.topLevelItem(i))
+            if target is not None:
+                break
+        if target is None:
+            return
+        # 선택 카테고리와 새로 추가된 하위 카테고리가 보이도록 자신·조상을 펼친다.
+        target.setExpanded(True)
+        parent = target.parent()
+        while parent is not None:
+            parent.setExpanded(True)
+            parent = parent.parent()
+        self.setCurrentItem(target)
 
     # ── 아이템 확장/축소 화살표 갱신 ────────────────────────────────────────────
 
@@ -2198,7 +2277,8 @@ def _write_branch_arrow_pixmap(state: str, color: str) -> str:
     state: "closed" → ▶(오른쪽), "open" → ▼(아래쪽)
     결과를 _arrow_cache에 캐싱해 동일 색상 재호출을 방지한다.
     """
-    import tempfile, os  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
     from PyQt6.QtGui import QPainter, QColor, QPolygonF  # noqa: PLC0415
     from PyQt6.QtCore import QPointF  # noqa: PLC0415
 
@@ -2232,8 +2312,11 @@ def _write_branch_arrow_pixmap(state: str, color: str) -> str:
     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     tmp.close()
     pm.save(tmp.name, "PNG")
-    _arrow_cache[key] = tmp.name
-    return tmp.name
+    # QSS image:url() 는 반드시 슬래시(/)만 허용한다.
+    # Windows 백슬래시 경로를 그대로 넣으면 QSS가 파싱 실패해 이미지가 표시되지 않는다.
+    fwd_path = tmp.name.replace("\\", "/")
+    _arrow_cache[key] = fwd_path
+    return fwd_path
 
 
 class _BreadcrumbBar(QWidget):
@@ -2330,6 +2413,9 @@ class _PlaylistPanel(QWidget):
     folder_selected               = pyqtSignal(object)         # folder UUID
     unfiled_selected              = pyqtSignal(object)         # source str — 미분류 디렉토리
     category_selected             = pyqtSignal(object)         # category UUID
+    channel_selected              = pyqtSignal(str)            # 구독 채널 URL
+    feed_all_selected             = pyqtSignal()               # 전체 구독 피드
+    channels_root_selected        = pyqtSignal()               # "구독 채널" 노드 — 채널 목록 그리드
     delete_playlist_req           = pyqtSignal(object)         # playlist UUID
     rename_playlist_req           = pyqtSignal(object)         # playlist UUID
     playlist_move_req             = pyqtSignal(object, object) # (playlist_id, folder_id|None)
@@ -2432,6 +2518,9 @@ class _PlaylistPanel(QWidget):
         tree.folder_selected.connect(self.folder_selected)
         tree.unfiled_selected.connect(self.unfiled_selected)
         tree.category_selected.connect(self.category_selected)
+        tree.channel_selected.connect(self.channel_selected)
+        tree.feed_all_selected.connect(self.feed_all_selected)
+        tree.channels_root_selected.connect(self.channels_root_selected)
         tree.playlist_delete_req.connect(self.delete_playlist_req)
         tree.playlist_rename_req.connect(self.rename_playlist_req)
         tree.playlist_move_req.connect(self.playlist_move_req)
@@ -2456,9 +2545,9 @@ class _PlaylistPanel(QWidget):
     def trees(self) -> list:
         return [self._local_tree, self._yt_tree]
 
-    def refresh(self, playlists, folders=None, categories=None) -> None:
+    def refresh(self, playlists, folders=None, categories=None, subscriptions=None) -> None:
         self._local_tree.load(playlists, folders or [], categories or [])
-        self._yt_tree.load(playlists, folders or [])
+        self._yt_tree.load(playlists, folders or [], subscriptions=subscriptions or [])
 
     def select_playlist(self, playlist_id) -> None:
         """두 트리에서 해당 재생목록 항목을 선택한다."""
@@ -2969,6 +3058,8 @@ class LibraryPanel(QWidget):
         clip_vm=None,
         download_vm=None,
         playlist_vm=None,
+        feed_vm=None,
+        monitoring_vm=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -2976,11 +3067,14 @@ class LibraryPanel(QWidget):
         self._clip_vm = clip_vm
         self._download_vm = download_vm
         self._playlist_vm = playlist_vm
+        self._feed_vm = feed_vm
+        self._monitoring_vm = monitoring_vm
         self._all_tags: list = []
         self._active_tag_ids: set[UUID] = set()
         self._current_cat_id: UUID | None = None
         self._current_playlist_id: UUID | None = None
         self._current_folder_id: UUID | None = None
+        self._feed_show_channel: bool = True   # 피드 카드에 채널명 표시 여부
         self._icon_delegate = _IconDelegate()
         self._list_delegate = _ListDelegate()
         self._refresh_dlg: QProgressDialog | None = None
@@ -3204,6 +3298,14 @@ class LibraryPanel(QWidget):
         self._folder_view = _FolderContentsView()
         self._view_stack.addWidget(self._folder_view)
 
+        # 구독 채널/전체 피드 카드 그리드 뷰 (_VIEW_FEED = 4) — feed_panel 부품 재사용
+        self._feed_view = self._build_feed_view()
+        self._view_stack.addWidget(self._feed_view)
+
+        # 구독 채널 목록(아바타 카드) 그리드 뷰 (_VIEW_CHANNELS = 5)
+        self._channels_view = self._build_channels_view()
+        self._view_stack.addWidget(self._channels_view)
+
         centre_layout.addWidget(self._view_stack, stretch=1)
         self._nav_stack.addWidget(centre_content)
 
@@ -3255,6 +3357,9 @@ class LibraryPanel(QWidget):
         self._playlist_panel.video_move_to_playlist_req.connect(self._on_video_move_to_playlist_from_dnd)
         self._playlist_panel.folder_selected.connect(self._on_folder_selected)
         self._playlist_panel.unfiled_selected.connect(self._on_unfiled_selected)
+        self._playlist_panel.channel_selected.connect(self._on_channel_selected)
+        self._playlist_panel.feed_all_selected.connect(self._on_feed_all_selected)
+        self._playlist_panel.channels_root_selected.connect(self._on_channels_root_selected)
         self._folder_view.playlist_selected.connect(self._on_folder_playlist_selected)
         self._folder_view.folder_selected.connect(self._on_folder_selected)
         if self._playlist_vm is not None:
@@ -3263,6 +3368,16 @@ class LibraryPanel(QWidget):
             self._playlist_vm.error_occurred.connect(
                 lambda err: self._vm.error_occurred.emit(err)
             )
+        # 구독 피드 VM (구독 채널 트리에 통합)
+        if self._feed_vm is not None:
+            self._feed_vm.feed_changed.connect(self._on_feed_changed)
+            self._feed_vm.channel_infos_changed.connect(self._on_channel_infos_changed)
+            self._feed_vm.loading_changed.connect(self._on_feed_loading_changed)
+            self._feed_vm.error_occurred.connect(self._on_feed_error)
+        # 채널 모니터링 VM — 구독 목록을 YouTube 트리에 반영
+        if self._monitoring_vm is not None:
+            self._monitoring_vm.subscriptions_changed.connect(self._refresh_unified_tree)
+            self._monitoring_vm.load()
         self._vm.yt_import_finished.connect(self._on_yt_import_finished)
 
         self._view_group.idClicked.connect(self._switch_view)
@@ -3343,14 +3458,16 @@ class LibraryPanel(QWidget):
 
     def _refresh_unified_tree(self) -> None:
         """카테고리 또는 재생목록이 변경될 때 통합 트리를 갱신한다."""
+        subs = self._monitoring_vm.subscriptions if self._monitoring_vm is not None else []
         if self._playlist_vm is not None:
             self._playlist_panel.refresh(
                 self._playlist_vm.playlists,
                 self._playlist_vm.folders,
                 self._vm.categories,
+                subscriptions=subs,
             )
         else:
-            self._playlist_panel.refresh([], [], self._vm.categories)
+            self._playlist_panel.refresh([], [], self._vm.categories, subscriptions=subs)
         self._favorites_bar.refresh(self._get_fav_counts())
 
     def _on_tags_changed(self) -> None:
@@ -3466,7 +3583,7 @@ class LibraryPanel(QWidget):
         """
         local_tree, yt_tree = self._playlist_panel.trees
         local_tree.setStyleSheet(branch_style)   # 로컬: branch indicator 있음
-        yt_tree.setStyleSheet(style)             # YouTube: indicator 숨김
+        yt_tree.setStyleSheet(branch_style)      # YouTube: "구독 채널" 등 자식 노드에 펼침 세모 표시
         self._playlist_panel.setStyleSheet(hdr_style)
 
     def _refresh_active_tags_bar(self) -> None:
@@ -3781,6 +3898,9 @@ class LibraryPanel(QWidget):
         self._current_cat_id = cat_id
         self._current_playlist_id = None
         self._current_folder_id = None
+        # 폴더 카드 뷰/피드 뷰에서 카테고리를 고르면 영상 리스트 뷰로 복귀
+        if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED):
+            self._switch_view(self._view_group.checkedId())
         if not self._is_restoring:
             self._push_nav_state()
         self._active_tag_ids.clear()
@@ -3831,7 +3951,9 @@ class LibraryPanel(QWidget):
         self._refresh_active_tags_bar()
         self._update_delegate_tags()
         self._refresh_breadcrumb()
-        if self._active_tag_ids:
+        # 재생목록 컨텍스트에서는 트리 선택을 유지해 재생목록∩태그 교집합으로 필터링한다.
+        # (재생목록이 아닌 뷰에서는 기존대로 트리 선택을 해제한다.)
+        if self._active_tag_ids and self._current_playlist_id is None:
             for _t_ in self._playlist_panel.trees:
                 _t_.clearSelection()
 
@@ -4746,6 +4868,149 @@ class LibraryPanel(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             self._playlist_vm.push_to_youtube(playlist_id, move=move)
 
+    # ── 구독 피드 뷰 ─────────────────────────────────────────────────
+
+    def _build_feed_view(self) -> QWidget:
+        """feed_panel의 카드 그리드를 재사용한 구독/채널 피드 뷰를 만든다."""
+        from gui.panels.feed_panel import _FeedGrid  # noqa: PLC0415
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        self._feed_status = QLabel()
+        self._feed_status.setContentsMargins(12, 6, 12, 6)
+        self._feed_status.hide()
+        v.addWidget(self._feed_status)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._feed_grid = _FeedGrid()
+        scroll.setWidget(self._feed_grid)
+        v.addWidget(scroll, stretch=1)
+
+        self._feed_grid.download_requested.connect(self._on_feed_card_download)
+        self._feed_grid.add_to_category_requested.connect(self._on_feed_card_to_category)
+        self._feed_grid.add_to_playlist_requested.connect(self._on_feed_card_to_playlist)
+        return container
+
+    def _build_channels_view(self) -> QWidget:
+        """구독 채널 목록(아바타 카드) 그리드 뷰."""
+        from gui.panels.feed_panel import _ChannelGrid  # noqa: PLC0415
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        self._channels_status = QLabel()
+        self._channels_status.setContentsMargins(12, 6, 12, 6)
+        self._channels_status.hide()
+        v.addWidget(self._channels_status)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._channel_grid = _ChannelGrid()
+        scroll.setWidget(self._channel_grid)
+        v.addWidget(scroll, stretch=1)
+
+        self._channel_grid.channel_clicked.connect(self._on_channel_selected)
+        return container
+
+    def _on_channels_root_selected(self) -> None:
+        """"구독 채널" 노드 클릭 — 등록된 채널을 아바타 카드 그리드로 표시."""
+        if self._feed_vm is None:
+            return
+        subs = self._monitoring_vm.subscriptions if self._monitoring_vm is not None else []
+        channels = [(s.channel_id, s.channel_name, s.channel_url) for s in subs]
+        self._current_playlist_id = None
+        self._current_folder_id = None
+        self._channels_status.setText("로딩 중…" if channels else "구독 중인 채널이 없습니다.")
+        self._channels_status.setVisible(True)
+        self._view_stack.setCurrentIndex(_VIEW_CHANNELS)
+        if channels:
+            self._feed_vm.load_channel_infos(channels)
+        self._refresh_breadcrumb()
+
+    def _on_channel_infos_changed(self) -> None:
+        if self._feed_vm is None:
+            return
+        infos = self._feed_vm.channel_infos
+        self._channel_grid.set_channels(infos)
+        if self._view_stack.currentIndex() == _VIEW_CHANNELS:
+            if infos:
+                self._channels_status.hide()
+            else:
+                self._channels_status.setText("채널 정보를 가져오지 못했습니다.")
+                self._channels_status.show()
+
+    def _show_feed_view(self, status: str | None = None) -> None:
+        if status:
+            self._feed_status.setText(status)
+            self._feed_status.show()
+        else:
+            self._feed_status.hide()
+        self._view_stack.setCurrentIndex(_VIEW_FEED)
+
+    def _on_channel_selected(self, channel_url: str) -> None:
+        """구독 채널 노드 클릭 — 해당 채널 영상을 피드 그리드에 로드."""
+        if self._feed_vm is None or not channel_url:
+            return
+        self._current_playlist_id = None
+        self._current_folder_id = None
+        self._feed_show_channel = False   # 이미 채널을 아는 화면이라 채널명 숨김
+        self._show_feed_view("로딩 중…")
+        self._feed_vm.load_channel(channel_url)
+        self._refresh_breadcrumb()
+
+    def _on_feed_all_selected(self) -> None:
+        """전체 구독 피드 노드 클릭 — 모든 구독 채널 최신 영상을 로드."""
+        if self._feed_vm is None:
+            return
+        self._current_playlist_id = None
+        self._current_folder_id = None
+        self._feed_show_channel = True    # 여러 채널이 섞이므로 채널명 표시
+        self._show_feed_view("로딩 중…")
+        self._feed_vm.refresh()
+        self._refresh_breadcrumb()
+
+    def _on_feed_changed(self) -> None:
+        if self._feed_vm is None:
+            return
+        items = self._feed_vm.feed
+        self._feed_grid.set_feed(items, show_channel=self._feed_show_channel)
+        if self._view_stack.currentIndex() == _VIEW_FEED:
+            self._feed_status.hide() if items else self._show_feed_view("영상이 없습니다.")
+
+    def _on_feed_loading_changed(self, loading: bool) -> None:
+        if loading and self._view_stack.currentIndex() == _VIEW_FEED:
+            self._feed_status.setText("로딩 중…")
+            self._feed_status.show()
+
+    def _on_feed_error(self, msg: str) -> None:
+        idx = self._view_stack.currentIndex()
+        if idx not in (_VIEW_FEED, _VIEW_CHANNELS):
+            return
+        if "cookie" in msg.lower() or "Could not copy" in msg:
+            display = "YouTube 로그인 필요 — 사이드바 계정 버튼에서 로그인하세요."
+        else:
+            display = f"오류: {msg[:120]}"
+        status = self._feed_status if idx == _VIEW_FEED else self._channels_status
+        status.setText(display)
+        status.show()
+
+    def _on_feed_card_download(self, url: str, title: str) -> None:
+        from domain.download.value_objects import DownloadSettings  # noqa: PLC0415
+        self.download_requested.emit(url, title, DownloadSettings())
+
+    def _on_feed_card_to_category(self, url: str) -> None:
+        self._vm.add_video(url)
+
+    def _on_feed_card_to_playlist(self, url: str) -> None:
+        # 재생목록 선택 UI가 없으므로 우선 라이브러리에 등록한다.
+        self._vm.add_video(url)
+
     # ── 폴더 뷰 핸들러 ───────────────────────────────────────────────
 
     def _on_playlist_selected_from_tree(self, playlist_id) -> None:
@@ -4753,7 +5018,7 @@ class LibraryPanel(QWidget):
         self._vm.set_playlist_filter(playlist_id)
         self._icon_view.set_playlist_context(playlist_id)
         self._list_view.set_playlist_context(playlist_id)
-        if self._view_stack.currentIndex() == _VIEW_FOLDER:
+        if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED):
             self._switch_view(self._view_group.checkedId())
         self._current_playlist_id = playlist_id
         self._current_folder_id = None

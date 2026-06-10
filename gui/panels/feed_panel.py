@@ -5,7 +5,7 @@ import logging
 from uuid import UUID
 
 import requests
-from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QThread, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QDesktopServices, QFont, QImage, QPainter, QPainterPath, QPixmap,
 )
@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from application.library.dtos import CategoryDTO, FeedVideoDTO, PlaylistDTO
+from application.library.dtos import CategoryDTO, ChannelInfoDTO, FeedVideoDTO, PlaylistDTO
 from config.settings import THUMBNAIL_DIR
 from gui.themes.manager import ThemeManager
 from gui.view_models.feed_vm import FeedViewModel
@@ -77,21 +77,31 @@ def _fmt_date(upload_date: str) -> str:
 # ---------------------------------------------------------------------------
 
 class _ThumbLoader(QThread):
-    loaded = pyqtSignal(str, QImage)   # yt_video_id, QImage
+    loaded = pyqtSignal(str, QImage)   # id, QImage
 
-    def __init__(self, url: str, vid_id: str, parent=None) -> None:
+    def __init__(
+        self,
+        url: str,
+        vid_id: str,
+        parent=None,
+        prefix: str = "feed",
+        size: tuple[int, int] = (640, 360),
+    ) -> None:
         super().__init__(parent)
         self._url = url
         self._vid = vid_id
+        self._prefix = prefix
+        self._size = size
 
     def run(self) -> None:
+        sw, sh = self._size
         for ext in ("jpg", "jpeg", "webp", "png"):
-            cached = THUMBNAIL_DIR / f"feed_{self._vid}.{ext}"
+            cached = THUMBNAIL_DIR / f"{self._prefix}_{self._vid}.{ext}"
             if cached.exists():
                 img = QImage(str(cached))
                 if not img.isNull():
                     self.loaded.emit(self._vid, img.scaled(
-                        640, 360,
+                        sw, sh,
                         Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                         Qt.TransformationMode.SmoothTransformation,
                     ))
@@ -108,14 +118,14 @@ class _ThumbLoader(QThread):
                 ext = self._url.rsplit(".", 1)[-1].split("?")[0].lower()
                 if ext not in ("jpg", "jpeg", "png", "webp"):
                     ext = "jpg"
-                (THUMBNAIL_DIR / f"feed_{self._vid}.{ext}").write_bytes(resp.content)
+                (THUMBNAIL_DIR / f"{self._prefix}_{self._vid}.{ext}").write_bytes(resp.content)
                 self.loaded.emit(self._vid, img.scaled(
-                    640, 360,
+                    sw, sh,
                     Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                     Qt.TransformationMode.SmoothTransformation,
                 ))
         except Exception:
-            logger.exception("피드 썸네일 다운로드/디코딩 실패")
+            logger.exception("썸네일 다운로드/디코딩 실패")
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +230,7 @@ class _RoundedThumbLabel(QWidget):
         self._h = h
         self._pixmap: QPixmap | None = None
         self._dur_text: str = ""
+        self._channel_text: str = ""
         self.setFixedSize(w, h)
 
     def set_image(self, img: QImage) -> None:
@@ -232,6 +243,10 @@ class _RoundedThumbLabel(QWidget):
 
     def set_duration(self, text: str) -> None:
         self._dur_text = text
+        self.update()
+
+    def set_channel(self, text: str) -> None:
+        self._channel_text = text
         self.update()
 
     def paintEvent(self, _event) -> None:
@@ -250,17 +265,32 @@ class _RoundedThumbLabel(QWidget):
         else:
             painter.fillRect(0, 0, self._w, self._h, QColor("#1a1a2e"))
 
+        f = QFont()
+        f.setPointSize(8)
+        painter.setFont(f)
+        painter.setPen(QColor("white"))
+        fm = painter.fontMetrics()
+        th = fm.height() + 4
+
+        # 재생시간 배지 (우측 하단)
+        dur_tw = 0
         if self._dur_text:
-            f = QFont()
-            f.setPointSize(8)
-            painter.setFont(f)
-            painter.setPen(QColor("white"))
-            fm = painter.fontMetrics()
-            tw = fm.horizontalAdvance(self._dur_text) + 8
-            th = fm.height() + 4
-            bx, by = self._w - tw - 4, self._h - th - 4
-            painter.fillRect(bx, by, tw, th, QColor(0, 0, 0, 180))
+            dur_tw = fm.horizontalAdvance(self._dur_text) + 8
+            bx, by = self._w - dur_tw - 4, self._h - th - 4
+            painter.fillRect(bx, by, dur_tw, th, QColor(0, 0, 0, 180))
             painter.drawText(bx + 4, by + th - 4, self._dur_text)
+
+        # 채널명 배지 (좌측 하단) — 재생시간 배지와 겹치지 않게 폭 제한 + 말줄임
+        if self._channel_text:
+            avail = self._w - dur_tw - 16  # 좌4 + 우4 + 배지 사이 간격 여유
+            if avail > 24:
+                text = fm.elidedText(
+                    self._channel_text, Qt.TextElideMode.ElideRight, avail
+                )
+                tw = fm.horizontalAdvance(text) + 8
+                bx, by = 4, self._h - th - 4
+                painter.fillRect(bx, by, tw, th, QColor(0, 0, 0, 180))
+                painter.drawText(bx + 4, by + th - 4, text)
 
         painter.end()
 
@@ -279,9 +309,15 @@ class _FeedCard(QFrame):
     _TW = 320
     _TH = 180
 
-    def __init__(self, dto: FeedVideoDTO, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        dto: FeedVideoDTO,
+        parent: QWidget | None = None,
+        show_channel: bool = True,
+    ) -> None:
         super().__init__(parent)
         self._dto = dto
+        self._show_channel = show_channel
         self._loader: _ThumbLoader | None = None
         self.setFixedWidth(self._TW + 16)
         self.setFrameShape(QFrame.Shape.StyledPanel)
@@ -299,6 +335,8 @@ class _FeedCard(QFrame):
 
         # 썸네일
         self._thumb_lbl = _RoundedThumbLabel(self._TW, self._TH)
+        if self._show_channel:
+            self._thumb_lbl.set_channel(self._dto.channel_name)
         layout.addWidget(self._thumb_lbl)
 
         # 제목 (2줄)
@@ -311,12 +349,16 @@ class _FeedCard(QFrame):
         self._title_lbl.setFont(f)
         layout.addWidget(self._title_lbl)
 
-        # 채널명
+        # 채널명 (개별 채널 피드에서는 중복이라 숨김). 테마 적용 안전을 위해
+        # 라벨은 항상 생성하고, 표시할 때만 레이아웃에 추가한다.
         self._channel_lbl = QLabel(self._dto.channel_name)
         f2 = QFont()
         f2.setPointSize(9)
         self._channel_lbl.setFont(f2)
-        layout.addWidget(self._channel_lbl)
+        if self._show_channel:
+            layout.addWidget(self._channel_lbl)
+        else:
+            self._channel_lbl.hide()
 
         # 하단 행: 메타 + 아이콘 버튼
         bottom = QHBoxLayout()
@@ -451,22 +493,184 @@ class _FeedGrid(QWidget):
         self._layout.setContentsMargins(12, 12, 12, 12)
         self._layout.setSpacing(16)
         self._cards: list[_FeedCard] = []
+        self._cols = 0
 
-    def set_feed(self, items: list[FeedVideoDTO]) -> None:
+    def minimumSizeHint(self) -> QSize:
+        # 고정폭 카드 + QGridLayout의 기본 최소너비(= 현재 열 수 × 카드폭)는
+        # 스크롤 영역(setWidgetResizable)이 그리드를 그 아래로 줄이지 못하게 막아
+        # 창 축소 시 reflow를 방해한다. 최소너비를 한 칸으로 낮춰 1열까지 축소
+        # 가능하게 하고, 실제 열 수는 resizeEvent가 결정한다.
+        return QSize(self._CARD_W + 24, 0)
+
+    def _calc_cols(self) -> int:
+        return max(1, (self.width() - 24) // self._CARD_W)
+
+    def set_feed(self, items: list[FeedVideoDTO], show_channel: bool = True) -> None:
         for card in self._cards:
             card.deleteLater()
         self._cards.clear()
 
-        cols = max(1, (self.width() - 24) // self._CARD_W)
+        self._cols = self._calc_cols()
         for i, dto in enumerate(items):
-            card = _FeedCard(dto)
+            card = _FeedCard(dto, show_channel=show_channel)
             card.add_to_category_requested.connect(self.add_to_category_requested)
             card.add_to_playlist_requested.connect(self.add_to_playlist_requested)
             card.download_requested.connect(self.download_requested)
             if dto.duration_sec:
                 card._thumb_lbl.set_duration(_fmt_duration(dto.duration_sec))
-            self._layout.addWidget(card, i // cols, i % cols)
+            self._layout.addWidget(card, i // self._cols, i % self._cols)
             self._cards.append(card)
+
+    def _relayout(self) -> None:
+        """카드를 재생성하지 않고 현재 열 수에 맞춰 그리드 위치만 재배치한다."""
+        for i, card in enumerate(self._cards):
+            self._layout.addWidget(card, i // self._cols, i % self._cols)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        new_cols = self._calc_cols()
+        if self._cards and new_cols != self._cols:
+            self._cols = new_cols
+            self._relayout()
+
+
+# ---------------------------------------------------------------------------
+# 채널 카드 — 구독 채널 목록(아바타 + 구독자수 + 영상수)
+# ---------------------------------------------------------------------------
+
+def _fmt_count(count: int | None, unit: str) -> str:
+    """구독자/영상 수 포맷. 예: 12.3만, 1,234."""
+    if count is None:
+        return ""
+    if count >= 100_000_000:
+        return f"{count / 100_000_000:.1f}억{unit}"
+    if count >= 10_000:
+        return f"{count / 10_000:.1f}만{unit}"
+    return f"{count:,}{unit}"
+
+
+class _ChannelCard(QFrame):
+    """구독 채널 카드 — 원형 아바타 + 채널명 + 구독자수 + 영상수."""
+
+    channel_clicked = pyqtSignal(str)   # channel_url
+
+    _AVATAR = 72
+    _W = 200
+
+    def __init__(self, dto: ChannelInfoDTO, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._dto = dto
+        self._loader: _ThumbLoader | None = None
+        self.setFixedWidth(self._W)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self._build_ui()
+        self._apply_theme(ThemeManager.instance().current())
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._start_avatar_load()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 14, 10, 14)
+        layout.setSpacing(6)
+
+        self._avatar = _RoundedThumbLabel(self._AVATAR, self._AVATAR)
+        layout.addWidget(self._avatar, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        self._name_lbl = QLabel(self._dto.channel_name)
+        self._name_lbl.setWordWrap(True)
+        self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self._name_lbl.setMaximumHeight(40)
+        fn = QFont()
+        fn.setPointSize(10)
+        fn.setWeight(QFont.Weight.Medium)
+        self._name_lbl.setFont(fn)
+        layout.addWidget(self._name_lbl)
+
+        meta_parts = []
+        subs = _fmt_count(self._dto.subscriber_count, "")
+        if subs:
+            meta_parts.append(f"구독자 {subs}")
+        vids = _fmt_count(self._dto.video_count, "")
+        if vids:
+            meta_parts.append(f"영상 {vids}")
+        self._meta_lbl = QLabel("  •  ".join(meta_parts))
+        self._meta_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        fm = QFont()
+        fm.setPointSize(8)
+        self._meta_lbl.setFont(fm)
+        layout.addWidget(self._meta_lbl)
+
+    def _start_avatar_load(self) -> None:
+        if not self._dto.channel_id:
+            return
+        self._loader = _ThumbLoader(
+            self._dto.thumbnail_url, self._dto.channel_id,
+            prefix="channel", size=(self._AVATAR, self._AVATAR),
+        )
+        self._loader.loaded.connect(lambda _id, img: self._avatar.set_image(img))
+        self._loader.start()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._dto.channel_url:
+            self.channel_clicked.emit(self._dto.channel_url)
+
+    def _apply_theme(self, tok) -> None:
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: {tok.bg_elevated};
+                border: 1px solid {tok.border};
+                border-radius: 8px;
+            }}
+            QFrame:hover {{ border-color: {tok.accent}; }}
+        """)
+        self._name_lbl.setStyleSheet(f"color: {tok.text_primary};")
+        self._meta_lbl.setStyleSheet(f"color: {tok.text_muted};")
+
+
+class _ChannelGrid(QWidget):
+    """구독 채널 카드 그리드 — _FeedGrid와 동일한 리사이즈 reflow."""
+
+    channel_clicked = pyqtSignal(str)
+
+    _CARD_W = _ChannelCard._W + 16
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._layout = QGridLayout(self)
+        self._layout.setContentsMargins(12, 12, 12, 12)
+        self._layout.setSpacing(16)
+        self._cards: list[_ChannelCard] = []
+        self._cols = 0
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(self._CARD_W + 24, 0)
+
+    def _calc_cols(self) -> int:
+        return max(1, (self.width() - 24) // self._CARD_W)
+
+    def set_channels(self, items: list[ChannelInfoDTO]) -> None:
+        for card in self._cards:
+            card.deleteLater()
+        self._cards.clear()
+        self._cols = self._calc_cols()
+        for i, dto in enumerate(items):
+            card = _ChannelCard(dto)
+            card.channel_clicked.connect(self.channel_clicked)
+            self._layout.addWidget(card, i // self._cols, i % self._cols)
+            self._cards.append(card)
+
+    def _relayout(self) -> None:
+        for i, card in enumerate(self._cards):
+            self._layout.addWidget(card, i // self._cols, i % self._cols)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        new_cols = self._calc_cols()
+        if self._cards and new_cols != self._cols:
+            self._cols = new_cols
+            self._relayout()
 
 
 # ---------------------------------------------------------------------------

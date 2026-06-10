@@ -78,9 +78,11 @@ from application.monitoring.commands import ImportYouTubeSubscriptionsHandler
 from infrastructure.youtube.oauth_adapter import YouTubeOAuthAdapter
 from infrastructure.youtube.youtube_api_adapter import YouTubeApiAdapter
 from application.library.playlist_queries import (
+    GetChannelVideosHandler,
     GetPlaylistFoldersHandler,
     GetPlaylistItemsHandler,
     GetPlaylistsHandler,
+    GetSubscribedChannelInfosHandler,
     GetSubscriptionFeedHandler,
     GetYouTubePlaylistsHandler,
 )
@@ -191,7 +193,9 @@ def main() -> int:
     )
     get_playlists_h    = GetPlaylistsHandler(playlist_repo)
     get_pl_items_h     = GetPlaylistItemsHandler(playlist_repo, video_repo)
-    get_feed_h         = GetSubscriptionFeedHandler(ytdlp, video_repo)
+    get_feed_h         = GetSubscriptionFeedHandler(ytdlp, video_repo, channel_repo, _yt_api)
+    get_channel_vids_h = GetChannelVideosHandler(ytdlp, video_repo)
+    get_ch_infos_h     = GetSubscribedChannelInfosHandler(_yt_api)
     add_url_to_pl_h    = AddUrlToPlaylistHandler(add_video, playlist_repo)
 
     # 9c. Playlist folder + YouTube API handlers
@@ -256,7 +260,12 @@ def main() -> int:
         move_video=move_video_pl_h,
         auth_service=auth_service,
     )
-    feed_vm = FeedViewModel(handler=get_feed_h, auth_service=auth_service)
+    feed_vm = FeedViewModel(
+        handler=get_feed_h,
+        channel_handler=get_channel_vids_h,
+        channel_infos_handler=get_ch_infos_h,
+        auth_service=auth_service,
+    )
     download_vm = DownloadViewModel(
         start_handler=start_dl,
         cancel_handler=cancel_dl,

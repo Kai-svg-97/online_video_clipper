@@ -107,6 +107,17 @@ class FeedVideoDTO:
 
 
 @dataclass(frozen=True)
+class ChannelInfoDTO:
+    """구독 채널 카드용 — 아바타 + 구독자수 + 영상수."""
+    channel_id: str
+    channel_name: str
+    channel_url: str
+    thumbnail_url: str           # 채널 아바타 원격 URL ("" if 없음)
+    subscriber_count: int | None
+    video_count: int | None
+
+
+@dataclass(frozen=True)
 class VideoDetailDTO:
     id: UUID
     url: str
