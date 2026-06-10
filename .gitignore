@@ -227,3 +227,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Superpowers 로컬 작업 디렉토리 (배포·런타임과 무관)
+.superpowers/
