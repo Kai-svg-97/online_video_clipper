@@ -32,6 +32,7 @@ class _JobRow(QWidget):
         self._title.setMaximumWidth(300)
         self._bar = QProgressBar()
         self._bar.setRange(0, 100)
+        self._bar.setTextVisible(False)  # 얇은 바라 퍼센트 텍스트 숨김
         self._bar.setValue(int(job.progress.percent))
         self._speed = QLabel(job.progress.speed_formatted())
         cancel_btn = QPushButton("✕")
@@ -46,6 +47,23 @@ class _JobRow(QWidget):
     def update_job(self, job: DownloadJobDTO) -> None:
         self._bar.setValue(int(job.progress.percent))
         self._speed.setText(job.progress.speed_formatted())
+
+
+_VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".m4a", ".mp3", ".opus"}
+
+
+def _is_listable_history(job: DownloadJobDTO) -> bool:
+    """완료 이력에 보여줄 행인지 판정.
+
+    file_path가 있으면 영상 확장자만 표시(썸네일 .jpg/.webp·중단 파일 .part 등 제외).
+    file_path가 없는 실패 작업은 '실패' 행으로 그대로 보여준다.
+    """
+    if not job.file_path:
+        return bool(job.error_msg)
+    suffix = Path(job.file_path).suffix.lower()
+    if suffix == ".part":
+        return False
+    return suffix in _VIDEO_EXTS
 
 
 def _fmt_size(b: int | None) -> str:
@@ -67,12 +85,17 @@ class _HistoryRow(QWidget):
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(6)
 
-        status_icon = "✓" if job.status == "COMPLETED" else "✗"
-        status_color = "#4caf50" if job.status == "COMPLETED" else "#f44336"
-        icon_lbl = QLabel(status_icon)
-        icon_lbl.setStyleSheet(f"color: {status_color}; font-weight: bold;")
-        icon_lbl.setFixedWidth(16)
-        layout.addWidget(icon_lbl)
+        completed = job.status == "COMPLETED"
+        badge_text = "완료" if completed else "실패"
+        badge_color = "#4caf50" if completed else "#f44336"
+        badge_lbl = QLabel(badge_text)
+        badge_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge_lbl.setFixedWidth(44)
+        badge_lbl.setStyleSheet(
+            f"color: white; background: {badge_color}; border-radius: 6px;"
+            " font-size: 8pt; font-weight: bold; padding: 1px 0;"
+        )
+        layout.addWidget(badge_lbl)
 
         title_lbl = QLabel(job.title or job.url)
         title_lbl.setMaximumWidth(300)
@@ -179,6 +202,8 @@ class _HistoryTab(QWidget):
                 item.widget().deleteLater()
 
         for job in self._vm.load_history():
+            if not _is_listable_history(job):
+                continue
             row = _HistoryRow(job, self._container)
             self._container_layout.insertWidget(
                 self._container_layout.count() - 1, row
