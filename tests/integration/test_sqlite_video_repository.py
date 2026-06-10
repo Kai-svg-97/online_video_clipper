@@ -71,6 +71,27 @@ class TestSqliteVideoRepository:
         assert all(a.video.favorite for a in results)
         assert any(a.id == fav.id for a in results)
 
+    def test_categorized_only_excludes_uncategorized(self, repo):
+        """\"로컬\" 루트 — categorized_only=True면 카테고리에 속한 영상만 반환한다."""
+        from domain.library.entities import Category
+
+        cat = Category.create("Games")
+        repo.save_category(cat)
+        categorized = _make_agg(url="https://youtu.be/cat1", title="Categorized")
+        categorized.assign_category(cat.id)
+        repo.save(categorized)
+        repo.save(_make_agg(url="https://youtu.be/uncat", title="Uncategorized"))
+
+        # 플래그 ON → 카테고리 영상만
+        only = repo.search(SearchQuery(categorized_only=True))
+        ids = {a.id for a in only}
+        assert categorized.id in ids
+        assert all(a.category_id is not None for a in only)
+
+        # 플래그 OFF(기본) → 미분류 포함 전체
+        everything = repo.search(SearchQuery())
+        assert len(everything) == 2
+
 
 class TestCategoryOrdering:
     def test_list_categories_sorted_by_name(self, repo):

@@ -18,6 +18,7 @@ class SearchQuery:
     category_ids: list[UUID] = field(default_factory=list)
     tag_ids: list[UUID] = field(default_factory=list)
     video_ids: list[UUID] = field(default_factory=list)  # 재생목록 필터 — 빈 리스트 = 필터 없음
+    categorized_only: bool = False     # True = 카테고리에 속한 영상만(category_id IS NOT NULL)
     favorite_only: bool = False
     watched: bool | None = None        # None = both
     limit: int = 50

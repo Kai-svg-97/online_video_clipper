@@ -27,6 +27,7 @@ class GetVideosQuery:
     category_ids: list[UUID] = field(default_factory=list)
     tag_ids: list[UUID] = field(default_factory=list)
     video_ids: list[UUID] = field(default_factory=list)
+    categorized_only: bool = False
     favorite_only: bool = False
     watched: bool | None = None
     limit: int = 50
@@ -44,6 +45,7 @@ class SearchVideosQuery:
     category_ids: list[UUID] = field(default_factory=list)
     tag_ids: list[UUID] = field(default_factory=list)
     video_ids: list[UUID] = field(default_factory=list)
+    categorized_only: bool = False
     favorite_only: bool = False
     limit: int = 50
     offset: int = 0
@@ -113,6 +115,7 @@ class GetVideosHandler:
                     category_ids=query.category_ids,
                     tag_ids=query.tag_ids,
                     video_ids=query.video_ids,
+                    categorized_only=query.categorized_only,
                     favorite_only=query.favorite_only,
                     watched=query.watched,
                     limit=query.limit,
@@ -142,6 +145,7 @@ class SearchVideosHandler:
                     category_ids=query.category_ids,
                     tag_ids=query.tag_ids,
                     video_ids=query.video_ids,
+                    categorized_only=query.categorized_only,
                     favorite_only=query.favorite_only,
                     limit=query.limit,
                     offset=query.offset,
@@ -272,11 +276,25 @@ class LibraryStatsHandler:
             total_dl = len(dl_history)
             total_bytes = 0
             from pathlib import Path  # noqa: PLC0415
+
+            # 같은 파일을 가리키는 이력 레코드가 여러 개(재시도·중복 다운로드)면
+            # 동일 파일이 중복 합산되므로, 정규화된 경로 기준으로 1회만 집계한다.
+            # 또한 영상 파일만 집계해 썸네일·메타데이터(.jpg/.part 등)를 제외한다.
+            video_exts = {
+                ".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".m4a", ".mp3", ".opus"
+            }
+            counted: set = set()
             for j in dl_history:
-                if j.file_path:
-                    p = Path(j.file_path)
-                    if p.exists():
-                        total_bytes += p.stat().st_size
+                if not j.file_path:
+                    continue
+                p = Path(j.file_path)
+                if p.suffix.lower() not in video_exts or not p.exists():
+                    continue
+                key = str(p.resolve())
+                if key in counted:
+                    continue
+                counted.add(key)
+                total_bytes += p.stat().st_size
         except Exception:
             logger.exception("다운로드 통계 집계 실패")
             total_dl = 0

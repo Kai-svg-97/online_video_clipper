@@ -10,6 +10,19 @@ from domain.library.value_objects import ChannelInfo, Duration, VideoUrl, normal
 from infrastructure.persistence.database import Database
 
 
+def _sanitize_fts_query(text: str) -> str:
+    """사용자 검색어를 FTS5 안전 형태로 변환.
+
+    각 공백 토큰을 큰따옴표로 감싼 구문(phrase)으로 만들어 결합한다. 이렇게 하면
+    ``-``·``(``·``*`` 등 FTS5 연산자 문자가 리터럴로 처리돼 ``fts5: syntax error``가
+    발생하지 않는다. 토큰 내부의 ``"``는 ``""``로 이스케이프한다. 결과가 비면
+    빈 문자열을 반환하며, 호출부는 이 경우 MATCH 절을 생략해 전체 목록을 반환한다.
+    """
+    tokens = text.split()
+    quoted = [f'"{t.replace(chr(34), chr(34) * 2)}"' for t in tokens if t]
+    return " ".join(quoted)
+
+
 def _parse_dt(s: str | None) -> datetime | None:
     if not s:
         return None
@@ -358,11 +371,13 @@ class SqliteVideoRepository(IVideoRepository):
         where: list[str] = []
 
         if query.text:
-            joins.append(
-                "JOIN videos_fts ON videos_fts.rowid = videos.rowid"
-            )
-            where.append("videos_fts MATCH ?")
-            params.append(query.text)
+            fts_expr = _sanitize_fts_query(query.text)
+            if fts_expr:
+                joins.append(
+                    "JOIN videos_fts ON videos_fts.rowid = videos.rowid"
+                )
+                where.append("videos_fts MATCH ?")
+                params.append(fts_expr)
 
         if query.category_ids:
             placeholders = ",".join("?" * len(query.category_ids))
@@ -371,6 +386,9 @@ class SqliteVideoRepository(IVideoRepository):
         elif query.category_id:
             where.append("videos.category_id = ?")
             params.append(str(query.category_id))
+        elif query.categorized_only:
+            # "로컬" 루트 — 카테고리에 속한 영상 전체(미분류·재생목록 전용 제외)
+            where.append("videos.category_id IS NOT NULL")
 
         if query.tag_ids:
             placeholders = ",".join("?" * len(query.tag_ids))

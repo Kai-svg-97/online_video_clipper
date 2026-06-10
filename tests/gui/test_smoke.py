@@ -67,6 +67,75 @@ class TestLibraryPanel:
         qtbot.addWidget(panel)
         panel.show()
 
+    def test_category_select_leaves_folder_view(self, qtbot, library_vm, download_vm, clip_vm):
+        """폴더 카드 뷰(경로바 'YouTube' 클릭 상태)에서 카테고리를 고르면
+        영상 리스트 뷰로 복귀해야 한다 (폴더 카드가 그대로 남으면 버그)."""
+        from gui.panels.library_panel import _VIEW_FOLDER, LibraryPanel
+
+        panel = LibraryPanel(vm=library_vm, clip_vm=clip_vm, download_vm=download_vm)
+        qtbot.addWidget(panel)
+        # 폴더 카드 뷰 상태를 강제 (섹션 루트 'YouTube' 클릭과 동일한 스택 상태)
+        panel._view_stack.setCurrentIndex(_VIEW_FOLDER)
+        assert panel._view_stack.currentIndex() == _VIEW_FOLDER
+
+        panel._on_cat_filter_changed(None)  # 카테고리 선택
+
+        assert panel._view_stack.currentIndex() != _VIEW_FOLDER
+
+
+class TestLibraryCategorizedOnly:
+    """\"로컬\" 루트 선택 시 카테고리 영상만(category_id IS NOT NULL) 조회하는지 검증."""
+
+    def _last_query(self, library_vm):
+        return library_vm._get_videos.handle.call_args.args[0]
+
+    def test_local_root_requests_categorized_only(self, library_vm):
+        from uuid import uuid4
+
+        # 특정 카테고리 선택 → categorized_only=False
+        library_vm.set_category_filter(uuid4())
+        assert self._last_query(library_vm).categorized_only is False
+
+        # "로컬"/전체(None) 선택 → categorized_only=True
+        library_vm.set_category_filter(None)
+        assert self._last_query(library_vm).categorized_only is True
+
+    def test_playlist_view_not_categorized_only(self, library_vm):
+        from uuid import uuid4
+
+        library_vm.set_playlist_filter(uuid4())
+        assert self._last_query(library_vm).categorized_only is False
+
+
+class TestPlaylistTreeCategorySelection:
+    """하위 카테고리 추가로 트리가 재구성돼도 부모 카테고리 선택이 유지돼야 한다."""
+
+    def test_load_preserves_category_selection(self, qtbot, qapp_instance):
+        from types import SimpleNamespace
+        from uuid import uuid4
+
+        from gui.panels.library_panel import _CAT_ID_ROLE, _PlaylistTree
+
+        parent_id = uuid4()
+        cats = [SimpleNamespace(id=parent_id, name="Games", parent_id=None, video_count=0)]
+        tree = _PlaylistTree(section="local")
+        qtbot.addWidget(tree)
+        tree.load(playlists=[], folders=[], categories=cats)
+
+        # 부모 카테고리 선택
+        tree.setCurrentItem(tree.topLevelItem(0))
+        assert tree.currentItem().data(0, _CAT_ID_ROLE) == parent_id
+
+        # 하위 카테고리 추가 → 트리 재구성(refresh와 동일)
+        child_id = uuid4()
+        cats2 = cats + [SimpleNamespace(id=child_id, name="PS5", parent_id=parent_id, video_count=0)]
+        tree.load(playlists=[], folders=[], categories=cats2)
+
+        # 부모 카테고리가 여전히 선택돼 있어야 한다
+        cur = tree.currentItem()
+        assert cur is not None
+        assert cur.data(0, _CAT_ID_ROLE) == parent_id
+
 
 class TestMonitoringPanel:
     def test_widget_creates_without_error(self, qtbot, monitoring_vm):

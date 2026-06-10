@@ -189,6 +189,8 @@ class LibraryViewModel(QObject):
         self._current_page: int = 0
         self._search_text: str = ""
         self._filter_category_id: UUID | None = None
+        # "로컬" 루트 뷰 — 카테고리에 속한 영상만 표시(미분류·재생목록 전용 제외). 기본 진입 뷰.
+        self._filter_categorized_only: bool = True
         self._filter_tag_ids: list[UUID] = []
         self._filter_favorite_only: bool = False
         self._filter_playlist_id: UUID | None = None
@@ -246,6 +248,8 @@ class LibraryViewModel(QObject):
 
     def set_category_filter(self, category_id: UUID | None) -> None:
         self._filter_category_id = category_id
+        # category_id 없음("로컬"/전체) → 카테고리 영상 전체만 표시
+        self._filter_categorized_only = category_id is None
         self._filter_tag_ids = []
         self._filter_playlist_id = None
         self._filter_playlist_video_ids = []
@@ -295,7 +299,9 @@ class LibraryViewModel(QObject):
         self._filter_playlist_id = playlist_id
         self._filter_playlist_video_ids = []
         self._filter_category_id = None
-        self._filter_tag_ids = []
+        # 재생목록 뷰는 video_ids로 필터 — 카테고리 미지정 영상도 보여야 하므로 해제
+        self._filter_categorized_only = False
+        # 태그 필터는 비우지 않는다 — 재생목록∩태그 교집합으로 함께 적용된다.
         self._current_page = 0
         if playlist_id is not None and self._get_playlist_items is not None:
             try:
@@ -474,6 +480,12 @@ class LibraryViewModel(QObject):
             if self._filter_category_id is not None
             else []
         )
+        # "로컬" 루트일 때만 카테고리 영상 한정 — 재생목록(video_ids) 뷰에는 적용 안 함
+        categorized_only = (
+            self._filter_categorized_only
+            and self._filter_category_id is None
+            and not self._filter_playlist_video_ids
+        )
         try:
             if self._search_text:
                 results = self._search_videos.handle(
@@ -482,6 +494,7 @@ class LibraryViewModel(QObject):
                         category_ids=category_ids,
                         tag_ids=self._filter_tag_ids,
                         video_ids=self._filter_playlist_video_ids,
+                        categorized_only=categorized_only,
                         favorite_only=self._filter_favorite_only,
                         limit=DEFAULT_PAGE_SIZE,
                         offset=offset,
@@ -497,6 +510,7 @@ class LibraryViewModel(QObject):
                         category_ids=category_ids,
                         tag_ids=self._filter_tag_ids,
                         video_ids=self._filter_playlist_video_ids,
+                        categorized_only=categorized_only,
                         favorite_only=self._filter_favorite_only,
                         limit=DEFAULT_PAGE_SIZE,
                         offset=offset,
