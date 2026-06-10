@@ -26,6 +26,7 @@ class YouTubeOAuthAdapter:
 
     def get_credentials(self) -> Any | None:
         """DB에서 저장된 자격증명을 로드하고 필요 시 갱신한다."""
+        from google.auth.exceptions import RefreshError  # noqa: PLC0415
         from google.oauth2.credentials import Credentials  # noqa: PLC0415
         data = self._load_token()
         if not data:
@@ -56,6 +57,10 @@ class YouTubeOAuthAdapter:
                 creds.refresh(_GReq(session=_sess))
                 self.save_credentials(creds)
             return creds
+        except RefreshError as exc:
+            # 토큰 만료/취소는 재인증으로 해소되는 예상 상황 — 스택트레이스 없이 경고만 남긴다.
+            logger.warning("OAuth 토큰 만료/취소됨 — 재인증이 필요합니다: %s", exc)
+            return None
         except Exception:
             logger.exception("OAuth 자격증명 로드/갱신 실패")
             return None
