@@ -42,16 +42,17 @@ logger = logging.getLogger(__name__)
 # 헬퍼
 # ---------------------------------------------------------------------------
 
-def _fmt_views(count: int | None) -> str:
-    if count is None:
+def _fmt_views(view_count: int | None) -> str:
+    """라이브러리 아이콘 카드와 동일한 '조회수 1.2만 회' 형식."""
+    if view_count is None:
         return ""
-    if count >= 100_000_000:
-        return f"{count / 100_000_000:.1f}억 회"
-    if count >= 10_000:
-        return f"{count / 10_000:.1f}만 회"
-    if count >= 1_000:
-        return f"{count / 1_000:.0f}천 회"
-    return f"{count}회"
+    if view_count < 1_000:
+        return f"조회수 {view_count}회"
+    if view_count < 10_000:
+        return f"조회수 {view_count / 1000:.1f}천 회"
+    if view_count < 100_000_000:
+        return f"조회수 {view_count / 10000:.1f}만 회"
+    return f"조회수 {view_count / 100_000_000:.1f}억 회"
 
 
 def _fmt_duration(sec: int | None) -> str:
@@ -64,12 +65,30 @@ def _fmt_duration(sec: int | None) -> str:
     return f"{m}:{s:02d}"
 
 
-def _fmt_date(upload_date: str) -> str:
-    if not upload_date:
+def _relative_time(date_str: str | None) -> str:
+    """라이브러리 카드와 동일한 '3일 전' 형식. yt-dlp의 YYYYMMDD·ISO 모두 처리."""
+    if not date_str:
         return ""
-    if len(upload_date) == 8:
-        return f"{upload_date[:4]}.{upload_date[4:6]}.{upload_date[6:]}"
-    return upload_date
+    from datetime import date, datetime
+    try:
+        if len(date_str) == 8 and date_str.isdigit():        # YYYYMMDD
+            pub = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:]))
+        elif "T" in date_str or " " in date_str:
+            pub = datetime.fromisoformat(date_str).date()
+        else:
+            pub = date.fromisoformat(date_str)
+        days = (date.today() - pub).days
+        if days < 0:
+            return ""
+        if days < 7:
+            return f"{days}일 전" if days > 0 else "오늘"
+        if days < 30:
+            return f"{days // 7}주 전"
+        if days < 365:
+            return f"{days // 30}개월 전"
+        return f"{days // 365}년 전"
+    except (ValueError, TypeError):
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -366,8 +385,9 @@ class _FeedCard(QFrame):
         meta_parts = []
         if self._dto.view_count:
             meta_parts.append(_fmt_views(self._dto.view_count))
-        if self._dto.published_at:
-            meta_parts.append(_fmt_date(self._dto.published_at))
+        rel = _relative_time(self._dto.published_at)
+        if rel:
+            meta_parts.append(rel)
         self._meta_lbl = QLabel("  •  ".join(meta_parts))
         f3 = QFont()
         f3.setPointSize(8)

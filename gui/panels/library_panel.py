@@ -3088,6 +3088,8 @@ class LibraryPanel(QWidget):
         # 내비게이션 히스토리 (최대 50개 상태 보존)
         self._nav_history: list[dict] = []
         self._is_restoring: bool = False
+        self._current_channel_url: str = ""      # 단일 채널 피드 복원용
+        self._current_detail_payload: object = None  # 상세 화면 재진입용(UUID|FeedVideoDTO)
         self._setup_ui()
         self._connect_signals()
         vm.load()
@@ -3106,53 +3108,24 @@ class LibraryPanel(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(2)
 
-        left_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # 통합 패널: 재생목록 트리(카테고리 포함) + 선택된 태그 바
-        unified_container = QWidget()
-        unified_layout = QVBoxLayout(unified_container)
-        unified_layout.setContentsMargins(0, 0, 0, 0)
-        unified_layout.setSpacing(2)
+        # 재생목록 트리(카테고리 포함)가 좌측 세로 공간을 최대한 차지한다.
         self._playlist_panel = _PlaylistPanel()
         self._apply_sidebar_tree_style()
-        unified_layout.addWidget(self._playlist_panel, stretch=1)
-        left_splitter.addWidget(unified_container)
+        left_layout.addWidget(self._playlist_panel, stretch=1)
 
-        tag_section = QWidget()
-        tag_section_layout = QVBoxLayout(tag_section)
-        tag_section_layout.setContentsMargins(0, 0, 0, 0)
-        tag_section_layout.setSpacing(4)
-
+        # 인기/전체 태그 패널은 좌측에서 제거됐다(카테고리 외 노드에서 부적합). 단, 태그
+        # 필터·태그 칩 기능은 유지하므로 위젯 객체 자체는 부모 없이 생성해 둔다(다수의
+        # 기존 참조: _refresh_popular_tags·_refresh_tag_display·_set_popular_tags_visible·
+        # _restore_tags 등이 안전하게 동작하도록).
         self._popular_hdr = QLabel("인기 태그")
-        self._popular_hdr.setStyleSheet(
-            f"font-size:8pt;color:{_t().text_muted};font-weight:600;padding:2px 4px;"
-        )
-        tag_section_layout.addWidget(self._popular_hdr)
-
         self._popular_tags_widget = QWidget()
         self._popular_tags_layout = QVBoxLayout(self._popular_tags_widget)
         self._popular_tags_layout.setContentsMargins(4, 0, 4, 4)
         self._popular_tags_layout.setSpacing(2)
-        tag_section_layout.addWidget(self._popular_tags_widget)
-
-        tag_hdr = QLabel("전체 태그")
-        tag_hdr.setStyleSheet(f"font-size:8pt;color:{_t().text_muted};padding:2px 4px;")
-        tag_section_layout.addWidget(tag_hdr)
-
         self._tag_filter_input = QLineEdit()
         self._tag_filter_input.setPlaceholderText("태그 검색...")
         self._tag_filter_input.setClearButtonEnabled(True)
-        self._tag_filter_input.setStyleSheet("font-size:8pt;")
-        tag_section_layout.addWidget(self._tag_filter_input)
-
         self._tag_list = _TagListWidget()
-        tag_section_layout.addWidget(self._tag_list)
-
-        left_splitter.addWidget(tag_section)
-        left_splitter.setStretchFactor(0, 2)
-        left_splitter.setStretchFactor(1, 1)
-
-        left_layout.addWidget(left_splitter, stretch=1)
 
         # ── 스마트 폴더 섹션 ──
         sf_header_row = QHBoxLayout()
@@ -3425,7 +3398,7 @@ class LibraryPanel(QWidget):
         self._table.doubleClicked.connect(self._on_table_double_click)
         self._table.customContextMenuRequested.connect(self._show_table_menu)
 
-        self._detail_widget.back_requested.connect(self._on_back_from_detail)
+        self._detail_widget.back_requested.connect(self._on_detail_back_requested)
         self._detail_widget.tag_filter_requested.connect(self._on_tag_filter_requested)
         self._detail_widget.tags_updated.connect(self._on_detail_tags_updated)
         self._detail_widget.download_requested.connect(self.download_requested.emit)
@@ -3896,14 +3869,14 @@ class LibraryPanel(QWidget):
             self._on_cat_filter_changed(None)
 
     def _on_cat_filter_changed(self, cat_id) -> None:
+        self._push_nav_state()          # 전환 직전 화면 보존
+        self._leave_detail_if_open()    # 상세 화면이면 목록으로 복귀
         self._current_cat_id = cat_id
         self._current_playlist_id = None
         self._current_folder_id = None
         # 폴더 카드 뷰/피드 뷰에서 카테고리를 고르면 영상 리스트 뷰로 복귀
         if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED):
             self._switch_view(self._view_group.checkedId())
-        if not self._is_restoring:
-            self._push_nav_state()
         self._active_tag_ids.clear()
         self._tag_list.blockSignals(True)
         self._tag_list.clearSelection()
@@ -4015,6 +3988,7 @@ class LibraryPanel(QWidget):
             for v in self._vm.videos if v.id != video_id
         ][:30]
         self._detail_widget.load(detail, tag_ids, resume_ms=0, related=related)
+        self._current_detail_payload = video_id
         self._nav_stack.setCurrentIndex(1)
 
     def _open_stream_detail(self, feed_dto) -> None:
@@ -4026,6 +4000,7 @@ class LibraryPanel(QWidget):
             self._push_nav_state()
         related = self._feed_related_items(feed_dto)
         self._detail_widget.load_stream(feed_dto, related=related)
+        self._current_detail_payload = feed_dto
         self._nav_stack.setCurrentIndex(1)
 
     def _on_related_item_selected(self, payload) -> None:
@@ -4075,6 +4050,13 @@ class LibraryPanel(QWidget):
                 thumb_url=f.thumbnail_url or "",
             ))
         return items
+
+    def _on_detail_back_requested(self) -> None:
+        """상세 화면 뒤로가기 버튼 — 히스토리 기반으로 직전 화면 복원."""
+        if self._nav_history:
+            self._go_back()
+        else:
+            self._on_back_from_detail()
 
     def _on_back_from_detail(self) -> None:
         self._detail_widget.stop_player()
@@ -4219,52 +4201,137 @@ class LibraryPanel(QWidget):
 
     # ── 내비게이션 히스토리 ────────────────────────────────────────────
 
-    def _push_nav_state(self) -> None:
-        """현재 카테고리·태그·화면 상태를 히스토리 스택에 저장한다."""
-        state = {
-            "cat_id": self.current_category_id(),
-            "tag_ids": frozenset(self._active_tag_ids),
+    def _leave_detail_if_open(self) -> None:
+        """상세 화면(_nav_stack 인덱스 1)이 열려 있으면 목록 컨테이너로 복귀한다."""
+        if self._nav_stack.currentIndex() == 1:
+            self._on_back_from_detail()
+
+    def _capture_screen(self) -> dict:
+        """현재 화면을 완전 스냅샷으로 캡처한다(트리 노드 종류 + 뷰 + 태그)."""
+        view_idx = self._view_stack.currentIndex()
+        if view_idx == _VIEW_CHANNELS:
+            kind = "channels_root"
+        elif view_idx == _VIEW_FEED:
+            kind = "feed_all" if self._feed_show_channel else "channel"
+        elif view_idx == _VIEW_FOLDER:
+            kind = "folder"
+        elif self._current_playlist_id is not None:
+            kind = "playlist"
+        else:
+            kind = "category"
+        return {
+            "kind": kind,
+            "cat_id": self._current_cat_id,
+            "playlist_id": self._current_playlist_id,
+            "folder_id": self._current_folder_id,
+            "channel_url": self._current_channel_url,
             "nav_idx": self._nav_stack.currentIndex(),
+            "detail_payload": self._current_detail_payload,
+            "tag_ids": frozenset(self._active_tag_ids),
         }
-        self._nav_history.append(state)
+
+    def _push_nav_state(self) -> None:
+        """전환 직전 화면을 히스토리 스택에 저장한다(복원 중에는 무시)."""
+        if self._is_restoring:
+            return
+        self._nav_history.append(self._capture_screen())
         if len(self._nav_history) > 50:
             self._nav_history.pop(0)
 
-    def _go_back(self) -> None:
-        """히스토리에서 직전 상태를 꺼내 복원한다."""
-        if not self._nav_history:
-            return
-        state = self._nav_history.pop()
+    def _reopen_detail(self, payload) -> None:
+        """히스토리 복원 시 직전 상세 화면을 다시 연다."""
+        from application.library.dtos import FeedVideoDTO  # noqa: PLC0415
+        if isinstance(payload, UUID):
+            self._open_detail(payload)
+        elif isinstance(payload, FeedVideoDTO):
+            self._open_stream_detail(payload)
+
+    def _restore_list_screen(self, snap: dict) -> None:
+        """스냅샷의 트리 노드(kind)로 실제 이동한다."""
+        kind = snap.get("kind", "category")
+        if kind == "playlist":
+            self._on_playlist_selected_from_tree(snap.get("playlist_id"))
+        elif kind == "folder":
+            self._on_folder_selected(snap.get("folder_id"))
+        elif kind == "feed_all":
+            self._on_feed_all_selected()
+        elif kind == "channel":
+            self._on_channel_selected(snap.get("channel_url") or "")
+        elif kind == "channels_root":
+            self._on_channels_root_selected()
+        else:  # category
+            self._on_cat_filter_changed(snap.get("cat_id"))
+
+    def _screen_matches(self, snap: dict) -> bool:
+        """상세 화면 아래에 깔린 현재 목록이 스냅샷과 동일한 노드인지(재로딩 회피용)."""
+        view_idx = self._view_stack.currentIndex()
+        kind = snap.get("kind")
+        list_views = (_VIEW_ICON, _VIEW_LIST, _VIEW_DETAIL)
+        if kind == "feed_all":
+            return view_idx == _VIEW_FEED and self._feed_show_channel
+        if kind == "channel":
+            return (view_idx == _VIEW_FEED and not self._feed_show_channel
+                    and self._current_channel_url == (snap.get("channel_url") or ""))
+        if kind == "channels_root":
+            return view_idx == _VIEW_CHANNELS
+        if kind == "folder":
+            return view_idx == _VIEW_FOLDER and self._current_folder_id == snap.get("folder_id")
+        if kind == "playlist":
+            return view_idx in list_views and self._current_playlist_id == snap.get("playlist_id")
+        return (view_idx in list_views and self._current_playlist_id is None
+                and self._current_cat_id == snap.get("cat_id"))
+
+    def _restore_screen(self, snap: dict) -> None:
+        """스냅샷에 따라 직전 화면을 정확히 복원한다."""
         self._is_restoring = True
         try:
-            # 상세 화면이면 목록으로 먼저 복귀
+            target_detail = (snap.get("nav_idx") == 1
+                             and snap.get("detail_payload") is not None)
+
+            # 상세 아래에 그대로 깔려 있던 직전 목록으로 복귀 — 재로딩 없이 빠르게
+            if (not target_detail and self._nav_stack.currentIndex() == 1
+                    and self._screen_matches(snap)):
+                self._on_back_from_detail()
+                self._restore_tags(snap)
+                return
+
+            # 그 외엔 목록 화면을 실제로 재구성한다
             if self._nav_stack.currentIndex() == 1:
                 self._on_back_from_detail()
+            self._restore_list_screen(snap)
+            self._restore_tags(snap)
 
-            # 태그 필터 복원
-            saved_tags: frozenset = state.get("tag_ids", frozenset())
-            self._active_tag_ids = set(saved_tags)
-            self._vm.set_tag_filter(list(self._active_tag_ids))
-            self._tag_list.blockSignals(True)
-            self._tag_list.clearSelection()
-            for i in range(self._tag_list.count()):
-                item = self._tag_list.item(i)
-                if item.data(Qt.ItemDataRole.UserRole) in self._active_tag_ids:
-                    item.setSelected(True)
-            self._tag_list.blockSignals(False)
-            self._refresh_active_tags_bar()
-            self._update_delegate_tags()
-
-            # 카테고리 복원
-            cat_id = state.get("cat_id")
-            self._current_cat_id = cat_id
-            self._vm.set_category_filter(cat_id)
-            self._icon_delegate.filter_cat_id = cat_id
-            self._list_delegate.filter_cat_id = cat_id
-            self._icon_view.viewport().update()
-            self._list_view.viewport().update()
+            # 직전이 상세였다면(연관영상 체인) 올바른 목록 위에 상세를 다시 연다
+            if target_detail:
+                self._reopen_detail(snap["detail_payload"])
         finally:
             self._is_restoring = False
+
+    def _restore_tags(self, snap: dict) -> None:
+        """화면 복원 뒤 태그 필터를 덮어쓴다(핸들러가 태그를 비울 수 있으므로)."""
+        saved_tags: frozenset = snap.get("tag_ids", frozenset())
+        if not saved_tags:
+            return
+        self._active_tag_ids = set(saved_tags)
+        self._vm.set_tag_filter(list(self._active_tag_ids))
+        self._tag_list.blockSignals(True)
+        self._tag_list.clearSelection()
+        for i in range(self._tag_list.count()):
+            item = self._tag_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) in self._active_tag_ids:
+                item.setSelected(True)
+        self._tag_list.blockSignals(False)
+        self._refresh_active_tags_bar()
+        self._update_delegate_tags()
+        self._icon_view.viewport().update()
+        self._list_view.viewport().update()
+
+    def _go_back(self) -> None:
+        """히스토리에서 직전 화면을 꺼내 복원한다."""
+        if not self._nav_history:
+            return
+        snap = self._nav_history.pop()
+        self._restore_screen(snap)
 
     def _on_hidden_tags_changed(self) -> None:
         """설정에서 숨김 태그가 변경되면 태그 표시 목록을 즉시 갱신한다."""
@@ -4965,6 +5032,8 @@ class LibraryPanel(QWidget):
         """"구독 채널" 노드 클릭 — 등록된 채널을 아바타 카드 그리드로 표시."""
         if self._feed_vm is None:
             return
+        self._push_nav_state()
+        self._leave_detail_if_open()
         subs = self._monitoring_vm.subscriptions if self._monitoring_vm is not None else []
         channels = [(s.channel_id, s.channel_name, s.channel_url) for s in subs]
         self._current_playlist_id = None
@@ -5001,8 +5070,11 @@ class LibraryPanel(QWidget):
         """구독 채널 노드 클릭 — 해당 채널 영상을 피드 그리드에 로드."""
         if self._feed_vm is None or not channel_url:
             return
+        self._push_nav_state()
+        self._leave_detail_if_open()
         self._current_playlist_id = None
         self._current_folder_id = None
+        self._current_channel_url = channel_url
         self._feed_show_channel = False   # 이미 채널을 아는 화면이라 채널명 숨김
         self._set_popular_tags_visible(False)
         self._show_feed_view("로딩 중…")
@@ -5013,6 +5085,8 @@ class LibraryPanel(QWidget):
         """전체 구독 피드 노드 클릭 — 모든 구독 채널 최신 영상을 로드."""
         if self._feed_vm is None:
             return
+        self._push_nav_state()
+        self._leave_detail_if_open()
         self._current_playlist_id = None
         self._current_folder_id = None
         self._feed_show_channel = True    # 여러 채널이 섞이므로 채널명 표시
@@ -5061,6 +5135,8 @@ class LibraryPanel(QWidget):
 
     def _on_playlist_selected_from_tree(self, playlist_id) -> None:
         """트리에서 재생목록 선택 — 폴더 카드 뷰에 있다면 정상 뷰로 복귀 후 필터 적용."""
+        self._push_nav_state()
+        self._leave_detail_if_open()
         self._vm.set_playlist_filter(playlist_id)
         self._icon_view.set_playlist_context(playlist_id)
         self._list_view.set_playlist_context(playlist_id)
@@ -5078,6 +5154,8 @@ class LibraryPanel(QWidget):
         folder_id=None이면 '미분류' 디렉터리 뷰."""
         if self._playlist_vm is None:
             return
+        self._push_nav_state()
+        self._leave_detail_if_open()
         folder_pls = [pl for pl in self._playlist_vm.playlists if pl.folder_id == folder_id]
         self._folder_view.load(folder_pls, get_first_item=self._vm.get_playlist_first_item)
         self._view_stack.setCurrentIndex(_VIEW_FOLDER)
