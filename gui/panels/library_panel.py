@@ -3108,24 +3108,48 @@ class LibraryPanel(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(2)
 
-        # 재생목록 트리(카테고리 포함)가 좌측 세로 공간을 최대한 차지한다.
+        # 트리(상단) + 태그 섹션(하단)을 세로 스플리터로 묶는다. 태그 섹션은
+        # 카테고리 선택 시에만 보이며(_set_popular_tags_visible), 숨기면 스플리터가
+        # 그 공간을 트리에 넘겨 재생목록 트리가 더 넓게 표시된다.
+        left_splitter = QSplitter(Qt.Orientation.Vertical)
         self._playlist_panel = _PlaylistPanel()
         self._apply_sidebar_tree_style()
-        left_layout.addWidget(self._playlist_panel, stretch=1)
+        left_splitter.addWidget(self._playlist_panel)
 
-        # 인기/전체 태그 패널은 좌측에서 제거됐다(카테고리 외 노드에서 부적합). 단, 태그
-        # 필터·태그 칩 기능은 유지하므로 위젯 객체 자체는 부모 없이 생성해 둔다(다수의
-        # 기존 참조: _refresh_popular_tags·_refresh_tag_display·_set_popular_tags_visible·
-        # _restore_tags 등이 안전하게 동작하도록).
+        self._tag_section = QWidget()
+        tag_section_layout = QVBoxLayout(self._tag_section)
+        tag_section_layout.setContentsMargins(0, 0, 0, 0)
+        tag_section_layout.setSpacing(4)
+
         self._popular_hdr = QLabel("인기 태그")
+        self._popular_hdr.setStyleSheet(
+            f"font-size:8pt;color:{_t().text_muted};font-weight:600;padding:2px 4px;"
+        )
+        tag_section_layout.addWidget(self._popular_hdr)
+
         self._popular_tags_widget = QWidget()
         self._popular_tags_layout = QVBoxLayout(self._popular_tags_widget)
         self._popular_tags_layout.setContentsMargins(4, 0, 4, 4)
         self._popular_tags_layout.setSpacing(2)
+        tag_section_layout.addWidget(self._popular_tags_widget)
+
+        tag_hdr = QLabel("전체 태그")
+        tag_hdr.setStyleSheet(f"font-size:8pt;color:{_t().text_muted};padding:2px 4px;")
+        tag_section_layout.addWidget(tag_hdr)
+
         self._tag_filter_input = QLineEdit()
         self._tag_filter_input.setPlaceholderText("태그 검색...")
         self._tag_filter_input.setClearButtonEnabled(True)
+        self._tag_filter_input.setStyleSheet("font-size:8pt;")
+        tag_section_layout.addWidget(self._tag_filter_input)
+
         self._tag_list = _TagListWidget()
+        tag_section_layout.addWidget(self._tag_list)
+
+        left_splitter.addWidget(self._tag_section)
+        left_splitter.setStretchFactor(0, 2)
+        left_splitter.setStretchFactor(1, 1)
+        left_layout.addWidget(left_splitter, stretch=1)
 
         # ── 스마트 폴더 섹션 ──
         sf_header_row = QHBoxLayout()
@@ -3558,9 +3582,9 @@ class LibraryPanel(QWidget):
         self._refresh_popular_tags()
 
     def _set_popular_tags_visible(self, visible: bool) -> None:
-        """피드/채널 등 로컬 태그가 없는 뷰에서는 인기 태그 패널을 숨긴다."""
-        self._popular_hdr.setVisible(visible)
-        self._popular_tags_widget.setVisible(visible)
+        """태그 섹션(인기/전체 태그)은 카테고리 선택 시에만 보인다. 재생목록·폴더·
+        피드·채널 뷰에서는 숨겨 재생목록 트리가 그 공간을 차지하도록 한다."""
+        self._tag_section.setVisible(visible)
 
     def _refresh_popular_tags(self) -> None:
         from config.settings import load_hidden_tag_names  # noqa: PLC0415
@@ -5144,9 +5168,8 @@ class LibraryPanel(QWidget):
             self._switch_view(self._view_group.checkedId())
         self._current_playlist_id = playlist_id
         self._current_folder_id = None
-        # 재생목록 영상 스코프 인기 태그 갱신 + 패널 표시
-        self._set_popular_tags_visible(True)
-        self._vm.refresh_scoped_tags()
+        # 재생목록 선택 시에는 태그 섹션을 숨겨 트리가 더 넓게 보이도록 한다
+        self._set_popular_tags_visible(False)
         self._refresh_breadcrumb()
 
     def _on_folder_selected(self, folder_id) -> None:
@@ -5162,6 +5185,7 @@ class LibraryPanel(QWidget):
         self._vm.set_playlist_filter(None)
         self._current_folder_id = folder_id
         self._current_playlist_id = None
+        self._set_popular_tags_visible(False)   # 폴더(재생목록 묶음) 뷰에서도 숨김
         self._refresh_breadcrumb()
 
     def _on_unfiled_selected(self, source: str) -> None:
@@ -5188,6 +5212,7 @@ class LibraryPanel(QWidget):
         # 섹션 루트 — 폴더도 재생목록도 아닌 상태
         self._current_folder_id = None
         self._current_playlist_id = None
+        self._set_popular_tags_visible(False)
         # 경로 바: "YouTube" 또는 "로컬" 단독 (클릭 안 되는 마지막 세그먼트)
         label = "YouTube" if source == "youtube" else "로컬"
         self._breadcrumb_bar.update_path([(label, None)], [])

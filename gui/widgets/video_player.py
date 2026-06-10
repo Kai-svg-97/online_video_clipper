@@ -42,46 +42,104 @@ logger = logging.getLogger(__name__)
 # ── Background worker: resolve yt-dlp stream URL ──────────────────
 
 class _StreamWorker(QThread):
-    stream_ready = pyqtSignal(str, str)   # (stream_url, quality_label e.g. "720p")
+    # (path_or_url, quality_label e.g. "720p", is_local) — is_local=True면 임시 병합 파일
+    stream_ready = pyqtSignal(str, str, bool)
+    progress     = pyqtSignal(int)   # 병합 다운로드 진행률(0-100)
     failed       = pyqtSignal(str)
 
-    def __init__(self, url: str, quality_fmt: str = "best[ext=mp4]/best", parent=None) -> None:
+    def __init__(
+        self,
+        url: str,
+        quality_fmt: str = "best[ext=mp4]/best",
+        merge: bool = False,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._url = url
         self._quality_fmt = quality_fmt
+        self._merge = merge           # True면 영상+오디오를 ffmpeg로 병합해 임시 파일 재생
 
     def run(self) -> None:
         try:
             import yt_dlp  # noqa: PLC0415
-            opts = {"quiet": True, "format": self._quality_fmt, "noplaylist": True}
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(self._url, download=False) or {}
-                stream: str = info.get("url", "")
-                fmt_info: dict = {}
-                if not stream:
-                    for f in reversed(info.get("formats") or []):
-                        if f.get("url") and f.get("ext") == "mp4":
-                            stream = f["url"]
-                            fmt_info = f
-                            break
-                if not stream:
-                    for f in reversed(info.get("formats") or []):
-                        if f.get("url"):
-                            stream = f["url"]
-                            fmt_info = f
-                            break
-
-                quality_label = ""
-                h = fmt_info.get("height") or info.get("height")
-                if h:
-                    quality_label = f"{h}p"
-
-                if stream:
-                    self.stream_ready.emit(stream, quality_label)
-                else:
-                    self.failed.emit("스트림 URL을 가져올 수 없습니다.")
+            if self._merge:
+                self._run_merge(yt_dlp)
+            else:
+                self._run_stream(yt_dlp)
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    # ── 즉시 스트리밍: 단일 muxed URL을 그대로 QMediaPlayer에 전달 ──
+    def _run_stream(self, yt_dlp) -> None:
+        opts = {"quiet": True, "no_warnings": True,
+                "format": self._quality_fmt, "noplaylist": True}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(self._url, download=False) or {}
+        stream: str = info.get("url", "")
+        fmt_info: dict = {}
+        if not stream:
+            for f in reversed(info.get("formats") or []):
+                if f.get("url") and f.get("ext") == "mp4" and f.get("acodec") not in (None, "none"):
+                    stream, fmt_info = f["url"], f
+                    break
+        if not stream:
+            for f in reversed(info.get("formats") or []):
+                if f.get("url"):
+                    stream, fmt_info = f["url"], f
+                    break
+        h = fmt_info.get("height") or info.get("height")
+        label = f"{h}p" if h else ""
+        if stream:
+            self.stream_ready.emit(stream, label, False)
+        else:
+            self.failed.emit("스트림 URL을 가져올 수 없습니다.")
+
+    # ── 고화질: 분리된 영상+오디오를 ffmpeg로 임시 mp4에 병합해 로컬 재생 ──
+    def _run_merge(self, yt_dlp) -> None:
+        import os  # noqa: PLC0415
+        import tempfile  # noqa: PLC0415
+        try:
+            from utils.resources import get_ffmpeg_path  # noqa: PLC0415
+            ffmpeg = get_ffmpeg_path()
+        except (FileNotFoundError, Exception):  # noqa: BLE001
+            ffmpeg = None
+        if not ffmpeg:
+            # ffmpeg 없으면 병합 불가 → 즉시 스트리밍으로 폴백(보통 360p)
+            self._run_stream(yt_dlp)
+            return
+
+        tmpdir = tempfile.mkdtemp(prefix="ovc_stream_")
+        opts = {
+            "quiet": True, "no_warnings": True, "noplaylist": True,
+            "format": self._quality_fmt,
+            "merge_output_format": "mp4",
+            "outtmpl": os.path.join(tmpdir, "stream.%(ext)s"),
+            "ffmpeg_location": ffmpeg,
+            "progress_hooks": [self._merge_hook],
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(self._url, download=True) or {}
+        rd = (info.get("requested_downloads") or [{}])[0]
+        path = rd.get("filepath") or info.get("filepath") or ydl.prepare_filename(info)
+        if not path or not os.path.exists(path):
+            # 병합 산출물을 못 찾으면 디렉터리에서 첫 파일을 집는다
+            files = [os.path.join(tmpdir, f) for f in os.listdir(tmpdir)]
+            path = files[0] if files else ""
+        h = rd.get("height") or info.get("height")
+        label = f"{h}p" if h else ""
+        if path and os.path.exists(path):
+            self.stream_ready.emit(path, label, True)
+        else:
+            self.failed.emit("고화질 병합에 실패했습니다.")
+
+    def _merge_hook(self, d: dict) -> None:
+        if d.get("status") != "downloading":
+            return
+        try:
+            pct = str(d.get("_percent_str") or "0").strip().rstrip("%")
+            self.progress.emit(int(float(pct or 0)))
+        except (ValueError, TypeError):
+            pass
 
 
 # ── Control bar (overlaid at the bottom of the video area) ────────
@@ -127,16 +185,27 @@ def _quality_badge_style() -> str:
         "font-size:8pt; padding:1px 5px; border-radius:3px;"
     )
 
-# (label shown in menu, format string for yt-dlp, short label for button)
+# YouTube 고화질(>360p)은 영상+오디오가 분리돼 ffmpeg 병합이 필요하다.
+# Windows Media Foundation 호환을 위해 avc1(H.264)+m4a(AAC)를 우선 선택한다.
+def _merge_fmt(h: int) -> str:
+    return (
+        f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
+        f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/"
+        f"best[height<={h}][ext=mp4]/best[height<={h}]/best"
+    )
+
+
+# (메뉴 라벨, yt-dlp 포맷, 버튼 단축 라벨, merge: 병합 필요 여부)
 _QUALITY_OPTIONS = [
-    ("자동 (최고 화질)", "best[ext=mp4]/best",                              "자동"),
-    ("1080p",           "best[height<=1080][ext=mp4]/best[height<=1080]/best", "1080p"),
-    ("720p",            "best[height<=720][ext=mp4]/best[height<=720]/best",   "720p"),
-    ("480p",            "best[height<=480][ext=mp4]/best[height<=480]/best",   "480p"),
-    ("360p",            "best[height<=360][ext=mp4]/best[height<=360]/best",   "360p"),
-    ("240p",            "best[height<=240][ext=mp4]/best[height<=240]/best",   "240p"),
+    ("자동 (빠른 재생)", "best[ext=mp4]/best", "자동",  False),
+    ("1080p",           _merge_fmt(1080),     "1080p", True),
+    ("720p",            _merge_fmt(720),      "720p",  True),
+    ("480p",            _merge_fmt(480),      "480p",  True),
+    ("360p",            "best[height<=360][ext=mp4]/best[height<=360]/best", "360p", False),
+    ("240p",            "best[height<=240][ext=mp4]/best[height<=240]/best", "240p", False),
 ]
 _DEFAULT_QUALITY_FMT = _QUALITY_OPTIONS[0][1]
+_DEFAULT_QUALITY_MERGE = _QUALITY_OPTIONS[0][3]
 
 
 class _ControlBar(QWidget):
@@ -147,7 +216,7 @@ class _ControlBar(QWidget):
     mute_toggled       = pyqtSignal()
     fullscreen_toggled = pyqtSignal()
     download_requested = pyqtSignal(object)   # DownloadSettings
-    quality_changed    = pyqtSignal(str, str) # (fmt_string, short_label)
+    quality_changed    = pyqtSignal(str, str, bool) # (fmt_string, short_label, merge)
 
     _HEIGHT = 72
 
@@ -268,18 +337,18 @@ class _ControlBar(QWidget):
             f"QMenu{{background:{tok.bg_elevated};color:{tok.text_primary};border:1px solid {tok.border_muted};}}"
             f"QMenu::item:selected{{background:{tok.bg_overlay};}}"
         )
-        for menu_label, fmt, short in _QUALITY_OPTIONS:
+        for menu_label, fmt, short, merge in _QUALITY_OPTIONS:
             act = menu.addAction(menu_label)
             act.triggered.connect(
-                lambda _c, f=fmt, s=short: self._on_quality_item(f, s)
+                lambda _c, f=fmt, s=short, m=merge: self._on_quality_item(f, s, m)
             )
         btn_pos = self._btn_quality.mapToGlobal(QPoint(0, 0))
         hint = menu.sizeHint()
         menu.exec(QPoint(btn_pos.x(), btn_pos.y() - hint.height()))
 
-    def _on_quality_item(self, fmt: str, short: str) -> None:
+    def _on_quality_item(self, fmt: str, short: str, merge: bool) -> None:
         self._btn_quality.setText(short)
-        self.quality_changed.emit(fmt, short)
+        self.quality_changed.emit(fmt, short, merge)
 
     def _show_download_menu(self) -> None:
         menu = QMenu(self)
@@ -503,6 +572,7 @@ class InlinePlayer(QWidget):
     _HIDE_MS = 2_000   # 2초 비활성 후 숨김
     _SHOW_MS = 1_000   # 마우스 감지 1초 후 표시
     _last_quality_fmt: str = _DEFAULT_QUALITY_FMT  # 세션 내 품질 선택 공유
+    _last_quality_merge: bool = _DEFAULT_QUALITY_MERGE
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -515,8 +585,10 @@ class InlinePlayer(QWidget):
         self._is_muted  = False
         self._filter_on = False
         self._current_quality_fmt = InlinePlayer._last_quality_fmt
+        self._current_merge: bool = InlinePlayer._last_quality_merge
         self._resume_ms: int = 0
         self._stream_quality_label: str = ""  # yt-dlp 보고 품질 레이블
+        self._temp_stream_path: str = ""      # 고화질 병합 임시 파일(재생 후 정리)
         self._setup()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
@@ -591,6 +663,7 @@ class InlinePlayer(QWidget):
         self._player.playbackStateChanged.connect(self._on_playback_state)
         self._player.errorOccurred.connect(self._on_error)
         self._player.metaDataChanged.connect(self._on_metadata_changed)
+        self._player.mediaStatusChanged.connect(self._on_media_status)
 
         # 개별 위젯에도 이벤트 필터 설치 (앱 레벨 필터 보완)
         self._video_area.installEventFilter(self)
@@ -712,6 +785,7 @@ class InlinePlayer(QWidget):
         self._downloads   = downloads
         self._resume_ms   = resume_ms
         self._current_quality_fmt = InlinePlayer._last_quality_fmt
+        self._current_merge       = InlinePlayer._last_quality_merge
         self._stream_quality_label = ""
         self._visual_stack.setCurrentIndex(0)
         if thumbnail_pixmap and not thumbnail_pixmap.isNull():
@@ -734,6 +808,8 @@ class InlinePlayer(QWidget):
 
     def stop(self) -> None:
         self._player.stop()
+        self._player.setSource(QUrl())   # 파일 핸들 해제 후 임시 파일 삭제 가능
+        self._cleanup_temp()
         self._hide_timer.stop()
         if self._worker:
             self._worker.quit()
@@ -743,6 +819,23 @@ class InlinePlayer(QWidget):
         self._bar.show()
         self._bar.raise_()
         self._bar.set_playing(False)
+
+    def _cleanup_temp(self) -> None:
+        """고화질 병합 임시 파일/디렉터리를 삭제한다."""
+        path = self._temp_stream_path
+        self._temp_stream_path = ""
+        if not path:
+            return
+        try:
+            import os  # noqa: PLC0415
+            import shutil  # noqa: PLC0415
+            d = os.path.dirname(path)
+            if os.path.isfile(path):
+                os.remove(path)
+            if d and os.path.basename(d).startswith("ovc_stream_") and os.path.isdir(d):
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            logger.debug("임시 스트림 파일 정리 실패", exc_info=True)
 
     def is_playing(self) -> bool:
         return self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
@@ -869,13 +962,19 @@ class InlinePlayer(QWidget):
             self._visual_stack.setCurrentIndex(0)
 
     def _do_play_start(self) -> None:
-        """재생 시작 공통 처리. resume_ms가 있으면 해당 위치부터 재생."""
+        """재생 시작. 이어보기(resume_ms) seek은 미디어가 탐색 가능해지는
+        시점(_on_media_status)에서 견고하게 처리한다."""
         self._player.play()
-        if self._resume_ms > 0:
-            QTimer.singleShot(80, lambda: self._seek_resume())
 
-    def _seek_resume(self) -> None:
-        if self._resume_ms > 0:
+    def _on_media_status(self, status) -> None:
+        """미디어가 로드/버퍼되어 탐색 가능해지면 이어보기 위치로 이동한다.
+        고정 지연(seek-after-80ms)은 네트워크 스트림에서 불안정하므로 사용하지 않는다."""
+        if self._resume_ms <= 0:
+            return
+        if status in (
+            QMediaPlayer.MediaStatus.LoadedMedia,
+            QMediaPlayer.MediaStatus.BufferedMedia,
+        ) and self._player.isSeekable():
             self._player.setPosition(self._resume_ms)
             self._resume_ms = 0
 
@@ -890,24 +989,42 @@ class InlinePlayer(QWidget):
         if not self._video_url:
             self.playback_failed.emit("재생할 URL이 없습니다.")
             return
-        self._status_lbl.setText("스트림 URL 가져오는 중…")
+        # 이전 소스/임시 파일 해제 (특히 품질 전환 시)
+        self._player.setSource(QUrl())
+        self._cleanup_temp()
+        self._status_lbl.setText(
+            "고화질 준비 중…" if self._current_merge else "스트림 URL 가져오는 중…"
+        )
         self._status_lbl.show()
-        self._worker = _StreamWorker(self._video_url, self._current_quality_fmt, self)
+        # 이전 워커가 살아 있으면 늦게 도착하는 신호를 무시한다
+        if self._worker is not None:
+            try:
+                self._worker.stream_ready.disconnect()
+                self._worker.progress.disconnect()
+                self._worker.failed.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+        self._worker = _StreamWorker(
+            self._video_url, self._current_quality_fmt, self._current_merge, self
+        )
         self._worker.stream_ready.connect(self._on_stream_ready)
+        self._worker.progress.connect(self._on_merge_progress)
         self._worker.failed.connect(self._on_stream_failed)
         self._worker.start()
 
-    def _on_stream_ready(self, stream_url: str, quality: str) -> None:
+    def _on_merge_progress(self, pct: int) -> None:
+        self._status_lbl.setText(f"고화질 준비 중…  {pct}%")
+        self._status_lbl.show()
+
+    def _on_stream_ready(self, src: str, quality: str, is_local: bool) -> None:
         self._status_lbl.hide()
-        self._player.setSource(QUrl(stream_url))
+        self._temp_stream_path = src if is_local else ""
+        self._player.setSource(QUrl.fromLocalFile(src) if is_local else QUrl(src))
         self._visual_stack.setCurrentIndex(1)
         self._bar.show()
         self._bar.raise_()
         self._stream_quality_label = quality  # metadata 업데이트 기준으로 사용
-        if quality:
-            self._bar.set_quality(quality)
-        else:
-            self._bar.set_quality("")
+        self._bar.set_quality(quality or "")
         QTimer.singleShot(50, self._do_play_start)
 
     def _on_stream_failed(self, err: str) -> None:
@@ -919,11 +1036,14 @@ class InlinePlayer(QWidget):
             self.stop()
             self.playback_failed.emit(error_string)
 
-    def _on_quality_changed(self, fmt: str, short: str) -> None:
+    def _on_quality_changed(self, fmt: str, short: str, merge: bool) -> None:
         self._current_quality_fmt = fmt
+        self._current_merge = merge
         InlinePlayer._last_quality_fmt = fmt
+        InlinePlayer._last_quality_merge = merge
         state = self._player.playbackState()
         if state != QMediaPlayer.PlaybackState.StoppedState:
+            # 현재 재생 위치를 저장해 새 화질에서 이어서 재생
             self._resume_ms = self._player.position()
             self._bar.set_quality("전환 중…")
             self._player.stop()

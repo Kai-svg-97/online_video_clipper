@@ -168,7 +168,7 @@ online_video_clipper/
 ├── gui/                             # Presentation layer (PyQt6, MVVM)
 │   ├── main_window.py               # 루트 윈도우, 사이드바 네비게이션(라이브러리·다운로드·채널 모니터링·통계), 패널 스택 — 구독 피드는 라이브러리 좌측 트리로 통합됨
 │   ├── panels/
-│   │   ├── library_panel.py         # 썸네일 그리드 + 카테고리/재생목록 트리 + 상세뷰 + YouTube 트리의 "구독 채널"/"전체 구독 피드" 노드. 영상 카드 **단일 클릭→상세화면**(미리보기 패널 제거됨, Ctrl/Shift 클릭은 다중선택 유지). 피드/채널 카드 단일 클릭→`_open_stream_detail`(스트리밍 상세). `_open_detail`/`_open_stream_detail`이 컨텍스트별 연관영상(RelatedItem)을 구성해 상세화면에 전달, 연관영상 클릭은 `_on_related_item_selected`로 재진입. **좌측 사이드바의 인기/전체 태그 패널은 제거됨**(트리가 전체 높이 차지). 태그 위젯(`_tag_list`·`_popular_tags_widget` 등)은 다수 참조 호환을 위해 부모 없이 생성만 해 둠 — 태그 필터·태그 칩 기능은 유지(`_set_popular_tags_visible`는 비표시 위젯 토글이라 무해). **트리 노드 클릭 시 상세 화면이면 먼저 목록으로 복귀**(`_leave_detail_if_open`). **뒤로가기는 화면 단위 스냅샷 기반**(`_capture_screen`→`_nav_history`, `_go_back`/`_restore_screen`): kind(category/playlist/folder/feed_all/channel/channels_root)+상세 payload까지 저장해 직전 화면을 정확히 복원(상세→상세 연관영상 체인 포함). 상세 뒤로가기 버튼도 `_on_detail_back_requested`→히스토리 복원. "전체 구독 피드"/개별 채널 클릭→피드 카드 그리드(_VIEW_FEED), "구독 채널" 노드 클릭→채널 아바타 카드 그리드(_VIEW_CHANNELS) (메인 패널, ~5000줄 — 분할 검토 대상. `_PreviewPane`는 미사용 잔존)
+│   │   ├── library_panel.py         # 썸네일 그리드 + 카테고리/재생목록 트리 + 상세뷰 + YouTube 트리의 "구독 채널"/"전체 구독 피드" 노드. 영상 카드 **단일 클릭→상세화면**(미리보기 패널 제거됨, Ctrl/Shift 클릭은 다중선택 유지). 피드/채널 카드 단일 클릭→`_open_stream_detail`(스트리밍 상세). `_open_detail`/`_open_stream_detail`이 컨텍스트별 연관영상(RelatedItem)을 구성해 상세화면에 전달, 연관영상 클릭은 `_on_related_item_selected`로 재진입. **인기/전체 태그 패널(`_tag_section`)은 트리 하단의 세로 스플리터에 두고 카테고리 선택 시에만 표시**(`_set_popular_tags_visible(True/False)`가 섹션 전체를 토글). 재생목록·폴더·섹션루트·피드·채널 선택 시엔 숨겨 트리가 그 공간을 차지한다. **트리 노드 클릭 시 상세 화면이면 먼저 목록으로 복귀**(`_leave_detail_if_open`). **뒤로가기는 화면 단위 스냅샷 기반**(`_capture_screen`→`_nav_history`, `_go_back`/`_restore_screen`): kind(category/playlist/folder/feed_all/channel/channels_root)+상세 payload까지 저장해 직전 화면을 정확히 복원(상세→상세 연관영상 체인 포함). 상세 뒤로가기 버튼도 `_on_detail_back_requested`→히스토리 복원. "전체 구독 피드"/개별 채널 클릭→피드 카드 그리드(_VIEW_FEED), "구독 채널" 노드 클릭→채널 아바타 카드 그리드(_VIEW_CHANNELS) (메인 패널, ~5000줄 — 분할 검토 대상. `_PreviewPane`는 미사용 잔존)
 │   │   ├── download_panel.py        # 다운로드 큐 + 완료 이력 탭 (영상 파일만 표시·완료/실패 배지)
 │   │   ├── feed_panel.py            # 피드 카드 부품(_FeedGrid·_FeedCard: 썸네일 좌하단 채널 배지·리사이즈 reflow, **단일 클릭→`video_clicked`(FeedVideoDTO) 방출**, 인라인 추가버튼 제거·우클릭 메뉴로 일원화) + 채널 카드 부품(_ChannelGrid·_ChannelCard) + 연관영상 행에서 재사용하는 `_RoundedThumbLabel`·`_ThumbLoader` 정의 — library_panel/video_detail_panel이 재사용. (구버전 FeedPanel 컨테이너는 더 이상 사이드바 메뉴로 노출되지 않음)
 │   │   ├── monitoring_panel.py      # 채널 구독 & 모니터링 규칙 관리
@@ -180,7 +180,7 @@ online_video_clipper/
 │   │   ├── youtube_auth_dialog.py   # YouTube OAuth 인증 플로우 다이얼로그
 │   │   └── batch_download_dialog.py # 일괄 다운로드 URL 입력 다이얼로그
 │   ├── widgets/
-│   │   └── video_player.py          # 인라인 비디오 플레이어 위젯 (QMediaPlayer 기반)
+│   │   └── video_player.py          # 인라인 비디오 플레이어 위젯 (QMediaPlayer 기반). **하이브리드 스트리밍 화질**: YouTube 고화질은 영상+오디오 분리(DASH)라 QMediaPlayer 단일 URL로는 360p가 한계 → `_StreamWorker`가 두 모드 운용. "자동(빠른 재생)"·360p·240p는 muxed URL 즉시 스트리밍(merge=False); 1080p/720p/480p는 `bestvideo[avc1]+bestaudio[mp4a]`를 번들 ffmpeg로 임시 mp4에 병합 후 로컬 재생(merge=True, `ovc_stream_*` 임시 디렉터리는 stop/load/품질전환 시 정리). WMF 호환 위해 avc1(H.264)+m4a 우선. 화질 변경 시 `_on_quality_changed`가 현재 위치 저장→`mediaStatusChanged`(LoadedMedia/BufferedMedia·seekable)에서 이어보기 seek(고정 지연 seek 폐기로 네트워크 스트림에서도 견고)
 │   ├── themes/
 │   │   ├── manager.py               # ThemeManager 싱글턴 — 전역 QSS 교체, theme_changed 시그널
 │   │   ├── tokens.py                # ThemeTokens dataclass + PRESETS 딕셔너리
@@ -284,6 +284,15 @@ These are **mandatory coding constraints**, not suggestions.
 | GUI 파일 추가 · 삭제 · 이름 변경 | 이 파일(`CLAUDE.md`)의 `gui/` 파일 맵 즉시 수정 |
 
 > Instructions that only live in the conversation are lost across sessions. Record them here **before or alongside** implementation — not as follow-up cleanup.
+
+---
+
+## 커밋 규칙 (mandatory)
+
+- **코드 수정이 생기면 항상 적절한 커밋 메시지와 함께 커밋한다.** 작업(기능/버그픽스/리팩터)이 끝나 검증까지 마치면 사용자가 따로 요청하지 않아도 변경을 커밋한다.
+- 커밋 메시지는 **무엇을·왜** 바꿨는지 드러나게 한국어로 작성한다(`feat:`/`fix:`/`chore:` 등 접두 + 핵심 변경 불릿). 관련 문서(CLAUDE.md, planning/) 변경도 같은 커밋에 포함한다.
+- git 작업(커밋·푸시·PR·브랜치 정리)은 Haiku 모델로 수행한다.
+- 푸시는 사용자가 명시적으로 요청할 때만 한다.
 
 ---
 
