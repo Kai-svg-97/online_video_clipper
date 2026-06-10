@@ -194,7 +194,7 @@ def main() -> int:
     get_playlists_h    = GetPlaylistsHandler(playlist_repo)
     get_pl_items_h     = GetPlaylistItemsHandler(playlist_repo, video_repo)
     get_feed_h         = GetSubscriptionFeedHandler(ytdlp, video_repo, channel_repo, _yt_api)
-    get_channel_vids_h = GetChannelVideosHandler(ytdlp, video_repo)
+    get_channel_vids_h = GetChannelVideosHandler(ytdlp, video_repo, _yt_api)
     get_ch_infos_h     = GetSubscribedChannelInfosHandler(_yt_api)
     add_url_to_pl_h    = AddUrlToPlaylistHandler(add_video, playlist_repo)
 

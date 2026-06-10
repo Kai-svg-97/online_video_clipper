@@ -187,6 +187,13 @@ class GetSubscriptionFeedHandler:
                 or api.get("channel_name")
                 or name_by_id.get(ch_id, "")
             )
+            # 플랫 추출은 게시일/조회수/길이를 비워 주므로 API 메타로 보강한다.
+            view_count = e.get("view_count")
+            if view_count is None:
+                view_count = api.get("view_count")
+            duration_sec = e.get("duration_sec")
+            if duration_sec is None:
+                duration_sec = api.get("duration_sec")
             result.append(
                 FeedVideoDTO(
                     url=url,
@@ -195,9 +202,9 @@ class GetSubscriptionFeedHandler:
                     channel_id=ch_id,
                     thumbnail_url=e.get("thumbnail") or "",
                     thumbnail_path="",
-                    published_at=e.get("published_at") or "",
-                    view_count=e.get("view_count"),
-                    duration_sec=e.get("duration_sec"),
+                    published_at=e.get("published_at") or api.get("published_at") or "",
+                    view_count=view_count,
+                    duration_sec=duration_sec,
                     in_library=in_library,
                     yt_video_id=e.get("yt_video_id") or "",
                 )
@@ -215,9 +222,11 @@ class GetChannelVideosHandler:
         self,
         ytdlp: IMediaSource,
         video_repo: IVideoRepository,
+        yt_api=None,  # YouTubeApiAdapter | None
     ) -> None:
         self._ytdlp = ytdlp
         self._video_repo = video_repo
+        self._yt_api = yt_api
 
     def handle(self, query: GetChannelVideosQuery) -> list[FeedVideoDTO]:
         entries = self._ytdlp.fetch_channel_videos(
@@ -225,21 +234,39 @@ class GetChannelVideosHandler:
             limit=query.limit,
             cookie_opts=query.cookie_opts,
         )
+        # 플랫 추출은 게시일/조회수를 비워 주므로 영상 ID로 API 메타를 보강한다.
+        meta_by_vid: dict[str, dict] = {}
+        if self._yt_api is not None:
+            vids = [e.get("yt_video_id") or e.get("id") or "" for e in entries]
+            vids = [v for v in vids if v]
+            if vids:
+                try:
+                    meta_by_vid = self._yt_api.get_videos_channels(vids)
+                except Exception:
+                    logger.exception("채널 영상 메타데이터 조회 실패")
         result: list[FeedVideoDTO] = []
         for e in entries:
             url = e.get("url") or ""
             in_library = self._video_repo.exists_by_url(url) if url else False
+            vid = e.get("yt_video_id") or e.get("id") or ""
+            meta = meta_by_vid.get(vid, {})
+            view_count = e.get("view_count")
+            if view_count is None:
+                view_count = meta.get("view_count")
+            duration_sec = e.get("duration_sec")
+            if duration_sec is None:
+                duration_sec = meta.get("duration_sec")
             result.append(
                 FeedVideoDTO(
                     url=url,
                     title=e.get("title") or "",
-                    channel_name=e.get("channel_name") or "",
-                    channel_id=e.get("channel_id") or "",
+                    channel_name=e.get("channel_name") or meta.get("channel_name") or "",
+                    channel_id=e.get("channel_id") or meta.get("channel_id") or "",
                     thumbnail_url=e.get("thumbnail") or "",
                     thumbnail_path="",
-                    published_at=e.get("published_at") or "",
-                    view_count=e.get("view_count"),
-                    duration_sec=e.get("duration_sec"),
+                    published_at=e.get("published_at") or meta.get("published_at") or "",
+                    view_count=view_count,
+                    duration_sec=duration_sec,
                     in_library=in_library,
                     yt_video_id=e.get("yt_video_id") or "",
                 )
@@ -276,6 +303,20 @@ class GetSubscribedChannelInfosHandler:
                     logger.exception("구독 채널 정보 조회 실패")
                     info_by_id = {}
 
+        # 채널별 최신 업로드 영상의 게시 시각(업로드 재생목록 첫 항목)
+        latest_by_id: dict[str, str] = {}
+        if self._yt_api is not None and info_by_id:
+            uploads = {
+                cid: v.get("uploads_playlist_id", "")
+                for cid, v in info_by_id.items()
+                if v.get("uploads_playlist_id")
+            }
+            if uploads:
+                try:
+                    latest_by_id = self._yt_api.get_latest_upload_dates(uploads)
+                except Exception:
+                    logger.exception("채널 최신 업로드 시각 조회 실패")
+
         result: list[ChannelInfoDTO] = []
         for cid, name, url in query.channels:
             info = info_by_id.get(cid, {})
@@ -287,8 +328,14 @@ class GetSubscribedChannelInfosHandler:
                     thumbnail_url=info.get("thumbnail") or "",
                     subscriber_count=info.get("subscriber_count"),
                     video_count=info.get("video_count"),
+                    latest_video_published_at=latest_by_id.get(cid) or None,
                 )
             )
+        # 정렬: 최신 영상 게시일 내림차순(최신 먼저), 게시일 없는 채널은 뒤로.
+        # 파이썬 정렬은 안정적이라, 먼저 이름 오름차순으로 정렬해 두면 게시일이
+        # 같거나 없는 채널끼리는 이름 오름차순이 유지된다.
+        result.sort(key=lambda c: c.channel_name.lower())
+        result.sort(key=lambda c: c.latest_video_published_at or "", reverse=True)
         return result
 
 

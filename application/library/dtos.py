@@ -115,6 +115,7 @@ class ChannelInfoDTO:
     thumbnail_url: str           # 채널 아바타 원격 URL ("" if 없음)
     subscriber_count: int | None
     video_count: int | None
+    latest_video_published_at: str | None = None  # 최신 업로드 영상 게시 시각(ISO)
 
 
 @dataclass(frozen=True)

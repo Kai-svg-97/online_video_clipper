@@ -74,7 +74,7 @@ def _relative_time(date_str: str | None) -> str:
         if len(date_str) == 8 and date_str.isdigit():        # YYYYMMDD
             pub = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:]))
         elif "T" in date_str or " " in date_str:
-            pub = datetime.fromisoformat(date_str).date()
+            pub = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
         else:
             pub = date.fromisoformat(date_str)
         days = (date.today() - pub).days
@@ -598,6 +598,16 @@ class _ChannelCard(QFrame):
         self._meta_lbl.setFont(fm)
         layout.addWidget(self._meta_lbl)
 
+        # 최근 업로드 영상이 얼마나 지났는지 (있을 때만)
+        rel = _relative_time(getattr(self._dto, "latest_video_published_at", None))
+        self._latest_lbl = QLabel(f"최근 영상 {rel}" if rel else "")
+        self._latest_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        fl = QFont()
+        fl.setPointSize(8)
+        self._latest_lbl.setFont(fl)
+        self._latest_lbl.setVisible(bool(rel))
+        layout.addWidget(self._latest_lbl)
+
     def _start_avatar_load(self) -> None:
         if not self._dto.channel_id:
             return
@@ -623,6 +633,7 @@ class _ChannelCard(QFrame):
         """)
         self._name_lbl.setStyleSheet(f"color: {tok.text_primary};")
         self._meta_lbl.setStyleSheet(f"color: {tok.text_muted};")
+        self._latest_lbl.setStyleSheet(f"color: {tok.text_secondary};")
 
 
 class _ChannelGrid(QWidget):

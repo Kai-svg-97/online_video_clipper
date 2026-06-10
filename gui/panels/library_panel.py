@@ -257,8 +257,10 @@ def _relative_time(date_str: str | None) -> str:
         return ""
     from datetime import date, datetime
     try:
-        if "T" in date_str or " " in date_str:
-            pub = datetime.fromisoformat(date_str).date()
+        if len(date_str) == 8 and date_str.isdigit():        # YYYYMMDD (yt-dlp)
+            pub = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:]))
+        elif "T" in date_str or " " in date_str:
+            pub = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
         else:
             pub = date.fromisoformat(date_str)
         today = date.today()
@@ -1431,7 +1433,8 @@ class _PlaylistTree(QTreeWidget):
         sub_group.setFont(0, gf)
         self.addTopLevelItem(sub_group)
         self._sub_group_item = sub_group
-        for sub in (subscriptions or []):
+        # 채널 목록은 이름 오름차순(대소문자 무시)으로 표시한다.
+        for sub in sorted(subscriptions or [], key=lambda s: (s.channel_name or "").lower()):
             sub_group.addChild(self._make_channel(sub.channel_name, sub.channel_url))
 
         yt_folders_by_id: dict = {}
@@ -4039,8 +4042,9 @@ class LibraryPanel(QWidget):
         meta = []
         if v.view_count:
             meta.append(f"조회수 {v.view_count:,}회")
-        if v.published_at:
-            meta.append(v.published_at)
+        rel = _relative_time(v.published_at)
+        if rel:
+            meta.append(rel)
         return RelatedItem(
             key=str(v.id),
             title=v.title,
@@ -4063,6 +4067,9 @@ class LibraryPanel(QWidget):
             meta = []
             if f.view_count:
                 meta.append(f"조회수 {f.view_count:,}회")
+            rel = _relative_time(f.published_at)
+            if rel:
+                meta.append(rel)
             items.append(RelatedItem(
                 key=f.yt_video_id or f.url,
                 title=f.title,

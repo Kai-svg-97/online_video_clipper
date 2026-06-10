@@ -7,6 +7,7 @@ httplib2는 TLS 핸드셰이크 자체가 실패하므로, requests + verify=Fal
 from __future__ import annotations
 
 import logging
+import re
 
 from domain.library.value_objects import extract_youtube_video_id
 
@@ -17,6 +18,9 @@ _BASE = "https://www.googleapis.com/youtube/v3"
 # 파싱 로직은 도메인으로 이동했다. 기존 참조 호환을 위한 얇은 별칭.
 _extract_yt_video_id = extract_youtube_video_id
 
+# ISO 8601 기간(예: "PT1H2M3S", "PT45S")
+_ISO8601_DURATION_RE = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
+
 
 def _to_int(value) -> int | None:
     """YouTube API statistics의 문자열 카운트를 정수로 변환 (실패 시 None)."""
@@ -24,6 +28,18 @@ def _to_int(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_iso8601_duration(value) -> int | None:
+    """contentDetails.duration(ISO 8601)을 초 단위 정수로 변환 (실패 시 None)."""
+    if not value or not isinstance(value, str):
+        return None
+    m = _ISO8601_DURATION_RE.match(value)
+    if not m:
+        return None
+    h, mi, s = (int(g) if g else 0 for g in m.groups())
+    total = h * 3600 + mi * 60 + s
+    return total or None
 
 
 class YouTubeApiAdapter:
@@ -216,11 +232,13 @@ class YouTubeApiAdapter:
         return result
 
     def get_videos_channels(self, video_ids: list[str]) -> dict[str, dict]:
-        """영상 ID 목록의 채널 정보를 videos.list로 일괄 조회.
+        """영상 ID 목록의 메타데이터를 videos.list로 일괄 조회.
 
-        구독 피드의 yt-dlp 플랫 추출은 영상 ID만 주고 채널 정보를 주지 않으므로,
-        영상 ID로 채널을 역조회한다. 한 번에 최대 50개씩 배치 호출한다.
-        Returns: {video_id: {"channel_id", "channel_name"}, ...}
+        구독 피드/채널 영상의 yt-dlp 플랫 추출은 영상 ID·길이 정도만 주고
+        채널·게시일·조회수를 주지 않으므로, 영상 ID로 역조회해 보강한다.
+        한 번에 최대 50개씩 배치 호출한다.
+        Returns: {video_id: {"channel_id", "channel_name", "published_at"(ISO),
+                             "view_count", "duration_sec"}, ...}
         """
         result: dict[str, dict] = {}
         ids = [v for v in video_ids if v]
@@ -229,19 +247,25 @@ class YouTubeApiAdapter:
             try:
                 resp = self._get(
                     "videos",
-                    {"part": "snippet", "id": ",".join(batch), "maxResults": 50},
+                    {"part": "snippet,statistics,contentDetails",
+                     "id": ",".join(batch), "maxResults": 50},
                 )
             except Exception:
-                logger.exception("영상 채널 정보 일괄 조회 실패")
+                logger.exception("영상 메타데이터 일괄 조회 실패")
                 continue
             for item in resp.get("items", []):
                 vid = item.get("id", "")
                 if not vid:
                     continue
                 snippet = item.get("snippet", {})
+                stats = item.get("statistics", {})
+                content = item.get("contentDetails", {})
                 result[vid] = {
                     "channel_id": snippet.get("channelId", ""),
                     "channel_name": snippet.get("channelTitle", ""),
+                    "published_at": snippet.get("publishedAt", ""),
+                    "view_count": _to_int(stats.get("viewCount")),
+                    "duration_sec": _parse_iso8601_duration(content.get("duration")),
                 }
         return result
 
@@ -249,7 +273,8 @@ class YouTubeApiAdapter:
         """채널 ID 목록의 메타데이터를 channels.list로 일괄 조회.
 
         Returns: {channel_id: {"title", "thumbnail", "subscriber_count",
-                               "video_count", "hidden_subscriber_count"}, ...}
+                               "video_count", "hidden_subscriber_count",
+                               "uploads_playlist_id"}, ...}
         한 번에 최대 50개씩 배치 호출한다.
         """
         result: dict[str, dict] = {}
@@ -259,8 +284,8 @@ class YouTubeApiAdapter:
             try:
                 resp = self._get(
                     "channels",
-                    {"part": "snippet,statistics", "id": ",".join(batch),
-                     "maxResults": 50},
+                    {"part": "snippet,statistics,contentDetails",
+                     "id": ",".join(batch), "maxResults": 50},
                 )
             except Exception:
                 logger.exception("채널 메타데이터 일괄 조회 실패")
@@ -271,6 +296,7 @@ class YouTubeApiAdapter:
                     continue
                 snippet = item.get("snippet", {})
                 stats = item.get("statistics", {})
+                content = item.get("contentDetails", {})
                 thumbs = snippet.get("thumbnails", {})
                 thumb = (
                     (thumbs.get("medium") or thumbs.get("default") or {}).get("url")
@@ -285,8 +311,55 @@ class YouTubeApiAdapter:
                     ),
                     "video_count": _to_int(stats.get("videoCount")),
                     "hidden_subscriber_count": hidden,
+                    "uploads_playlist_id": (
+                        content.get("relatedPlaylists", {}).get("uploads", "")
+                    ),
                 }
         return result
+
+    def get_latest_upload_dates(
+        self, uploads_by_channel: dict[str, str]
+    ) -> dict[str, str]:
+        """채널별 최신 업로드 영상의 게시 시각(ISO)을 반환한다.
+
+        uploads_by_channel: {channel_id: uploads_playlist_id}
+        Returns: {channel_id: published_at(ISO)} — 조회 실패/없음은 생략.
+
+        업로드 재생목록의 첫 항목(=최신)만 가져온다(쿼터 1단위/채널).
+        채널 수만큼 호출이므로 스레드풀로 병렬 조회한다.
+        """
+        from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+        pairs = [(c, p) for c, p in uploads_by_channel.items() if c and p]
+        if not pairs:
+            return {}
+        # 병렬 호출 전에 토큰을 한 번 갱신해 401 경합을 줄인다.
+        try:
+            self._ensure_token()
+        except Exception:
+            logger.exception("토큰 갱신 실패 — 최신 업로드 조회 계속 진행")
+
+        def _fetch(pair: tuple[str, str]) -> tuple[str, str]:
+            cid, pl = pair
+            try:
+                resp = self._get(
+                    "playlistItems",
+                    {"part": "contentDetails", "playlistId": pl, "maxResults": 1},
+                )
+                items = resp.get("items", [])
+                if items:
+                    iso = items[0].get("contentDetails", {}).get("videoPublishedAt", "")
+                    return cid, iso or ""
+            except Exception:
+                logger.exception("채널 최신 업로드 시각 조회 실패: %s", cid)
+            return cid, ""
+
+        out: dict[str, str] = {}
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for cid, iso in ex.map(_fetch, pairs):
+                if iso:
+                    out[cid] = iso
+        return out
 
     def list_playlists(self) -> list[dict]:
         """내 YouTube 재생목록 목록 반환.
