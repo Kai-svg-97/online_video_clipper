@@ -1654,6 +1654,61 @@ class _PlaylistTree(QTreeWidget):
             elif current.data(0, _SECTION_ROLE) == "youtube":
                 self.channels_root_selected.emit()  # 구독 채널 목록 그리드
 
+    def _find_item(self, predicate):
+        """술어를 만족하는 첫 노드를 깊이우선으로 찾는다 (없으면 None)."""
+        def rec(item: QTreeWidgetItem):
+            if predicate(item):
+                return item
+            for i in range(item.childCount()):
+                found = rec(item.child(i))
+                if found is not None:
+                    return found
+            return None
+        for i in range(self.topLevelItemCount()):
+            found = rec(self.topLevelItem(i))
+            if found is not None:
+                return found
+        return None
+
+    def select_for_snapshot(self, snap: dict) -> bool:
+        """스냅샷(kind+id)에 해당하는 노드를 시그널 차단 상태로 선택. 찾으면 True."""
+        kind = snap.get("kind", "category")
+
+        def pred(item: QTreeWidgetItem) -> bool:
+            it = item.data(0, _ITEM_TYPE_ROLE)
+            if kind == "playlist":
+                return it == _ITYPE_PLAYLIST and item.data(0, _PLAYLIST_ID_ROLE) == snap.get("playlist_id")
+            if kind == "channel":
+                return it == _ITYPE_CHANNEL and (item.data(0, _CHANNEL_URL_ROLE) or "") == (snap.get("channel_url") or "")
+            if kind == "feed_all":
+                return it == _ITYPE_FEED_ALL
+            if kind == "channels_root":
+                return it == _ITYPE_ROOT and item.data(0, _SECTION_ROLE) == "youtube"
+            if kind == "folder":
+                fid = snap.get("folder_id")
+                if fid is None:   # 미분류
+                    return it == _ITYPE_FOLDER and not item.data(0, _FOLDER_ID_ROLE)
+                return it == _ITYPE_FOLDER and item.data(0, _FOLDER_ID_ROLE) == fid
+            # category
+            cat_id = snap.get("cat_id")
+            if cat_id is None:
+                return it == _ITYPE_ROOT and item.data(0, _SECTION_ROLE) == "local"
+            return it == _ITYPE_CATEGORY and item.data(0, _CAT_ID_ROLE) == cat_id
+
+        target = self._find_item(pred)
+        if target is None:
+            return False
+        self.blockSignals(True)
+        try:
+            parent = target.parent()
+            while parent is not None:
+                parent.setExpanded(True)
+                parent = parent.parent()
+            self.setCurrentItem(target)
+        finally:
+            self.blockSignals(False)
+        return True
+
     def _restore_selection(self, pl_id) -> None:
         def _find(item: QTreeWidgetItem) -> bool:
             if item.data(0, _PLAYLIST_ID_ROLE) == pl_id:
@@ -2564,6 +2619,22 @@ class _PlaylistPanel(QWidget):
         self._local_tree._restore_selection(playlist_id)
         self._yt_tree._restore_selection(playlist_id)
 
+    def select_snapshot(self, snap: dict) -> None:
+        """뒤로/앞으로 복원 시 스냅샷에 해당하는 트리 노드를 강조한다.
+
+        시그널을 차단해 선택 변경이 핸들러를 재실행하지 않도록 한다(이중 실행 방지).
+        일치 노드를 찾은 트리만 선택하고 나머지 트리는 선택 해제한다.
+        """
+        matched = None
+        for tr in self.trees:
+            if matched is None and tr.select_for_snapshot(snap):
+                matched = tr
+        for tr in self.trees:
+            if tr is not matched:
+                tr.blockSignals(True)
+                tr.clearSelection()
+                tr.blockSignals(False)
+
 
 # ------------------------------------------------------------------
 # Category tree
@@ -3088,8 +3159,9 @@ class LibraryPanel(QWidget):
         self._icon_delegate = _IconDelegate()
         self._list_delegate = _ListDelegate()
         self._refresh_dlg: QProgressDialog | None = None
-        # 내비게이션 히스토리 (최대 50개 상태 보존)
+        # 내비게이션 히스토리 (최대 50개 상태 보존) + 앞으로가기 스택
         self._nav_history: list[dict] = []
+        self._nav_future: list[dict] = []
         self._is_restoring: bool = False
         self._current_channel_url: str = ""      # 단일 채널 피드 복원용
         self._current_detail_payload: object = None  # 상세 화면 재진입용(UUID|FeedVideoDTO)
@@ -4219,6 +4291,9 @@ class LibraryPanel(QWidget):
             if event.button() == Qt.MouseButton.BackButton:
                 self._go_back()
                 return True
+            if event.button() == Qt.MouseButton.ForwardButton:
+                self._go_forward()
+                return True
         return super().eventFilter(obj, event)
 
     def _cycle_view(self, direction: int) -> None:
@@ -4262,12 +4337,16 @@ class LibraryPanel(QWidget):
         }
 
     def _push_nav_state(self) -> None:
-        """전환 직전 화면을 히스토리 스택에 저장한다(복원 중에는 무시)."""
+        """전환 직전 화면을 히스토리 스택에 저장한다(복원 중에는 무시).
+
+        사용자가 새 분기로 이동하는 것이므로 앞으로가기 스택은 무효화한다
+        (브라우저 표준 동작)."""
         if self._is_restoring:
             return
         self._nav_history.append(self._capture_screen())
         if len(self._nav_history) > 50:
             self._nav_history.pop(0)
+        self._nav_future.clear()
 
     def _reopen_detail(self, payload) -> None:
         """히스토리 복원 시 직전 상세 화면을 다시 연다."""
@@ -4324,6 +4403,7 @@ class LibraryPanel(QWidget):
                     and self._screen_matches(snap)):
                 self._on_back_from_detail()
                 self._restore_tags(snap)
+                self._playlist_panel.select_snapshot(snap)
                 return
 
             # 그 외엔 목록 화면을 실제로 재구성한다
@@ -4331,6 +4411,8 @@ class LibraryPanel(QWidget):
                 self._on_back_from_detail()
             self._restore_list_screen(snap)
             self._restore_tags(snap)
+            # 좌측 트리 강조를 복원된 노드에 맞춰 동기화(경로 표현 자연스럽게)
+            self._playlist_panel.select_snapshot(snap)
 
             # 직전이 상세였다면(연관영상 체인) 올바른 목록 위에 상세를 다시 연다
             if target_detail:
@@ -4358,10 +4440,19 @@ class LibraryPanel(QWidget):
         self._list_view.viewport().update()
 
     def _go_back(self) -> None:
-        """히스토리에서 직전 화면을 꺼내 복원한다."""
+        """히스토리에서 직전 화면을 꺼내 복원한다. 현재 화면은 앞으로가기 스택에 보존."""
         if not self._nav_history:
             return
+        self._nav_future.append(self._capture_screen())
         snap = self._nav_history.pop()
+        self._restore_screen(snap)
+
+    def _go_forward(self) -> None:
+        """앞으로가기 스택에서 다음 화면을 꺼내 복원한다. 현재 화면은 뒤로가기 스택에 보존."""
+        if not self._nav_future:
+            return
+        self._nav_history.append(self._capture_screen())
+        snap = self._nav_future.pop()
         self._restore_screen(snap)
 
     def _on_hidden_tags_changed(self) -> None:
