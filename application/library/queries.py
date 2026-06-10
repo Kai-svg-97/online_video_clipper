@@ -238,12 +238,31 @@ class GetCategoriesHandler:
         ]
 
 
+@dataclass
+class GetTagsQuery:
+    """태그 목록 조회. 스코프 미지정 시 라이브러리 전체.
+
+    category_ids: 해당 카테고리(하위 포함) 영상들의 태그만 집계.
+    video_ids: 해당 영상들의 태그만 집계(재생목록 스코프).
+    """
+    category_ids: list[UUID] = field(default_factory=list)
+    video_ids: list[UUID] = field(default_factory=list)
+
+
 class GetTagsHandler:
     def __init__(self, repo: IVideoRepository) -> None:
         self._repo = repo
 
-    def handle(self) -> list[TagDTO]:
-        return [TagDTO(id=t.id, name=t.name, count=c) for t, c in self._repo.list_tags_with_counts()]
+    def handle(self, query: GetTagsQuery | None = None) -> list[TagDTO]:
+        cat_ids = query.category_ids if query else None
+        vid_ids = query.video_ids if query else None
+        return [
+            TagDTO(id=t.id, name=t.name, count=c)
+            for t, c in self._repo.list_tags_with_counts(
+                category_ids=cat_ids or None,
+                video_ids=vid_ids or None,
+            )
+        ]
 
 
 @dataclass

@@ -6,13 +6,15 @@ It includes a back button, inline player, metadata, and clickable tags.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
 from PyQt6.QtCore import QEvent, QTime, QTimer, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QFont
+from PyQt6.QtGui import QDesktopServices, QFont, QImage
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -37,16 +39,194 @@ from gui.widgets.video_player import InlinePlayer
 logger = logging.getLogger(__name__)
 
 
-def _t():
-    return ThemeManager.instance().current()
+# ------------------------------------------------------------------
+# 연관 영상 목록 (우측 사이드바) — YouTube 시청 페이지 우측 목록
+# ------------------------------------------------------------------
+
+@dataclass
+class RelatedItem:
+    """상세화면 우측 연관 영상 1건.
+
+    payload: 클릭 시 재진입에 사용 — 로컬 영상이면 VideoDTO.id(UUID),
+    스트리밍(피드/채널) 영상이면 FeedVideoDTO.
+    """
+    key: str
+    title: str
+    channel: str
+    duration_sec: int | None
+    meta_text: str
+    payload: object
+    thumb_path: str = ""   # 로컬 썸네일 경로
+    thumb_url: str = ""    # 원격 썸네일 URL
 
 
 def _fmt_dur(sec: int | None) -> str:
     if sec is None:
         return "—"
-    h, rem = divmod(sec, 3600)
+    h, rem = divmod(int(sec), 3600)
     m, s = divmod(rem, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _fmt_pub(value: str | None) -> str:
+    """업로드일 표기. yt-dlp의 YYYYMMDD 또는 ISO 문자열 모두 처리."""
+    if not value:
+        return ""
+    if len(value) == 8 and value.isdigit():
+        return f"{value[:4]}.{value[4:6]}.{value[6:]}"
+    return value
+
+
+_TS_RE = re.compile(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})")
+
+
+def _parse_chapters(description: str) -> list[tuple[int, str]]:
+    """설명에서 타임스탬프(챕터)를 추출한다.
+
+    각 줄에서 `MM:SS` 또는 `HH:MM:SS` 형태를 찾아 (초, 라벨)로 변환.
+    라벨은 타임스탬프 뒤 텍스트(없으면 앞 텍스트). 2개 이상일 때만 챕터로 본다.
+    """
+    if not description:
+        return []
+    chapters: list[tuple[int, str]] = []
+    strip_chars = " \t-–—:·•.)]"
+    for line in description.splitlines():
+        m = _TS_RE.search(line)
+        if not m:
+            continue
+        h = int(m.group(1)) if m.group(1) else 0
+        sec = h * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+        label = line[m.end():].strip(strip_chars)
+        if not label:
+            label = line[:m.start()].strip(strip_chars)
+        chapters.append((sec, label or _fmt_dur(sec)))
+    return chapters if len(chapters) >= 2 else []
+
+
+class _RelatedRow(QFrame):
+    """연관 영상 1행 — 작은 썸네일 + 제목 2줄 + 채널/메타. 단일 클릭으로 선택."""
+
+    clicked = pyqtSignal(object)   # payload
+    _TW, _TH = 168, 94
+
+    def __init__(self, item: RelatedItem, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._item = item
+        self._loader = None
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self._build_ui(item)
+        self._apply_theme(ThemeManager.instance().current())
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+
+    def _build_ui(self, item: RelatedItem) -> None:
+        from gui.panels.feed_panel import _RoundedThumbLabel, _ThumbLoader  # noqa: PLC0415
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(4, 4, 4, 4)
+        row.setSpacing(8)
+
+        self._thumb = _RoundedThumbLabel(self._TW, self._TH)
+        if item.duration_sec:
+            self._thumb.set_duration(_fmt_dur(item.duration_sec))
+        row.addWidget(self._thumb)
+
+        # 썸네일 로드: 로컬 경로 우선, 없으면 원격 URL 비동기
+        if item.thumb_path and Path(item.thumb_path).exists():
+            img = QImage(item.thumb_path)
+            if not img.isNull():
+                self._thumb.set_image(img)
+        elif item.thumb_url:
+            self._loader = _ThumbLoader(
+                item.thumb_url, item.key, prefix="related",
+                size=(self._TW * 2, self._TH * 2),
+            )
+            self._loader.loaded.connect(lambda _id, im: self._thumb.set_image(im))
+            self._loader.start()
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(2)
+        self._title_lbl = QLabel(item.title)
+        self._title_lbl.setWordWrap(True)
+        self._title_lbl.setMaximumHeight(40)
+        tf = QFont()
+        tf.setPointSize(9)
+        tf.setWeight(QFont.Weight.Medium)
+        self._title_lbl.setFont(tf)
+        text_col.addWidget(self._title_lbl)
+
+        self._chan_lbl = QLabel(item.channel)
+        cf = QFont()
+        cf.setPointSize(8)
+        self._chan_lbl.setFont(cf)
+        text_col.addWidget(self._chan_lbl)
+
+        self._meta_lbl = QLabel(item.meta_text)
+        self._meta_lbl.setFont(cf)
+        text_col.addWidget(self._meta_lbl)
+        text_col.addStretch()
+        row.addLayout(text_col, 1)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and event.modifiers() == Qt.KeyboardModifier.NoModifier
+        ):
+            self.clicked.emit(self._item.payload)
+
+    def _apply_theme(self, tok) -> None:
+        self.setStyleSheet(
+            f"QFrame{{background:transparent;border-radius:6px;}}"
+            f"QFrame:hover{{background:{tok.bg_overlay};}}"
+        )
+        self._title_lbl.setStyleSheet(f"color:{tok.text_primary};")
+        self._chan_lbl.setStyleSheet(f"color:{tok.text_secondary};")
+        self._meta_lbl.setStyleSheet(f"color:{tok.text_muted};")
+
+
+class _RelatedList(QScrollArea):
+    """우측 연관 영상 세로 목록."""
+
+    item_selected = pyqtSignal(object)   # payload
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setMinimumWidth(280)
+        self._inner = QWidget()
+        self._layout = QVBoxLayout(self._inner)
+        self._layout.setContentsMargins(8, 8, 8, 8)
+        self._layout.setSpacing(4)
+        self._header = QLabel("연관 영상")
+        hf = QFont()
+        hf.setPointSize(10)
+        hf.setWeight(QFont.Weight.Bold)
+        self._header.setFont(hf)
+        self._layout.addWidget(self._header)
+        self._layout.addStretch()
+        self.setWidget(self._inner)
+
+    def set_items(self, items: list[RelatedItem]) -> None:
+        # 헤더(0)·스트레치(끝)는 유지하고 사이 행들만 제거
+        while self._layout.count() > 2:
+            item = self._layout.takeAt(1)
+            if item.widget():
+                item.widget().deleteLater()
+        if not items:
+            empty = QLabel("표시할 연관 영상이 없습니다.")
+            empty.setStyleSheet("color:#888;padding:8px;")
+            self._layout.insertWidget(1, empty)
+            return
+        for i, it in enumerate(items):
+            row = _RelatedRow(it)
+            row.clicked.connect(self.item_selected.emit)
+            self._layout.insertWidget(1 + i, row)
+
+
+def _t():
+    return ThemeManager.instance().current()
 
 
 def _fmt_size(b: int | None) -> str:
@@ -139,6 +319,12 @@ class VideoDetailWidget(QWidget):
     tag_filter_requested = pyqtSignal(object, str)   # (UUID, str)
     tags_updated         = pyqtSignal(object, object)  # (UUID, list[str])
     download_requested   = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
+    item_selected        = pyqtSignal(object)  # 연관 영상 클릭 — payload(UUID | FeedVideoDTO)
+
+    # 하단 탭 인덱스
+    _TAB_DOWNLOADS = 0
+    _TAB_NOTES = 1
+    _TAB_CLIPS = 2
 
     def __init__(self, clip_vm=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -147,6 +333,8 @@ class VideoDetailWidget(QWidget):
         self._clip_vm = clip_vm
         self._clip_source_file: str | None = None
         self._filter_on = False
+        self._streaming = False          # 스트리밍(피드/채널) 모드 여부
+        self._current_url = ""           # 브라우저 열기/재생 실패 폴백용
         self._setup_skeleton()
 
     # ── Skeleton (built once) ──────────────────────────────────────
@@ -164,22 +352,17 @@ class VideoDetailWidget(QWidget):
         self._btn_back.clicked.connect(self.back_requested.emit)
         back_row.addWidget(self._btn_back)
         back_row.addStretch()
-
-        self._title_top = QLabel()
-        self._title_top.setFont(_bold_font(11))
-        self._title_top.setWordWrap(True)
-        back_row.addWidget(self._title_top, stretch=1)
         root.addLayout(back_row)
 
         sep0 = _hline()
         root.addWidget(sep0)
 
-        # ── Top splitter: player | metadata ─────────────────────────
-        top_split = QSplitter(Qt.Orientation.Horizontal)
+        # ── 메인 분할: (좌)시청 컬럼 | (우)연관 영상 ─────────────────
+        main_split = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left: inline player
+        # ── 좌측: 플레이어 + 정보 + 탭 (YouTube 시청 페이지) ──
         left_w = QWidget()
-        left_w.setMinimumWidth(320)
+        left_w.setMinimumWidth(360)
         left_layout = QVBoxLayout(left_w)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
@@ -187,57 +370,36 @@ class VideoDetailWidget(QWidget):
         self._player = InlinePlayer(left_w)
         self._player.playback_failed.connect(self._on_play_failed)
         self._player.download_requested.connect(self.download_requested.emit)
-        left_layout.addWidget(self._player, stretch=1)
+        left_layout.addWidget(self._player, stretch=3)
 
-        # 아이콘 버튼 (텍스트 없음)
-        self._btn_browser = QPushButton("🌐")
-        self._btn_browser.setFixedSize(28, 28)
-        self._btn_browser.setToolTip("브라우저에서 열기")
+        # 액션 행: 브라우저 열기 버튼
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        self._btn_browser = QPushButton("🌐 브라우저에서 열기")
+        self._btn_browser.setFixedHeight(26)
         self._btn_browser.clicked.connect(self._on_open_browser)
-        left_layout.addWidget(self._btn_browser)
-        top_split.addWidget(left_w)
+        action_row.addWidget(self._btn_browser)
+        action_row.addStretch()
+        left_layout.addLayout(action_row)
 
-        # Right: metadata scroll area
-        right_scroll = QScrollArea()
-        right_scroll.setWidgetResizable(True)
-        right_scroll.setFrameShape(QFrame.Shape.NoFrame)
-
+        # 정보 스크롤 (제목·메타·태그·챕터·설명)
+        info_scroll = QScrollArea()
+        info_scroll.setWidgetResizable(True)
+        info_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._meta_widget = QWidget()
         self._meta_layout = QVBoxLayout(self._meta_widget)
-        self._meta_layout.setContentsMargins(12, 4, 4, 4)
+        self._meta_layout.setContentsMargins(4, 4, 4, 4)
         self._meta_layout.setSpacing(6)
-        right_scroll.setWidget(self._meta_widget)
-        top_split.addWidget(right_scroll)
+        info_scroll.setWidget(self._meta_widget)
+        left_layout.addWidget(info_scroll, stretch=2)
 
-        top_split.setStretchFactor(0, 1)
-        top_split.setStretchFactor(1, 1)
-        root.addWidget(top_split, stretch=2)
-
-        sep1 = _hline()
-        root.addWidget(sep1)
-
-        # ── Tabs ─────────────────────────────────────────────────────
+        # ── 하단 탭 (다운로드 파일 / 내 메모 / 클립) ──
         self._tabs = QTabWidget()
-        self._tabs.setMaximumHeight(260)
+        self._tabs.setMaximumHeight(240)
 
-        # Tab: YouTube 정보
-        self._yt_tab = QWidget()
-        yt_layout = QVBoxLayout(self._yt_tab)
-        yt_layout.setContentsMargins(8, 8, 8, 8)
-        yt_desc_grp = QGroupBox("YouTube 영상 설명")
-        yt_desc_inner = QVBoxLayout(yt_desc_grp)
-        self._desc_edit = QPlainTextEdit()
-        self._desc_edit.setReadOnly(True)
-        self._desc_edit.setMaximumHeight(120)
-        yt_desc_inner.addWidget(self._desc_edit)
-        yt_layout.addWidget(yt_desc_grp)
-        self._tabs.addTab(_wrap(self._yt_tab), "YouTube 정보")
-
-        # Tab: 다운로드 파일
         self._dl_tab = QWidget()
         self._tabs.addTab(_wrap(self._dl_tab), "다운로드 파일")
 
-        # Tab: 내 메모
         note_tab = QWidget()
         note_layout = QVBoxLayout(note_tab)
         note_layout.setContentsMargins(8, 8, 8, 8)
@@ -249,14 +411,25 @@ class VideoDetailWidget(QWidget):
         note_layout.addWidget(note_grp)
         self._tabs.addTab(_wrap(note_tab), "내 메모")
 
-        # Tab: 클립
         self._clip_tab_widget = QWidget()
         self._clip_tab_layout = QVBoxLayout(self._clip_tab_widget)
         self._clip_tab_layout.setContentsMargins(8, 8, 8, 8)
         self._tabs.addTab(_wrap(self._clip_tab_widget), "클립")
 
         self._tabs.currentChanged.connect(self._on_tab_changed)
-        root.addWidget(self._tabs)
+        left_layout.addWidget(self._tabs)
+
+        main_split.addWidget(left_w)
+
+        # ── 우측: 연관 영상 목록 ──
+        self._related = _RelatedList()
+        self._related.item_selected.connect(self.item_selected.emit)
+        main_split.addWidget(self._related)
+
+        main_split.setStretchFactor(0, 3)
+        main_split.setStretchFactor(1, 1)
+        main_split.setSizes([720, 300])
+        root.addWidget(main_split, stretch=1)
 
     # ── 이벤트 필터 (마우스 뒤로가기 버튼 감지) ───────────────────────
 
@@ -288,81 +461,204 @@ class VideoDetailWidget(QWidget):
 
     # ── Populate ───────────────────────────────────────────────────
 
-    def load(self, detail: VideoDetailDTO, tag_ids: dict[str, UUID], resume_ms: int = 0) -> None:
-        """Populate all fields from *detail*. resume_ms > 0이면 해당 위치부터 이어서 재생."""
+    def load(
+        self,
+        detail: VideoDetailDTO,
+        tag_ids: dict[str, UUID],
+        resume_ms: int = 0,
+        related: list[RelatedItem] | None = None,
+    ) -> None:
+        """라이브러리(로컬) 영상 상세를 채운다. resume_ms>0이면 이어서 재생."""
         self._detail = detail
         self._tag_ids = tag_ids
+        self._streaming = False
+        self._current_url = detail.url
 
         self._player.load(detail.url, detail.downloads, resume_ms=resume_ms)
         if resume_ms > 0:
             QTimer.singleShot(150, self._player.play)
-        self._title_top.setText(detail.title)
 
-        # Rebuild metadata area
+        self._build_info(
+            title=detail.title,
+            channel=detail.channel_name,
+            duration_sec=detail.duration_sec,
+            published_at=detail.published_at,
+            view_count=detail.view_count,
+            favorite=detail.favorite,
+            watched=detail.watched,
+            description=detail.description,
+            tags=list(detail.tags),
+            tag_ids=tag_ids,
+            allow_tag_edit=True,
+        )
+
+        # 하단 탭 — 모두 활성
+        self._set_tabs_enabled(True)
+        self._build_downloads_tab(detail.downloads)
+        self._notes_edit.setReadOnly(False)
+        self._notes_edit.setPlainText(detail.notes)
+
+        # 클립 탭 — 로컬 파일 탐색 및 탭 초기화
+        self._clip_source_file = None
+        for dl in detail.downloads:
+            if dl.file_path and Path(dl.file_path).exists():
+                self._clip_source_file = dl.file_path
+                break
+        self._build_clip_tab()
+
+        self.set_related(related or [])
+
+    def load_stream(self, feed, related: list[RelatedItem] | None = None) -> None:
+        """스트리밍(구독 피드/채널) 영상 상세 — URL 직접 재생.
+
+        feed: FeedVideoDTO. 로컬 항목이 아니므로 클립/메모/태그 편집은 비활성.
+        """
+        self._detail = None
+        self._tag_ids = {}
+        self._streaming = True
+        self._current_url = feed.url
+
+        self._player.load(feed.url, [])
+        QTimer.singleShot(150, self._player.play)
+
+        self._build_info(
+            title=feed.title,
+            channel=feed.channel_name,
+            duration_sec=feed.duration_sec,
+            published_at=_fmt_pub(feed.published_at),
+            view_count=feed.view_count,
+            favorite=False,
+            watched=False,
+            description="",
+            tags=[],
+            tag_ids={},
+            allow_tag_edit=False,
+        )
+
+        # 하단 탭 — 메모/클립 비활성, 다운로드 안내만
+        self._set_tabs_enabled(False)
+        self._build_downloads_tab([])
+        self._notes_edit.setReadOnly(True)
+        self._notes_edit.setPlainText("스트리밍 영상입니다. 다운로드 후 메모/클립을 사용할 수 있습니다.")
+        self._clip_source_file = None
+        _clear_layout(self._clip_tab_layout)
+        info = QLabel("스트리밍 영상은 클립을 추출할 수 없습니다.\n다운로드 후 다시 시도해 주세요.")
+        info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info.setStyleSheet("color:#888; font-size:10pt; padding:24px;")
+        self._clip_tab_layout.addWidget(info)
+        self._clip_tab_layout.addStretch()
+        self._tabs.setCurrentIndex(self._TAB_DOWNLOADS)
+
+        self.set_related(related or [])
+
+    # ── 정보 영역 (제목·메타·태그·챕터·설명) ─────────────────────────
+
+    def _build_info(
+        self,
+        *,
+        title: str,
+        channel: str,
+        duration_sec: int | None,
+        published_at: str | None,
+        view_count: int | None,
+        favorite: bool,
+        watched: bool,
+        description: str | None,
+        tags: list[str],
+        tag_ids: dict[str, UUID],
+        allow_tag_edit: bool,
+    ) -> None:
         _clear_layout(self._meta_layout)
+        self._tag_add_input = None
 
-        title_lbl = QLabel(detail.title)
-        title_lbl.setFont(_bold_font(12))
+        title_lbl = QLabel(title)
+        title_lbl.setFont(_bold_font(13))
         title_lbl.setWordWrap(True)
         self._meta_layout.addWidget(title_lbl)
 
-        def _row(label: str, value: str) -> None:
-            lbl = QLabel(f"<b>{label}</b>")
-            lbl.setSizePolicy(lbl.sizePolicy().horizontalPolicy(), lbl.sizePolicy().verticalPolicy())
-            val = QLabel(value)
-            val.setWordWrap(True)
-            val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(lbl, 0)
-            row.addWidget(val, 1)
-            self._meta_layout.addLayout(row)
-
-        if detail.channel_name:
-            _row("채널:", detail.channel_name)
-        _row("재생 시간:", _fmt_dur(detail.duration_sec))
-        if detail.published_at:
-            _row("업로드:", detail.published_at)
-        if detail.view_count is not None:
-            _row("조회수:", f"{detail.view_count:,}회")
+        # 채널 · 조회수 · 업로드일 한 줄
+        meta_parts = []
+        if channel:
+            meta_parts.append(channel)
+        if view_count is not None:
+            meta_parts.append(f"조회수 {view_count:,}회")
+        if published_at:
+            meta_parts.append(published_at)
+        if duration_sec is not None:
+            meta_parts.append(_fmt_dur(duration_sec))
+        if meta_parts:
+            meta_lbl = QLabel("  ·  ".join(meta_parts))
+            meta_lbl.setWordWrap(True)
+            meta_lbl.setStyleSheet(f"color:{_t().text_secondary};")
+            self._meta_layout.addWidget(meta_lbl)
 
         statuses = []
-        if detail.watched:
+        if watched:
             statuses.append("✓ 시청완료")
-        if detail.favorite:
+        if favorite:
             statuses.append("★ 즐겨찾기")
         if statuses:
-            _row("상태:", "  ".join(statuses))
+            st_lbl = QLabel("  ".join(statuses))
+            st_lbl.setStyleSheet(f"color:{_t().text_muted};")
+            self._meta_layout.addWidget(st_lbl)
 
-        # Clickable tag chips
-        self._meta_layout.addWidget(QLabel("<b>태그:</b>"))
-        if detail.tags:
-            flow = _TagFlow(detail.tags, tag_ids, self._meta_widget)
+        # 태그 칩
+        if tags:
+            self._meta_layout.addWidget(QLabel("<b>태그:</b>"))
+            flow = _TagFlow(tags, tag_ids, self._meta_widget)
             flow.tag_clicked.connect(self.tag_filter_requested.emit)
             self._meta_layout.addWidget(flow)
 
-        # Manual tag add input
-        tag_add_row = QHBoxLayout()
-        tag_add_row.setContentsMargins(0, 2, 0, 0)
-        tag_add_row.setSpacing(4)
-        self._tag_add_input = QLineEdit()
-        self._tag_add_input.setPlaceholderText("태그 추가... (쉼표로 구분)")
-        self._tag_add_input.setStyleSheet("font-size:8pt;")
-        self._tag_add_input.returnPressed.connect(self._on_add_tag)
-        tag_add_row.addWidget(self._tag_add_input, 1)
-        add_btn = QPushButton("+")
-        add_btn.setFixedSize(24, 24)
-        add_btn.setStyleSheet("font-size:11pt; font-weight:bold;")
-        add_btn.clicked.connect(self._on_add_tag)
-        tag_add_row.addWidget(add_btn)
-        self._meta_layout.addLayout(tag_add_row)
+        # 수동 태그 추가 (로컬 영상만)
+        if allow_tag_edit:
+            tag_add_row = QHBoxLayout()
+            tag_add_row.setContentsMargins(0, 2, 0, 0)
+            tag_add_row.setSpacing(4)
+            self._tag_add_input = QLineEdit()
+            self._tag_add_input.setPlaceholderText("태그 추가... (쉼표로 구분)")
+            self._tag_add_input.setStyleSheet("font-size:8pt;")
+            self._tag_add_input.returnPressed.connect(self._on_add_tag)
+            tag_add_row.addWidget(self._tag_add_input, 1)
+            add_btn = QPushButton("+")
+            add_btn.setFixedSize(24, 24)
+            add_btn.setStyleSheet("font-size:11pt; font-weight:bold;")
+            add_btn.clicked.connect(self._on_add_tag)
+            tag_add_row.addWidget(add_btn)
+            self._meta_layout.addLayout(tag_add_row)
+
+        # 챕터(타임라인) — 설명에서 추출, 클릭 시 해당 위치로 seek
+        chapters = _parse_chapters(description or "")
+        if chapters:
+            self._meta_layout.addWidget(QLabel("<b>챕터:</b>"))
+            for sec, label in chapters:
+                btn = QPushButton(f"{_fmt_dur(sec)}  {label}")
+                btn.setFlat(True)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.setStyleSheet(
+                    f"QPushButton{{text-align:left; border:none; padding:2px 4px;"
+                    f" color:{_t().accent}; font-size:9pt;}}"
+                    f"QPushButton:hover{{text-decoration:underline;}}"
+                )
+                btn.clicked.connect(lambda _, s=sec: self._on_chapter_clicked(s))
+                self._meta_layout.addWidget(btn)
+
+        # 설명
+        if description:
+            self._meta_layout.addWidget(QLabel("<b>설명:</b>"))
+            desc_edit = QPlainTextEdit()
+            desc_edit.setReadOnly(True)
+            desc_edit.setPlainText(description)
+            desc_edit.setMaximumHeight(160)
+            self._meta_layout.addWidget(desc_edit)
 
         self._meta_layout.addStretch()
 
-        # Description
-        self._desc_edit.setPlainText(detail.description or "(설명 없음)")
+    def _on_chapter_clicked(self, sec: int) -> None:
+        self._player.seek_to_ms(sec * 1000)
+        if not self._player.is_playing():
+            self._player.play()
 
-        # Downloads tab
+    def _build_downloads_tab(self, downloads: list) -> None:
         if self._dl_tab.layout():
             _clear_layout(self._dl_tab.layout())
             dl_layout = self._dl_tab.layout()
@@ -370,8 +666,8 @@ class VideoDetailWidget(QWidget):
             dl_layout = QVBoxLayout(self._dl_tab)
         dl_layout.setContentsMargins(8, 8, 8, 4)
         dl_layout.setSpacing(8)
-        if detail.downloads:
-            for dl in detail.downloads:
+        if downloads:
+            for dl in downloads:
                 fp = Path(dl.file_path) if dl.file_path else None
                 exists = fp is not None and fp.exists()
                 filename = fp.name if fp else "—"
@@ -410,17 +706,15 @@ class VideoDetailWidget(QWidget):
             dl_layout.addWidget(QLabel("다운로드된 파일이 없습니다."))
         dl_layout.addStretch()
 
-        # Notes
-        self._notes_edit.setPlainText(detail.notes)
+    def _set_tabs_enabled(self, local: bool) -> None:
+        """스트리밍 모드면 메모·클립 탭 비활성."""
+        self._tabs.setTabEnabled(self._TAB_NOTES, local)
+        self._tabs.setTabEnabled(self._TAB_CLIPS, local)
 
-        # Clip tab — 로컬 파일 탐색 및 탭 초기화
-        self._clip_source_file = None
-        if detail.downloads:
-            for dl in detail.downloads:
-                if dl.file_path and Path(dl.file_path).exists():
-                    self._clip_source_file = dl.file_path
-                    break
-        self._build_clip_tab()
+    # ── 연관 영상 ──────────────────────────────────────────────────
+
+    def set_related(self, items: list[RelatedItem]) -> None:
+        self._related.set_items(items)
 
     # ── Clip tab ───────────────────────────────────────────────────
 
@@ -537,7 +831,12 @@ class VideoDetailWidget(QWidget):
         )
 
     def _on_tab_changed(self, index: int) -> None:
-        if index == 3 and self._clip_vm is not None and self._detail is not None:
+        if (
+            index == self._TAB_CLIPS
+            and not self._streaming
+            and self._clip_vm is not None
+            and self._detail is not None
+        ):
             self._clip_vm.load_clips(self._detail.id)
 
     def _refresh_clip_list(self) -> None:
@@ -604,12 +903,12 @@ class VideoDetailWidget(QWidget):
         self._tag_add_input.clear()
 
     def _on_open_browser(self) -> None:
-        if self._detail:
-            QDesktopServices.openUrl(QUrl(self._detail.url))
+        if self._current_url:
+            QDesktopServices.openUrl(QUrl(self._current_url))
 
     def _on_play_failed(self, err: str) -> None:
-        if self._detail:
-            QDesktopServices.openUrl(QUrl(self._detail.url))
+        if self._current_url:
+            QDesktopServices.openUrl(QUrl(self._current_url))
 
     def stop_player(self) -> None:
         self._player.stop()

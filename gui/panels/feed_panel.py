@@ -305,6 +305,7 @@ class _FeedCard(QFrame):
     add_to_category_requested = pyqtSignal(str)
     add_to_playlist_requested = pyqtSignal(str)
     download_requested        = pyqtSignal(str, str)   # url, title
+    video_clicked             = pyqtSignal(object)      # FeedVideoDTO (단일 클릭 → 상세)
 
     _TW = 320
     _TH = 180
@@ -360,11 +361,8 @@ class _FeedCard(QFrame):
         else:
             self._channel_lbl.hide()
 
-        # 하단 행: 메타 + 아이콘 버튼
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 0, 0, 0)
-        bottom.setSpacing(4)
-
+        # 하단 행: 메타 (조회수·업로드일). 카테고리/재생목록 추가는 우클릭 메뉴로 일원화해
+        # 라이브러리 아이콘 카드와 외형을 통일한다.
         meta_parts = []
         if self._dto.view_count:
             meta_parts.append(_fmt_views(self._dto.view_count))
@@ -374,27 +372,7 @@ class _FeedCard(QFrame):
         f3 = QFont()
         f3.setPointSize(8)
         self._meta_lbl.setFont(f3)
-        bottom.addWidget(self._meta_lbl, 1)
-
-        self._cat_btn = QPushButton("📁")
-        self._cat_btn.setFixedSize(24, 24)
-        self._cat_btn.setToolTip("카테고리에 추가")
-        self._cat_btn.setFlat(True)
-        self._cat_btn.clicked.connect(
-            lambda: self.add_to_category_requested.emit(self._dto.url)
-        )
-        bottom.addWidget(self._cat_btn)
-
-        self._pl_btn = QPushButton("☰")
-        self._pl_btn.setFixedSize(24, 24)
-        self._pl_btn.setToolTip("재생목록에 추가")
-        self._pl_btn.setFlat(True)
-        self._pl_btn.clicked.connect(
-            lambda: self.add_to_playlist_requested.emit(self._dto.url)
-        )
-        bottom.addWidget(self._pl_btn)
-
-        layout.addLayout(bottom)
+        layout.addWidget(self._meta_lbl)
 
         if self._dto.in_library:
             badge = QLabel("✓ 라이브러리")
@@ -425,10 +403,13 @@ class _FeedCard(QFrame):
     def _on_thumb_loaded(self, _vid_id: str, img: QImage) -> None:
         self._thumb_lbl.set_image(img)
 
-    # ── 더블클릭: 브라우저에서 열기 ──
-    def mouseDoubleClickEvent(self, _event) -> None:
-        if self._dto.url:
-            QDesktopServices.openUrl(QUrl(self._dto.url))
+    # ── 단일 클릭: 상세화면으로 진입 (수식키 없는 좌클릭) ──
+    def mouseReleaseEvent(self, event) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and event.modifiers() == Qt.KeyboardModifier.NoModifier
+        ):
+            self.video_clicked.emit(self._dto)
 
     # ── 우클릭: 컨텍스트 메뉴 ──
     def contextMenuEvent(self, event) -> None:
@@ -467,13 +448,6 @@ class _FeedCard(QFrame):
         self._title_lbl.setStyleSheet(f"color: {tok.text_primary};")
         self._channel_lbl.setStyleSheet(f"color: {tok.text_secondary};")
         self._meta_lbl.setStyleSheet(f"color: {tok.text_muted};")
-        btn_style = (
-            f"QPushButton {{ color: {tok.text_muted}; background: transparent; "
-            f"border: none; border-radius: 3px; font-size: 13px; }}"
-            f"QPushButton:hover {{ background: {tok.bg_overlay}; color: {tok.accent}; }}"
-        )
-        self._cat_btn.setStyleSheet(btn_style)
-        self._pl_btn.setStyleSheet(btn_style)
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +458,7 @@ class _FeedGrid(QWidget):
     add_to_category_requested = pyqtSignal(str)
     add_to_playlist_requested = pyqtSignal(str)
     download_requested        = pyqtSignal(str, str)
+    video_clicked             = pyqtSignal(object)   # FeedVideoDTO
 
     _CARD_W = _FeedCard._TW + 16 + 16
 
@@ -516,6 +491,7 @@ class _FeedGrid(QWidget):
             card.add_to_category_requested.connect(self.add_to_category_requested)
             card.add_to_playlist_requested.connect(self.add_to_playlist_requested)
             card.download_requested.connect(self.download_requested)
+            card.video_clicked.connect(self.video_clicked)
             if dto.duration_sec:
                 card._thumb_lbl.set_duration(_fmt_duration(dto.duration_sec))
             self._layout.addWidget(card, i // self._cols, i % self._cols)

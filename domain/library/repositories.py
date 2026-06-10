@@ -69,7 +69,14 @@ class IVideoRepository(ABC):
     def list_tags(self) -> list[Tag]: ...
 
     @abstractmethod
-    def list_tags_with_counts(self) -> list[tuple[Tag, int]]: ...
+    def list_tags_with_counts(
+        self,
+        *,
+        category_ids: list[UUID] | None = None,
+        video_ids: list[UUID] | None = None,
+    ) -> list[tuple[Tag, int]]:
+        """태그별 사용 횟수. 스코프 지정 시 해당 영상들에 달린 태그만 집계."""
+        ...
 
     @abstractmethod
     def save_tag(self, tag: Tag) -> None: ...

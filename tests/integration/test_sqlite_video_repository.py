@@ -62,6 +62,39 @@ class TestSqliteVideoRepository:
         loaded = repo.get_by_id(agg.id)
         assert tag.id in loaded.tag_ids
 
+    def test_list_tags_with_counts_scoped(self, repo):
+        """인기 태그 스코핑 — 카테고리/영상 범위로 태그 집계가 한정된다."""
+        from domain.library.entities import Category
+
+        cat_a = Category.create("A")
+        cat_b = Category.create("B")
+        repo.save_category(cat_a)
+        repo.save_category(cat_b)
+        t_news = repo.get_or_create_tag("news")
+        t_music = repo.get_or_create_tag("music")
+
+        v1 = _make_agg(url="https://youtu.be/v1", title="V1")  # cat A + news
+        v1.assign_category(cat_a.id)
+        v1.set_tags([t_news.id])
+        repo.save(v1)
+        v2 = _make_agg(url="https://youtu.be/v2", title="V2")  # cat B + music
+        v2.assign_category(cat_b.id)
+        v2.set_tags([t_music.id])
+        repo.save(v2)
+
+        # 전역 집계: 두 태그 모두 등장
+        all_counts = {t.name: c for t, c in repo.list_tags_with_counts()}
+        assert all_counts.get("news") == 1
+        assert all_counts.get("music") == 1
+
+        # 카테고리 A 스코프: news만
+        a_counts = {t.name: c for t, c in repo.list_tags_with_counts(category_ids=[cat_a.id])}
+        assert a_counts == {"news": 1}
+
+        # 영상 스코프: v2만 → music만
+        v2_counts = {t.name: c for t, c in repo.list_tags_with_counts(video_ids=[v2.id])}
+        assert v2_counts == {"music": 1}
+
     def test_favorite_filter(self, repo):
         fav = _make_agg(url="https://youtu.be/fav", title="Fav Video")
         fav.update_metadata(favorite=True)

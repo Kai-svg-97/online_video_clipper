@@ -694,6 +694,10 @@ class InlinePlayer(QWidget):
         """현재 재생 위치(ms). 재생 전이면 0."""
         return self._player.position()
 
+    def seek_to_ms(self, ms: int) -> None:
+        """절대 위치(ms)로 재생 위치를 이동한다. 설명 타임스탬프 클릭 등에서 사용."""
+        self._player.setPosition(max(0, int(ms)))
+
     def load(
         self,
         video_url: str,

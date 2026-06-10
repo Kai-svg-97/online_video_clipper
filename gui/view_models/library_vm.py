@@ -40,6 +40,7 @@ from application.library.queries import (
     GetCategoryVideoOrderHandler,
     GetCategoryVideoOrderQuery,
     GetTagsHandler,
+    GetTagsQuery,
     GetVideoDetailHandler,
     GetVideosHandler,
     GetVideosQuery,
@@ -127,6 +128,7 @@ class LibraryViewModel(QObject):
     videos_changed = pyqtSignal()
     categories_changed = pyqtSignal()
     tags_changed = pyqtSignal()
+    scoped_tags_changed = pyqtSignal()  # 현재 트리 노드 스코프 인기 태그 갱신
     error_occurred = pyqtSignal(str)
     video_add_started = pyqtSignal(str)
     video_add_finished = pyqtSignal(str)
@@ -186,6 +188,7 @@ class LibraryViewModel(QObject):
         self._videos: list[VideoDTO] = []
         self._categories: list[CategoryDTO] = []
         self._tags: list[TagDTO] = []
+        self._scoped_tags: list[TagDTO] = []
         self._current_page: int = 0
         self._search_text: str = ""
         self._filter_category_id: UUID | None = None
@@ -231,11 +234,41 @@ class LibraryViewModel(QObject):
     def tags(self) -> list[TagDTO]:
         return self._tags
 
+    @property
+    def scoped_tags(self) -> list[TagDTO]:
+        """현재 트리 노드(카테고리/재생목록) 스코프로 집계된 인기 태그."""
+        return self._scoped_tags
+
+    def refresh_scoped_tags(self) -> None:
+        """현재 활성 필터(카테고리 서브트리 또는 재생목록 영상)에 맞춘 인기 태그를
+        집계한다. 카테고리·재생목록 모두 없으면(로컬 루트) 라이브러리 전체.
+
+        피드/채널 등 로컬 태그가 없는 뷰에서는 패널이 이 메서드를 호출하지 않고
+        인기 태그 패널 자체를 숨긴다.
+        """
+        category_ids = (
+            self._resolve_category_ids(self._filter_category_id)
+            if self._filter_category_id is not None
+            else []
+        )
+        video_ids = list(self._filter_playlist_video_ids)
+        try:
+            self._scoped_tags = self._get_tags.handle(
+                GetTagsQuery(category_ids=category_ids, video_ids=video_ids)
+            )
+        except Exception as exc:
+            logger.exception("스코프 태그 집계 실패")
+            self._scoped_tags = []
+            self.error_occurred.emit(str(exc))
+            return
+        self.scoped_tags_changed.emit()
+
     def load(self) -> None:
         self._current_page = 0
         self._refresh_videos()
         self._refresh_categories()
         self._refresh_tags()
+        self.refresh_scoped_tags()
 
     def load_next_page(self) -> None:
         self._current_page += 1

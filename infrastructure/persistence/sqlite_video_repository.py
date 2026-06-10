@@ -267,17 +267,52 @@ class SqliteVideoRepository(IVideoRepository):
             rows = conn.execute("SELECT id, name FROM tags").fetchall()
         return [Tag(id=UUID(r["id"]), name=r["name"]) for r in rows]
 
-    def list_tags_with_counts(self) -> list[tuple[Tag, int]]:
-        with self._db.connection() as conn:
-            rows = conn.execute(
-                """
+    def list_tags_with_counts(
+        self,
+        *,
+        category_ids: list[UUID] | None = None,
+        video_ids: list[UUID] | None = None,
+    ) -> list[tuple[Tag, int]]:
+        """태그별 사용 횟수를 집계한다.
+
+        스코프 미지정(둘 다 None/빈 리스트) 시 라이브러리 전체를 LEFT JOIN으로
+        집계(0회 태그 포함). category_ids/video_ids 지정 시 해당 영상들에 실제로
+        달린 태그만 INNER JOIN으로 집계한다(GROUP BY — 전체를 메모리에 올리지 않음).
+        """
+        if category_ids:
+            ph = ",".join("?" * len(category_ids))
+            sql = f"""
+                SELECT t.id, t.name, COUNT(vt.video_id) AS cnt
+                FROM tags t
+                JOIN video_tags vt ON vt.tag_id = t.id
+                JOIN videos v ON v.id = vt.video_id
+                WHERE v.category_id IN ({ph})
+                GROUP BY t.id
+                ORDER BY t.name
+            """
+            params: list = [str(c) for c in category_ids]
+        elif video_ids:
+            ph = ",".join("?" * len(video_ids))
+            sql = f"""
+                SELECT t.id, t.name, COUNT(vt.video_id) AS cnt
+                FROM tags t
+                JOIN video_tags vt ON vt.tag_id = t.id
+                WHERE vt.video_id IN ({ph})
+                GROUP BY t.id
+                ORDER BY t.name
+            """
+            params = [str(v) for v in video_ids]
+        else:
+            sql = """
                 SELECT t.id, t.name, COUNT(vt.video_id) AS cnt
                 FROM tags t
                 LEFT JOIN video_tags vt ON vt.tag_id = t.id
                 GROUP BY t.id
                 ORDER BY t.name
-                """
-            ).fetchall()
+            """
+            params = []
+        with self._db.connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
         return [(Tag(id=UUID(r["id"]), name=r["name"]), r["cnt"]) for r in rows]
 
     def save_tag(self, tag: Tag) -> None:

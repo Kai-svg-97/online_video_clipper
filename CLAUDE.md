@@ -1,0 +1,328 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+Python-based GUI desktop application for downloading and scraping online videos (YouTube and other platforms), with rich browsing and search capabilities. Built following **Domain-Driven Design (DDD)** methodology.
+
+---
+
+## Development Methodology: DDD
+
+All development follows DDD principles:
+
+- **Ubiquitous Language** — use domain terms consistently in code, comments, and docs (see `planning/ddd_design.md`)
+- **Bounded Contexts** — each domain is isolated; cross-context communication via Domain Events or Application Services only
+- **Layered Architecture** — strict dependency rule: `gui → application → domain ← infrastructure`
+- **Aggregates** — only modify state through Aggregate Root methods; never directly mutate child entities
+- **Repository Pattern** — `domain/` defines interfaces; `infrastructure/` provides concrete implementations
+- **Domain Events** — side effects (e.g., UI refresh, file ops) are triggered by events, not inline logic
+
+> When adding a feature: define the domain model first (entities, value objects, aggregates), then application use cases, then infrastructure, then GUI.
+
+---
+
+## Tech Stack
+
+| Layer | Library | Notes |
+| ----- | ------- | ----- |
+| GUI | `PyQt6` | Main thread only; MVVM pattern with ViewModels |
+| Downloader | `yt-dlp` | Supports 1000+ sites |
+| HTTP / Scraping | `requests`, `beautifulsoup4` | Static pages |
+| JS-heavy scraping | `playwright` | Preferred over Selenium |
+| Video processing | `ffmpeg-python` | Merging, trimming, format conversion |
+| Local storage | SQLite via `sqlite3` (stdlib) | FTS5 for full-text search |
+| YouTube API | `google-api-python-client`, `google-auth-oauthlib`, `google-auth-httplib2` | OAuth 2.0 인증 + YouTube Data API v3 |
+| Config | `PyYAML` | 테마 등 사용자 설정 영속화 |
+| Dev / Test | `pytest`, `pytest-qt` | GUI 스모크 테스트 포함 (`tests/gui/`) |
+| Dev / Build | `ruff`, `pyinstaller` | 린트·포맷·패키징 |
+
+---
+
+## Development Commands
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the application
+python main.py
+
+# Run tests
+pytest
+
+# Run unit tests only
+pytest tests/unit/
+
+# Run integration tests only
+pytest tests/integration/
+
+# Run GUI smoke tests only
+pytest tests/gui/ -v
+
+# Lint
+ruff check .
+
+# Format
+ruff format .
+```
+
+---
+
+## Architecture (DDD Layered)
+
+```text
+online_video_clipper/
+├── main.py                          # Entry point
+├── requirements.txt
+├── requirements-dev.txt             # PyInstaller, ruff, pytest (not bundled)
+├── config/
+│   └── settings.py                  # User preferences; uses platformdirs for data paths
+├── utils/
+│   ├── resources.py                 # get_resource_path() — handles dev vs. PyInstaller bundle
+│   └── logging_config.py            # setup_logging() — 회전 파일(LOG_DIR/app.log)+콘솔 로거 (진입점에서 1회 호출)
+│
+├── bin/                             # Bundled binaries (not in VCS — downloaded by build script)
+│   ├── ffmpeg.exe                   # Windows build
+│   └── ffmpeg                       # Linux build
+│
+├── assets/                          # Icons, images bundled into the package
+│   └── icon.ico
+│
+├── packaging/
+│   ├── online_video_clipper.spec    # PyInstaller spec (Windows + Linux)
+│   ├── installer.iss                # Inno Setup script (Windows .exe installer)
+│   └── appimage/                    # AppImage recipe (Linux)
+│
+├── scripts/
+│   ├── build_windows.ps1            # PowerShell: runs PyInstaller → Inno Setup
+│   └── build_linux.sh               # Bash: runs PyInstaller → appimagetool
+│
+├── domain/                          # Pure domain layer — NO external dependencies
+│   ├── shared/                      # 교차 컨텍스트 공유 추상화
+│   │   └── ports.py                 # IEventBus·IMediaSource·IClipExtractor(Protocol) — application이 의존하는 포트
+│   ├── library/                     # [Bounded Context] Core: video library management
+│   │   ├── entities.py              # Video, Category, Tag
+│   │   ├── value_objects.py         # VideoUrl, Duration, Timestamp, ChannelInfo
+│   │   ├── aggregates.py            # VideoAggregate (root)
+│   │   ├── repositories.py          # IVideoRepository (interface)
+│   │   ├── services.py              # Domain services (e.g., duplicate detection)
+│   │   └── events.py                # VideoAdded, VideoUpdated, VideoDeleted
+│   │
+│   ├── download/                    # [Bounded Context] Download queue & history
+│   │   ├── entities.py              # DownloadJob
+│   │   ├── value_objects.py         # DownloadSettings, DownloadProgress, Format, Quality
+│   │   ├── aggregates.py            # DownloadQueueAggregate (root)
+│   │   ├── repositories.py          # IDownloadRepository
+│   │   ├── services.py
+│   │   └── events.py                # DownloadStarted, DownloadCompleted, DownloadFailed
+│   │
+│   ├── clip/                        # [Bounded Context] Clip extraction
+│   │   ├── entities.py              # Clip
+│   │   ├── value_objects.py         # TimeRange
+│   │   ├── aggregates.py            # ClipAggregate (root)
+│   │   ├── repositories.py          # IClipRepository
+│   │   └── events.py                # ClipCreated
+│   │
+│   └── monitoring/                  # [Bounded Context] Channel subscription & monitoring
+│       ├── entities.py              # ChannelSubscription
+│       ├── value_objects.py         # MonitoringRule (keyword/duration filter)
+│       ├── aggregates.py            # ChannelMonitorAggregate (root)
+│       ├── repositories.py          # IChannelRepository
+│       └── events.py                # NewVideoDetected
+│
+├── application/                     # Application layer — use cases (commands & queries)
+│   ├── library/
+│   │   ├── commands.py              # AddVideo, UpdateVideo, DeleteVideo, ImportPlaylist
+│   │   └── queries.py               # GetVideos, SearchVideos, GetVideoById
+│   ├── download/
+│   │   ├── commands.py              # StartDownload, CancelDownload, RetryDownload
+│   │   └── queries.py               # GetDownloadQueue, GetDownloadHistory
+│   ├── clip/
+│   │   ├── commands.py              # ExtractClip, DeleteClip
+│   │   └── queries.py               # GetClips
+│   └── monitoring/
+│       ├── commands.py              # SubscribeChannel, UnsubscribeChannel, SetMonitoringRule
+│       └── queries.py               # GetSubscriptions
+│
+├── infrastructure/                  # Concrete implementations (invert dependencies)
+│   ├── persistence/
+│   │   ├── database.py              # SQLite 연결 + WAL 설정 + 스키마 마이그레이션
+│   │   ├── sqlite_video_repository.py
+│   │   ├── sqlite_download_repository.py
+│   │   ├── sqlite_clip_repository.py
+│   │   ├── sqlite_channel_repository.py
+│   │   └── sqlite_playlist_repository.py  # 재생목록 + 폴더 저장소
+│   ├── downloader/
+│   │   └── ytdlp_adapter.py         # yt-dlp 래퍼 — domain.shared.ports.IMediaSource를 구조적으로 만족
+│   ├── ffmpeg/
+│   │   └── ffmpeg_adapter.py        # ffmpeg wrapper for clip extraction
+│   ├── auth/
+│   │   └── youtube_auth.py          # 브라우저 프로필 탐지 + Netscape 쿠키 추출 (playwright 로그인)
+│   ├── youtube/
+│   │   ├── oauth_adapter.py         # OAuth 2.0 토큰 발급/갱신
+│   │   └── youtube_api_adapter.py   # YouTube Data API v3 래퍼 (requests.Session)
+│   └── event_bus.py                 # In-process event dispatcher
+│
+├── gui/                             # Presentation layer (PyQt6, MVVM)
+│   ├── main_window.py               # 루트 윈도우, 사이드바 네비게이션(라이브러리·다운로드·채널 모니터링·통계), 패널 스택 — 구독 피드는 라이브러리 좌측 트리로 통합됨
+│   ├── panels/
+│   │   ├── library_panel.py         # 썸네일 그리드 + 카테고리/태그 트리 + 상세뷰 + YouTube 트리의 "구독 채널"/"전체 구독 피드" 노드. 영상 카드 **단일 클릭→상세화면**(미리보기 패널 제거됨, Ctrl/Shift 클릭은 다중선택 유지). 피드/채널 카드 단일 클릭→`_open_stream_detail`(스트리밍 상세). `_open_detail`/`_open_stream_detail`이 컨텍스트별 연관영상(RelatedItem)을 구성해 상세화면에 전달, 연관영상 클릭은 `_on_related_item_selected`로 재진입. 인기 태그는 `_vm.refresh_scoped_tags()`로 현재 노드(카테고리/재생목록) 스코프, 피드/채널 뷰에선 `_set_popular_tags_visible(False)`로 숨김. "전체 구독 피드"/개별 채널 클릭→피드 카드 그리드(_VIEW_FEED), "구독 채널" 노드 클릭→채널 아바타 카드 그리드(_VIEW_CHANNELS) (메인 패널, ~5000줄 — 분할 검토 대상. `_PreviewPane`는 미사용 잔존)
+│   │   ├── download_panel.py        # 다운로드 큐 + 완료 이력 탭 (영상 파일만 표시·완료/실패 배지)
+│   │   ├── feed_panel.py            # 피드 카드 부품(_FeedGrid·_FeedCard: 썸네일 좌하단 채널 배지·리사이즈 reflow, **단일 클릭→`video_clicked`(FeedVideoDTO) 방출**, 인라인 추가버튼 제거·우클릭 메뉴로 일원화) + 채널 카드 부품(_ChannelGrid·_ChannelCard) + 연관영상 행에서 재사용하는 `_RoundedThumbLabel`·`_ThumbLoader` 정의 — library_panel/video_detail_panel이 재사용. (구버전 FeedPanel 컨테이너는 더 이상 사이드바 메뉴로 노출되지 않음)
+│   │   ├── monitoring_panel.py      # 채널 구독 & 모니터링 규칙 관리
+│   │   ├── stats_panel.py           # 라이브러리 통계 대시보드
+│   │   ├── video_detail_panel.py    # YouTube 시청 페이지형 상세화면 — 좌(큰 플레이어+제목/메타/태그/챕터/설명+하단 탭:다운로드·메모·클립) | 우(`_RelatedList` 연관영상). `load`(로컬)/`load_stream`(스트리밍, 메모·클립 비활성) + `set_related`. 설명에서 `_parse_chapters`로 타임스탬프 추출→클릭 시 `InlinePlayer.seek_to_ms`. `RelatedItem` dataclass + `item_selected` 시그널
+│   │   ├── settings_panel.py        # 전체 설정 패널 (다운로드 경로, 테마 등)
+│   │   └── settings_dialog.py       # 간략 설정 다이얼로그 (레거시, 42줄)
+│   ├── dialogs/
+│   │   ├── youtube_auth_dialog.py   # YouTube OAuth 인증 플로우 다이얼로그
+│   │   └── batch_download_dialog.py # 일괄 다운로드 URL 입력 다이얼로그
+│   ├── widgets/
+│   │   └── video_player.py          # 인라인 비디오 플레이어 위젯 (QMediaPlayer 기반)
+│   ├── themes/
+│   │   ├── manager.py               # ThemeManager 싱글턴 — 전역 QSS 교체, theme_changed 시그널
+│   │   ├── tokens.py                # ThemeTokens dataclass + PRESETS 딕셔너리
+│   │   └── stylesheet.py            # build_qss(tokens) → QSS 문자열 생성
+│   └── view_models/                 # UI 상태 — Application 레이어와 View 사이 브릿지
+│       ├── library_vm.py            # LibraryViewModel — 영상 목록, 카테고리, 검색
+│       ├── download_vm.py           # DownloadViewModel — 다운로드 큐/이력 + 진행률
+│       ├── feed_vm.py               # FeedViewModel — 전체 구독 피드(refresh) + 채널별 영상(load_channel) + 구독 채널 카드 정보(load_channel_infos) 로딩, shutdown() 워커 정리
+│       ├── monitoring_vm.py         # MonitoringViewModel — 채널 구독 목록
+│       ├── clip_vm.py               # ClipViewModel — 클립 목록 + 추출 작업
+│       └── playlist_vm.py           # PlaylistViewModel — 재생목록 관리
+│
+├── db/
+│   └── schema.sql                   # SQLite schema (FTS5 for search)
+│
+└── tests/
+    ├── unit/
+    │   └── domain/                  # Pure domain logic tests (no I/O)
+    └── integration/                 # Tests hitting SQLite, yt-dlp, ffmpeg
+```
+
+---
+
+## Key Design Decisions
+
+- **GUI on main thread** — all network/download work runs in background `QThread`; results communicated via Qt signals.
+- **yt-dlp progress hooks** → `DownloadProgress` value object → emitted as Qt signal to update progress bar.
+- **Aggregates own state changes** — e.g., `VideoAggregate.mark_watched()` not `video.watched = True`.
+- **Repositories are interfaces in `domain/`** — GUI and Application layers depend on abstractions; SQLite is an implementation detail.
+- **Domain Events over direct calls** — when a download completes, `DownloadCompleted` event triggers library update and UI notification independently.
+- **ffmpeg resolved via `get_ffmpeg_path()`** — checks `bin/` first (bundled), falls back to system PATH.
+- **Ports over concrete infra in application** — application 레이어는 `EventBus`/`YtDlpAdapter`/`FfmpegAdapter`를 직접 import하지 않고 `domain/shared/ports.py`의 Protocol(`IEventBus`·`IMediaSource`·`IClipExtractor`)에 의존한다. 어댑터는 구조적 타이핑으로 이를 만족(상속 불필요)하며, 구체 인스턴스 주입은 composition root(`main.py`)가 담당한다. 작업별 진행률 훅이 필요한 다운로드처럼 인스턴스를 새로 만들어야 하는 경우는 **팩토리 콜백을 주입**한다(`make_downloader`, `yt_api_factory`).
+- **GUI→infra 예외 경계** — `gui/main_window.py`·`gui/dialogs/youtube_auth_dialog.py`는 `infrastructure.auth`를 직접 참조한다. 로그인 플로우가 playwright 구동·쿠키 파일 작성 등 **본질적으로 인프라**라 포트로 감싸도 런타임 의존이 사라지지 않으므로, composition-root 인접의 **수용된 경계**로 둔다(application 레이어는 이런 예외가 없어야 함).
+
+## 에러 처리 & 로깅 규칙 (mandatory)
+
+- 진입점(`main.py`)에서 `utils.logging_config.setup_logging()`을 1회 호출한다(회전 파일 `LOG_DIR/app.log` + 콘솔).
+- 모듈마다 `logger = logging.getLogger(__name__)`를 정의한다.
+- **예외를 조용히 삼키지 말 것.** `except Exception: pass`/조용한 폴백이 필요하면(네트워크·API·DB 실패를 폴백 처리할 때) 반드시 `logger.exception("맥락")`으로 흔적을 남긴다. idempotent하게 무시해도 되는 경우만 `logger.debug(...)`.
+- 예외를 UI로 표출하는 뷰모델 패턴(`error_occurred.emit(str(exc))`)은 이미 가시적이므로 그대로 둔다.
+- 백그라운드 워커를 만드는 뷰모델은 `shutdown()`을 제공하고 `MainWindow.closeEvent`에서 호출해 종료 시 워커를 정리한다. yt-dlp 다운로드처럼 협조적 취소 훅이 없으면 `terminate()` 후 `wait()`로 종료를 보장한다.
+
+## Memory Optimization Rules (target: low-spec PCs, ~4 GB RAM)
+
+These are **mandatory coding constraints**, not suggestions.
+
+### Thumbnail Grid
+
+- Use `QListView` + custom `QAbstractItemModel` with a delegate — **never** `QListWidget` with pre-loaded items.
+- Only fetch and decode thumbnails for items **currently visible** in the viewport (virtual scrolling).
+- Keep an LRU cache of max **100 `QPixmap` objects per render size**; evict oldest on overflow. (캐시 키에 표시 크기가 포함되므로 — 아이콘 그리드·리스트·상세뷰 3종 — 전체 상한은 `LRU_THUMBNAIL_MAX × 렌더 크기 종류 수`. `library_panel.py`의 `_thumb_cache` 참조.)
+- Scale thumbnails to display size (e.g., 160×90) **at load time** — never store full-resolution `QImage` in memory after conversion.
+- Set `QPixmapCache.setCacheLimit(30720)` (30 MB) on startup.
+
+### SQLite Queries
+
+- All repository queries **must** use `LIMIT` / `OFFSET` pagination — default page size 50.
+- Never call `.fetchall()` on the `videos` table; iterate with a cursor.
+- Load `description` and `notes` fields **only** when the detail panel is opened (`GetVideoByIdQuery`), not in list queries.
+- Thumbnails are stored as **file paths** in the DB — never as BLOBs.
+
+### Domain / Value Objects
+
+- Apply `__slots__` to all Value Objects (e.g., `VideoUrl`, `TimeRange`, `DownloadProgress`) to reduce per-instance memory.
+- Use generator expressions instead of list comprehensions when processing query result sets.
+
+### Background Tasks
+
+- Playlist/channel import은 **반드시 워커 `QThread`에서 실행**하고, 진행 상황을 항목 단위(또는 ≤50개 청크 단위)로 `on_progress` 콜백 → Qt 시그널로 방출해 메인 스레드 이벤트 루프를 막지 않는다. (DB에서 재처리하는 메타데이터 갱신은 `RefreshCategoryMetadataHandler`처럼 `LIMIT/OFFSET` 50개 청크로 순회하여 전체를 메모리에 올리지 않는다.)
+- Completed `DownloadJob` objects are removed from the in-memory queue immediately after the `DownloadCompleted` event fires.
+- Monitoring polls one channel at a time sequentially; do not accumulate full feed results in memory.
+
+### Startup
+
+- Do **not** pre-load thumbnails or metadata on startup; the grid populates lazily on first render.
+- SQLite WAL mode on — reduces contention without extra memory buffers.
+
+---
+
+## Packaging Rules (must follow for Windows/Linux distribution)
+
+- **All resource paths** go through `utils/resources.get_resource_path()` — handles both dev (`Path(__file__)`) and PyInstaller bundle (`sys._MEIPASS`).
+- **User data paths** (DB, logs, downloads) use `platformdirs.user_data_dir()` — never write to the app install directory.
+- `bin/` is **git-ignored** — ffmpeg binaries are downloaded by build scripts, not committed.
+- Build scripts live in `scripts/`; PyInstaller spec(`online_video_clipper.spec`)와 Inno Setup script(`installer.iss`)는 `packaging/`에 있다. (`build/`는 PyInstaller가 생성하는 빌드 산출물 디렉토리이므로 소스 위치와 혼동하지 말 것.)
+- See `planning/packaging_plan.md` for full build instructions and checklist.
+
+---
+
+## Requirement & Planning Updates
+
+**These updates are MANDATORY — never skip them, even for small changes.**
+
+| What changed | Where to record it |
+| --- | --- |
+| New coding rule, constraint, or workflow instruction | This file (`CLAUDE.md`) |
+| New/changed feature requirement | `planning/youtube_content_manager_prd.md` |
+| New bounded context, aggregate, entity, value object | `planning/ddd_design.md` |
+| Architecture or layer structure change | This file (`CLAUDE.md`) |
+| Build / packaging change | `planning/packaging_plan.md` |
+| GUI 파일 추가 · 삭제 · 이름 변경 | 이 파일(`CLAUDE.md`)의 `gui/` 파일 맵 즉시 수정 |
+
+> Instructions that only live in the conversation are lost across sessions. Record them here **before or alongside** implementation — not as follow-up cleanup.
+
+---
+
+## GUI 수정 작업 규칙
+
+### GUI 변경 후 반드시 `/verify` 실행
+
+GUI 파일(`gui/` 하위 어느 파일이든)을 수정한 경우, 코드 변경 완료 후 반드시 `/verify` 스킬을 호출해 앱을 실제로 실행하고 변경 결과를 확인한다. 코드가 컴파일 오류 없이 실행되고 해당 패널이 정상적으로 뜨는지 확인한 뒤 완료 보고한다.
+
+### GUI 수정 요청 시 포함해야 할 정보
+
+요청 형식을 지킬수록 반복 수정 횟수가 줄어든다:
+
+```
+패널/파일: gui/panels/library_panel.py (LibraryPanel)
+현재 동작: [단계별 재현] 예) 영상 클릭 → 상세 패널 열림 → X 버튼 클릭 → 아무 반응 없음
+기대 동작: X 버튼 클릭 시 상세 패널 닫힘
+오류 메시지: (터미널/콘솔 출력 있으면 붙여넣기)
+스크린샷: (가능하면 첨부)
+```
+
+최소한 **파일명 + 현재 동작 + 기대 동작** 세 가지는 포함한다.
+
+### 코드 분석 효율화
+
+- 세션 시작 시 위 `gui/` 파일 맵을 1차 참조한다 — 파일 맵에 없는 경우에만 탐색 에이전트를 호출한다.
+- `gui/` 내 어느 파일을 수정해야 하는지 모를 때는 파일 맵에서 책임 설명을 먼저 확인한다.
+
+---
+
+## 언어 정책
+
+- 모든 대화 응답, 문서(CLAUDE.md, planning/), 코드 주석은 **한국어**로 작성한다.
+- 예외(영어 유지): 코드 식별자(함수명·클래스명·변수명), 라이브러리·프레임워크 명칭, SQL 키워드, 셸 명령어 등 기술적으로 영어가 필수인 요소.
+
+---
+
+## Platform Support Notes
+
+- Target OS: Windows (primary), macOS/Linux (secondary)
+- Requires Python 3.10+
+- ffmpeg binary must be on PATH or bundled in `bin/`

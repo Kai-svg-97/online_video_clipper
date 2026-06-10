@@ -29,6 +29,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QButtonGroup,
     QComboBox,
     QDialog,
@@ -63,7 +64,12 @@ from PyQt6.QtWidgets import (
 from application.library.dtos import CategoryDTO, VideoDTO
 from config.settings import LRU_THUMBNAIL_MAX, THUMBNAIL_DIR, THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH
 from gui.dialogs.batch_download_dialog import BatchDownloadDialog
-from gui.panels.video_detail_panel import VideoDetailWidget, _TagFlow, _clear_layout
+from gui.panels.video_detail_panel import (
+    RelatedItem,
+    VideoDetailWidget,
+    _TagFlow,
+    _clear_layout,
+)
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
 from gui.view_models.library_vm import LibraryViewModel
@@ -401,8 +407,9 @@ class _CollapseHandle(QSplitterHandle):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         sp = self.splitter()
-        # Only show the collapse button on the last handle
-        if sp and sp.handle(sp.count() - 1) is self:
+        # 미리보기 패널 제거 후에는 접기 버튼이 본문(nav_stack)을 접게 되므로,
+        # 패널이 3개 이상일 때(마지막 핸들)만 노출한다 — 현재 2패널 구성에선 숨김.
+        if sp and sp.count() > 2 and sp.handle(sp.count() - 1) is self:
             self._btn.show()
             self._btn.move(0, (self.height() - self._btn.height()) // 2)
         else:
@@ -3116,11 +3123,11 @@ class LibraryPanel(QWidget):
         tag_section_layout.setContentsMargins(0, 0, 0, 0)
         tag_section_layout.setSpacing(4)
 
-        popular_hdr = QLabel("인기 태그")
-        popular_hdr.setStyleSheet(
+        self._popular_hdr = QLabel("인기 태그")
+        self._popular_hdr.setStyleSheet(
             f"font-size:8pt;color:{_t().text_muted};font-weight:600;padding:2px 4px;"
         )
-        tag_section_layout.addWidget(popular_hdr)
+        tag_section_layout.addWidget(self._popular_hdr)
 
         self._popular_tags_widget = QWidget()
         self._popular_tags_layout = QVBoxLayout(self._popular_tags_widget)
@@ -3243,14 +3250,6 @@ class LibraryPanel(QWidget):
         self._btn_reorder.hide()   # 카테고리 선택 시에만 표시
         toolbar.addWidget(self._btn_reorder)
 
-        toolbar.addSpacing(4)
-        self._btn_preview = QToolButton()
-        self._btn_preview.setText("⊡")
-        self._btn_preview.setToolTip("미리보기 패널 열기/닫기")
-        self._btn_preview.setCheckable(True)
-        self._btn_preview.setChecked(False)
-        self._btn_preview.setFixedSize(28, 28)
-        toolbar.addWidget(self._btn_preview)
 
         centre_layout.addLayout(toolbar)
 
@@ -3314,16 +3313,11 @@ class LibraryPanel(QWidget):
 
         outer_splitter.addWidget(self._nav_stack)
 
-        # ── 3. Right: preview pane ──
-        self._preview = _PreviewPane(self._vm)
-        self._preview.setMinimumWidth(320)
-        outer_splitter.addWidget(self._preview)
-
+        # 미리보기 패널 제거 — 영상 단일 클릭 시 곧바로 상세화면(YouTube 시청 페이지)으로
+        # 전환하므로 우측 미리보기 패널은 더 이상 사용하지 않는다.
         outer_splitter.setStretchFactor(0, 0)
         outer_splitter.setStretchFactor(1, 1)
-        outer_splitter.setStretchFactor(2, 0)
-        outer_splitter.setSizes([200, 700, 0])
-        self._preview.hide()
+        outer_splitter.setSizes([200, 800])
 
         self._outer_splitter = outer_splitter
 
@@ -3337,6 +3331,7 @@ class LibraryPanel(QWidget):
         self._vm.videos_changed.connect(self._on_videos_changed)
         self._vm.categories_changed.connect(self._on_categories_changed)
         self._vm.tags_changed.connect(self._on_tags_changed)
+        self._vm.scoped_tags_changed.connect(self._refresh_popular_tags)
         ThemeManager.instance().theme_changed.connect(lambda _: self._apply_sidebar_tree_style())
 
         # 재생목록 탭 시그널
@@ -3383,7 +3378,6 @@ class LibraryPanel(QWidget):
         self._view_group.idClicked.connect(self._switch_view)
         self._search_box.textChanged.connect(self._vm.set_search_text)
         self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
-        self._btn_preview.clicked.connect(self._toggle_preview)
         self._btn_reorder.toggled.connect(self._on_reorder_toggled)
         self._model.reordered.connect(self._on_category_reordered)
 
@@ -3431,14 +3425,14 @@ class LibraryPanel(QWidget):
         self._table.doubleClicked.connect(self._on_table_double_click)
         self._table.customContextMenuRequested.connect(self._show_table_menu)
 
-        self._preview.detail_requested.connect(self._on_preview_detail_requested)
-        self._preview.tag_filter_requested.connect(self._on_tag_filter_requested)
-        self._preview.download_requested.connect(self.download_requested.emit)
-
         self._detail_widget.back_requested.connect(self._on_back_from_detail)
         self._detail_widget.tag_filter_requested.connect(self._on_tag_filter_requested)
         self._detail_widget.tags_updated.connect(self._on_detail_tags_updated)
         self._detail_widget.download_requested.connect(self.download_requested.emit)
+        self._detail_widget.item_selected.connect(self._on_related_item_selected)
+
+        # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
+        self._feed_grid.video_clicked.connect(self._open_stream_detail)
 
         # Ctrl+휠 뷰 전환 & 마우스 BackButton 히스토리 이벤트 필터
         for w in (self._icon_view, self._list_view, self._table):
@@ -3590,6 +3584,11 @@ class LibraryPanel(QWidget):
         self._refresh_breadcrumb()
         self._refresh_popular_tags()
 
+    def _set_popular_tags_visible(self, visible: bool) -> None:
+        """피드/채널 등 로컬 태그가 없는 뷰에서는 인기 태그 패널을 숨긴다."""
+        self._popular_hdr.setVisible(visible)
+        self._popular_tags_widget.setVisible(visible)
+
     def _refresh_popular_tags(self) -> None:
         from config.settings import load_hidden_tag_names  # noqa: PLC0415
         hidden_names = load_hidden_tag_names()
@@ -3597,8 +3596,10 @@ class LibraryPanel(QWidget):
             item = self._popular_tags_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        # 현재 트리 노드 스코프 태그(카테고리/재생목록). 비면 라이브러리 전체로 폴백.
+        source = self._vm.scoped_tags or self._all_tags
         top_tags = sorted(
-            (t for t in self._all_tags if t.name not in hidden_names),
+            (t for t in source if t.name not in hidden_names),
             key=lambda t: -t.count,
         )[:5]
         for tag in top_tags:
@@ -3910,6 +3911,9 @@ class LibraryPanel(QWidget):
         self._refresh_active_tags_bar()
         self._update_delegate_tags()
         self._vm.set_category_filter(cat_id)  # also clears tag filter internally
+        # 카테고리 스코프 인기 태그 갱신 + 패널 표시
+        self._set_popular_tags_visible(True)
+        self._vm.refresh_scoped_tags()
         # Update delegates so they know which category is selected (for subcategory label)
         self._icon_delegate.filter_cat_id = cat_id
         self._list_delegate.filter_cat_id = cat_id
@@ -3998,31 +4002,83 @@ class LibraryPanel(QWidget):
     # ── In-place navigation ────────────────────────────────────────
 
     def _open_detail(self, video_id: UUID) -> None:
+        """로컬 영상 상세화면을 연다. 연관 목록 = 현재 보고 있는 영상 목록(같은
+        카테고리/재생목록), 자기 자신 제외."""
         detail = self._vm.get_video_detail(video_id)
         if detail is None:
             return
         if not self._is_restoring:
             self._push_nav_state()
         tag_ids = {t.name: t.id for t in self._vm.tags}
-        # Bug A: 미리보기 재생 상태를 캡처한 뒤 중지하고, 상세보기에서 이어서 재생
-        was_playing, pos_ms = self._preview.get_playback_state()
-        self._preview.stop_player()
-        resume = pos_ms if was_playing else 0
-        self._detail_widget.load(detail, tag_ids, resume_ms=resume)
-        self._preview.hide()
+        related = [
+            self._related_from_video(v)
+            for v in self._vm.videos if v.id != video_id
+        ][:30]
+        self._detail_widget.load(detail, tag_ids, resume_ms=0, related=related)
         self._nav_stack.setCurrentIndex(1)
+
+    def _open_stream_detail(self, feed_dto) -> None:
+        """구독 피드/채널의 스트리밍 영상 상세화면을 연다. 연관 목록 = 같은 채널의
+        최근 영상(현재 로드된 피드 기준), 없으면 현재 피드 목록."""
+        if self._feed_vm is None:
+            return
+        if not self._is_restoring:
+            self._push_nav_state()
+        related = self._feed_related_items(feed_dto)
+        self._detail_widget.load_stream(feed_dto, related=related)
+        self._nav_stack.setCurrentIndex(1)
+
+    def _on_related_item_selected(self, payload) -> None:
+        """연관 영상 클릭 — payload 타입에 따라 로컬/스트리밍 상세로 재진입."""
+        from application.library.dtos import FeedVideoDTO  # noqa: PLC0415
+        if isinstance(payload, UUID):
+            self._open_detail(payload)
+        elif isinstance(payload, FeedVideoDTO):
+            self._open_stream_detail(payload)
+
+    def _related_from_video(self, v: VideoDTO) -> RelatedItem:
+        meta = []
+        if v.view_count:
+            meta.append(f"조회수 {v.view_count:,}회")
+        if v.published_at:
+            meta.append(v.published_at)
+        return RelatedItem(
+            key=str(v.id),
+            title=v.title,
+            channel=v.channel_name,
+            duration_sec=v.duration_sec,
+            meta_text="  ·  ".join(meta),
+            payload=v.id,
+            thumb_path=v.thumbnail_path or "",
+        )
+
+    def _feed_related_items(self, clicked) -> list[RelatedItem]:
+        feed = self._feed_vm.feed if self._feed_vm else []
+        same = [
+            f for f in feed
+            if f.channel_id and f.channel_id == clicked.channel_id and f.url != clicked.url
+        ]
+        pool = same if same else [f for f in feed if f.url != clicked.url]
+        items = []
+        for f in pool[:30]:
+            meta = []
+            if f.view_count:
+                meta.append(f"조회수 {f.view_count:,}회")
+            items.append(RelatedItem(
+                key=f.yt_video_id or f.url,
+                title=f.title,
+                channel=f.channel_name,
+                duration_sec=f.duration_sec,
+                meta_text="  ·  ".join(meta),
+                payload=f,
+                thumb_path=f.thumbnail_path or "",
+                thumb_url=f.thumbnail_url or "",
+            ))
+        return items
 
     def _on_back_from_detail(self) -> None:
         self._detail_widget.stop_player()
         self._nav_stack.setCurrentIndex(0)
-        if self._preview.has_video and self._btn_preview.isChecked():
-            sizes = self._outer_splitter.sizes()
-            if sizes[-1] == 0:
-                saved = getattr(self._outer_splitter, "_saved_preview_size", 400)
-                sizes[1] = max(100, sizes[1] - saved)
-                sizes[-1] = saved
-                self._outer_splitter.setSizes(sizes)
-            self._preview.show()
 
     def _on_detail_tags_updated(self, video_id: UUID, tags: list) -> None:
         """Called when user manually adds a tag in the detail view."""
@@ -4031,7 +4087,11 @@ class LibraryPanel(QWidget):
             detail = self._vm.get_video_detail(video_id)
             if detail:
                 tag_ids = {t.name: t.id for t in self._vm.tags}
-                self._detail_widget.load(detail, tag_ids)
+                related = [
+                    self._related_from_video(v)
+                    for v in self._vm.videos if v.id != video_id
+                ][:30]
+                self._detail_widget.load(detail, tag_ids, related=related)
 
     def _on_sort_changed(self, index: int) -> None:
         sort_by, sort_asc = self._sort_combo.itemData(index)
@@ -4127,9 +4187,6 @@ class LibraryPanel(QWidget):
         folders = [f for f in load_smart_folders() if f.id != sf_id]
         save_smart_folders(folders)
         self._load_smart_folders_ui()
-
-    def _on_preview_detail_requested(self, dto: VideoDTO) -> None:
-        self._open_detail(dto.id)
 
     # ── Empty space click ────────────────────────────────────────────
 
@@ -4274,31 +4331,15 @@ class LibraryPanel(QWidget):
 
     # ── Item click / double-click ──────────────────────────────────
 
-    def _toggle_preview(self, checked: bool) -> None:
-        sizes = self._outer_splitter.sizes()
-        if checked:
-            saved = getattr(self._outer_splitter, "_saved_preview_size", 400)
-            if sizes[-1] == 0:
-                sizes[1] = max(100, sizes[1] - saved)
-                sizes[-1] = saved
-                self._outer_splitter.setSizes(sizes)
-            self._preview.show()
-        else:
-            if sizes[-1] > 0:
-                self._outer_splitter._saved_preview_size = sizes[-1]
-            sizes[-1] = 0
-            self._outer_splitter.setSizes(sizes)
-            self._preview.hide()
-
     def _on_item_clicked(self, index: QModelIndex, view: QListView) -> None:
-        # Only update preview when exactly one item is selected
-        if len(view.selectedIndexes()) != 1:
+        """단일 클릭 → 상세화면 진입. Ctrl/Shift 클릭은 다중 선택·드래그용으로 유지."""
+        mods = QApplication.keyboardModifiers()
+        if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
             return
         dto: VideoDTO | None = self._model.data(index, VideoListModel.DtoRole)
         if dto:
-            if self._preview.isVisible():
-                self._preview.show_video(dto)
             self.video_selected.emit(dto)
+            self._open_detail(dto.id)
 
     def _on_double_click(self, index: QModelIndex) -> None:
         dto: VideoDTO | None = self._model.data(index, VideoListModel.DtoRole)
@@ -4306,12 +4347,14 @@ class LibraryPanel(QWidget):
             self._open_detail(dto.id)
 
     def _on_table_clicked(self, index: QModelIndex) -> None:
+        mods = QApplication.keyboardModifiers()
+        if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
+            return
         item = self._table.item(index.row(), 0)
         if item:
             vid_id = item.data(Qt.ItemDataRole.UserRole)
-            if vid_id and index.row() < len(self._vm.videos):
-                if self._preview.isVisible():
-                    self._preview.show_video(self._vm.videos[index.row()])
+            if vid_id:
+                self._open_detail(vid_id)
 
     def _on_table_double_click(self, index: QModelIndex) -> None:
         item = self._table.item(index.row(), 0)
@@ -4926,6 +4969,7 @@ class LibraryPanel(QWidget):
         channels = [(s.channel_id, s.channel_name, s.channel_url) for s in subs]
         self._current_playlist_id = None
         self._current_folder_id = None
+        self._set_popular_tags_visible(False)
         self._channels_status.setText("로딩 중…" if channels else "구독 중인 채널이 없습니다.")
         self._channels_status.setVisible(True)
         self._view_stack.setCurrentIndex(_VIEW_CHANNELS)
@@ -4960,6 +5004,7 @@ class LibraryPanel(QWidget):
         self._current_playlist_id = None
         self._current_folder_id = None
         self._feed_show_channel = False   # 이미 채널을 아는 화면이라 채널명 숨김
+        self._set_popular_tags_visible(False)
         self._show_feed_view("로딩 중…")
         self._feed_vm.load_channel(channel_url)
         self._refresh_breadcrumb()
@@ -4971,6 +5016,7 @@ class LibraryPanel(QWidget):
         self._current_playlist_id = None
         self._current_folder_id = None
         self._feed_show_channel = True    # 여러 채널이 섞이므로 채널명 표시
+        self._set_popular_tags_visible(False)
         self._show_feed_view("로딩 중…")
         self._feed_vm.refresh()
         self._refresh_breadcrumb()
@@ -5022,6 +5068,9 @@ class LibraryPanel(QWidget):
             self._switch_view(self._view_group.checkedId())
         self._current_playlist_id = playlist_id
         self._current_folder_id = None
+        # 재생목록 영상 스코프 인기 태그 갱신 + 패널 표시
+        self._set_popular_tags_visible(True)
+        self._vm.refresh_scoped_tags()
         self._refresh_breadcrumb()
 
     def _on_folder_selected(self, folder_id) -> None:
