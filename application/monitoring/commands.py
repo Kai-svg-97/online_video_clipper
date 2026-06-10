@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 class SubscribeChannelCommand:
     channel_url: str
     rule: MonitoringRule | None = None
+    # 사전 식별된 채널 정보(예: YouTube API 구독 목록). 주어지면 yt-dlp 메타데이터
+    # 조회를 생략해 일괄 가져오기 시 채널당 네트워크 호출을 없앤다.
+    channel_id: str | None = None
+    channel_name: str | None = None
 
 
 @dataclass
@@ -41,16 +45,29 @@ class SubscribeChannelHandler:
         self._ytdlp = ytdlp_adapter
 
     def handle(self, cmd: SubscribeChannelCommand) -> ChannelMonitorAggregate:
-        channel_id = cmd.channel_url
-        channel_name = cmd.channel_url
+        channel_id = cmd.channel_id or cmd.channel_url
+        channel_name = cmd.channel_name or cmd.channel_url
 
-        if self._ytdlp:
+        # id가 주어지지 않은 수동 URL 구독에서만 메타데이터를 1회 조회한다.
+        # 일괄 가져오기는 API/yt-dlp가 이미 id·name을 제공하므로 조회를 건너뛴다.
+        if cmd.channel_id is None and self._ytdlp:
             try:
                 info = self._ytdlp.fetch_metadata(cmd.channel_url)
                 channel_id = info.get("channel_id") or info.get("uploader_id") or cmd.channel_url
-                channel_name = info.get("uploader") or info.get("channel") or cmd.channel_url
+                channel_name = (
+                    cmd.channel_name
+                    or info.get("uploader")
+                    or info.get("channel")
+                    or cmd.channel_url
+                )
             except Exception:
                 logger.exception("채널 메타데이터 조회 실패")
+
+        # 멱등성: 이미 구독 중인 채널이면 기존 구독을 그대로 반환한다.
+        # (channel_id는 UNIQUE이므로 새 UUID로 재삽입하면 IntegrityError가 난다.)
+        existing = self._repo.get_by_channel_id(channel_id)
+        if existing is not None:
+            return existing
 
         agg = ChannelMonitorAggregate.create(
             channel_id=channel_id,
@@ -130,7 +147,13 @@ class ImportYouTubeSubscriptionsHandler:
             if not url:
                 continue
             try:
-                self._subscribe.handle(SubscribeChannelCommand(channel_url=url))
+                self._subscribe.handle(
+                    SubscribeChannelCommand(
+                        channel_url=url,
+                        channel_id=ch.get("id") or None,
+                        channel_name=ch.get("name") or None,
+                    )
+                )
                 count += 1
             except Exception:
                 logger.exception("채널 구독 등록 실패")  # 중복 구독 등 오류 무시
