@@ -63,6 +63,7 @@ class FeedViewModel(QObject):
         self._feed: list[FeedVideoDTO] = []
         self._channel_infos: list[ChannelInfoDTO] = []
         self._workers: list[_FeedWorker] = []
+        self._gen: int = 0   # 요청 세대 — 최신 요청 결과만 반영(이전 요청 무시)
 
     @property
     def feed(self) -> list[FeedVideoDTO]:
@@ -76,13 +77,26 @@ class FeedViewModel(QObject):
         return self._auth.get_ytdlp_opts() if self._auth else {}
 
     def _start(self, fetch: Callable[[], list], on_ok) -> None:
-        if self._workers:
-            return
+        # 진행 중 워커가 있어도 새 요청을 버리지 않는다(직전 클릭이 묻히는 버그 방지).
+        # 대신 세대 토큰으로 최신 요청 결과만 반영하고, 오래된 워커 결과는 무시한다.
+        self._gen += 1
+        gen = self._gen
         self.loading_changed.emit(True)
         worker = _FeedWorker(fetch, self)
-        worker.finished_ok.connect(on_ok)
-        worker.finished_err.connect(self._on_err)
-        worker.finished.connect(lambda: self._workers.remove(worker))
+
+        def _ok(items, _g=gen):
+            if _g == self._gen:
+                on_ok(items)
+
+        def _err(msg, _g=gen):
+            if _g == self._gen:
+                self._on_err(msg)
+
+        worker.finished_ok.connect(_ok)
+        worker.finished_err.connect(_err)
+        worker.finished.connect(
+            lambda w=worker: self._workers.remove(w) if w in self._workers else None
+        )
         self._workers.append(worker)
         worker.start()
 

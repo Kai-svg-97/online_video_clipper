@@ -3183,13 +3183,17 @@ class LibraryPanel(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(2)
 
-        # 트리(상단) + 태그 섹션(하단)을 세로 스플리터로 묶는다. 태그 섹션은
-        # 카테고리 선택 시에만 보이며(_set_popular_tags_visible), 숨기면 스플리터가
-        # 그 공간을 트리에 넘겨 재생목록 트리가 더 넓게 표시된다.
-        left_splitter = QSplitter(Qt.Orientation.Vertical)
+        # 트리(상단) + 태그 섹션(하단)을 일반 세로 레이아웃으로 쌓는다. 태그 섹션은
+        # 카테고리 선택 시에만 보이며(_set_popular_tags_visible), 숨기면 트리가 그
+        # 공간을 차지한다. (이전에는 QSplitter로 묶었으나, 스플리터 자식의 가시성
+        # 토글이 레이아웃 재분배 thrash → 깜빡임·프리징을 유발해 일반 레이아웃으로 교체.)
+        nav_container = QWidget()
+        nav_layout = QVBoxLayout(nav_container)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setSpacing(4)
         self._playlist_panel = _PlaylistPanel()
         self._apply_sidebar_tree_style()
-        left_splitter.addWidget(self._playlist_panel)
+        nav_layout.addWidget(self._playlist_panel, stretch=2)
 
         self._tag_section = QWidget()
         tag_section_layout = QVBoxLayout(self._tag_section)
@@ -3221,10 +3225,8 @@ class LibraryPanel(QWidget):
         self._tag_list = _TagListWidget()
         tag_section_layout.addWidget(self._tag_list)
 
-        left_splitter.addWidget(self._tag_section)
-        left_splitter.setStretchFactor(0, 2)
-        left_splitter.setStretchFactor(1, 1)
-        left_layout.addWidget(left_splitter, stretch=1)
+        nav_layout.addWidget(self._tag_section, stretch=1)
+        left_layout.addWidget(nav_container, stretch=1)
 
         # ── 스마트 폴더 섹션 ──
         sf_header_row = QHBoxLayout()
@@ -3942,7 +3944,32 @@ class LibraryPanel(QWidget):
             prefix, root_val = "로컬", "root"
         return [(prefix, root_val), (folder.name, None)]
 
+    def _channel_name_for_url(self, url: str) -> str:
+        """구독 URL로 채널 표시명을 조회한다(브레드크럼용)."""
+        if not url or self._monitoring_vm is None:
+            return ""
+        for s in self._monitoring_vm.subscriptions:
+            if s.channel_url == url:
+                return s.channel_name
+        return ""
+
     def _refresh_breadcrumb(self) -> None:
+        # 구독 채널/피드 뷰는 _current_playlist_id/_current_folder_id가 None이라
+        # 카테고리 분기로 빠지므로(stale 경로), 뷰 기반으로 먼저 처리한다.
+        view = self._view_stack.currentIndex()
+        if view == _VIEW_CHANNELS:
+            self._breadcrumb_bar.update_path(
+                [("YouTube", "section:youtube"), ("구독 채널", None)], [])
+            return
+        if view == _VIEW_FEED:
+            if self._feed_show_channel:
+                segments = [("YouTube", "section:youtube"), ("전체 구독 피드", None)]
+            else:
+                name = self._channel_name_for_url(self._current_channel_url) or "채널"
+                segments = [("YouTube", "section:youtube"),
+                            ("구독 채널", "channels_root"), (name, None)]
+            self._breadcrumb_bar.update_path(segments, [])
+            return
         if self._current_playlist_id is not None:
             segments = self._build_playlist_breadcrumb_segments(self._current_playlist_id)
             self._breadcrumb_bar.update_path(segments, [])
@@ -3960,6 +3987,8 @@ class LibraryPanel(QWidget):
             self._on_folder_selected(val[1])
         elif isinstance(val, UUID):
             self._on_cat_filter_changed(val)
+        elif val == "channels_root":
+            self._on_channels_root_selected()
         elif isinstance(val, str) and val.startswith("section:"):
             # "section:youtube" 또는 "section:local" → 섹션 루트 뷰 (폴더+미분류 카드)
             self._on_section_root_selected(val.split(":", 1)[1])
@@ -5160,6 +5189,7 @@ class LibraryPanel(QWidget):
         channels = [(s.channel_id, s.channel_name, s.channel_url) for s in subs]
         self._current_playlist_id = None
         self._current_folder_id = None
+        self._current_cat_id = None
         self._set_popular_tags_visible(False)
         self._channels_status.setText("로딩 중…" if channels else "구독 중인 채널이 없습니다.")
         self._channels_status.setVisible(True)
@@ -5196,6 +5226,7 @@ class LibraryPanel(QWidget):
         self._leave_detail_if_open()
         self._current_playlist_id = None
         self._current_folder_id = None
+        self._current_cat_id = None
         self._current_channel_url = channel_url
         self._feed_show_channel = False   # 이미 채널을 아는 화면이라 채널명 숨김
         self._set_popular_tags_visible(False)
@@ -5211,6 +5242,7 @@ class LibraryPanel(QWidget):
         self._leave_detail_if_open()
         self._current_playlist_id = None
         self._current_folder_id = None
+        self._current_cat_id = None
         self._feed_show_channel = True    # 여러 채널이 섞이므로 채널명 표시
         self._set_popular_tags_visible(False)
         self._show_feed_view("로딩 중…")
