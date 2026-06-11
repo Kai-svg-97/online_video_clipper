@@ -49,8 +49,12 @@ class YouTubeApiAdapter:
     """
 
     def __init__(self, credentials) -> None:
+        import threading  # noqa: PLC0415
         self._creds = credentials
         self._session = None
+        # get_latest_upload_dates의 ThreadPoolExecutor가 공유 세션·자격증명을 동시 사용하므로
+        # 토큰 갱신(creds.refresh)은 스레드 안전하지 않다 → 락으로 직렬화한다.
+        self._token_lock = threading.Lock()
 
     # ── HTTP 헬퍼 ────────────────────────────────────────────────────────────
 
@@ -65,19 +69,21 @@ class YouTubeApiAdapter:
         return self._session
 
     def _ensure_token(self):
-        """액세스 토큰이 유효한지 확인하고, 만료됐으면 갱신한다."""
-        if not self._creds.valid:
-            from google.auth.transport.requests import Request as _GReq
-            self._creds.refresh(_GReq(session=self._get_session()))
+        """액세스 토큰이 유효한지 확인하고, 만료됐으면 갱신한다(스레드 안전)."""
+        with self._token_lock:
+            if not self._creds.valid:
+                from google.auth.transport.requests import Request as _GReq  # noqa: PLC0415
+                self._creds.refresh(_GReq(session=self._get_session()))
 
     def _hdrs(self) -> dict:
         self._ensure_token()
         return {"Authorization": f"Bearer {self._creds.token}"}
 
     def _force_refresh(self):
-        """액세스 토큰을 강제로 갱신한다 (401 재시도용)."""
+        """액세스 토큰을 강제로 갱신한다 (401 재시도용, 스레드 안전)."""
         from google.auth.transport.requests import Request as _GReq  # noqa: PLC0415
-        self._creds.refresh(_GReq(session=self._get_session()))
+        with self._token_lock:
+            self._creds.refresh(_GReq(session=self._get_session()))
 
     def _get(self, resource: str, params: dict) -> dict:
         r = self._get_session().get(
@@ -350,8 +356,14 @@ class YouTubeApiAdapter:
                 if items:
                     iso = items[0].get("contentDetails", {}).get("videoPublishedAt", "")
                     return cid, iso or ""
-            except Exception:
-                logger.exception("채널 최신 업로드 시각 조회 실패: %s", cid)
+            except Exception as exc:
+                # 업로드 재생목록이 비활성/빈 채널은 404가 정상적으로 발생한다.
+                # 채널 단위로 무시되는 비치명적 실패이므로 조용히(debug) 남긴다.
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status == 404:
+                    logger.debug("채널 업로드 재생목록 없음(404): %s", cid)
+                else:
+                    logger.debug("채널 최신 업로드 시각 조회 실패: %s (%s)", cid, exc)
             return cid, ""
 
         out: dict[str, str] = {}

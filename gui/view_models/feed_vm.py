@@ -64,6 +64,7 @@ class FeedViewModel(QObject):
         self._channel_infos: list[ChannelInfoDTO] = []
         self._workers: list[_FeedWorker] = []
         self._gen: int = 0   # 요청 세대 — 최신 요청 결과만 반영(이전 요청 무시)
+        self._pending: tuple | None = None   # 진행 중일 때 보류된 최신 요청
 
     @property
     def feed(self) -> list[FeedVideoDTO]:
@@ -77,28 +78,42 @@ class FeedViewModel(QObject):
         return self._auth.get_ytdlp_opts() if self._auth else {}
 
     def _start(self, fetch: Callable[[], list], on_ok) -> None:
-        # 진행 중 워커가 있어도 새 요청을 버리지 않는다(직전 클릭이 묻히는 버그 방지).
-        # 대신 세대 토큰으로 최신 요청 결과만 반영하고, 오래된 워커 결과는 무시한다.
+        # 한 번에 워커 하나만 실행한다(공유 세션 동시 과부하·hang 방지). 진행 중이면
+        # 새 요청을 버리지 않고 '최신 보류'로 저장해 두었다가, 현재 워커가 끝나면 실행한다.
+        # 세대 토큰으로 오래된 결과는 무시(최신 요청만 반영).
         self._gen += 1
         gen = self._gen
+        if self._workers:
+            self._pending = (fetch, on_ok, gen)   # 이전 보류는 덮어씀(최신만 유지)
+            return
+        self._run(fetch, on_ok, gen)
+
+    def _run(self, fetch: Callable[[], list], on_ok, gen: int) -> None:
         self.loading_changed.emit(True)
         worker = _FeedWorker(fetch, self)
-
-        def _ok(items, _g=gen):
-            if _g == self._gen:
-                on_ok(items)
-
-        def _err(msg, _g=gen):
-            if _g == self._gen:
-                self._on_err(msg)
-
-        worker.finished_ok.connect(_ok)
-        worker.finished_err.connect(_err)
-        worker.finished.connect(
-            lambda w=worker: self._workers.remove(w) if w in self._workers else None
-        )
+        worker.finished_ok.connect(lambda items, _g=gen, _ok=on_ok: self._finish_ok(items, _ok, _g))
+        worker.finished_err.connect(lambda msg, _g=gen: self._finish_err(msg, _g))
+        worker.finished.connect(lambda w=worker: self._drain(w))
         self._workers.append(worker)
         worker.start()
+
+    def _finish_ok(self, items, on_ok, gen: int) -> None:
+        if gen == self._gen:
+            on_ok(items)   # 데이터 세팅 + feed_changed/channel_infos_changed 방출
+
+    def _finish_err(self, msg: str, gen: int) -> None:
+        if gen == self._gen:
+            self.error_occurred.emit(msg)
+
+    def _drain(self, worker) -> None:
+        if worker in self._workers:
+            self._workers.remove(worker)
+        if self._pending is not None and not self._workers:
+            fetch, on_ok, gen = self._pending
+            self._pending = None
+            self._run(fetch, on_ok, gen)
+        elif not self._workers:
+            self.loading_changed.emit(False)   # 모든 워커 종료 → 로딩 상태 1회만 해제
 
     def refresh(self, limit: int = 100) -> None:
         """전체 구독 피드를 가져온다."""
@@ -141,20 +156,16 @@ class FeedViewModel(QObject):
         )
 
     def _on_ok(self, items: list[FeedVideoDTO]) -> None:
+        # loading_changed(False)는 _drain이 (보류 포함) 모든 워커 종료 시 1회 방출한다.
         self._feed = items
-        self.loading_changed.emit(False)
         self.feed_changed.emit()
 
     def _on_infos_ok(self, items: list[ChannelInfoDTO]) -> None:
         self._channel_infos = items
-        self.loading_changed.emit(False)
         self.channel_infos_changed.emit()
-
-    def _on_err(self, err: str) -> None:
-        self.loading_changed.emit(False)
-        self.error_occurred.emit(err)
 
     def shutdown(self) -> None:
         """종료 시 진행 중인 워커를 정리한다 (MainWindow.closeEvent에서 호출)."""
+        self._pending = None
         for worker in list(self._workers):
             worker.wait(3000)
