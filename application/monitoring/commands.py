@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -62,6 +63,10 @@ class SubscribeChannelHandler:
                 )
             except Exception:
                 logger.exception("채널 메타데이터 조회 실패")
+                # yt-dlp 실패 시에도 /channel/UCxxx 형식 URL이면 ID 추출 가능
+                m = re.search(r"/channel/(UC[A-Za-z0-9_-]+)", cmd.channel_url)
+                if m:
+                    channel_id = m.group(1)
 
         # 멱등성: 이미 구독 중인 채널이면 기존 구독을 그대로 반환한다.
         # (channel_id는 UNIQUE이므로 새 UUID로 재삽입하면 IntegrityError가 난다.)

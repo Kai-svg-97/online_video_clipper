@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -290,12 +291,21 @@ class GetSubscribedChannelInfosHandler:
     def __init__(self, yt_api=None) -> None:  # YouTubeApiAdapter | None
         self._yt_api = yt_api
 
+    @staticmethod
+    def _norm_channel_id(raw: str) -> str:
+        """https://www.youtube.com/channel/UCxxx 형식이면 UCxxx만 추출."""
+        m = re.search(r"/channel/(UC[A-Za-z0-9_-]+)", raw)
+        return m.group(1) if m else raw
+
     def handle(self, query: GetSubscribedChannelInfosQuery) -> list["ChannelInfoDTO"]:
         from application.library.dtos import ChannelInfoDTO  # noqa: PLC0415
 
+        # DB에 URL 형식으로 저장된 channel_id를 UCxxx 형식으로 정규화
+        norm_map = {cid: self._norm_channel_id(cid) for cid, _, _ in query.channels}
+
         info_by_id: dict[str, dict] = {}
         if self._yt_api is not None:
-            ids = [cid for cid, _, _ in query.channels if cid.startswith("UC")]
+            ids = list({norm for norm in norm_map.values() if norm.startswith("UC")})
             if ids:
                 try:
                     info_by_id = self._yt_api.list_channels(ids)
@@ -319,16 +329,17 @@ class GetSubscribedChannelInfosHandler:
 
         result: list[ChannelInfoDTO] = []
         for cid, name, url in query.channels:
-            info = info_by_id.get(cid, {})
+            norm_id = norm_map.get(cid, cid)
+            info = info_by_id.get(norm_id, {})
             result.append(
                 ChannelInfoDTO(
-                    channel_id=cid,
+                    channel_id=norm_id,
                     channel_name=info.get("title") or name,
                     channel_url=url,
                     thumbnail_url=info.get("thumbnail") or "",
                     subscriber_count=info.get("subscriber_count"),
                     video_count=info.get("video_count"),
-                    latest_video_published_at=latest_by_id.get(cid) or None,
+                    latest_video_published_at=latest_by_id.get(norm_id) or None,
                 )
             )
         # 정렬: 최신 영상 게시일 내림차순(최신 먼저), 게시일 없는 채널은 뒤로.
