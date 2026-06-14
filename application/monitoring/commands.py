@@ -49,6 +49,11 @@ class SubscribeChannelHandler:
         channel_id = cmd.channel_id or cmd.channel_url
         channel_name = cmd.channel_name or cmd.channel_url
 
+        # URL 형식 channel_id 정규화 (https://youtube.com/channel/UCxxx → UCxxx)
+        _m = re.search(r"/channel/(UC[A-Za-z0-9_-]+)", channel_id)
+        if _m:
+            channel_id = _m.group(1)
+
         # id가 주어지지 않은 수동 URL 구독에서만 메타데이터를 1회 조회한다.
         # 일괄 가져오기는 API/yt-dlp가 이미 id·name을 제공하므로 조회를 건너뛴다.
         if cmd.channel_id is None and self._ytdlp:

@@ -159,6 +159,21 @@ class GetSubscriptionFeedHandler:
             limit=query.limit,
             cookie_opts=query.cookie_opts,
         )
+        # yt-dlp 쿠키 인증 없이 빈 결과인 경우 YouTube API로 fallback
+        if not entries and self._yt_api is not None and self._channel_repo is not None:
+            logger.debug("구독 피드 yt-dlp 결과 없음 — YouTube API로 fallback")
+            try:
+                channel_ids = [
+                    agg.subscription.channel_id
+                    for agg in self._channel_repo.list_active()
+                    if agg.subscription.channel_id
+                ]
+                if channel_ids:
+                    entries = self._yt_api.get_subscription_feed_via_api(
+                        channel_ids, per_channel=3, limit=query.limit
+                    )
+            except Exception:
+                logger.exception("YouTube API 피드 fallback 실패")
         # 영상 ID → 채널 정보 (YouTube API 역조회)
         ch_by_vid: dict[str, dict] = {}
         if self._yt_api is not None:
@@ -328,8 +343,12 @@ class GetSubscribedChannelInfosHandler:
                     logger.exception("채널 최신 업로드 시각 조회 실패")
 
         result: list[ChannelInfoDTO] = []
+        seen_ids: set[str] = set()
         for cid, name, url in query.channels:
             norm_id = norm_map.get(cid, cid)
+            if norm_id in seen_ids:
+                continue  # 같은 UC ID 중복(URL 형식 + UCxxx 동시 저장) 건너뜀
+            seen_ids.add(norm_id)
             info = info_by_id.get(norm_id, {})
             result.append(
                 ChannelInfoDTO(

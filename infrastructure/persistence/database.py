@@ -27,6 +27,39 @@ class Database:
             conn.executescript(schema_sql)
         self._migrate_normalize_urls()
         self._migrate_playlist_schema()
+        self._migrate_channel_ids()
+
+    def _migrate_channel_ids(self) -> None:
+        """channel_subscriptions의 URL 형식 channel_id를 UCxxx로 정규화 (idempotent).
+
+        같은 UC ID 레코드가 이미 존재하면 URL 형식 레코드를 삭제해 중복 제거.
+        """
+        import re  # noqa: PLC0415
+
+        def _norm(raw: str) -> str:
+            m = re.search(r"/channel/(UC[A-Za-z0-9_-]+)", raw)
+            return m.group(1) if m else raw
+
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT id, channel_id FROM channel_subscriptions WHERE channel_id LIKE 'https://%'"
+            ).fetchall()
+            for row in rows:
+                uc_id = _norm(row["channel_id"])
+                if uc_id == row["channel_id"]:
+                    continue
+                existing = conn.execute(
+                    "SELECT id FROM channel_subscriptions WHERE channel_id=?", (uc_id,)
+                ).fetchone()
+                if existing:
+                    conn.execute("DELETE FROM channel_subscriptions WHERE id=?", (row["id"],))
+                    logger.info("중복 채널 구독 레코드 제거: %s (UC 형식 레코드 유지)", row["channel_id"])
+                else:
+                    conn.execute(
+                        "UPDATE channel_subscriptions SET channel_id=? WHERE id=?",
+                        (uc_id, row["id"]),
+                    )
+                    logger.info("채널 구독 ID 정규화: %s → %s", row["channel_id"], uc_id)
 
     def _migrate_playlist_schema(self) -> None:
         """플레이리스트 스키마 컬럼 추가 (idempotent ALTER TABLE)."""

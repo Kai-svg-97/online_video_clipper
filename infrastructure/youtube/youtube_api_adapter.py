@@ -373,6 +373,96 @@ class YouTubeApiAdapter:
                     out[cid] = iso
         return out
 
+    def get_subscription_feed_via_api(
+        self,
+        channel_ids: list[str],
+        per_channel: int = 5,
+        limit: int = 100,
+    ) -> list[dict]:
+        """구독 채널의 최신 영상을 YouTube API로 가져온다 (yt-dlp 쿠키 없을 때 fallback).
+
+        channels.list → 각 채널 playlistItems.list → videos.list 순으로 호출.
+        """
+        from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+        ids = [c for c in channel_ids if c and c.startswith("UC")]
+        if not ids:
+            return []
+
+        # 1단계: uploads_playlist_id + 채널명 가져오기
+        channel_info = self.list_channels(ids)
+        uploads: dict[str, tuple[str, str]] = {}
+        for cid, info in channel_info.items():
+            pl = info.get("uploads_playlist_id", "")
+            if pl:
+                uploads[cid] = (pl, info.get("title", ""))
+
+        if not uploads:
+            return []
+
+        # 2단계: 각 채널에서 최신 per_channel개 영상 가져오기 (병렬)
+        try:
+            self._ensure_token()
+        except Exception:
+            logger.exception("토큰 갱신 실패 — 피드 API 조회 계속 진행")
+
+        def _fetch_items(cid_pl: tuple[str, tuple[str, str]]) -> list[dict]:
+            cid, (pl, ch_name) = cid_pl
+            try:
+                resp = self._get(
+                    "playlistItems",
+                    {"part": "snippet,contentDetails", "playlistId": pl, "maxResults": per_channel},
+                )
+                items = []
+                for item in resp.get("items", []):
+                    snippet = item.get("snippet", {})
+                    content = item.get("contentDetails", {})
+                    vid = content.get("videoId") or snippet.get("resourceId", {}).get("videoId", "")
+                    if not vid:
+                        continue
+                    pub_at = content.get("videoPublishedAt", "")
+                    thumbs = snippet.get("thumbnails", {})
+                    thumb = (thumbs.get("medium") or thumbs.get("default") or {}).get("url") or ""
+                    items.append({
+                        "url": f"https://www.youtube.com/watch?v={vid}",
+                        "yt_video_id": vid,
+                        "title": snippet.get("title", ""),
+                        "channel_name": ch_name,
+                        "channel_id": cid,
+                        "thumbnail": thumb or f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg",
+                        "published_at": pub_at,
+                        "view_count": None,
+                        "duration_sec": None,
+                    })
+                return items
+            except Exception as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status == 404:
+                    logger.debug("채널 업로드 재생목록 없음(404): %s", cid)
+                else:
+                    logger.debug("피드 플레이리스트 조회 실패: %s (%s)", cid, exc)
+                return []
+
+        all_entries: list[dict] = []
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for batch in ex.map(_fetch_items, uploads.items()):
+                all_entries.extend(batch)
+
+        # 3단계: videos.list로 조회수/길이 보강
+        if all_entries:
+            vids = [e["yt_video_id"] for e in all_entries]
+            meta = self.get_videos_channels(vids)
+            for e in all_entries:
+                m = meta.get(e["yt_video_id"], {})
+                if m.get("view_count") is not None:
+                    e["view_count"] = m["view_count"]
+                if m.get("duration_sec") is not None:
+                    e["duration_sec"] = m["duration_sec"]
+
+        # 4단계: 날짜 내림차순 정렬 후 limit개 반환
+        all_entries.sort(key=lambda x: x.get("published_at") or "", reverse=True)
+        return all_entries[:limit]
+
     def list_playlists(self) -> list[dict]:
         """내 YouTube 재생목록 목록 반환.
 
