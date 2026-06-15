@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from collections import OrderedDict
 from uuid import UUID
 
 import requests
@@ -36,6 +38,34 @@ if TYPE_CHECKING:
     from gui.view_models.playlist_vm import PlaylistViewModel
 
 logger = logging.getLogger(__name__)
+
+# 동시 썸네일 다운로드 스레드 상한 — 피드 100개 카드 진입 시 스레드 폭발 방지
+_THUMB_SEMA = threading.Semaphore(10)
+
+
+class _ThumbnailCache:
+    """스크롤·재진입 시 QPixmap 재변환을 방지하는 LRU 인메모리 캐시."""
+
+    def __init__(self, maxsize: int = 150) -> None:
+        self._cache: OrderedDict = OrderedDict()
+        self._maxsize = maxsize
+
+    def get(self, key: str):
+        if key not in self._cache:
+            return None
+        self._cache.move_to_end(key)
+        return self._cache[key]
+
+    def put(self, key: str, pixmap) -> None:
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        else:
+            if len(self._cache) >= self._maxsize:
+                self._cache.popitem(last=False)
+            self._cache[key] = pixmap
+
+
+_feed_thumb_cache = _ThumbnailCache(maxsize=150)
 
 
 # ---------------------------------------------------------------------------
@@ -114,37 +144,38 @@ class _ThumbLoader(QThread):
 
     def run(self) -> None:
         sw, sh = self._size
-        for ext in ("jpg", "jpeg", "webp", "png"):
-            cached = THUMBNAIL_DIR / f"{self._prefix}_{self._vid}.{ext}"
-            if cached.exists():
-                img = QImage(str(cached))
+        with _THUMB_SEMA:
+            for ext in ("jpg", "jpeg", "webp", "png"):
+                cached = THUMBNAIL_DIR / f"{self._prefix}_{self._vid}.{ext}"
+                if cached.exists():
+                    img = QImage(str(cached))
+                    if not img.isNull():
+                        self.loaded.emit(self._vid, img.scaled(
+                            sw, sh,
+                            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                            Qt.TransformationMode.SmoothTransformation,
+                        ))
+                        return
+            if not self._url:
+                return
+            try:
+                resp = requests.get(self._url, timeout=10)
+                resp.raise_for_status()
+                img = QImage()
+                img.loadFromData(resp.content)
                 if not img.isNull():
+                    THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
+                    ext = self._url.rsplit(".", 1)[-1].split("?")[0].lower()
+                    if ext not in ("jpg", "jpeg", "png", "webp"):
+                        ext = "jpg"
+                    (THUMBNAIL_DIR / f"{self._prefix}_{self._vid}.{ext}").write_bytes(resp.content)
                     self.loaded.emit(self._vid, img.scaled(
                         sw, sh,
                         Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                         Qt.TransformationMode.SmoothTransformation,
                     ))
-                    return
-        if not self._url:
-            return
-        try:
-            resp = requests.get(self._url, timeout=10)
-            resp.raise_for_status()
-            img = QImage()
-            img.loadFromData(resp.content)
-            if not img.isNull():
-                THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
-                ext = self._url.rsplit(".", 1)[-1].split("?")[0].lower()
-                if ext not in ("jpg", "jpeg", "png", "webp"):
-                    ext = "jpg"
-                (THUMBNAIL_DIR / f"{self._prefix}_{self._vid}.{ext}").write_bytes(resp.content)
-                self.loaded.emit(self._vid, img.scaled(
-                    sw, sh,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation,
-                ))
-        except Exception:
-            logger.exception("썸네일 다운로드/디코딩 실패")
+            except Exception:
+                logger.exception("썸네일 다운로드/디코딩 실패")
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +437,12 @@ class _FeedCard(QFrame):
         vid_id = self._dto.yt_video_id or self._dto.url.split("v=")[-1].split("&")[0][:11]
         if not vid_id:
             return
+        cache_key = f"{vid_id}@{self._TW}x{self._TH}"
+        cached_px = _feed_thumb_cache.get(cache_key)
+        if cached_px is not None:
+            self._thumb_lbl._pixmap = cached_px
+            self._thumb_lbl.update()
+            return
         for ext in ("jpg", "jpeg", "webp", "png"):
             cached = THUMBNAIL_DIR / f"feed_{vid_id}.{ext}"
             if cached.exists():
@@ -417,11 +454,20 @@ class _FeedCard(QFrame):
         if not url:
             return
         self._loader = _ThumbLoader(url, vid_id)
-        self._loader.loaded.connect(self._on_thumb_loaded)
+        self._loader.loaded.connect(lambda vid, im, key=cache_key: self._on_thumb_loaded(vid, im, key))
         self._loader.start()
 
-    def _on_thumb_loaded(self, _vid_id: str, img: QImage) -> None:
-        self._thumb_lbl.set_image(img)
+    def _on_thumb_loaded(self, _vid_id: str, img: QImage, cache_key: str = "") -> None:
+        from PyQt6.QtGui import QPixmap  # noqa: PLC0415
+        px = QPixmap.fromImage(img).scaled(
+            self._TW, self._TH,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        if cache_key:
+            _feed_thumb_cache.put(cache_key, px)
+        self._thumb_lbl._pixmap = px
+        self._thumb_lbl.update()
 
     # ── 단일 클릭: 상세화면으로 진입 (수식키 없는 좌클릭) ──
     def mouseReleaseEvent(self, event) -> None:
@@ -611,11 +657,31 @@ class _ChannelCard(QFrame):
     def _start_avatar_load(self) -> None:
         if not self._dto.channel_id:
             return
+        cache_key = f"ch_{self._dto.channel_id}@{self._AVATAR}x{self._AVATAR}"
+        cached_px = _feed_thumb_cache.get(cache_key)
+        if cached_px is not None:
+            self._avatar._pixmap = cached_px
+            self._avatar.update()
+            return
+        if not self._dto.thumbnail_url:
+            return
         self._loader = _ThumbLoader(
             self._dto.thumbnail_url, self._dto.channel_id,
             prefix="channel", size=(self._AVATAR, self._AVATAR),
         )
-        self._loader.loaded.connect(lambda _id, img: self._avatar.set_image(img))
+
+        def _on_loaded(_id: str, img: QImage, key: str = cache_key) -> None:
+            from PyQt6.QtGui import QPixmap  # noqa: PLC0415
+            px = QPixmap.fromImage(img).scaled(
+                self._AVATAR, self._AVATAR,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            _feed_thumb_cache.put(key, px)
+            self._avatar._pixmap = px
+            self._avatar.update()
+
+        self._loader.loaded.connect(_on_loaded)
         self._loader.start()
 
     def mouseReleaseEvent(self, event) -> None:

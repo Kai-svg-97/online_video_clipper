@@ -26,6 +26,8 @@ from application.library.commands import (
     MoveCategoryHandler,
     RefreshCategoryMetadataCommand,
     RefreshCategoryMetadataHandler,
+    RefreshVideoThumbnailCommand,
+    RefreshVideoThumbnailHandler,
     RenameCategoryCommand,
     RenameCategoryHandler,
     SetCategoryVideoOrderCommand,
@@ -98,6 +100,48 @@ class _ImportYTToCatWorker(QThread):
             self.finished_err.emit(str(exc))
 
 
+class _ListVideosWorker(QThread):
+    """_refresh_videos()를 백그라운드 스레드에서 실행한다."""
+    finished_ok  = pyqtSignal(list, bool)   # (videos, append)
+    finished_err = pyqtSignal(str)
+
+    def __init__(self, fetch_fn, append: bool, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._fetch = fetch_fn
+        self._append = append
+
+    def run(self) -> None:
+        try:
+            results = self._fetch()
+            self.finished_ok.emit(results, self._append)
+        except Exception as exc:
+            self.finished_err.emit(str(exc))
+
+
+class _RefreshThumbnailWorker(QThread):
+    """단일 영상의 썸네일을 백그라운드에서 갱신한다."""
+    finished_ok  = pyqtSignal(object, str)   # (video_id: UUID, new_path: str)
+    finished_err = pyqtSignal(str)
+
+    def __init__(
+        self,
+        handler: RefreshVideoThumbnailHandler,
+        cmd: RefreshVideoThumbnailCommand,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._handler = handler
+        self._cmd = cmd
+
+    def run(self) -> None:
+        try:
+            new_path = self._handler.handle(self._cmd)
+            if new_path:
+                self.finished_ok.emit(self._cmd.video_id, new_path)
+        except Exception as exc:
+            self.finished_err.emit(str(exc))
+
+
 class _RefreshMetadataWorker(QThread):
     progress = pyqtSignal(int, int)   # current, total
     finished_ok = pyqtSignal(int)     # count of refreshed videos
@@ -136,6 +180,7 @@ class LibraryViewModel(QObject):
     metadata_refresh_finished = pyqtSignal(int)        # count refreshed
     yt_import_progress  = pyqtSignal(int, int)         # current, total
     yt_import_finished  = pyqtSignal(int)              # 처리된 영상 수
+    thumbnail_refreshed = pyqtSignal(object, str)      # (video_id: UUID, new_path)
 
     def __init__(
         self,
@@ -159,6 +204,7 @@ class LibraryViewModel(QObject):
         get_category_order: GetCategoryVideoOrderHandler | None = None,
         set_category_order: SetCategoryVideoOrderHandler | None = None,
         import_yt_to_category: ImportYouTubePlaylistToCategoryHandler | None = None,
+        refresh_thumbnail: RefreshVideoThumbnailHandler | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -182,8 +228,12 @@ class LibraryViewModel(QObject):
         self._get_category_order = get_category_order
         self._set_category_order = set_category_order
         self._import_yt_to_category = import_yt_to_category
+        self._refresh_thumbnail_handler = refresh_thumbnail
         self._refresh_metadata_workers: list[_RefreshMetadataWorker] = []
         self._yt_import_workers: list[_ImportYTToCatWorker] = []
+        self._thumb_workers: list[_RefreshThumbnailWorker] = []
+        self._list_workers: list[_ListVideosWorker] = []
+        self._list_gen: int = 0
 
         self._videos: list[VideoDTO] = []
         self._categories: list[CategoryDTO] = []
@@ -214,6 +264,8 @@ class LibraryViewModel(QObject):
             *self._refresh_metadata_workers,
             *self._yt_import_workers,
             *self._add_workers,
+            *self._thumb_workers,
+            *self._list_workers,
         ]:
             if worker.isRunning():
                 worker.terminate()
@@ -221,6 +273,8 @@ class LibraryViewModel(QObject):
         self._refresh_metadata_workers.clear()
         self._yt_import_workers.clear()
         self._add_workers.clear()
+        self._thumb_workers.clear()
+        self._list_workers.clear()
 
     @property
     def videos(self) -> list[VideoDTO]:
@@ -287,9 +341,10 @@ class LibraryViewModel(QObject):
         self._filter_playlist_id = None
         self._filter_playlist_video_ids = []
         self._current_page = 0
-        self._refresh_videos()
         if category_id is not None:
-            self._apply_category_order(category_id)
+            self._refresh_videos(on_done=lambda: self._apply_category_order(category_id))
+        else:
+            self._refresh_videos()
 
     def _apply_category_order(self, category_id: UUID) -> None:
         """저장된 카테고리 순서가 있으면 영상 목록을 그 순서로 재정렬한다."""
@@ -506,60 +561,77 @@ class LibraryViewModel(QObject):
         self._current_page = 0
         self._refresh_videos()
 
-    def _refresh_videos(self, append: bool = False) -> None:
+    def _refresh_videos(self, append: bool = False, on_done=None) -> None:
+        """영상 목록을 백그라운드 스레드에서 비동기로 갱신한다.
+
+        on_done: 갱신 완료 후 메인 스레드에서 호출할 콜백(선택).
+        세대 토큰(_list_gen)으로 연속 빠른 전환 시 오래된 결과를 무시한다.
+        """
+        self._list_gen += 1
+        gen = self._list_gen
+
         offset = self._current_page * DEFAULT_PAGE_SIZE
         category_ids: list[UUID] = (
             self._resolve_category_ids(self._filter_category_id)
             if self._filter_category_id is not None
             else []
         )
-        # "로컬" 루트일 때만 카테고리 영상 한정 — 재생목록(video_ids) 뷰에는 적용 안 함
         categorized_only = (
             self._filter_categorized_only
             and self._filter_category_id is None
             and not self._filter_playlist_video_ids
         )
-        try:
-            if self._search_text:
-                results = self._search_videos.handle(
-                    SearchVideosQuery(
-                        text=self._search_text,
-                        category_ids=category_ids,
-                        tag_ids=self._filter_tag_ids,
-                        video_ids=self._filter_playlist_video_ids,
-                        categorized_only=categorized_only,
-                        favorite_only=self._filter_favorite_only,
-                        limit=DEFAULT_PAGE_SIZE,
-                        offset=offset,
-                        sort_by=self._sort_by,
-                        sort_asc=self._sort_asc,
-                        min_duration_sec=self._min_duration_sec,
-                        max_duration_sec=self._max_duration_sec,
-                    )
-                )
+
+        if self._search_text:
+            query = SearchVideosQuery(
+                text=self._search_text,
+                category_ids=category_ids,
+                tag_ids=self._filter_tag_ids,
+                video_ids=self._filter_playlist_video_ids,
+                categorized_only=categorized_only,
+                favorite_only=self._filter_favorite_only,
+                limit=DEFAULT_PAGE_SIZE,
+                offset=offset,
+                sort_by=self._sort_by,
+                sort_asc=self._sort_asc,
+                min_duration_sec=self._min_duration_sec,
+                max_duration_sec=self._max_duration_sec,
+            )
+            fetch = lambda: self._search_videos.handle(query)
+        else:
+            query = GetVideosQuery(
+                category_ids=category_ids,
+                tag_ids=self._filter_tag_ids,
+                video_ids=self._filter_playlist_video_ids,
+                categorized_only=categorized_only,
+                favorite_only=self._filter_favorite_only,
+                limit=DEFAULT_PAGE_SIZE,
+                offset=offset,
+                sort_by=self._sort_by,
+                sort_asc=self._sort_asc,
+                min_duration_sec=self._min_duration_sec,
+                max_duration_sec=self._max_duration_sec,
+            )
+            fetch = lambda: self._get_videos.handle(query)
+
+        worker = _ListVideosWorker(fetch, append, self)
+
+        def _on_ok(videos: list, app: bool) -> None:
+            if gen != self._list_gen:
+                return  # 더 새로운 요청이 있으면 오래된 결과 무시
+            if app:
+                self._videos.extend(videos)
             else:
-                results = self._get_videos.handle(
-                    GetVideosQuery(
-                        category_ids=category_ids,
-                        tag_ids=self._filter_tag_ids,
-                        video_ids=self._filter_playlist_video_ids,
-                        categorized_only=categorized_only,
-                        favorite_only=self._filter_favorite_only,
-                        limit=DEFAULT_PAGE_SIZE,
-                        offset=offset,
-                        sort_by=self._sort_by,
-                        sort_asc=self._sort_asc,
-                        min_duration_sec=self._min_duration_sec,
-                        max_duration_sec=self._max_duration_sec,
-                    )
-                )
-            if append:
-                self._videos.extend(results)
-            else:
-                self._videos = results
+                self._videos = videos
             self.videos_changed.emit()
-        except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            if on_done:
+                on_done()
+
+        worker.finished_ok.connect(_on_ok)
+        worker.finished_err.connect(self.error_occurred)
+        worker.finished.connect(lambda: self._list_workers.remove(worker) if worker in self._list_workers else None)
+        self._list_workers.append(worker)
+        worker.start()
 
     def _refresh_categories(self) -> None:
         self._categories = self._get_categories.handle()
@@ -661,3 +733,23 @@ class LibraryViewModel(QObject):
         # Emit a status-bar clear via a blank finished, then show the real error.
         self.video_add_finished.emit("")   # clears "영상 등록 중:" status message
         self.error_occurred.emit(error)
+
+    def request_thumbnail_refresh(self, video_id: UUID, video_url: str) -> None:
+        """상세화면 진입 시 1주일 경과 썸네일을 백그라운드에서 갱신한다.
+
+        YouTube 영상이 아니거나 handler가 미설정이면 무시한다.
+        """
+        if self._refresh_thumbnail_handler is None:
+            return
+        cmd = RefreshVideoThumbnailCommand(video_id=video_id, video_url=video_url)
+        worker = _RefreshThumbnailWorker(self._refresh_thumbnail_handler, cmd, self)
+
+        def _on_ok(vid_id: object, new_path: str) -> None:
+            self.thumbnail_refreshed.emit(vid_id, new_path)
+            self._refresh_videos()  # 그리드 썸네일 갱신
+
+        worker.finished_ok.connect(_on_ok)
+        worker.finished_err.connect(lambda err: logger.debug("썸네일 갱신 실패(무시): %s", err))
+        worker.finished.connect(lambda: self._thumb_workers.remove(worker) if worker in self._thumb_workers else None)
+        self._thumb_workers.append(worker)
+        worker.start()

@@ -73,11 +73,16 @@ CREATE TRIGGER IF NOT EXISTS videos_au AFTER UPDATE ON videos BEGIN
 END;
 
 -- Indexes
-CREATE INDEX IF NOT EXISTS idx_videos_category   ON videos(category_id);
-CREATE INDEX IF NOT EXISTS idx_videos_favorite   ON videos(favorite);
-CREATE INDEX IF NOT EXISTS idx_videos_watched    ON videos(watched);
-CREATE INDEX IF NOT EXISTS idx_videos_created_at ON videos(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_video_tags_tag    ON video_tags(tag_id);
+CREATE INDEX IF NOT EXISTS idx_videos_category    ON videos(category_id);
+CREATE INDEX IF NOT EXISTS idx_videos_favorite    ON videos(favorite);
+CREATE INDEX IF NOT EXISTS idx_videos_watched     ON videos(watched);
+CREATE INDEX IF NOT EXISTS idx_videos_created_at  ON videos(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_video_tags_tag     ON video_tags(tag_id);
+-- 정렬 가속 인덱스 (published_at·title·view_count·duration_sec ORDER BY 플랜에서 풀스캔 방지)
+CREATE INDEX IF NOT EXISTS idx_videos_published_at ON videos(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_videos_title        ON videos(title COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_videos_view_count   ON videos(view_count DESC);
+CREATE INDEX IF NOT EXISTS idx_videos_duration_sec ON videos(duration_sec);
 
 -- =========================================================
 -- Download context

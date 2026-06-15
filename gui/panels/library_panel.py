@@ -4118,6 +4118,7 @@ class LibraryPanel(QWidget):
         self._detail_widget.load(detail, tag_ids, resume_ms=0, related=related)
         self._current_detail_payload = video_id
         self._nav_stack.setCurrentIndex(1)
+        self._vm.request_thumbnail_refresh(video_id, detail.url)
 
     def _open_stream_detail(self, feed_dto) -> None:
         """구독 피드/채널의 스트리밍 영상 상세화면을 연다. 연관 목록 = 같은 채널의

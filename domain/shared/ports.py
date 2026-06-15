@@ -38,7 +38,11 @@ class IMediaSource(Protocol):
     def fetch_metadata(self, url: str) -> dict: ...
 
     def download_thumbnail(
-        self, video_id: UUID, thumbnail_url: str, force: bool = False
+        self,
+        video_id: UUID,
+        thumbnail_url: str,
+        force: bool = False,
+        max_age_days: int | None = None,
     ) -> str | None: ...
 
     def download(

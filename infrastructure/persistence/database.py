@@ -28,6 +28,7 @@ class Database:
         self._migrate_normalize_urls()
         self._migrate_playlist_schema()
         self._migrate_channel_ids()
+        self._migrate_sort_indexes()
 
     def _migrate_channel_ids(self) -> None:
         """channel_subscriptions의 URL 형식 channel_id를 UCxxx로 정규화 (idempotent).
@@ -60,6 +61,21 @@ class Database:
                         (uc_id, row["id"]),
                     )
                     logger.info("채널 구독 ID 정규화: %s → %s", row["channel_id"], uc_id)
+
+    def _migrate_sort_indexes(self) -> None:
+        """정렬 가속 인덱스를 추가한다 (idempotent — IF NOT EXISTS로 재실행 안전)."""
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_videos_published_at ON videos(published_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_videos_title        ON videos(title COLLATE NOCASE)",
+            "CREATE INDEX IF NOT EXISTS idx_videos_view_count   ON videos(view_count DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_videos_duration_sec ON videos(duration_sec)",
+        ]
+        with self.connection() as conn:
+            for sql in indexes:
+                try:
+                    conn.execute(sql)
+                except Exception:
+                    logger.debug("정렬 인덱스 생성 건너뜀: %s", sql)
 
     def _migrate_playlist_schema(self) -> None:
         """플레이리스트 스키마 컬럼 추가 (idempotent ALTER TABLE)."""

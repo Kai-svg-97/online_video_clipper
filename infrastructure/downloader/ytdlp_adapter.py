@@ -69,13 +69,20 @@ class YtDlpAdapter:
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False) or {}
 
-    def download_thumbnail(self, video_id: UUID, thumbnail_url: str, force: bool = False) -> str | None:
+    def download_thumbnail(
+        self,
+        video_id: UUID,
+        thumbnail_url: str,
+        force: bool = False,
+        max_age_days: int | None = None,
+    ) -> str | None:
         """Download thumbnail image; return relative filename or None on failure.
 
         Args:
             video_id: UUID of the video, used as the filename stem.
             thumbnail_url: Remote URL of the thumbnail image.
             force: When True, delete any existing cached file before downloading.
+            max_age_days: 파일이 이 일수보다 오래됐으면 강제 재다운로드.
         """
         if not thumbnail_url:
             return None
@@ -85,6 +92,11 @@ class YtDlpAdapter:
         dest = THUMBNAIL_DIR / filename
         if force:
             dest.unlink(missing_ok=True)
+        if not force and max_age_days is not None and dest.exists():
+            import time
+            age_days = (time.time() - dest.stat().st_mtime) / 86400
+            if age_days > max_age_days:
+                dest.unlink(missing_ok=True)
         if dest.exists():
             return filename
         try:

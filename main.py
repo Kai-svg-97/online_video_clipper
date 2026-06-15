@@ -33,6 +33,7 @@ from application.library.commands import (
     MarkWatchedHandler,
     MoveCategoryHandler,
     RefreshCategoryMetadataHandler,
+    RefreshVideoThumbnailHandler,
     RenameCategoryHandler,
     SetCategoryVideoOrderHandler,
     UpdateVideoHandler,
@@ -146,8 +147,9 @@ def main() -> int:
     get_tags            = GetTagsHandler(video_repo)
     get_video_detail    = GetVideoDetailHandler(video_repo, download_repo)
     stats_handler       = LibraryStatsHandler(video_repo, download_repo)
-    get_cat_order_h     = GetCategoryVideoOrderHandler(video_repo)
-    set_cat_order_h     = SetCategoryVideoOrderHandler(video_repo)
+    get_cat_order_h        = GetCategoryVideoOrderHandler(video_repo)
+    set_cat_order_h        = SetCategoryVideoOrderHandler(video_repo)
+    refresh_thumbnail_h    = RefreshVideoThumbnailHandler(video_repo, ytdlp)
     import_yt_to_cat_h = ImportYouTubePlaylistToCategoryHandler(
         video_repo, event_bus, ytdlp, add_video_handler=add_video
     )
@@ -237,6 +239,7 @@ def main() -> int:
         get_category_order=get_cat_order_h,
         set_category_order=set_cat_order_h,
         import_yt_to_category=import_yt_to_cat_h,
+        refresh_thumbnail=refresh_thumbnail_h,
     )
     get_yt_playlists_h = GetYouTubePlaylistsHandler(ytdlp, _yt_api)
     playlist_vm = PlaylistViewModel(

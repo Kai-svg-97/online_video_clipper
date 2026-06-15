@@ -540,6 +540,59 @@ class ImportYouTubePlaylistToCategoryCommand:
     on_progress: Callable[[int, int], None] | None = None
 
 
+@dataclass
+class RefreshVideoThumbnailCommand:
+    """영상 1개의 썸네일을 갱신한다.
+
+    YouTube 영상이면 video_url에서 video_id를 파생해 i.ytimg.com에서 재다운로드한다.
+    파일이 max_age_days 이내이면 갱신을 생략한다.
+    """
+    video_id: UUID
+    video_url: str
+    max_age_days: int = 7
+
+
+class RefreshVideoThumbnailHandler:
+    def __init__(self, repo: IVideoRepository, ytdlp: IMediaSource) -> None:
+        self._repo = repo
+        self._ytdlp = ytdlp
+
+    def handle(self, cmd: RefreshVideoThumbnailCommand) -> str | None:
+        """썸네일을 갱신한다. 새 파일 경로를 반환하거나 갱신 불필요/실패 시 None."""
+        agg = self._repo.get_by_id(cmd.video_id)
+        if agg is None:
+            return None
+
+        # YouTube 영상 ID 추출 (비 YouTube면 갱신 생략)
+        m = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", cmd.video_url)
+        if not m:
+            m = re.search(r"youtu\.be/([A-Za-z0-9_-]{11})", cmd.video_url)
+        if not m:
+            return None
+
+        vid = m.group(1)
+        thumb_url = f"https://i.ytimg.com/vi/{vid}/maxresdefault.jpg"
+
+        new_path = self._ytdlp.download_thumbnail(
+            cmd.video_id, thumb_url, max_age_days=cmd.max_age_days
+        )
+        if new_path is None:
+            # maxresdefault 실패 시 hqdefault fallback
+            hq_url = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+            new_path = self._ytdlp.download_thumbnail(
+                cmd.video_id, hq_url, max_age_days=cmd.max_age_days
+            )
+        if new_path is None:
+            return None
+
+        if new_path != agg.video.thumbnail_path:
+            agg.update_metadata(thumbnail_path=new_path)
+            self._repo.save(agg)
+            logger.info("썸네일 갱신 완료: %s → %s", cmd.video_id, new_path)
+
+        return new_path
+
+
 class ImportYouTubePlaylistToCategoryHandler:
     """YouTube 재생목록의 영상들을 라이브러리의 특정 카테고리로 가져온다.
 
