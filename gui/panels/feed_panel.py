@@ -688,6 +688,24 @@ class _ChannelCard(QFrame):
         if event.button() == Qt.MouseButton.LeftButton and self._dto.channel_url:
             self.channel_clicked.emit(self._dto.channel_url)
 
+    def update_meta(self, dto: ChannelInfoDTO) -> None:
+        """API 보강 데이터로 카드 내용을 in-place 갱신한다 (카드 재생성 없음)."""
+        self._dto = dto
+        self._name_lbl.setText(dto.channel_name)
+        meta_parts = []
+        subs = _fmt_count(dto.subscriber_count, "")
+        if subs:
+            meta_parts.append(f"구독자 {subs}")
+        vids = _fmt_count(dto.video_count, "")
+        if vids:
+            meta_parts.append(f"영상 {vids}")
+        self._meta_lbl.setText("  •  ".join(meta_parts))
+        rel = _relative_time(dto.latest_video_published_at)
+        self._latest_lbl.setText(f"최근 영상 {rel}" if rel else "")
+        self._latest_lbl.setVisible(bool(rel))
+        if dto.thumbnail_url and self._loader is None and not self._avatar._pixmap:
+            self._start_avatar_load()
+
     def _apply_theme(self, tok) -> None:
         self.setStyleSheet(f"""
             QFrame {{
@@ -733,6 +751,14 @@ class _ChannelGrid(QWidget):
             card.channel_clicked.connect(self.channel_clicked)
             self._layout.addWidget(card, i // self._cols, i % self._cols)
             self._cards.append(card)
+
+    def update_cards(self, dtos: list[ChannelInfoDTO]) -> None:
+        """channel_url 매핑으로 기존 카드를 in-place 업데이트한다 (카드 재생성 없음)."""
+        by_url = {dto.channel_url: dto for dto in dtos}
+        for card in self._cards:
+            dto = by_url.get(card._dto.channel_url)
+            if dto:
+                card.update_meta(dto)
 
     def _relayout(self) -> None:
         for i, card in enumerate(self._cards):

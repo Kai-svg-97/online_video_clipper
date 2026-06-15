@@ -5192,24 +5192,50 @@ class LibraryPanel(QWidget):
         self._current_folder_id = None
         self._current_cat_id = None
         self._set_popular_tags_visible(False)
-        self._channels_status.setText("로딩 중…" if channels else "구독 중인 채널이 없습니다.")
-        self._channels_status.setVisible(True)
         self._view_stack.setCurrentIndex(_VIEW_CHANNELS)
-        if channels:
-            self._feed_vm.load_channel_infos(channels)
+
+        if not channels:
+            self._channels_status.setText("구독 중인 채널이 없습니다.")
+            self._channels_status.setVisible(True)
+            self._refresh_breadcrumb()
+            return
+
+        # Phase 1: DB 정보만으로 예비 카드 즉시 표시 (API 없이)
+        from application.library.dtos import ChannelInfoDTO  # noqa: PLC0415
+        preliminary = sorted(
+            [
+                ChannelInfoDTO(
+                    channel_id=s.channel_id,
+                    channel_name=s.channel_name,
+                    channel_url=s.channel_url,
+                    thumbnail_url="",
+                    subscriber_count=None,
+                    video_count=None,
+                    latest_video_published_at=None,
+                )
+                for s in subs
+            ],
+            key=lambda c: c.channel_name.lower(),
+        )
+        self._channels_status.setVisible(False)
+        self._channel_grid.set_channels(preliminary)
+
+        # Phase 2: API로 보강 (백그라운드)
+        self._feed_vm.load_channel_infos(channels)
         self._refresh_breadcrumb()
 
     def _on_channel_infos_changed(self) -> None:
         if self._feed_vm is None:
             return
+        if self._view_stack.currentIndex() != _VIEW_CHANNELS:
+            return
         infos = self._feed_vm.channel_infos
-        self._channel_grid.set_channels(infos)
-        if self._view_stack.currentIndex() == _VIEW_CHANNELS:
-            if infos:
-                self._channels_status.hide()
-            else:
-                self._channels_status.setText("채널 정보를 가져오지 못했습니다.")
-                self._channels_status.show()
+        if not infos:
+            self._channels_status.setText("채널 정보를 가져오지 못했습니다.")
+            self._channels_status.show()
+            return
+        self._channels_status.hide()
+        self._channel_grid.update_cards(infos)   # 예비 카드 in-place 갱신 (카드 재생성 없음)
 
     def _show_feed_view(self, status: str | None = None) -> None:
         if status:
