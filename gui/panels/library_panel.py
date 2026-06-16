@@ -3227,6 +3227,7 @@ class LibraryPanel(QWidget):
         self._current_channel_url: str = ""      # 단일 채널 피드 복원용
         self._current_detail_payload: object = None  # 상세 화면 재진입용(UUID|FeedVideoDTO)
         self._thumb_load_gen: int = 0  # 썸네일 bg 로더 세대 (구 로더 UI 반영 방지용)
+        self._active_thumb_loaders: list = []  # GC 방지용 강한 참조 보관
         self._setup_ui()
         self._connect_signals()
         vm.load()
@@ -3597,8 +3598,17 @@ class LibraryPanel(QWidget):
         self._thumb_load_gen += 1
         gen = self._thumb_load_gen
         loader = _ThumbBgLoader(items)
+        self._active_thumb_loaders.append(loader)
+
+        def _on_loader_done(l=loader) -> None:
+            try:
+                self._active_thumb_loaders.remove(l)
+            except ValueError:
+                pass
+            l.deleteLater()
+
         loader.batch_ready.connect(lambda b, g=gen: self._on_thumb_batch(b, g))
-        loader.finished.connect(loader.deleteLater)
+        loader.finished.connect(_on_loader_done)
         loader.start()
 
     def _on_thumb_batch(self, batch: list, gen: int) -> None:
