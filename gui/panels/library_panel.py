@@ -3661,7 +3661,21 @@ class LibraryPanel(QWidget):
     def _set_popular_tags_visible(self, visible: bool) -> None:
         """태그 섹션(인기/전체 태그)은 카테고리 선택 시에만 보인다. 재생목록·폴더·
         피드·채널 뷰에서는 숨겨 재생목록 트리가 그 공간을 차지하도록 한다."""
+        if self._tag_section.isVisible() == visible:
+            return
+        # 태그 패널 토글 시 _playlist_panel 높이가 변하면서 내부 QSplitter가
+        # 3:2 비율로 재분배 → local_container(카테고리 트리)가 커져 yt_container
+        # (재생목록 트리) 시작점이 달라지는 현상 방지: 토글 전 local 높이를 저장해 복원.
+        local_sz = self._playlist_panel._splitter.sizes()[0]
         self._tag_section.setVisible(visible)
+        if local_sz > 0:
+            QTimer.singleShot(0, lambda sz=local_sz: self._restore_playlist_local_size(sz))
+
+    def _restore_playlist_local_size(self, local_sz: int) -> None:
+        splitter = self._playlist_panel._splitter
+        total = sum(splitter.sizes())
+        if total > 0:
+            splitter.setSizes([local_sz, max(0, total - local_sz)])
 
     def _refresh_popular_tags(self) -> None:
         from config.settings import load_hidden_tag_names  # noqa: PLC0415
