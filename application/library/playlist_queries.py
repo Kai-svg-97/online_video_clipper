@@ -154,7 +154,11 @@ class GetSubscriptionFeedHandler:
         self._channel_repo = channel_repo
         self._yt_api = yt_api
 
-    def handle(self, query: GetSubscriptionFeedQuery) -> list[FeedVideoDTO]:
+    def handle(
+        self,
+        query: GetSubscriptionFeedQuery,
+        on_progress=None,  # Optional[Callable[[list[FeedVideoDTO]], None]]
+    ) -> list[FeedVideoDTO]:
         entries = self._ytdlp.fetch_subscription_feed(
             limit=query.limit,
             cookie_opts=query.cookie_opts,
@@ -174,6 +178,36 @@ class GetSubscriptionFeedHandler:
                     )
             except Exception:
                 logger.exception("YouTube API 피드 fallback 실패")
+
+        # Phase 1: yt-dlp entries로 부분 DTO 즉시 방출 (views/dates 없음)
+        # API 보강이 완료되기 전에 제목·URL·thumbnail_url은 이미 사용 가능.
+        if on_progress and entries:
+            # channel_id→채널명 매핑 (구독 저장소에서 빠르게 확보 가능)
+            name_by_id_fast: dict[str, str] = {}
+            if self._channel_repo is not None:
+                for agg in self._channel_repo.list_active():
+                    sub = agg.subscription
+                    if sub.channel_id and sub.channel_name:
+                        name_by_id_fast[sub.channel_id] = sub.channel_name
+            partial: list[FeedVideoDTO] = []
+            for e in entries:
+                ch_id_fast = e.get("channel_id") or ""
+                partial.append(FeedVideoDTO(
+                    url=e.get("url") or "",
+                    title=e.get("title") or "",
+                    channel_name=e.get("channel_name") or name_by_id_fast.get(ch_id_fast, ""),
+                    channel_id=ch_id_fast,
+                    thumbnail_url=e.get("thumbnail") or "",
+                    thumbnail_path="",
+                    published_at="",
+                    view_count=None,
+                    duration_sec=e.get("duration_sec"),
+                    in_library=False,
+                    yt_video_id=e.get("yt_video_id") or e.get("id") or "",
+                ))
+            on_progress(partial)
+
+        # Phase 2: YouTube API 보강
         # 영상 ID → 채널 정보 (YouTube API 역조회)
         ch_by_vid: dict[str, dict] = {}
         if self._yt_api is not None:
@@ -244,13 +278,37 @@ class GetChannelVideosHandler:
         self._video_repo = video_repo
         self._yt_api = yt_api
 
-    def handle(self, query: GetChannelVideosQuery) -> list[FeedVideoDTO]:
+    def handle(
+        self,
+        query: GetChannelVideosQuery,
+        on_progress=None,  # Optional[Callable[[list[FeedVideoDTO]], None]]
+    ) -> list[FeedVideoDTO]:
         entries = self._ytdlp.fetch_channel_videos(
             channel_url=query.channel_url,
             limit=query.limit,
             cookie_opts=query.cookie_opts,
         )
-        # 플랫 추출은 게시일/조회수를 비워 주므로 영상 ID로 API 메타를 보강한다.
+
+        # Phase 1: yt-dlp entries로 부분 DTO 즉시 방출 (views/dates 없음)
+        if on_progress and entries:
+            partial: list[FeedVideoDTO] = []
+            for e in entries:
+                partial.append(FeedVideoDTO(
+                    url=e.get("url") or "",
+                    title=e.get("title") or "",
+                    channel_name=e.get("channel_name") or "",
+                    channel_id=e.get("channel_id") or "",
+                    thumbnail_url=e.get("thumbnail") or "",
+                    thumbnail_path="",
+                    published_at="",
+                    view_count=None,
+                    duration_sec=e.get("duration_sec"),
+                    in_library=False,
+                    yt_video_id=e.get("yt_video_id") or e.get("id") or "",
+                ))
+            on_progress(partial)
+
+        # Phase 2: 플랫 추출은 게시일/조회수를 비워 주므로 영상 ID로 API 메타를 보강한다.
         meta_by_vid: dict[str, dict] = {}
         if self._yt_api is not None:
             vids = [e.get("yt_video_id") or e.get("id") or "" for e in entries]

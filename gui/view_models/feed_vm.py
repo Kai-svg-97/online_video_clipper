@@ -24,6 +24,7 @@ class _FeedWorker(QThread):
 
     finished_ok = pyqtSignal(list)
     finished_err = pyqtSignal(str)
+    partial_ready = pyqtSignal(list)  # 부분 결과 배치 — Qt 큐드 시그널로 main thread 전달
 
     def __init__(
         self,
@@ -35,7 +36,9 @@ class _FeedWorker(QThread):
 
     def run(self) -> None:
         try:
-            result = self._fetch()
+            def on_progress(batch: list) -> None:
+                self.partial_ready.emit(list(batch))  # thread-safe: Qt queued connection
+            result = self._fetch(on_progress=on_progress)
             self.finished_ok.emit(result)
         except Exception as exc:
             self.finished_err.emit(str(exc))
@@ -43,6 +46,7 @@ class _FeedWorker(QThread):
 
 class FeedViewModel(QObject):
     feed_changed = pyqtSignal()
+    feed_batch_appended = pyqtSignal(list)  # list[FeedVideoDTO] — 부분 결과 배치
     channel_infos_changed = pyqtSignal()
     loading_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
@@ -94,6 +98,7 @@ class FeedViewModel(QObject):
         worker.finished_ok.connect(lambda items, _g=gen, _ok=on_ok: self._finish_ok(items, _ok, _g))
         worker.finished_err.connect(lambda msg, _g=gen: self._finish_err(msg, _g))
         worker.finished.connect(lambda w=worker: self._drain(w))
+        worker.partial_ready.connect(lambda batch, _g=gen: self._on_partial(batch, _g))
         self._workers.append(worker)
         worker.start()
 
@@ -119,8 +124,9 @@ class FeedViewModel(QObject):
         """전체 구독 피드를 가져온다."""
         cookie_opts = self._cookie_opts()
         self._start(
-            lambda: self._handler.handle(
-                GetSubscriptionFeedQuery(limit=limit, cookie_opts=cookie_opts)
+            lambda on_progress=None: self._handler.handle(
+                GetSubscriptionFeedQuery(limit=limit, cookie_opts=cookie_opts),
+                on_progress=on_progress,
             ),
             self._on_ok,
         )
@@ -132,10 +138,11 @@ class FeedViewModel(QObject):
             return
         cookie_opts = self._cookie_opts()
         self._start(
-            lambda: self._channel_handler.handle(
+            lambda on_progress=None: self._channel_handler.handle(
                 GetChannelVideosQuery(
                     channel_url=channel_url, limit=limit, cookie_opts=cookie_opts
-                )
+                ),
+                on_progress=on_progress,
             ),
             self._on_ok,
         )
@@ -149,11 +156,17 @@ class FeedViewModel(QObject):
             self.error_occurred.emit("채널 정보 조회 기능을 사용할 수 없습니다.")
             return
         self._start(
-            lambda: self._channel_infos_handler.handle(
+            lambda on_progress=None: self._channel_infos_handler.handle(
                 GetSubscribedChannelInfosQuery(channels=channels)
             ),
             self._on_infos_ok,
         )
+
+    def _on_partial(self, batch: list, gen: int) -> None:
+        """부분 결과 배치 수신 — gen 일치 시만 UI에 방출."""
+        if gen != self._gen:
+            return
+        self.feed_batch_appended.emit(batch)
 
     def _on_ok(self, items: list[FeedVideoDTO]) -> None:
         # loading_changed(False)는 _drain이 (보류 포함) 모든 워커 종료 시 1회 방출한다.

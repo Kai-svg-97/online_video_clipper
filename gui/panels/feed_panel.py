@@ -563,6 +563,25 @@ class _FeedGrid(QWidget):
             self._layout.addWidget(card, i // self._cols, i % self._cols)
             self._cards.append(card)
 
+    def append_feed(self, items: list[FeedVideoDTO], show_channel: bool = True) -> None:
+        """기존 카드를 유지하면서 새 항목만 추가한다 (부분 결과 스트리밍용)."""
+        if not items:
+            return
+        if self._cols == 0:
+            self._cols = self._calc_cols()
+        start = len(self._cards)
+        for i, dto in enumerate(items):
+            card = _FeedCard(dto, show_channel=show_channel)
+            card.add_to_category_requested.connect(self.add_to_category_requested)
+            card.add_to_playlist_requested.connect(self.add_to_playlist_requested)
+            card.download_requested.connect(self.download_requested)
+            card.video_clicked.connect(self.video_clicked)
+            if dto.duration_sec:
+                card._thumb_lbl.set_duration(_fmt_duration(dto.duration_sec))
+            row, col = divmod(start + i, self._cols)
+            self._layout.addWidget(card, row, col)
+            self._cards.append(card)
+
     def _relayout(self) -> None:
         """카드를 재생성하지 않고 현재 열 수에 맞춰 그리드 위치만 재배치한다."""
         for i, card in enumerate(self._cards):

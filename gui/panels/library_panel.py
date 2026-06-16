@@ -3226,6 +3226,8 @@ class LibraryPanel(QWidget):
         self._is_restoring: bool = False
         self._current_channel_url: str = ""      # 단일 채널 피드 복원용
         self._current_detail_payload: object = None  # 상세 화면 재진입용(UUID|FeedVideoDTO)
+        self._had_initial_feed: bool = False     # 재방문(캐시 즉시 표시) 여부 — batch append 분기용
+        self._last_channel_url: str = ""         # 직전 채널 URL — 재방문 캐시 표시 판별용
         self._thumb_load_gen: int = 0  # 썸네일 bg 로더 세대 (구 로더 UI 반영 방지용)
         self._active_thumb_loaders: list = []  # GC 방지용 강한 참조 보관
         self._setup_ui()
@@ -3503,6 +3505,7 @@ class LibraryPanel(QWidget):
         # 구독 피드 VM (구독 채널 트리에 통합)
         if self._feed_vm is not None:
             self._feed_vm.feed_changed.connect(self._on_feed_changed)
+            self._feed_vm.feed_batch_appended.connect(self._on_feed_batch_appended)
             self._feed_vm.channel_infos_changed.connect(self._on_channel_infos_changed)
             self._feed_vm.loading_changed.connect(self._on_feed_loading_changed)
             self._feed_vm.error_occurred.connect(self._on_feed_error)
@@ -5380,7 +5383,16 @@ class LibraryPanel(QWidget):
         self._current_channel_url = channel_url
         self._feed_show_channel = False   # 이미 채널을 아는 화면이라 채널명 숨김
         self._set_popular_tags_visible(False)
-        self._show_feed_view("로딩 중…")
+        existing = self._feed_vm.feed
+        if existing and channel_url == self._last_channel_url:
+            # 같은 채널 재방문: 캐시 즉시 표시 후 백그라운드 갱신
+            self._had_initial_feed = True
+            self._feed_grid.set_feed(existing, show_channel=False)
+            self._show_feed_view()
+        else:
+            self._had_initial_feed = False
+            self._show_feed_view("로딩 중…")
+        self._last_channel_url = channel_url
         self._feed_vm.load_channel(channel_url)
         self._refresh_breadcrumb()
 
@@ -5395,13 +5407,35 @@ class LibraryPanel(QWidget):
         self._current_cat_id = None
         self._feed_show_channel = True    # 여러 채널이 섞이므로 채널명 표시
         self._set_popular_tags_visible(False)
-        self._show_feed_view("로딩 중…")
+        existing = self._feed_vm.feed
+        if existing:
+            # 이전 로드 결과 즉시 표시 후 백그라운드 갱신
+            self._had_initial_feed = True
+            self._feed_grid.set_feed(existing, show_channel=True)
+            self._show_feed_view()
+        else:
+            self._had_initial_feed = False
+            self._show_feed_view("로딩 중…")
         self._feed_vm.refresh()
         self._refresh_breadcrumb()
+
+    def _on_feed_batch_appended(self, batch: list) -> None:
+        """부분 결과 배치 수신 — 첫 로딩 시만 점진적으로 카드를 추가한다.
+
+        재방문(캐시 즉시 표시)의 경우 _had_initial_feed=True이므로 건너뛰고,
+        최종 feed_changed 시그널의 set_feed()로 정렬된 완전 데이터로 교체한다.
+        """
+        if self._had_initial_feed:
+            return
+        if self._view_stack.currentIndex() != _VIEW_FEED:
+            return
+        self._feed_grid.append_feed(batch, show_channel=self._feed_show_channel)
+        self._feed_status.hide()   # 첫 카드 등장 시 로딩 텍스트 숨김
 
     def _on_feed_changed(self) -> None:
         if self._feed_vm is None:
             return
+        self._had_initial_feed = False
         items = self._feed_vm.feed
         self._feed_grid.set_feed(items, show_channel=self._feed_show_channel)
         if self._view_stack.currentIndex() == _VIEW_FEED:
