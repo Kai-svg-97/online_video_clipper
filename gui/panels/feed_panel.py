@@ -466,8 +466,11 @@ class _FeedCard(QFrame):
         )
         if cache_key:
             _feed_thumb_cache.put(cache_key, px)
-        self._thumb_lbl._pixmap = px
-        self._thumb_lbl.update()
+        try:
+            self._thumb_lbl._pixmap = px
+            self._thumb_lbl.update()
+        except RuntimeError:
+            pass  # 카드가 소멸된 후 콜백 도달 시 무시
 
     # ── 단일 클릭: 상세화면으로 진입 (수식키 없는 좌클릭) ──
     def mouseReleaseEvent(self, event) -> None:
@@ -697,8 +700,11 @@ class _ChannelCard(QFrame):
                 Qt.TransformationMode.SmoothTransformation,
             )
             _feed_thumb_cache.put(key, px)
-            self._avatar._pixmap = px
-            self._avatar.update()
+            try:
+                self._avatar._pixmap = px
+                self._avatar.update()
+            except RuntimeError:
+                pass  # 카드가 소멸된 후 콜백 도달 시 무시
 
         self._loader.loaded.connect(_on_loaded)
         self._loader.start()

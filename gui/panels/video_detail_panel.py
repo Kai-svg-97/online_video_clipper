@@ -141,7 +141,12 @@ class _RelatedRow(QFrame):
                 item.thumb_url, item.key, prefix="related",
                 size=(self._TW * 2, self._TH * 2),
             )
-            self._loader.loaded.connect(lambda _id, im: self._thumb.set_image(im))
+            def _on_related_thumb(_id: str, im: QImage) -> None:
+                try:
+                    self._thumb.set_image(im)
+                except RuntimeError:
+                    pass  # 카드 소멸 후 콜백 도달 시 무시
+            self._loader.loaded.connect(_on_related_thumb)
             self._loader.start()
 
         text_col = QVBoxLayout()
