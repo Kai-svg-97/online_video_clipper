@@ -1337,6 +1337,7 @@ _ITEM_TYPE_ROLE   = Qt.ItemDataRole.UserRole + 202  # "root" | "folder" | "playl
 _SECTION_ROLE     = Qt.ItemDataRole.UserRole + 203  # "local" | "youtube"
 _CAT_ID_ROLE      = Qt.ItemDataRole.UserRole + 204  # category UUID
 _CHANNEL_URL_ROLE = Qt.ItemDataRole.UserRole + 205  # 구독 채널 URL
+_ORIG_TEXT_ROLE   = Qt.ItemDataRole.UserRole + 299  # 스피너 중 원본 텍스트 보존
 
 _ITYPE_ROOT     = "root"
 _ITYPE_FOLDER   = "folder"
@@ -1391,12 +1392,53 @@ class _PlaylistTree(QTreeWidget):
         self.currentItemChanged.connect(self._on_selection_changed)
         self.itemExpanded.connect(self._on_item_expanded)
         self.itemCollapsed.connect(self._on_item_collapsed)
+        # 로딩 스피너
+        self._spinner_item: QTreeWidgetItem | None = None
+        self._spinner_frames = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧")
+        self._spinner_idx = 0
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(120)
+        self._spinner_timer.timeout.connect(self._tick_spinner)
+
+    # ── 스피너 ───────────────────────────────────────────────────────────────
+
+    def set_node_loading(self, item: "QTreeWidgetItem | None", loading: bool) -> None:
+        """지정 노드의 로딩 스피너를 시작/종료한다."""
+        if self._spinner_item is not None:
+            orig = self._spinner_item.data(0, _ORIG_TEXT_ROLE)
+            if orig is not None:
+                self._spinner_item.setText(0, orig)
+                self._spinner_item.setData(0, _ORIG_TEXT_ROLE, None)
+        self._spinner_timer.stop()
+        self._spinner_item = None
+        if loading and item is not None:
+            self._spinner_item = item
+            item.setData(0, _ORIG_TEXT_ROLE, item.text(0))
+            self._spinner_idx = 0
+            self._update_spinner_text()
+            self._spinner_timer.start()
+
+    def _tick_spinner(self) -> None:
+        if self._spinner_item is None:
+            self._spinner_timer.stop()
+            return
+        self._spinner_idx = (self._spinner_idx + 1) % len(self._spinner_frames)
+        self._update_spinner_text()
+
+    def _update_spinner_text(self) -> None:
+        if self._spinner_item is None:
+            return
+        orig = self._spinner_item.data(0, _ORIG_TEXT_ROLE)
+        if orig is None:
+            return
+        self._spinner_item.setText(0, f"{orig}  {self._spinner_frames[self._spinner_idx]}")
 
     # ── 로드 ─────────────────────────────────────────────────────────────────
 
     def load(self, playlists, folders, categories=None, subscriptions=None) -> None:
         """playlists: list[PlaylistDTO], folders: list[PlaylistFolderDTO], categories: list[CategoryDTO],
         subscriptions: list[SubscriptionDTO] (YouTube 섹션에서만 사용)"""
+        self.set_node_loading(None, False)   # clear() 전 스피너 정리 — 해제된 Qt 객체 참조 방지
         from application.library.favorites import load_favorites  # noqa: PLC0415
         self._favs = {(f.type, f.id) for f in load_favorites()}
         self.blockSignals(True)
@@ -2679,6 +2721,11 @@ class _PlaylistPanel(QWidget):
         """두 트리에서 해당 재생목록 항목을 선택한다."""
         self._local_tree._restore_selection(playlist_id)
         self._yt_tree._restore_selection(playlist_id)
+
+    def set_yt_node_loading(self, loading: bool) -> None:
+        """현재 선택된 YouTube 트리 노드에 로딩 스피너를 표시/해제한다."""
+        item = self._yt_tree.currentItem() if loading else None
+        self._yt_tree.set_node_loading(item, loading)
 
     def select_snapshot(self, snap: dict) -> None:
         """뒤로/앞으로 복원 시 스냅샷에 해당하는 트리 노드를 강조한다.
@@ -5442,9 +5489,11 @@ class LibraryPanel(QWidget):
             self._feed_status.hide() if items else self._show_feed_view("영상이 없습니다.")
 
     def _on_feed_loading_changed(self, loading: bool) -> None:
+        self._playlist_panel.set_yt_node_loading(loading)
         if loading and self._view_stack.currentIndex() == _VIEW_FEED:
-            self._feed_status.setText("로딩 중…")
-            self._feed_status.show()
+            if not self._feed_vm.feed:
+                self._feed_status.setText("로딩 중…")
+                self._feed_status.show()
 
     def _on_feed_error(self, msg: str) -> None:
         idx = self._view_stack.currentIndex()
