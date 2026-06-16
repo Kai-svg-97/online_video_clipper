@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from uuid import UUID
+
+_VIDEO_CACHE_MAX = 20  # 최대 20개 쿼리 결과를 LRU 캐시에 보관
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
@@ -253,6 +256,7 @@ class LibraryViewModel(QObject):
         self._sort_asc: bool = False
         self._min_duration_sec: int | None = None
         self._max_duration_sec: int | None = None
+        self._video_cache: OrderedDict[str, list[VideoDTO]] = OrderedDict()
 
     def shutdown(self) -> None:
         """앱 종료 시 호출 — 실행 중인 백그라운드 워커(메타데이터 갱신·YouTube
@@ -451,21 +455,21 @@ class LibraryViewModel(QObject):
     def delete_video(self, video_id: UUID) -> None:
         try:
             self._delete_video.handle(DeleteVideoCommand(video_id))
-            self._refresh_videos()
+            self._refresh_videos(bust_cache=True)
         except Exception as exc:
             self.error_occurred.emit(str(exc))
 
     def mark_watched(self, video_id: UUID) -> None:
         try:
             self._mark_watched.handle(MarkWatchedCommand(video_id))
-            self._refresh_videos()
+            self._refresh_videos(bust_cache=True)
         except Exception as exc:
             self.error_occurred.emit(str(exc))
 
     def assign_category(self, video_id: UUID, category_id: UUID | None) -> None:
         try:
             self._assign_category.handle(AssignCategoryCommand(video_id, category_id))
-            self._refresh_videos()
+            self._refresh_videos(bust_cache=True)
         except Exception as exc:
             self.error_occurred.emit(str(exc))
 
@@ -475,7 +479,7 @@ class LibraryViewModel(QObject):
                 self._assign_category.handle(AssignCategoryCommand(vid_id, category_id))
             except Exception as exc:
                 self.error_occurred.emit(str(exc))
-        self._refresh_videos()
+        self._refresh_videos(bust_cache=True)
 
     def delete_tag(self, tag_id: UUID) -> None:
         try:
@@ -484,7 +488,7 @@ class LibraryViewModel(QObject):
             if tag_id in self._filter_tag_ids:
                 self._filter_tag_ids = [t for t in self._filter_tag_ids if t != tag_id]
             self._refresh_tags()
-            self._refresh_videos()
+            self._refresh_videos(bust_cache=True)
         except Exception as exc:
             self.error_occurred.emit(str(exc))
 
@@ -512,8 +516,8 @@ class LibraryViewModel(QObject):
     def delete_category(self, category_id: UUID) -> None:
         try:
             self._delete_category.handle(DeleteCategoryCommand(category_id=category_id))
-            self._refresh_categories()
-            self._refresh_videos()
+            self._refresh_categories()  # _refresh_categories()가 캐시 무효화 포함
+            self._refresh_videos(bust_cache=True)
         except Exception as exc:
             self.error_occurred.emit(str(exc))
 
@@ -547,6 +551,19 @@ class LibraryViewModel(QObject):
                     queue.append(c.id)
         return result
 
+    def _cache_key(self) -> str:
+        """현재 필터 상태를 문자열 캐시 키로 직렬화한다."""
+        cat = str(self._filter_category_id) if self._filter_category_id else ""
+        tag = ",".join(sorted(str(t) for t in self._filter_tag_ids))
+        pl  = ",".join(sorted(str(v) for v in self._filter_playlist_video_ids))
+        return (
+            f"cat={cat}|tag={tag}|pl={pl}"
+            f"|sort={self._sort_by}:{self._sort_asc}"
+            f"|q={self._search_text}|fav={self._filter_favorite_only}"
+            f"|cat_only={self._filter_categorized_only}"
+            f"|dur={self._min_duration_sec}-{self._max_duration_sec}"
+        )
+
     def set_sort(self, sort_by: str, sort_asc: bool) -> None:
         """정렬 기준을 변경하고 영상 목록을 갱신한다."""
         self._sort_by = sort_by
@@ -561,12 +578,27 @@ class LibraryViewModel(QObject):
         self._current_page = 0
         self._refresh_videos()
 
-    def _refresh_videos(self, append: bool = False, on_done=None) -> None:
+    def _refresh_videos(
+        self, append: bool = False, on_done=None, bust_cache: bool = False
+    ) -> None:
         """영상 목록을 백그라운드 스레드에서 비동기로 갱신한다.
 
         on_done: 갱신 완료 후 메인 스레드에서 호출할 콜백(선택).
-        세대 토큰(_list_gen)으로 연속 빠른 전환 시 오래된 결과를 무시한다.
+        bust_cache: True이면 캐시를 무효화하고 반드시 DB를 재쿼리한다(뮤테이션 호출 시).
+        세대 토큰(_list_gen)으로 연속 빠른 전환 시 오래된 결과 UI 반영을 막지만,
+        완료된 결과는 항상 캐시에 저장해 나중에 동일 노드 재방문 시 즉시 로드할 수 있다.
         """
+        if bust_cache:
+            self._video_cache.clear()
+
+        ck = None if append else self._cache_key()
+        if ck and ck in self._video_cache:
+            self._videos = list(self._video_cache[ck])
+            self.videos_changed.emit()
+            if on_done:
+                on_done()
+            return
+
         self._list_gen += 1
         gen = self._list_gen
 
@@ -617,8 +649,14 @@ class LibraryViewModel(QObject):
         worker = _ListVideosWorker(fetch, append, self)
 
         def _on_ok(videos: list, app: bool) -> None:
+            # 항상 캐시에 저장 — gen 불일치(구 노드 로딩)여도 결과는 보관해
+            # 나중에 동일 노드 재방문 시 즉시 로드할 수 있도록 한다.
+            if ck and not app:
+                self._video_cache[ck] = list(videos)
+                while len(self._video_cache) > _VIDEO_CACHE_MAX:
+                    self._video_cache.popitem(last=False)
             if gen != self._list_gen:
-                return  # 더 새로운 요청이 있으면 오래된 결과 무시
+                return  # UI 반영은 현재 gen만
             if app:
                 self._videos.extend(videos)
             else:
@@ -634,6 +672,7 @@ class LibraryViewModel(QObject):
         worker.start()
 
     def _refresh_categories(self) -> None:
+        self._video_cache.clear()  # 카테고리 트리 변경 시 캐시 무효화
         self._categories = self._get_categories.handle()
         self.categories_changed.emit()
 
@@ -646,7 +685,7 @@ class LibraryViewModel(QObject):
         try:
             self._update_video.handle(UpdateVideoCommand(video_id=video_id, tags=tag_names))
             self._refresh_tags()
-            self._refresh_videos()
+            self._refresh_videos(bust_cache=True)
         except Exception as exc:
             self.error_occurred.emit(str(exc))
 
@@ -662,7 +701,7 @@ class LibraryViewModel(QObject):
             except Exception as exc:
                 self.error_occurred.emit(str(exc))
         self._refresh_tags()
-        self._refresh_videos()
+        self._refresh_videos(bust_cache=True)
 
     def refresh_category_metadata(self, category_id: UUID | None) -> None:
         if self._refresh_metadata_workers:  # already running
@@ -682,7 +721,7 @@ class LibraryViewModel(QObject):
         worker.start()
 
     def _on_refresh_metadata_ok(self, count: int) -> None:
-        self._refresh_videos()
+        self._refresh_videos(bust_cache=True)
         self._refresh_tags()
         self.metadata_refresh_finished.emit(count)
 
@@ -714,8 +753,8 @@ class LibraryViewModel(QObject):
         worker.start()
 
     def _on_yt_import_ok(self, count: int) -> None:
-        self._refresh_videos()
-        self._refresh_categories()
+        self._refresh_videos(bust_cache=True)
+        self._refresh_categories()  # _refresh_categories()가 캐시 무효화 포함
         self._refresh_tags()
         self.yt_import_finished.emit(count)
 
@@ -724,7 +763,7 @@ class LibraryViewModel(QObject):
         self.yt_import_finished.emit(0)
 
     def _on_add_ok(self, url: str) -> None:
-        self._refresh_videos()
+        self._refresh_videos(bust_cache=True)
         self._refresh_tags()
         self.video_add_finished.emit(url)
 
@@ -746,7 +785,7 @@ class LibraryViewModel(QObject):
 
         def _on_ok(vid_id: object, new_path: str) -> None:
             self.thumbnail_refreshed.emit(vid_id, new_path)
-            self._refresh_videos()  # 그리드 썸네일 갱신
+            self._refresh_videos(bust_cache=True)  # 그리드 썸네일 갱신
 
         worker.finished_ok.connect(_on_ok)
         worker.finished_err.connect(lambda err: logger.debug("썸네일 갱신 실패(무시): %s", err))

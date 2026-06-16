@@ -6,6 +6,7 @@ a video replaces the list area with VideoDetailWidget inline (no modal dialog).
 from __future__ import annotations
 
 import logging
+import threading
 from collections import OrderedDict
 from pathlib import Path
 from uuid import UUID
@@ -19,13 +20,14 @@ from PyQt6.QtCore import (
     QPoint,
     QRect,
     QSize,
+    QThread,
     QTimer,
     QUrl,
     Qt,
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QAction, QBrush, QColor, QDesktopServices, QDrag, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap,
+    QAction, QBrush, QColor, QDesktopServices, QDrag, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen, QPixmap,
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -204,6 +206,58 @@ def _load_thumb(thumbnail_path: str, w: int, h: int) -> QPixmap:
     pm.fill(QColor(_t().bg_overlay))
     _thumb_cache.put(key, pm)
     return pm
+
+
+def _load_thumb_async(thumbnail_path: str, w: int, h: int) -> QPixmap:
+    """캐시 히트 시 즉시 반환, 미스 시 플레이스홀더 반환 (파일 I/O 없음).
+    _ThumbBgLoader가 백그라운드에서 파일을 읽어 캐시를 채운 뒤 dataChanged로 재그리기 요청한다."""
+    key = f"{thumbnail_path}@{w}x{h}" if thumbnail_path else f"__ph__{w}x{h}"
+    cached = _thumb_cache.get(key)
+    if cached is not None:
+        return cached
+    pm = QPixmap(w, h)
+    pm.fill(QColor(_t().bg_overlay))
+    return pm
+
+
+class _ThumbBgLoader(QThread):
+    """백그라운드에서 QImage를 로드하고 배치 단위로 메인 스레드로 전달한다.
+
+    QImage는 비-GUI 스레드에서 안전하게 생성 가능(Qt 명세).
+    QPixmap 변환은 수신 슬롯(_on_thumb_batch) — main thread 에서만 수행한다.
+    """
+    batch_ready = pyqtSignal(list)  # list[(path: str, w: int, h: int, img: QImage)]
+
+    _IO_SEMA = threading.Semaphore(4)  # 동시 파일 읽기 4개 제한
+
+    def __init__(self, items: list[tuple[str, int, int]], parent=None) -> None:
+        super().__init__(parent)
+        self._items = items
+
+    def run(self) -> None:
+        batch: list = []
+        for path, w, h in self._items:
+            key = f"{path}@{w}x{h}"
+            if _thumb_cache.get(key) is not None:
+                continue  # 이미 캐시에 있으면 스킵 (읽기만이므로 스레드 안전)
+            full = Path(THUMBNAIL_DIR) / path
+            if not full.exists():
+                continue
+            with self._IO_SEMA:
+                img = QImage(str(full))
+            if img.isNull():
+                continue
+            scaled = img.scaled(
+                w, h,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            batch.append((path, w, h, scaled))
+            if len(batch) >= 8:
+                self.batch_ready.emit(list(batch))
+                batch.clear()
+        if batch:
+            self.batch_ready.emit(batch)
 
 
 def _url_from_mime(mime: QMimeData) -> str:
@@ -501,7 +555,7 @@ class _IconDelegate(QStyledItemDelegate):
         cat_name: str = index.data(VideoListModel.CategoryRole) or ""
 
         # ── Thumbnail (둥근 모서리) ──────────────────────────────────
-        thumb = _load_thumb(path, self._TW, self._TH)
+        thumb = _load_thumb_async(path, self._TW, self._TH)
         tx = rect.left() + self._PAD
         ty = rect.top()
         thumb_clip = QPainterPath()
@@ -626,7 +680,7 @@ class _ListDelegate(QStyledItemDelegate):
         cat_name: str = index.data(VideoListModel.CategoryRole) or ""
 
         # ── Thumbnail (둥근 모서리) ──────────────────────────────────
-        thumb = _load_thumb(path, self._TW, self._TH)
+        thumb = _load_thumb_async(path, self._TW, self._TH)
         tx = rect.left() + 6
         ty = rect.top() + (rect.height() - self._TH) // 2
         thumb_clip = QPainterPath()
@@ -810,6 +864,13 @@ class VideoListModel(QAbstractListModel):
         if role == Qt.ItemDataRole.SizeHintRole:
             return QSize(_TW_ICON + _ICON_PAD * 2, _TH_ICON + _ICON_TEXT_H)
         return None
+
+    def notify_thumb_cached(self, paths: set[str]) -> None:
+        """지정 썸네일 경로가 캐시에 추가됐을 때 해당 행만 재그리기 요청한다."""
+        for row, dto in enumerate(self._items):
+            if dto.thumbnail_path in paths:
+                idx = self.index(row)
+                self.dataChanged.emit(idx, idx, [VideoListModel.ThumbPathRole])
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         base = super().flags(index) | Qt.ItemFlag.ItemIsDragEnabled
@@ -3165,6 +3226,7 @@ class LibraryPanel(QWidget):
         self._is_restoring: bool = False
         self._current_channel_url: str = ""      # 단일 채널 피드 복원용
         self._current_detail_payload: object = None  # 상세 화면 재진입용(UUID|FeedVideoDTO)
+        self._thumb_load_gen: int = 0  # 썸네일 bg 로더 세대 (구 로더 UI 반영 방지용)
         self._setup_ui()
         self._connect_signals()
         vm.load()
@@ -3518,8 +3580,38 @@ class LibraryPanel(QWidget):
     # ── VM → UI ────────────────────────────────────────────────────
 
     def _on_videos_changed(self) -> None:
-        self._model.set_videos(self._vm.videos)
+        videos = self._vm.videos
+        self._model.set_videos(videos)
         self._refresh_table()
+        self._start_thumb_preload(videos)
+
+    def _start_thumb_preload(self, videos: list) -> None:
+        """현재 뷰 모드에 맞는 크기로 썸네일을 bg에서 프리로드한다."""
+        # isVisible()은 위젯이 표시되기 전 False를 반환할 수 있으므로
+        # currentWidget() 기준으로 활성 뷰를 판단한다.
+        is_icon = self._view_stack.currentWidget() is not self._list_view
+        w, h = (_TW_ICON, _TH_ICON) if is_icon else (_TW_LIST, _TH_LIST)
+        items = [(dto.thumbnail_path, w, h) for dto in videos if dto.thumbnail_path]
+        if not items:
+            return
+        self._thumb_load_gen += 1
+        gen = self._thumb_load_gen
+        loader = _ThumbBgLoader(items)
+        loader.batch_ready.connect(lambda b, g=gen: self._on_thumb_batch(b, g))
+        loader.finished.connect(loader.deleteLater)
+        loader.start()
+
+    def _on_thumb_batch(self, batch: list, gen: int) -> None:
+        """_ThumbBgLoader 배치 완료 처리: 항상 캐시에 저장, 현재 gen만 UI 갱신."""
+        paths_updated: set[str] = set()
+        for path, w, h, img in batch:
+            key = f"{path}@{w}x{h}"
+            if _thumb_cache.get(key) is None:  # 중복 방어 (main thread에서만 write)
+                _thumb_cache.put(key, QPixmap.fromImage(img))
+            paths_updated.add(path)
+        if gen == self._thumb_load_gen:
+            self._model.notify_thumb_cached(paths_updated)
+        # gen 불일치(구 노드 로더)도 캐시에는 저장 완료 → 재방문 시 캐시 히트
 
     def _on_categories_changed(self) -> None:
         self._refresh_unified_tree()
@@ -4565,14 +4657,21 @@ class LibraryPanel(QWidget):
     # ── Item click / double-click ──────────────────────────────────
 
     def _on_item_clicked(self, index: QModelIndex, view: QListView) -> None:
-        """단일 클릭 → 상세화면 진입. Ctrl/Shift 클릭은 다중 선택·드래그용으로 유지."""
+        """단일 클릭 → 상세화면 진입.
+        Ctrl+클릭 → 웹 브라우저로 영상 URL 열기.
+        Shift 클릭은 다중 선택·드래그용으로 유지."""
         mods = QApplication.keyboardModifiers()
-        if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
-            return
         dto: VideoDTO | None = self._model.data(index, VideoListModel.DtoRole)
-        if dto:
-            self.video_selected.emit(dto)
-            self._open_detail(dto.id)
+        if not dto:
+            return
+        if mods & Qt.KeyboardModifier.ControlModifier:
+            if dto.url:
+                QDesktopServices.openUrl(QUrl(dto.url))
+            return
+        if mods & Qt.KeyboardModifier.ShiftModifier:
+            return
+        self.video_selected.emit(dto)
+        self._open_detail(dto.id)
 
     def _on_double_click(self, index: QModelIndex) -> None:
         dto: VideoDTO | None = self._model.data(index, VideoListModel.DtoRole)
