@@ -59,6 +59,7 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
+    QTreeWidgetItemIterator,
     QVBoxLayout,
     QWidget,
 )
@@ -74,6 +75,7 @@ from gui.panels.video_detail_panel import (
 )
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
+from gui.view_models.feed_vm import FEED_ALL_KEY
 from gui.view_models.library_vm import LibraryViewModel
 from gui.widgets.video_player import InlinePlayer
 
@@ -1392,53 +1394,90 @@ class _PlaylistTree(QTreeWidget):
         self.currentItemChanged.connect(self._on_selection_changed)
         self.itemExpanded.connect(self._on_item_expanded)
         self.itemCollapsed.connect(self._on_item_collapsed)
-        # 로딩 스피너
-        self._spinner_item: QTreeWidgetItem | None = None
+        # 로딩 스피너 (다중 스피너 — key별 독립 관리)
+        self._spinner_items: dict[str, QTreeWidgetItem] = {}   # key → item
+        self._spinner_frame_idx: dict[str, int] = {}           # key → frame index
         self._spinner_frames = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧")
-        self._spinner_idx = 0
         self._spinner_timer = QTimer(self)
         self._spinner_timer.setInterval(120)
         self._spinner_timer.timeout.connect(self._tick_spinner)
 
     # ── 스피너 ───────────────────────────────────────────────────────────────
 
-    def set_node_loading(self, item: "QTreeWidgetItem | None", loading: bool) -> None:
-        """지정 노드의 로딩 스피너를 시작/종료한다."""
-        if self._spinner_item is not None:
-            orig = self._spinner_item.data(0, _ORIG_TEXT_ROLE)
+    def set_node_loading(self, key: str, item: "QTreeWidgetItem | None", loading: bool) -> None:
+        """지정 키 노드의 로딩 스피너를 시작/종료한다."""
+        if key in self._spinner_items:
+            old_item = self._spinner_items.pop(key)
+            self._spinner_frame_idx.pop(key, None)
+            orig = old_item.data(0, _ORIG_TEXT_ROLE)
             if orig is not None:
-                self._spinner_item.setText(0, orig)
-                self._spinner_item.setData(0, _ORIG_TEXT_ROLE, None)
-        self._spinner_timer.stop()
-        self._spinner_item = None
+                old_item.setText(0, orig)
+                old_item.setData(0, _ORIG_TEXT_ROLE, None)
         if loading and item is not None:
-            self._spinner_item = item
+            self._spinner_items[key] = item
+            self._spinner_frame_idx[key] = 0
             item.setData(0, _ORIG_TEXT_ROLE, item.text(0))
-            self._spinner_idx = 0
-            self._update_spinner_text()
-            self._spinner_timer.start()
+            self._update_spinner_text(key)
+            if not self._spinner_timer.isActive():
+                self._spinner_timer.start()
+        if not self._spinner_items:
+            self._spinner_timer.stop()
+
+    def _clear_all_spinners(self) -> None:
+        """load() 전 모든 스피너를 안전하게 정리한다 (clear() 후 해제된 Qt 객체 참조 방지)."""
+        for item in self._spinner_items.values():
+            orig = item.data(0, _ORIG_TEXT_ROLE)
+            if orig is not None:
+                item.setText(0, orig)
+                item.setData(0, _ORIG_TEXT_ROLE, None)
+        self._spinner_items.clear()
+        self._spinner_frame_idx.clear()
+        self._spinner_timer.stop()
 
     def _tick_spinner(self) -> None:
-        if self._spinner_item is None:
+        if not self._spinner_items:
             self._spinner_timer.stop()
             return
-        self._spinner_idx = (self._spinner_idx + 1) % len(self._spinner_frames)
-        self._update_spinner_text()
+        for key in list(self._spinner_items):
+            self._spinner_frame_idx[key] = (self._spinner_frame_idx.get(key, 0) + 1) % len(self._spinner_frames)
+            self._update_spinner_text(key)
 
-    def _update_spinner_text(self) -> None:
-        if self._spinner_item is None:
+    def _update_spinner_text(self, key: str) -> None:
+        item = self._spinner_items.get(key)
+        if item is None:
             return
-        orig = self._spinner_item.data(0, _ORIG_TEXT_ROLE)
+        orig = item.data(0, _ORIG_TEXT_ROLE)
         if orig is None:
             return
-        self._spinner_item.setText(0, f"{orig}  {self._spinner_frames[self._spinner_idx]}")
+        frame = self._spinner_frames[self._spinner_frame_idx.get(key, 0)]
+        item.setText(0, f"{orig}  {frame}")
+
+    def find_item_by_type(self, itype: str) -> "QTreeWidgetItem | None":
+        """트리에서 _ITEM_TYPE_ROLE이 itype인 첫 번째 아이템을 반환한다."""
+        it = QTreeWidgetItemIterator(self)
+        while it.value():
+            item = it.value()
+            if item.data(0, _ITEM_TYPE_ROLE) == itype:
+                return item
+            it += 1
+        return None
+
+    def find_item_by_channel_url(self, url: str) -> "QTreeWidgetItem | None":
+        """트리에서 _CHANNEL_URL_ROLE이 url인 아이템을 반환한다."""
+        it = QTreeWidgetItemIterator(self)
+        while it.value():
+            item = it.value()
+            if item.data(0, _CHANNEL_URL_ROLE) == url:
+                return item
+            it += 1
+        return None
 
     # ── 로드 ─────────────────────────────────────────────────────────────────
 
     def load(self, playlists, folders, categories=None, subscriptions=None) -> None:
         """playlists: list[PlaylistDTO], folders: list[PlaylistFolderDTO], categories: list[CategoryDTO],
         subscriptions: list[SubscriptionDTO] (YouTube 섹션에서만 사용)"""
-        self.set_node_loading(None, False)   # clear() 전 스피너 정리 — 해제된 Qt 객체 참조 방지
+        self._clear_all_spinners()   # clear() 전 스피너 정리 — 해제된 Qt 객체 참조 방지
         from application.library.favorites import load_favorites  # noqa: PLC0415
         self._favs = {(f.type, f.id) for f in load_favorites()}
         self.blockSignals(True)
@@ -2722,10 +2761,15 @@ class _PlaylistPanel(QWidget):
         self._local_tree._restore_selection(playlist_id)
         self._yt_tree._restore_selection(playlist_id)
 
-    def set_yt_node_loading(self, loading: bool) -> None:
-        """현재 선택된 YouTube 트리 노드에 로딩 스피너를 표시/해제한다."""
-        item = self._yt_tree.currentItem() if loading else None
-        self._yt_tree.set_node_loading(item, loading)
+    def set_yt_node_loading(self, key: str, item: "QTreeWidgetItem | None", loading: bool) -> None:
+        """지정 키 노드에 로딩 스피너를 표시/해제한다."""
+        self._yt_tree.set_node_loading(key, item, loading)
+
+    def find_yt_item_by_key(self, key: str) -> "QTreeWidgetItem | None":
+        """key(채널 URL 또는 FEED_ALL_KEY)에 해당하는 YouTube 트리 아이템을 반환한다."""
+        if key == FEED_ALL_KEY:
+            return self._yt_tree.find_item_by_type(_ITYPE_FEED_ALL)
+        return self._yt_tree.find_item_by_channel_url(key)
 
     def select_snapshot(self, snap: dict) -> None:
         """뒤로/앞으로 복원 시 스냅샷에 해당하는 트리 노드를 강조한다.
@@ -3273,8 +3317,7 @@ class LibraryPanel(QWidget):
         self._is_restoring: bool = False
         self._current_channel_url: str = ""      # 단일 채널 피드 복원용
         self._current_detail_payload: object = None  # 상세 화면 재진입용(UUID|FeedVideoDTO)
-        self._had_initial_feed: bool = False     # 재방문(캐시 즉시 표시) 여부 — batch append 분기용
-        self._last_channel_url: str = ""         # 직전 채널 URL — 재방문 캐시 표시 판별용
+        self._current_feed_key: str = ""         # 현재 화면에 표시 중인 피드 key
         self._thumb_load_gen: int = 0  # 썸네일 bg 로더 세대 (구 로더 UI 반영 방지용)
         self._active_thumb_loaders: list = []  # GC 방지용 강한 참조 보관
         self._setup_ui()
@@ -3556,6 +3599,9 @@ class LibraryPanel(QWidget):
             self._feed_vm.channel_infos_changed.connect(self._on_channel_infos_changed)
             self._feed_vm.loading_changed.connect(self._on_feed_loading_changed)
             self._feed_vm.error_occurred.connect(self._on_feed_error)
+            self._feed_vm.loading_key_changed.connect(self._on_feed_loading_key_changed)
+            self._feed_vm.feed_key_changed.connect(self._on_feed_key_changed)
+            self._feed_vm.feed_batch_ready.connect(self._on_feed_batch_ready)
         # 채널 모니터링 VM — 구독 목록을 YouTube 트리에 반영
         if self._monitoring_vm is not None:
             self._monitoring_vm.subscriptions_changed.connect(self._refresh_unified_tree)
@@ -5430,16 +5476,14 @@ class LibraryPanel(QWidget):
         self._current_channel_url = channel_url
         self._feed_show_channel = False   # 이미 채널을 아는 화면이라 채널명 숨김
         self._set_popular_tags_visible(False)
-        existing = self._feed_vm.feed
-        if existing and channel_url == self._last_channel_url:
-            # 같은 채널 재방문: 캐시 즉시 표시 후 백그라운드 갱신
-            self._had_initial_feed = True
-            self._feed_grid.set_feed(existing, show_channel=False)
+        self._current_feed_key = channel_url
+        cached = self._feed_vm.get_cached(channel_url)
+        if cached:
+            # 채널별 캐시 히트: 즉시 표시 후 백그라운드 갱신
+            self._feed_grid.set_feed(cached, show_channel=False)
             self._show_feed_view()
         else:
-            self._had_initial_feed = False
             self._show_feed_view("로딩 중…")
-        self._last_channel_url = channel_url
         self._feed_vm.load_channel(channel_url)
         self._refresh_breadcrumb()
 
@@ -5454,46 +5498,55 @@ class LibraryPanel(QWidget):
         self._current_cat_id = None
         self._feed_show_channel = True    # 여러 채널이 섞이므로 채널명 표시
         self._set_popular_tags_visible(False)
-        existing = self._feed_vm.feed
-        if existing:
-            # 이전 로드 결과 즉시 표시 후 백그라운드 갱신
-            self._had_initial_feed = True
-            self._feed_grid.set_feed(existing, show_channel=True)
+        self._current_feed_key = FEED_ALL_KEY
+        cached = self._feed_vm.get_cached(FEED_ALL_KEY)
+        if cached:
+            # 전체 피드 캐시 히트: 즉시 표시 후 백그라운드 갱신
+            self._feed_grid.set_feed(cached, show_channel=True)
             self._show_feed_view()
         else:
-            self._had_initial_feed = False
             self._show_feed_view("로딩 중…")
         self._feed_vm.refresh()
         self._refresh_breadcrumb()
 
     def _on_feed_batch_appended(self, batch: list) -> None:
-        """부분 결과 배치 수신 — 첫 로딩 시만 점진적으로 카드를 추가한다.
-
-        재방문(캐시 즉시 표시)의 경우 _had_initial_feed=True이므로 건너뛰고,
-        최종 feed_changed 시그널의 set_feed()로 정렬된 완전 데이터로 교체한다.
-        """
-        if self._had_initial_feed:
-            return
-        if self._view_stack.currentIndex() != _VIEW_FEED:
-            return
-        self._feed_grid.append_feed(batch, show_channel=self._feed_show_channel)
-        self._feed_status.hide()   # 첫 카드 등장 시 로딩 텍스트 숨김
+        pass   # feed_batch_ready 시그널로 대체됨
 
     def _on_feed_changed(self) -> None:
-        if self._feed_vm is None:
-            return
-        self._had_initial_feed = False
-        items = self._feed_vm.feed
-        self._feed_grid.set_feed(items, show_channel=self._feed_show_channel)
+        pass   # feed_key_changed 시그널로 대체됨
+
+    def _on_feed_loading_changed(self, loading: bool) -> None:
+        # 스피너는 loading_key_changed 전담; 상태 텍스트만 유지
+        if loading and self._view_stack.currentIndex() == _VIEW_FEED:
+            if not self._feed_vm.get_cached(self._current_feed_key):
+                self._feed_status.setText("로딩 중…")
+                self._feed_status.show()
+
+    def _on_feed_loading_key_changed(self, key: str, loading: bool) -> None:
+        """loading_key_changed 핸들러 — 해당 키 노드에 스피너 즉시 전환."""
+        item = self._playlist_panel.find_yt_item_by_key(key)
+        self._playlist_panel.set_yt_node_loading(key, item, loading)
+
+    def _on_feed_key_changed(self, key: str, items: list) -> None:
+        """채널 로딩 완료 — 현재 표시 중인 key와 일치할 때만 그리드 갱신."""
+        if key != self._current_feed_key:
+            return   # 백그라운드 채널 완료 — 캐시에만 저장됨
+        show_channel = (key == FEED_ALL_KEY)
+        self._feed_grid.set_feed(items, show_channel=show_channel)
         if self._view_stack.currentIndex() == _VIEW_FEED:
             self._feed_status.hide() if items else self._show_feed_view("영상이 없습니다.")
 
-    def _on_feed_loading_changed(self, loading: bool) -> None:
-        self._playlist_panel.set_yt_node_loading(loading)
-        if loading and self._view_stack.currentIndex() == _VIEW_FEED:
-            if not self._feed_vm.feed:
-                self._feed_status.setText("로딩 중…")
-                self._feed_status.show()
+    def _on_feed_batch_ready(self, key: str, batch: list) -> None:
+        """부분 결과 배치 — 현재 key 첫 로딩 시만 점진적으로 카드를 추가한다."""
+        if key != self._current_feed_key:
+            return
+        if self._feed_vm.get_cached(key):
+            return   # 재방문: feed_key_changed가 전체 교체
+        if self._view_stack.currentIndex() != _VIEW_FEED:
+            return
+        show_channel = (key == FEED_ALL_KEY)
+        self._feed_grid.append_feed(batch, show_channel=show_channel)
+        self._feed_status.hide()
 
     def _on_feed_error(self, msg: str) -> None:
         idx = self._view_stack.currentIndex()

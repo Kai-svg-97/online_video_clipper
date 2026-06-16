@@ -83,6 +83,7 @@ def _load_bool(key: str, default: bool) -> bool:
 
 
 MAX_CONCURRENT_DOWNLOADS: int = _load_int("max_concurrent_downloads", 3)
+MAX_CONCURRENT_FEED_WORKERS: int = _load_int("max_concurrent_feed_workers", 4)
 CLIPBOARD_MONITORING: bool = _load_bool("clipboard_monitoring", True)
 DEFAULT_QUALITY: str = _resolve_str("default_quality", "best[ext=mp4]/best")
 DEFAULT_FORMAT: str = _resolve_str("default_format", "mp4")
@@ -118,6 +119,7 @@ def save_setting(key: str, value) -> None:
     # 모듈 변수 즉시 갱신
     mapping = {
         "max_concurrent_downloads": "MAX_CONCURRENT_DOWNLOADS",
+        "max_concurrent_feed_workers": "MAX_CONCURRENT_FEED_WORKERS",
         "clipboard_monitoring": "CLIPBOARD_MONITORING",
         "default_quality": "DEFAULT_QUALITY",
         "default_format": "DEFAULT_FORMAT",

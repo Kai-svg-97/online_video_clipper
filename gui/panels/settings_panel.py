@@ -371,6 +371,7 @@ class SettingsPanel(QWidget):
     """설정 패널 (인라인, QDialog 아님)."""
 
     hidden_tags_changed = pyqtSignal()
+    feed_workers_changed = pyqtSignal(int)
 
     def __init__(
         self,
@@ -508,10 +509,12 @@ class SettingsPanel(QWidget):
         try:
             from config import settings as s
             cur_concurrent = s.MAX_CONCURRENT_DOWNLOADS
+            cur_feed_workers = s.MAX_CONCURRENT_FEED_WORKERS
             cur_clipboard = s.CLIPBOARD_MONITORING
         except Exception:
             logger.exception("일반 설정 로드 실패")
             cur_concurrent = 3
+            cur_feed_workers = 4
             cur_clipboard = True
 
         # 동시 다운로드 수
@@ -529,6 +532,23 @@ class SettingsPanel(QWidget):
         concurrent_row.addWidget(self._concurrent_spin)
         concurrent_row.addStretch()
         layout.addLayout(concurrent_row)
+        layout.addSpacing(10)
+
+        # 피드 동시 로딩 수
+        feed_workers_row = QHBoxLayout()
+        feed_workers_row.setContentsMargins(0, 0, 0, 0)
+        feed_workers_lbl = QLabel("피드 동시 로딩 수")
+        feed_workers_lbl.setFixedWidth(130)
+        feed_workers_lbl.setStyleSheet("font-size: 11px;")
+        self._feed_workers_spin = QSpinBox()
+        self._feed_workers_spin.setRange(1, 8)
+        self._feed_workers_spin.setValue(cur_feed_workers)
+        self._feed_workers_spin.setFixedWidth(64)
+        self._feed_workers_spin.valueChanged.connect(self._on_feed_workers_changed)
+        feed_workers_row.addWidget(feed_workers_lbl)
+        feed_workers_row.addWidget(self._feed_workers_spin)
+        feed_workers_row.addStretch()
+        layout.addLayout(feed_workers_row)
         layout.addSpacing(10)
 
         # 클립보드 URL 자동 감지
@@ -791,6 +811,11 @@ class SettingsPanel(QWidget):
     def _on_concurrent_changed(self, value: int) -> None:
         from config import settings as s
         s.save_setting("max_concurrent_downloads", value)
+
+    def _on_feed_workers_changed(self, value: int) -> None:
+        from config import settings as s
+        s.save_setting("max_concurrent_feed_workers", value)
+        self.feed_workers_changed.emit(value)
 
     def _on_clipboard_changed(self, state) -> None:
         from config import settings as s

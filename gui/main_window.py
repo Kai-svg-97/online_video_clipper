@@ -528,6 +528,12 @@ class MainWindow(QMainWindow):
             lp._on_hidden_tags_changed
         )
 
+        # 피드 동시 로딩 수 변경 → FeedViewModel 즉시 반영
+        if self._feed_vm is not None:
+            self._settings_panel.feed_workers_changed.connect(
+                self._feed_vm.set_max_workers
+            )
+
         # 구독 피드는 라이브러리 패널 좌측 트리의 "구독" 노드로 통합됨.
         # 피드 카드 신호(카테고리/재생목록 추가·다운로드)는 LibraryPanel 내부에서
         # 기존 핸들러에 연결되므로 여기서 별도 배선하지 않는다.
