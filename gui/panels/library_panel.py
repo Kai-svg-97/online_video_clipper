@@ -75,7 +75,7 @@ from gui.panels.video_detail_panel import (
 )
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
-from gui.view_models.feed_vm import FEED_ALL_KEY
+from gui.view_models.feed_vm import CHANNELS_ROOT_KEY, FEED_ALL_KEY
 from gui.view_models.library_vm import LibraryViewModel
 from gui.widgets.video_player import InlinePlayer
 
@@ -2792,9 +2792,11 @@ class _PlaylistPanel(QWidget):
         self._yt_tree.set_node_loading(key, item, loading)
 
     def find_yt_item_by_key(self, key: str) -> "QTreeWidgetItem | None":
-        """key(채널 URL 또는 FEED_ALL_KEY)에 해당하는 YouTube 트리 아이템을 반환한다."""
+        """key(채널 URL·FEED_ALL_KEY·CHANNELS_ROOT_KEY)에 해당하는 YouTube 트리 아이템을 반환한다."""
         if key == FEED_ALL_KEY:
             return self._yt_tree.find_item_by_type(_ITYPE_FEED_ALL)
+        if key == CHANNELS_ROOT_KEY:
+            return self._yt_tree.find_item_by_type(_ITYPE_ROOT)
         return self._yt_tree.find_item_by_channel_url(key)
 
     def set_local_node_loading(self, key: str, item: "QTreeWidgetItem | None", loading: bool) -> None:
@@ -5490,8 +5492,14 @@ class LibraryPanel(QWidget):
         self._channels_status.setVisible(False)
         self._channel_grid.set_channels(preliminary)
 
-        # Phase 2: API로 보강 (백그라운드)
-        self._feed_vm.load_channel_infos(channels)
+        # Phase 2: API 보강 — 캐시 히트 시 즉시 채우고 스피너 없이 조용히 갱신,
+        # 미스 시엔 "구독 채널" 노드에 스피너 띄우고 보강.
+        cached = self._feed_vm.get_cached(CHANNELS_ROOT_KEY)
+        if cached:
+            self._channel_grid.update_cards(cached)
+            self._feed_vm.load_channel_infos(channels, silent=True)
+        else:
+            self._feed_vm.load_channel_infos(channels)
         self._refresh_breadcrumb()
 
     def _on_channel_infos_changed(self) -> None:

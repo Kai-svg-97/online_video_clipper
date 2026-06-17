@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from infrastructure.auth.youtube_auth import YouTubeAuthService
 
 FEED_ALL_KEY = "__all__"   # 전체 구독 피드 식별 키
+CHANNELS_ROOT_KEY = "__channels__"   # "구독 채널" 노드(채널 카드 목록) 식별 키
 
 
 class _FeedWorker(QThread):
@@ -186,10 +187,11 @@ class FeedViewModel(QObject):
             silent=silent,
         )
 
-    def load_channel_infos(self, channels: list[tuple[str, str, str]]) -> None:
+    def load_channel_infos(self, channels: list[tuple[str, str, str]], silent: bool = False) -> None:
         """구독 채널 카드 정보(아바타·구독자수·영상수)를 가져온다.
 
         channels: (channel_id, channel_name, channel_url) 튜플 목록.
+        silent=True면 스피너 없이 조용히 갱신한다(캐시 표시 중 백그라운드 최신화).
         """
         if self._channel_infos_handler is None:
             self.error_occurred.emit("채널 정보 조회 기능을 사용할 수 없습니다.")
@@ -199,7 +201,8 @@ class FeedViewModel(QObject):
                 GetSubscribedChannelInfosQuery(channels=channels)
             ),
             self._on_infos_ok,
-            key="__channel_infos__",
+            key=CHANNELS_ROOT_KEY,
+            silent=silent,
         )
 
     def _on_partial(self, batch: list, gen: int, key: str, silent: bool = False) -> None:
