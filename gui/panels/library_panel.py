@@ -1472,6 +1472,32 @@ class _PlaylistTree(QTreeWidget):
             it += 1
         return None
 
+    def find_item_by_cat_id(self, cat_id) -> "QTreeWidgetItem | None":
+        """트리에서 _CAT_ID_ROLE이 cat_id인 카테고리 아이템을 반환한다."""
+        it = QTreeWidgetItemIterator(self)
+        while it.value():
+            item = it.value()
+            if (
+                item.data(0, _ITEM_TYPE_ROLE) == _ITYPE_CATEGORY
+                and str(item.data(0, _CAT_ID_ROLE)) == str(cat_id)
+            ):
+                return item
+            it += 1
+        return None
+
+    def find_item_by_playlist_id(self, pl_id) -> "QTreeWidgetItem | None":
+        """트리에서 _PLAYLIST_ID_ROLE이 pl_id인 재생목록 아이템을 반환한다."""
+        it = QTreeWidgetItemIterator(self)
+        while it.value():
+            item = it.value()
+            if (
+                item.data(0, _ITEM_TYPE_ROLE) == _ITYPE_PLAYLIST
+                and str(item.data(0, _PLAYLIST_ID_ROLE)) == str(pl_id)
+            ):
+                return item
+            it += 1
+        return None
+
     # ── 로드 ─────────────────────────────────────────────────────────────────
 
     def load(self, playlists, folders, categories=None, subscriptions=None) -> None:
@@ -2771,6 +2797,29 @@ class _PlaylistPanel(QWidget):
             return self._yt_tree.find_item_by_type(_ITYPE_FEED_ALL)
         return self._yt_tree.find_item_by_channel_url(key)
 
+    def set_local_node_loading(self, key: str, item: "QTreeWidgetItem | None", loading: bool) -> None:
+        """로컬 트리의 지정 키 노드에 로딩 스피너를 표시/해제한다."""
+        self._local_tree.set_node_loading(key, item, loading)
+
+    def find_local_item_by_key(self, key: str) -> "QTreeWidgetItem | None":
+        """노드 키("cat:{uuid}" | "pl:{uuid}" | "local_root")에 해당하는 로컬 트리 아이템을 반환한다."""
+        if key == "local_root":
+            it = QTreeWidgetItemIterator(self._local_tree)
+            while it.value():
+                item = it.value()
+                if (
+                    item.data(0, _ITEM_TYPE_ROLE) == _ITYPE_ROOT
+                    and item.data(0, _SECTION_ROLE) == "local"
+                ):
+                    return item
+                it += 1
+            return None
+        if key.startswith("cat:"):
+            return self._local_tree.find_item_by_cat_id(key[4:])
+        if key.startswith("pl:"):
+            return self._local_tree.find_item_by_playlist_id(key[3:])
+        return None
+
     def select_snapshot(self, snap: dict) -> None:
         """뒤로/앞으로 복원 시 스냅샷에 해당하는 트리 노드를 강조한다.
 
@@ -3561,6 +3610,7 @@ class LibraryPanel(QWidget):
         self._vm.categories_changed.connect(self._on_categories_changed)
         self._vm.tags_changed.connect(self._on_tags_changed)
         self._vm.scoped_tags_changed.connect(self._refresh_popular_tags)
+        self._vm.loading_key_changed.connect(self._on_local_loading_key_changed)
         ThemeManager.instance().theme_changed.connect(lambda _: self._apply_sidebar_tree_style())
 
         # 재생목록 탭 시그널
@@ -4223,7 +4273,8 @@ class LibraryPanel(QWidget):
         self._tag_list.blockSignals(False)
         self._refresh_active_tags_bar()
         self._update_delegate_tags()
-        self._vm.set_category_filter(cat_id)  # also clears tag filter internally
+        node_key = f"cat:{cat_id}" if cat_id is not None else "local_root"
+        self._vm.set_category_filter(cat_id, node_key=node_key)  # also clears tag filter internally
         # 카테고리 스코프 인기 태그 갱신 + 패널 표시
         self._set_popular_tags_visible(True)
         self._vm.refresh_scoped_tags()
@@ -5479,12 +5530,13 @@ class LibraryPanel(QWidget):
         self._current_feed_key = channel_url
         cached = self._feed_vm.get_cached(channel_url)
         if cached:
-            # 채널별 캐시 히트: 즉시 표시 후 백그라운드 갱신
+            # 채널별 캐시 히트: 즉시 표시 + 스피너 없이 조용히 백그라운드 갱신
             self._feed_grid.set_feed(cached, show_channel=False)
             self._show_feed_view()
+            self._feed_vm.load_channel(channel_url, silent=True)
         else:
             self._show_feed_view("로딩 중…")
-        self._feed_vm.load_channel(channel_url)
+            self._feed_vm.load_channel(channel_url)
         self._refresh_breadcrumb()
 
     def _on_feed_all_selected(self) -> None:
@@ -5501,12 +5553,13 @@ class LibraryPanel(QWidget):
         self._current_feed_key = FEED_ALL_KEY
         cached = self._feed_vm.get_cached(FEED_ALL_KEY)
         if cached:
-            # 전체 피드 캐시 히트: 즉시 표시 후 백그라운드 갱신
+            # 전체 피드 캐시 히트: 즉시 표시 + 스피너 없이 조용히 백그라운드 갱신
             self._feed_grid.set_feed(cached, show_channel=True)
             self._show_feed_view()
+            self._feed_vm.refresh(silent=True)
         else:
             self._show_feed_view("로딩 중…")
-        self._feed_vm.refresh()
+            self._feed_vm.refresh()
         self._refresh_breadcrumb()
 
     def _on_feed_batch_appended(self, batch: list) -> None:
@@ -5526,6 +5579,11 @@ class LibraryPanel(QWidget):
         """loading_key_changed 핸들러 — 해당 키 노드에 스피너 즉시 전환."""
         item = self._playlist_panel.find_yt_item_by_key(key)
         self._playlist_panel.set_yt_node_loading(key, item, loading)
+
+    def _on_local_loading_key_changed(self, key: str, loading: bool) -> None:
+        """로컬 트리 노드(카테고리/재생목록) 스피너 즉시 전환."""
+        item = self._playlist_panel.find_local_item_by_key(key)
+        self._playlist_panel.set_local_node_loading(key, item, loading)
 
     def _on_feed_key_changed(self, key: str, items: list) -> None:
         """채널 로딩 완료 — 현재 표시 중인 key와 일치할 때만 그리드 갱신."""
@@ -5577,7 +5635,8 @@ class LibraryPanel(QWidget):
         """트리에서 재생목록 선택 — 폴더 카드 뷰에 있다면 정상 뷰로 복귀 후 필터 적용."""
         self._push_nav_state()
         self._leave_detail_if_open()
-        self._vm.set_playlist_filter(playlist_id)
+        node_key = f"pl:{playlist_id}" if playlist_id is not None else None
+        self._vm.set_playlist_filter(playlist_id, node_key=node_key)
         self._icon_view.set_playlist_context(playlist_id)
         self._list_view.set_playlist_context(playlist_id)
         if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED):

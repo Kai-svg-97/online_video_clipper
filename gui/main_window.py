@@ -528,10 +528,14 @@ class MainWindow(QMainWindow):
             lp._on_hidden_tags_changed
         )
 
-        # 피드 동시 로딩 수 변경 → FeedViewModel 즉시 반영
+        # 노드 동시 로딩 수 변경 → 피드·로컬 양쪽 ViewModel에 즉시 반영
         if self._feed_vm is not None:
             self._settings_panel.feed_workers_changed.connect(
                 self._feed_vm.set_max_workers
+            )
+        if self._library_vm is not None:
+            self._settings_panel.feed_workers_changed.connect(
+                self._library_vm.set_max_workers
             )
 
         # 구독 피드는 라이브러리 패널 좌측 트리의 "구독" 노드로 통합됨.

@@ -534,10 +534,10 @@ class SettingsPanel(QWidget):
         layout.addLayout(concurrent_row)
         layout.addSpacing(10)
 
-        # 피드 동시 로딩 수
+        # 노드 동시 로딩 수 (피드·채널·카테고리·재생목록 등 모든 트리 노드 공통)
         feed_workers_row = QHBoxLayout()
         feed_workers_row.setContentsMargins(0, 0, 0, 0)
-        feed_workers_lbl = QLabel("피드 동시 로딩 수")
+        feed_workers_lbl = QLabel("노드 동시 로딩 수")
         feed_workers_lbl.setFixedWidth(130)
         feed_workers_lbl.setStyleSheet("font-size: 11px;")
         self._feed_workers_spin = QSpinBox()

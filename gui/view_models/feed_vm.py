@@ -107,28 +107,30 @@ class FeedViewModel(QObject):
     def _cookie_opts(self) -> dict:
         return self._auth.get_ytdlp_opts() if self._auth else {}
 
-    def _start(self, fetch: Callable[[], list], on_ok, key: str) -> None:
+    def _start(self, fetch: Callable[[], list], on_ok, key: str, silent: bool = False) -> None:
         self._gen += 1
         gen = self._gen
         if len(self._workers) < self._max_workers:
-            self._run(fetch, on_ok, gen, key)
+            self._run(fetch, on_ok, gen, key, silent)
         else:
             if len(self._pending_queue) >= 32:   # 메모리 안전 상한
                 self._pending_queue.popleft()
-            self._pending_queue.append((fetch, on_ok, gen, key))
+            self._pending_queue.append((fetch, on_ok, gen, key, silent))
 
-    def _run(self, fetch: Callable[[], list], on_ok, gen: int, key: str) -> None:
-        self.loading_changed.emit(True)
-        self.loading_key_changed.emit(key, True)
+    def _run(self, fetch: Callable[[], list], on_ok, gen: int, key: str, silent: bool = False) -> None:
+        # silent=True: 캐시를 이미 표시 중인 재방문 — 스피너·상태텍스트 없이 조용히 갱신
+        if not silent:
+            self.loading_changed.emit(True)
+            self.loading_key_changed.emit(key, True)
         worker = _FeedWorker(fetch, self)
         worker._key = key
         worker.finished_ok.connect(
             lambda items, _g=gen, _ok=on_ok, _k=key: self._finish_ok(items, _ok, _g, _k)
         )
         worker.finished_err.connect(lambda msg, _g=gen: self._finish_err(msg, _g))
-        worker.finished.connect(lambda w=worker, _k=key: self._drain(w, _k))
+        worker.finished.connect(lambda w=worker, _k=key, _s=silent: self._drain(w, _k, _s))
         worker.partial_ready.connect(
-            lambda batch, _g=gen, _k=key: self._on_partial(batch, _g, _k)
+            lambda batch, _g=gen, _k=key, _s=silent: self._on_partial(batch, _g, _k, _s)
         )
         self._workers.append(worker)
         worker.start()
@@ -142,18 +144,19 @@ class FeedViewModel(QObject):
         if gen == self._gen:
             self.error_occurred.emit(msg)
 
-    def _drain(self, worker, key: str) -> None:
+    def _drain(self, worker, key: str, silent: bool = False) -> None:
         if worker in self._workers:
             self._workers.remove(worker)
-        self.loading_key_changed.emit(key, False)
+        if not silent:
+            self.loading_key_changed.emit(key, False)
         while len(self._workers) < self._max_workers and self._pending_queue:
-            fetch, on_ok, gen, next_key = self._pending_queue.popleft()
-            self._run(fetch, on_ok, gen, next_key)
+            fetch, on_ok, gen, next_key, next_silent = self._pending_queue.popleft()
+            self._run(fetch, on_ok, gen, next_key, next_silent)
         if not self._workers:
             self.loading_changed.emit(False)
 
-    def refresh(self, limit: int = 100) -> None:
-        """전체 구독 피드를 가져온다."""
+    def refresh(self, limit: int = 100, silent: bool = False) -> None:
+        """전체 구독 피드를 가져온다. silent=True면 스피너 없이 조용히 갱신한다."""
         cookie_opts = self._cookie_opts()
         self._start(
             lambda on_progress=None: self._handler.handle(
@@ -162,10 +165,11 @@ class FeedViewModel(QObject):
             ),
             self._on_ok,
             key=FEED_ALL_KEY,
+            silent=silent,
         )
 
-    def load_channel(self, channel_url: str, limit: int = 30) -> None:
-        """특정 채널의 최신 영상을 가져온다."""
+    def load_channel(self, channel_url: str, limit: int = 30, silent: bool = False) -> None:
+        """특정 채널의 최신 영상을 가져온다. silent=True면 스피너 없이 조용히 갱신한다."""
         if self._channel_handler is None:
             self.error_occurred.emit("채널 영상 조회 기능을 사용할 수 없습니다.")
             return
@@ -179,6 +183,7 @@ class FeedViewModel(QObject):
             ),
             self._on_ok,
             key=channel_url,
+            silent=silent,
         )
 
     def load_channel_infos(self, channels: list[tuple[str, str, str]]) -> None:
@@ -197,9 +202,10 @@ class FeedViewModel(QObject):
             key="__channel_infos__",
         )
 
-    def _on_partial(self, batch: list, gen: int, key: str) -> None:
-        """부분 결과 배치 수신 — gen 일치 시만 UI에 방출."""
-        if gen != self._gen:
+    def _on_partial(self, batch: list, gen: int, key: str, silent: bool = False) -> None:
+        """부분 결과 배치 수신 — gen 일치 시만 UI에 방출.
+        silent(재방문 갱신)일 땐 이미 캐시를 표시 중이므로 부분 배치를 흘리지 않는다."""
+        if gen != self._gen or silent:
             return
         self.feed_batch_appended.emit(batch)   # 하위 호환
         self.feed_batch_ready.emit(key, batch)

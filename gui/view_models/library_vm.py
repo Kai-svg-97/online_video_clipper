@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from uuid import UUID
 
 _VIDEO_CACHE_MAX = 20  # 최대 20개 쿼리 결과를 LRU 캐시에 보관
@@ -184,6 +184,7 @@ class LibraryViewModel(QObject):
     yt_import_progress  = pyqtSignal(int, int)         # current, total
     yt_import_finished  = pyqtSignal(int)              # 처리된 영상 수
     thumbnail_refreshed = pyqtSignal(object, str)      # (video_id: UUID, new_path)
+    loading_key_changed = pyqtSignal(str, bool)        # (node_key, loading) — 트리 노드별 스피너
 
     def __init__(
         self,
@@ -257,6 +258,17 @@ class LibraryViewModel(QObject):
         self._min_duration_sec: int | None = None
         self._max_duration_sec: int | None = None
         self._video_cache: OrderedDict[str, list[VideoDTO]] = OrderedDict()
+        # 멀티워커 — 동시 로딩 워커 수를 제한하고 초과분은 큐에 보관(노드 연타 시 스레드 폭발 방지)
+        self._pending_list: deque = deque()   # (fetch, append, gen, ck, on_done, node_key)
+        try:
+            import config.settings as _s  # noqa: PLC0415
+            self._max_workers: int = getattr(_s, "MAX_CONCURRENT_FEED_WORKERS", 4)
+        except Exception:
+            self._max_workers = 4
+
+    def set_max_workers(self, n: int) -> None:
+        """동시 로딩 워커 최대 수를 변경한다 (메인 스레드에서만 호출)."""
+        self._max_workers = max(1, min(n, 8))
 
     def shutdown(self) -> None:
         """앱 종료 시 호출 — 실행 중인 백그라운드 워커(메타데이터 갱신·YouTube
@@ -279,6 +291,7 @@ class LibraryViewModel(QObject):
         self._add_workers.clear()
         self._thumb_workers.clear()
         self._list_workers.clear()
+        self._pending_list.clear()
 
     @property
     def videos(self) -> list[VideoDTO]:
@@ -337,7 +350,7 @@ class LibraryViewModel(QObject):
         self._current_page = 0
         self._refresh_videos()
 
-    def set_category_filter(self, category_id: UUID | None) -> None:
+    def set_category_filter(self, category_id: UUID | None, node_key: str | None = None) -> None:
         self._filter_category_id = category_id
         # category_id 없음("로컬"/전체) → 카테고리 영상 전체만 표시
         self._filter_categorized_only = category_id is None
@@ -346,9 +359,12 @@ class LibraryViewModel(QObject):
         self._filter_playlist_video_ids = []
         self._current_page = 0
         if category_id is not None:
-            self._refresh_videos(on_done=lambda: self._apply_category_order(category_id))
+            self._refresh_videos(
+                on_done=lambda: self._apply_category_order(category_id),
+                node_key=node_key,
+            )
         else:
-            self._refresh_videos()
+            self._refresh_videos(node_key=node_key)
 
     def _apply_category_order(self, category_id: UUID) -> None:
         """저장된 카테고리 순서가 있으면 영상 목록을 그 순서로 재정렬한다."""
@@ -386,8 +402,12 @@ class LibraryViewModel(QObject):
     def active_playlist_id(self) -> "UUID | None":
         return self._filter_playlist_id
 
-    def set_playlist_filter(self, playlist_id: UUID | None) -> None:
-        """재생목록 필터 — None이면 필터 해제."""
+    def set_playlist_filter(self, playlist_id: UUID | None, node_key: str | None = None) -> None:
+        """재생목록 필터 — None이면 필터 해제.
+
+        재생목록 영상 id 조회(GetPlaylistItemsQuery)는 _refresh_videos의 워커 스레드 안에서
+        수행해 메인 스레드(클릭)를 막지 않는다.
+        """
         self._filter_playlist_id = playlist_id
         self._filter_playlist_video_ids = []
         self._filter_category_id = None
@@ -395,15 +415,7 @@ class LibraryViewModel(QObject):
         self._filter_categorized_only = False
         # 태그 필터는 비우지 않는다 — 재생목록∩태그 교집합으로 함께 적용된다.
         self._current_page = 0
-        if playlist_id is not None and self._get_playlist_items is not None:
-            try:
-                items = self._get_playlist_items.handle(
-                    GetPlaylistItemsQuery(playlist_id=playlist_id, limit=500)
-                )
-                self._filter_playlist_video_ids = [item.video_id for item in items]
-            except Exception as exc:
-                self.error_occurred.emit(str(exc))
-        self._refresh_videos()
+        self._refresh_videos(node_key=node_key)
 
     def get_playlist_video_ids(self, playlist_id: UUID) -> list[UUID]:
         """재생목록에 속한 영상 ID 목록을 반환한다."""
@@ -552,10 +564,14 @@ class LibraryViewModel(QObject):
         return result
 
     def _cache_key(self) -> str:
-        """현재 필터 상태를 문자열 캐시 키로 직렬화한다."""
+        """현재 필터 상태를 문자열 캐시 키로 직렬화한다.
+
+        재생목록은 video_ids가 아니라 재생목록 UUID(_filter_playlist_id)로 식별한다.
+        (video_ids 조회를 워커 스레드로 옮겼기 때문에 캐시 키 계산 시점엔 아직 비어 있을 수 있음.)
+        """
         cat = str(self._filter_category_id) if self._filter_category_id else ""
         tag = ",".join(sorted(str(t) for t in self._filter_tag_ids))
-        pl  = ",".join(sorted(str(v) for v in self._filter_playlist_video_ids))
+        pl  = str(self._filter_playlist_id) if self._filter_playlist_id else ""
         return (
             f"cat={cat}|tag={tag}|pl={pl}"
             f"|sort={self._sort_by}:{self._sort_asc}"
@@ -579,20 +595,24 @@ class LibraryViewModel(QObject):
         self._refresh_videos()
 
     def _refresh_videos(
-        self, append: bool = False, on_done=None, bust_cache: bool = False
+        self, append: bool = False, on_done=None, bust_cache: bool = False,
+        node_key: str | None = None,
     ) -> None:
         """영상 목록을 백그라운드 스레드에서 비동기로 갱신한다.
 
         on_done: 갱신 완료 후 메인 스레드에서 호출할 콜백(선택).
         bust_cache: True이면 캐시를 무효화하고 반드시 DB를 재쿼리한다(뮤테이션 호출 시).
+        node_key: 트리 노드별 스피너용 키(선택) — 워커 시작/종료 시 loading_key_changed 방출.
         세대 토큰(_list_gen)으로 연속 빠른 전환 시 오래된 결과 UI 반영을 막지만,
         완료된 결과는 항상 캐시에 저장해 나중에 동일 노드 재방문 시 즉시 로드할 수 있다.
+        동시 실행 워커는 _max_workers로 제한하고 초과분은 _pending_list 큐에 보관한다.
         """
         if bust_cache:
             self._video_cache.clear()
 
         ck = None if append else self._cache_key()
         if ck and ck in self._video_cache:
+            # 캐시 히트 — 스피너 없이 즉시 표시
             self._videos = list(self._video_cache[ck])
             self.videos_changed.emit()
             if on_done:
@@ -603,49 +623,70 @@ class LibraryViewModel(QObject):
         gen = self._list_gen
 
         offset = self._current_page * DEFAULT_PAGE_SIZE
-        category_ids: list[UUID] = (
-            self._resolve_category_ids(self._filter_category_id)
-            if self._filter_category_id is not None
-            else []
-        )
-        categorized_only = (
-            self._filter_categorized_only
-            and self._filter_category_id is None
-            and not self._filter_playlist_video_ids
-        )
+        # 필터 상태를 호출 시점에 캡처 — fetch는 워커 스레드에서 실행된다.
+        search_text = self._search_text
+        filter_category_id = self._filter_category_id
+        filter_playlist_id = self._filter_playlist_id
+        explicit_video_ids = list(self._filter_playlist_video_ids)
+        tag_ids = list(self._filter_tag_ids)
+        favorite_only = self._filter_favorite_only
+        categorized_only_base = self._filter_categorized_only
+        sort_by, sort_asc = self._sort_by, self._sort_asc
+        min_dur, max_dur = self._min_duration_sec, self._max_duration_sec
 
-        if self._search_text:
-            query = SearchVideosQuery(
-                text=self._search_text,
+        def fetch() -> list:
+            category_ids: list[UUID] = (
+                self._resolve_category_ids(filter_category_id)
+                if filter_category_id is not None
+                else []
+            )
+            # 재생목록 영상 id 조회를 워커 안에서 수행(메인 스레드 차단 방지)
+            video_ids = explicit_video_ids
+            if (
+                filter_playlist_id is not None
+                and not video_ids
+                and self._get_playlist_items is not None
+            ):
+                items = self._get_playlist_items.handle(
+                    GetPlaylistItemsQuery(playlist_id=filter_playlist_id, limit=500)
+                )
+                video_ids = [item.video_id for item in items]
+            categorized_only = (
+                categorized_only_base
+                and filter_category_id is None
+                and filter_playlist_id is None
+            )
+            common = dict(
                 category_ids=category_ids,
-                tag_ids=self._filter_tag_ids,
-                video_ids=self._filter_playlist_video_ids,
+                tag_ids=tag_ids,
+                video_ids=video_ids,
                 categorized_only=categorized_only,
-                favorite_only=self._filter_favorite_only,
+                favorite_only=favorite_only,
                 limit=DEFAULT_PAGE_SIZE,
                 offset=offset,
-                sort_by=self._sort_by,
-                sort_asc=self._sort_asc,
-                min_duration_sec=self._min_duration_sec,
-                max_duration_sec=self._max_duration_sec,
+                sort_by=sort_by,
+                sort_asc=sort_asc,
+                min_duration_sec=min_dur,
+                max_duration_sec=max_dur,
             )
-            fetch = lambda: self._search_videos.handle(query)
+            if search_text:
+                return self._search_videos.handle(SearchVideosQuery(text=search_text, **common))
+            return self._get_videos.handle(GetVideosQuery(**common))
+
+        self._enqueue_list(fetch, append, gen, ck, on_done, node_key)
+
+    def _enqueue_list(self, fetch, append, gen, ck, on_done, node_key) -> None:
+        """워커 슬롯이 있으면 즉시 실행, 아니면 큐에 보관(상한 32)."""
+        if len(self._list_workers) < self._max_workers:
+            self._run_list(fetch, append, gen, ck, on_done, node_key)
         else:
-            query = GetVideosQuery(
-                category_ids=category_ids,
-                tag_ids=self._filter_tag_ids,
-                video_ids=self._filter_playlist_video_ids,
-                categorized_only=categorized_only,
-                favorite_only=self._filter_favorite_only,
-                limit=DEFAULT_PAGE_SIZE,
-                offset=offset,
-                sort_by=self._sort_by,
-                sort_asc=self._sort_asc,
-                min_duration_sec=self._min_duration_sec,
-                max_duration_sec=self._max_duration_sec,
-            )
-            fetch = lambda: self._get_videos.handle(query)
+            if len(self._pending_list) >= 32:
+                self._pending_list.popleft()
+            self._pending_list.append((fetch, append, gen, ck, on_done, node_key))
 
+    def _run_list(self, fetch, append, gen, ck, on_done, node_key) -> None:
+        if node_key:
+            self.loading_key_changed.emit(node_key, True)
         worker = _ListVideosWorker(fetch, append, self)
 
         def _on_ok(videos: list, app: bool) -> None:
@@ -667,9 +708,18 @@ class LibraryViewModel(QObject):
 
         worker.finished_ok.connect(_on_ok)
         worker.finished_err.connect(self.error_occurred)
-        worker.finished.connect(lambda: self._list_workers.remove(worker) if worker in self._list_workers else None)
+        worker.finished.connect(lambda w=worker, k=node_key: self._drain_list(w, k))
         self._list_workers.append(worker)
         worker.start()
+
+    def _drain_list(self, worker, node_key) -> None:
+        if worker in self._list_workers:
+            self._list_workers.remove(worker)
+        if node_key:
+            self.loading_key_changed.emit(node_key, False)
+        while len(self._list_workers) < self._max_workers and self._pending_list:
+            fetch, append, gen, ck, on_done, nk = self._pending_list.popleft()
+            self._run_list(fetch, append, gen, ck, on_done, nk)
 
     def _refresh_categories(self) -> None:
         self._video_cache.clear()  # 카테고리 트리 변경 시 캐시 무효화
