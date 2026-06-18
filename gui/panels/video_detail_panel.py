@@ -58,6 +58,7 @@ class RelatedItem:
     payload: object
     thumb_path: str = ""   # 로컬 썸네일 경로
     thumb_url: str = ""    # 원격 썸네일 URL
+    yt_video_id: str = ""  # 스트리밍 항목 — 피드 그리드와 썸네일 캐시(feed_*) 공유용
 
 
 def _fmt_dur(sec: int | None) -> str:
@@ -120,7 +121,7 @@ class _RelatedRow(QFrame):
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
 
     def _build_ui(self, item: RelatedItem) -> None:
-        from gui.panels.feed_panel import _RoundedThumbLabel, _ThumbLoader  # noqa: PLC0415
+        from gui.panels.feed_panel import _RoundedThumbLabel  # noqa: PLC0415
 
         row = QHBoxLayout(self)
         row.setContentsMargins(4, 4, 4, 4)
@@ -131,23 +132,8 @@ class _RelatedRow(QFrame):
             self._thumb.set_duration(_fmt_dur(item.duration_sec))
         row.addWidget(self._thumb)
 
-        # 썸네일 로드: 로컬 경로 우선, 없으면 원격 URL 비동기
-        if item.thumb_path and Path(item.thumb_path).exists():
-            img = QImage(item.thumb_path)
-            if not img.isNull():
-                self._thumb.set_image(img)
-        elif item.thumb_url:
-            self._loader = _ThumbLoader(
-                item.thumb_url, item.key, prefix="related",
-                size=(self._TW * 2, self._TH * 2),
-            )
-            def _on_related_thumb(_id: str, im: QImage) -> None:
-                try:
-                    self._thumb.set_image(im)
-                except RuntimeError:
-                    pass  # 카드 소멸 후 콜백 도달 시 무시
-            self._loader.loaded.connect(_on_related_thumb)
-            self._loader.start()
+        self._cache_key = ""
+        self._load_thumb(item)
 
         text_col = QVBoxLayout()
         text_col.setContentsMargins(0, 0, 0, 0)
@@ -172,6 +158,60 @@ class _RelatedRow(QFrame):
         text_col.addWidget(self._meta_lbl)
         text_col.addStretch()
         row.addLayout(text_col, 1)
+
+    def _load_thumb(self, item: RelatedItem) -> None:
+        """썸네일 로드 — 로컬 경로 우선, 없으면 피드 그리드와 동일한 캐시를 공유.
+
+        스트리밍 항목은 ``yt_video_id`` 기준으로 피드 그리드(_FeedCard)가 쓰는
+        인메모리 ``_feed_thumb_cache``·디스크 ``feed_{id}.{ext}``를 그대로 재사용해
+        중복 다운로드(prefix 불일치로 인한 재다운로드·스레드 경쟁)를 막는다.
+        """
+        from config.settings import THUMBNAIL_DIR  # noqa: PLC0415
+        from gui.panels.feed_panel import _ThumbLoader, _feed_thumb_cache  # noqa: PLC0415
+
+        # 1) 로컬 영상 — 저장된 썸네일 경로 우선
+        if item.thumb_path and Path(item.thumb_path).exists():
+            img = QImage(item.thumb_path)
+            if not img.isNull():
+                self._thumb.set_image(img)
+            return
+
+        # 2) 스트리밍 — 피드 그리드와 캐시/디스크(prefix "feed") 공유
+        vid_id = item.yt_video_id
+        if vid_id:
+            self._cache_key = f"{vid_id}@{self._TW}x{self._TH}"
+            cached_px = _feed_thumb_cache.get(self._cache_key)
+            if cached_px is not None:
+                self._thumb._pixmap = cached_px
+                self._thumb.update()
+                return
+            for ext in ("jpg", "jpeg", "webp", "png"):
+                cached = THUMBNAIL_DIR / f"feed_{vid_id}.{ext}"
+                if cached.exists():
+                    img = QImage(str(cached))
+                    if not img.isNull():
+                        self._thumb.set_image(img)
+                        if self._cache_key:
+                            _feed_thumb_cache.put(self._cache_key, self._thumb._pixmap)
+                        return
+
+        if not item.thumb_url:
+            return
+        self._loader = _ThumbLoader(
+            item.thumb_url, vid_id or item.key, prefix="feed",
+            size=(self._TW * 2, self._TH * 2),
+        )
+        self._loader.loaded.connect(self._on_remote_thumb)
+        self._loader.start()
+
+    def _on_remote_thumb(self, _id: str, im: QImage) -> None:
+        from gui.panels.feed_panel import _feed_thumb_cache  # noqa: PLC0415
+        try:
+            self._thumb.set_image(im)
+            if self._cache_key:
+                _feed_thumb_cache.put(self._cache_key, self._thumb._pixmap)
+        except RuntimeError:
+            pass  # 행 소멸 후 콜백 도달 시 무시
 
     def mouseReleaseEvent(self, event) -> None:
         if (

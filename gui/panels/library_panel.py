@@ -334,6 +334,21 @@ def _relative_time(date_str: str | None) -> str:
         return ""
 
 
+def _pub_sort_key(date_str: str | None) -> int:
+    """published_at(YYYYMMDD·ISO·date)을 정렬용 ordinal로 변환. 없거나 파싱 실패 시 0(맨 뒤)."""
+    if not date_str:
+        return 0
+    from datetime import date, datetime
+    try:
+        if len(date_str) == 8 and date_str.isdigit():        # YYYYMMDD (yt-dlp)
+            return date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:])).toordinal()
+        if "T" in date_str or " " in date_str:
+            return datetime.fromisoformat(date_str.replace("Z", "+00:00")).date().toordinal()
+        return date.fromisoformat(date_str).toordinal()
+    except (ValueError, TypeError):
+        return 0
+
+
 def _fmt_views(view_count: int | None) -> str:
     """Return a short Korean view count string like '1.2만 회'."""
     if view_count is None:
@@ -4429,6 +4444,9 @@ class LibraryPanel(QWidget):
             if f.channel_id and f.channel_id == clicked.channel_id and f.url != clicked.url
         ]
         pool = same if same else [f for f in feed if f.url != clicked.url]
+        # 게시일 내림차순(최신 먼저)으로 정렬 — 피드 원본 순서가 채널별로 뭉쳐
+        # 있어 무작위로 보이던 문제 교정. 게시일 없는 항목은 안정 정렬로 뒤에 둔다.
+        pool = sorted(pool, key=lambda f: _pub_sort_key(f.published_at), reverse=True)
         items = []
         for f in pool[:30]:
             meta = []
@@ -4446,6 +4464,7 @@ class LibraryPanel(QWidget):
                 payload=f,
                 thumb_path=f.thumbnail_path or "",
                 thumb_url=f.thumbnail_url or "",
+                yt_video_id=f.yt_video_id or "",
             ))
         return items
 
