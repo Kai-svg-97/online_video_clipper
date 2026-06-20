@@ -1,5 +1,8 @@
 """애플리케이션 레이어가 의존하는 포트(추상화) 정의.
 
+UpdateInfo와 IUpdateChecker도 여기 정의한다 — 업데이트 확인은
+application → domain/shared 의존만 허용한다.
+
 DDD 의존성 규칙(`gui → application → domain ← infrastructure`)에 따라
 application 레이어는 infrastructure의 구체 클래스(EventBus, YtDlpAdapter,
 FfmpegAdapter)를 직접 import 해서는 안 된다. 대신 여기 정의된 Protocol에
@@ -12,12 +15,25 @@ FfmpegAdapter)를 직접 import 해서는 안 된다. 대신 여기 정의된 Pr
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
 from domain.clip.value_objects import TimeRange
 from domain.download.value_objects import DownloadSettings
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateInfo:
+    """GitHub 릴리스 자산 정보 — 도메인 값객체."""
+
+    version: str          # '1.0.1' (v 접두사 없음)
+    asset_name: str       # 'YouTubeContentManager-setup.exe'
+    download_url: str
+    size_bytes: int
+    sha256: str | None    # 체크섬 (있으면 검증, 없으면 크기 검증)
+    release_notes: str    # GitHub Release 본문
 
 
 class IEventBus(Protocol):
@@ -70,6 +86,22 @@ class IMediaSource(Protocol):
 # 다운로드는 작업별 진행률 훅이 필요해 인스턴스를 새로 만들어야 하므로,
 # composition root가 `lambda cb: YtDlpAdapter(on_progress=cb)` 형태로 주입한다.
 MediaSourceFactory = Callable[[Callable[[object], None]], IMediaSource]
+
+
+class IUpdateChecker(Protocol):
+    """GitHub Releases 기반 업데이트 확인·다운로드 추상화.
+
+    구현체: infrastructure.updater.update_checker.GithubUpdateChecker
+    """
+
+    def check_latest(self) -> UpdateInfo | None: ...
+
+    def download_asset(
+        self,
+        info: UpdateInfo,
+        dest_dir: Path,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> Path: ...
 
 
 class IClipExtractor(Protocol):

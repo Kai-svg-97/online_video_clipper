@@ -1,6 +1,10 @@
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
+
 [Setup]
 AppName=YouTube Content Manager
-AppVersion=1.0.0
+AppVersion={#AppVersion}
 DefaultDirName={autopf}\YouTubeContentManager
 DefaultGroupName=YouTube Content Manager
 OutputDir=..\dist
@@ -9,6 +13,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
+CloseApplications=yes
 
 [Files]
 Source: "..\dist\windows\YouTubeContentManager.exe"; DestDir: "{app}"

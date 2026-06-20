@@ -1,0 +1,121 @@
+{
+  "updatedAt": "2026-06-20T13:02:41.101Z",
+  "missions": [
+    {
+      "id": "session:abb82b63-6b50-4d98-a472-b095950e8f5a:none",
+      "source": "session",
+      "name": "none",
+      "objective": "Session mission",
+      "createdAt": "2026-06-20T10:07:57.001Z",
+      "updatedAt": "2026-06-20T13:02:41.101Z",
+      "status": "running",
+      "workerCount": 7,
+      "taskCounts": {
+        "total": 7,
+        "pending": 0,
+        "blocked": 0,
+        "inProgress": 1,
+        "completed": 6,
+        "failed": 0
+      },
+      "agents": [
+        {
+          "name": "Explore:ac442b5",
+          "role": "Explore",
+          "ownership": "ac442b5bb37d0864f",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-06-20T12:52:32.897Z"
+        },
+        {
+          "name": "git-master:ae7691a",
+          "role": "git-master",
+          "ownership": "ae7691a2b09c82d9a",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-06-20T10:23:55.379Z"
+        },
+        {
+          "name": "analyst:a91133b",
+          "role": "analyst",
+          "ownership": "a91133bab45ea9e6f",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-06-20T10:32:39.979Z"
+        },
+        {
+          "name": "architect:ace8110",
+          "role": "architect",
+          "ownership": "ace811033c26d7d24",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-06-20T10:33:26.401Z"
+        },
+        {
+          "name": "security-reviewer:acf65a1",
+          "role": "security-reviewer",
+          "ownership": "acf65a1dca0d7833e",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-06-20T12:56:16.832Z"
+        },
+        {
+          "name": "code-reviewer:af3b55c",
+          "role": "code-reviewer",
+          "ownership": "af3b55c1f0b85e83b",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-06-20T12:57:19.825Z"
+        },
+        {
+          "name": "git-master:a7305ab",
+          "role": "git-master",
+          "ownership": "a7305ab6203847b3e",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-06-20T13:02:41.101Z"
+        }
+      ],
+      "timeline": [
+        {
+          "id": "session-stop:acf65a1dca0d7833e:2026-06-20T12:56:16.832Z",
+          "at": "2026-06-20T12:56:16.832Z",
+          "kind": "completion",
+          "agent": "security-reviewer:acf65a1",
+          "detail": "completed",
+          "sourceKey": "session-stop:acf65a1dca0d7833e"
+        },
+        {
+          "id": "session-stop:af3b55c1f0b85e83b:2026-06-20T12:57:19.825Z",
+          "at": "2026-06-20T12:57:19.825Z",
+          "kind": "completion",
+          "agent": "code-reviewer:af3b55c",
+          "detail": "completed",
+          "sourceKey": "session-stop:af3b55c1f0b85e83b"
+        },
+        {
+          "id": "session-start:a7305ab6203847b3e:2026-06-20T13:02:41.101Z",
+          "at": "2026-06-20T13:02:41.101Z",
+          "kind": "update",
+          "agent": "git-master:a7305ab",
+          "detail": "started git-master:a7305ab",
+          "sourceKey": "session-start:a7305ab6203847b3e"
+        }
+      ]
+    }
+  ]
+}

@@ -93,6 +93,11 @@ from infrastructure.persistence.sqlite_playlist_repository import (
 )
 from infrastructure.auth.youtube_auth import YouTubeAuthService
 
+from version import __version__
+from infrastructure.updater.update_checker import GithubUpdateChecker
+from application.updater.queries import CheckForUpdateHandler
+from application.updater.commands import DownloadUpdateHandler
+
 from gui.main_window import MainWindow
 from gui.view_models.clip_vm import ClipViewModel
 from gui.view_models.download_vm import DownloadViewModel
@@ -320,6 +325,15 @@ def main() -> int:
         auth_service=auth_service,
         yt_oauth=yt_oauth,
     )
+
+    # 자동 업데이트 — composition root에서 조립
+    from gui.updater.update_controller import UpdateController  # noqa: PLC0415
+    _update_checker  = GithubUpdateChecker(__version__)
+    _check_update_h  = CheckForUpdateHandler(_update_checker)
+    _dl_update_h     = DownloadUpdateHandler(_update_checker)
+    _update_ctrl     = UpdateController(_check_update_h, _dl_update_h, window)
+    window.set_update_controller(_update_ctrl)
+
     window.show()
     return app.exec()
 

@@ -1,0 +1,11 @@
+{
+  "active": true,
+  "started_at": "2026-06-20T10:29:57.296Z",
+  "original_prompt": "/autopilot 자동 업데이트기능을 추가해줘 내가 푸시하고 릴리즈하면 배포된 버전에선 업데이트 되도록말야.",
+  "session_id": "abb82b63-6b50-4d98-a472-b095950e8f5a",
+  "project_path": "C:\\Users\\kai\\OneDrive\\Documents\\projects\\online_video_clipper",
+  "reinforcement_count": 0,
+  "awaiting_confirmation": true,
+  "awaiting_confirmation_set_at": "2026-06-20T10:29:57.296Z",
+  "last_checked_at": "2026-06-20T10:29:57.296Z"
+}

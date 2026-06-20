@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, QTimer, Qt
 from PyQt6.QtGui import QCloseEvent, QIcon, QPainter, QPixmap, QPixmapCache
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
@@ -427,6 +427,7 @@ class MainWindow(QMainWindow):
         self._feed_vm = feed_vm
         self._yt_oauth = yt_oauth
         self._auth_service = auth_service or YouTubeAuthService()
+        self._update_controller = None
 
         self.setWindowTitle("YouTube Content Manager")
         self.setMinimumSize(1024, 680)
@@ -584,11 +585,22 @@ class MainWindow(QMainWindow):
             )
         dlg.exec()
 
+    # ------------------------------------------------------------------
+    def set_update_controller(self, controller) -> None:
+        """composition root에서 창 생성 후 주입. 시작 시 업데이트 체크를 예약한다."""
+        self._update_controller = controller
+        # 윈도우가 완전히 렌더링된 후 2초 뒤 조용히 확인 (메인 스레드 블로킹 없음)
+        QTimer.singleShot(2000, controller.check_silently)
+        # 설정 패널의 "업데이트 확인" 버튼 연결
+        if hasattr(self._settings_panel, "check_update_requested"):
+            self._settings_panel.check_update_requested.connect(
+                controller.check_interactively
+            )
+
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.
-        # 정리하지 않으면 워커가 살아남아 이미 파괴된 위젯으로 시그널을
-        # 방출하거나, 파일 핸들/DB 커넥션이 닫히지 않을 수 있다.
-        for vm in (self._download_vm, self._library_vm, self._feed_vm):
+        for vm in (self._download_vm, self._library_vm, self._feed_vm,
+                   self._update_controller):
             if vm is None:
                 continue
             shutdown = getattr(vm, "shutdown", None)

@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write   # 릴리스 자산 업로드에 필요
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Derive version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building version: $v"
+
+      - name: Verify version.py matches tag
+        shell: pwsh
+        run: |
+          $content = Get-Content version.py -Raw
+          $expected = "${{ steps.ver.outputs.version }}"
+          if ($content -notmatch [regex]::Escape($expected)) {
+            Write-Error "version.py does not contain '$expected' — update version.py before tagging"
+            exit 1
+          }
+
+      - name: Download ffmpeg + run PyInstaller
+        shell: pwsh
+        run: |
+          # ffmpeg 다운로드
+          $ffmpegExe = "bin\ffmpeg.exe"
+          if (-not (Test-Path $ffmpegExe)) {
+            Write-Host "Downloading ffmpeg..."
+            $tmpZip = "$env:TEMP\ffmpeg.zip"
+            Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $tmpZip
+            Expand-Archive -Path $tmpZip -DestinationPath "$env:TEMP\ffmpeg_extract" -Force
+            $bin = Get-ChildItem "$env:TEMP\ffmpeg_extract" -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+            New-Item -ItemType Directory -Force -Path "bin" | Out-Null
+            Copy-Item $bin.FullName $ffmpegExe
+          }
+          # PyInstaller
+          python -m PyInstaller packaging/online_video_clipper.spec --distpath dist/windows --workpath build/tmp --noconfirm
+
+      - name: Build installer with Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          & $iscc /DAppVersion=${{ steps.ver.outputs.version }} packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate checksums and version.txt
+        shell: pwsh
+        run: |
+          $installer = "dist\YouTubeContentManager-setup.exe"
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+          # ASCII 명시 — BOM 없는 UTF-8/ASCII로 저장해 클라이언트 파싱 보장
+          [System.IO.File]::WriteAllText("$installer.sha256", $hash, [System.Text.Encoding]::ASCII)
+          [System.IO.File]::WriteAllText("version.txt", "${{ steps.ver.outputs.version }}", [System.Text.Encoding]::ASCII)
+          Write-Host "SHA256: $hash"
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "YouTube Content Manager ${{ steps.ver.outputs.version }}"
+          generate_release_notes: true
+          files: |
+            dist/YouTubeContentManager-setup.exe
+            dist/YouTubeContentManager-setup.exe.sha256
+            version.txt

@@ -1,0 +1,566 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1781950059041,
+  "projectRoot": "C:\\Users\\kai\\OneDrive\\Documents\\projects\\online_video_clipper",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pip",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "cd \"C:\\Users\\kai\\OneDrive\\Documents\\projects\\online_video_clipper\" && python -m pytest tests/unit/application/updater/ -v 2>&1",
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "assets",
+      "bin",
+      "docs",
+      "scripts",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "application": {
+      "path": "application",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1781950058970,
+      "keyFiles": [
+        "__init__.py"
+      ]
+    },
+    "assets": {
+      "path": "assets",
+      "purpose": "Static assets",
+      "fileCount": 2,
+      "lastAccessed": 1781950058971,
+      "keyFiles": [
+        "icon.ico",
+        "icon.png"
+      ]
+    },
+    "bin": {
+      "path": "bin",
+      "purpose": "Executable scripts",
+      "fileCount": 1,
+      "lastAccessed": 1781950058972,
+      "keyFiles": [
+        "ffmpeg.exe"
+      ]
+    },
+    "build": {
+      "path": "build",
+      "purpose": "Build output",
+      "fileCount": 0,
+      "lastAccessed": 1781950058975,
+      "keyFiles": []
+    },
+    "config": {
+      "path": "config",
+      "purpose": "Configuration files",
+      "fileCount": 2,
+      "lastAccessed": 1781950058978,
+      "keyFiles": [
+        "settings.py",
+        "__init__.py"
+      ]
+    },
+    "data": {
+      "path": "data",
+      "purpose": "Data files",
+      "fileCount": 4,
+      "lastAccessed": 1781950058981,
+      "keyFiles": [
+        "config.yaml",
+        "config.yaml.example",
+        "library.db",
+        "OAuth.json"
+      ]
+    },
+    "db": {
+      "path": "db",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1781950058983,
+      "keyFiles": [
+        "schema.sql"
+      ]
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 0,
+      "lastAccessed": 1781950058986,
+      "keyFiles": []
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 4,
+      "lastAccessed": 1781950058987,
+      "keyFiles": [
+        "packaging-linux.md",
+        "packaging-macos.md",
+        "packaging-windows.md",
+        "README.md"
+      ]
+    },
+    "domain": {
+      "path": "domain",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1781950058989,
+      "keyFiles": [
+        "__init__.py"
+      ]
+    },
+    "gui": {
+      "path": "gui",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1781950058990,
+      "keyFiles": [
+        "main_window.py",
+        "__init__.py"
+      ]
+    },
+    "infrastructure": {
+      "path": "infrastructure",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1781950058990,
+      "keyFiles": [
+        "event_bus.py",
+        "__init__.py"
+      ]
+    },
+    "packaging": {
+      "path": "packaging",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1781950058991,
+      "keyFiles": [
+        "installer.iss",
+        "online_video_clipper.spec"
+      ]
+    },
+    "planning": {
+      "path": "planning",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1781950058992,
+      "keyFiles": [
+        "ddd_design.md",
+        "packaging_plan.md",
+        "requirements.md",
+        "youtube_content_manager_prd.md"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 2,
+      "lastAccessed": 1781950058993,
+      "keyFiles": [
+        "build_linux.sh",
+        "build_windows.ps1"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 1,
+      "lastAccessed": 1781950058996,
+      "keyFiles": [
+        "__init__.py"
+      ]
+    },
+    "utils": {
+      "path": "utils",
+      "purpose": "Utility functions",
+      "fileCount": 3,
+      "lastAccessed": 1781950058999,
+      "keyFiles": [
+        "logging_config.py",
+        "resources.py",
+        "__init__.py"
+      ]
+    },
+    "venv": {
+      "path": "venv",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1781950059001,
+      "keyFiles": [
+        "pyvenv.cfg"
+      ]
+    },
+    "__pycache__": {
+      "path": "__pycache__",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1781950059002,
+      "keyFiles": [
+        "main.cpython-312.pyc",
+        "main.cpython-314.pyc"
+      ]
+    },
+    "packaging\\bin": {
+      "path": "packaging\\bin",
+      "purpose": "Executable scripts",
+      "fileCount": 1,
+      "lastAccessed": 1781950059008,
+      "keyFiles": [
+        "ffmpeg.exe"
+      ]
+    },
+    "venv\\Lib": {
+      "path": "venv\\Lib",
+      "purpose": "Library code",
+      "fileCount": 0,
+      "lastAccessed": 1781950059011,
+      "keyFiles": []
+    },
+    "venv\\Scripts": {
+      "path": "venv\\Scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 78,
+      "lastAccessed": 1781950059012,
+      "keyFiles": [
+        "activate",
+        "activate.bat",
+        "Activate.ps1"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "domain\\shared\\ports.py",
+      "accessCount": 8,
+      "lastAccessed": 1781960110450,
+      "type": "file"
+    },
+    {
+      "path": "main.py",
+      "accessCount": 6,
+      "lastAccessed": 1781960110995,
+      "type": "file"
+    },
+    {
+      "path": "config\\settings.py",
+      "accessCount": 6,
+      "lastAccessed": 1781960132625,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 4,
+      "lastAccessed": 1781960398601,
+      "type": "directory"
+    },
+    {
+      "path": "domain\\library\\entities.py",
+      "accessCount": 1,
+      "lastAccessed": 1781950364752,
+      "type": "file"
+    },
+    {
+      "path": "infrastructure\\event_bus.py",
+      "accessCount": 1,
+      "lastAccessed": 1781950366334,
+      "type": "file"
+    },
+    {
+      "path": "AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950557543,
+      "type": "file"
+    },
+    {
+      "path": "domain\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950575849,
+      "type": "file"
+    },
+    {
+      "path": "application\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950587608,
+      "type": "file"
+    },
+    {
+      "path": "infrastructure\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950603446,
+      "type": "file"
+    },
+    {
+      "path": "gui\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950620767,
+      "type": "file"
+    },
+    {
+      "path": "config\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950631948,
+      "type": "file"
+    },
+    {
+      "path": "utils\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950642170,
+      "type": "file"
+    },
+    {
+      "path": "db\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950650058,
+      "type": "file"
+    },
+    {
+      "path": "tests\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950657806,
+      "type": "file"
+    },
+    {
+      "path": "packaging\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950669058,
+      "type": "file"
+    },
+    {
+      "path": "planning\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950676508,
+      "type": "file"
+    },
+    {
+      "path": "scripts\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950681573,
+      "type": "file"
+    },
+    {
+      "path": "docs\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950686639,
+      "type": "file"
+    },
+    {
+      "path": "assets\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950690731,
+      "type": "file"
+    },
+    {
+      "path": "domain\\library\\value_objects.py",
+      "accessCount": 1,
+      "lastAccessed": 1781950702763,
+      "type": "file"
+    },
+    {
+      "path": "domain\\download\\entities.py",
+      "accessCount": 1,
+      "lastAccessed": 1781950703880,
+      "type": "file"
+    },
+    {
+      "path": "domain\\clip\\entities.py",
+      "accessCount": 1,
+      "lastAccessed": 1781950704694,
+      "type": "file"
+    },
+    {
+      "path": "domain\\monitoring\\entities.py",
+      "accessCount": 1,
+      "lastAccessed": 1781950705394,
+      "type": "file"
+    },
+    {
+      "path": "application\\library\\queries.py",
+      "accessCount": 1,
+      "lastAccessed": 1781950706450,
+      "type": "file"
+    },
+    {
+      "path": "application\\library\\commands.py",
+      "accessCount": 1,
+      "lastAccessed": 1781950706804,
+      "type": "file"
+    },
+    {
+      "path": "domain\\library\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950735776,
+      "type": "file"
+    },
+    {
+      "path": "domain\\download\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950744480,
+      "type": "file"
+    },
+    {
+      "path": "domain\\clip\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950750190,
+      "type": "file"
+    },
+    {
+      "path": "domain\\monitoring\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950756359,
+      "type": "file"
+    },
+    {
+      "path": "domain\\shared\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950765042,
+      "type": "file"
+    },
+    {
+      "path": "application\\library\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950782200,
+      "type": "file"
+    },
+    {
+      "path": "application\\download\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950788438,
+      "type": "file"
+    },
+    {
+      "path": "application\\clip\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950792584,
+      "type": "file"
+    },
+    {
+      "path": "application\\monitoring\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950797635,
+      "type": "file"
+    },
+    {
+      "path": "infrastructure\\persistence\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950809581,
+      "type": "file"
+    },
+    {
+      "path": "infrastructure\\downloader\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950821529,
+      "type": "file"
+    },
+    {
+      "path": "infrastructure\\ffmpeg\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950828613,
+      "type": "file"
+    },
+    {
+      "path": "infrastructure\\youtube\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950838117,
+      "type": "file"
+    },
+    {
+      "path": "infrastructure\\auth\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950845529,
+      "type": "file"
+    },
+    {
+      "path": "gui\\panels\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950867001,
+      "type": "file"
+    },
+    {
+      "path": "gui\\view_models\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950879269,
+      "type": "file"
+    },
+    {
+      "path": "gui\\widgets\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950890253,
+      "type": "file"
+    },
+    {
+      "path": "gui\\dialogs\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950896104,
+      "type": "file"
+    },
+    {
+      "path": "gui\\themes\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950903596,
+      "type": "file"
+    },
+    {
+      "path": "tests\\unit\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950908985,
+      "type": "file"
+    },
+    {
+      "path": "tests\\integration\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950916365,
+      "type": "file"
+    },
+    {
+      "path": "tests\\gui\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950922906,
+      "type": "file"
+    },
+    {
+      "path": "tests\\unit\\domain\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950938636,
+      "type": "file"
+    },
+    {
+      "path": "tests\\unit\\application\\AGENTS.md",
+      "accessCount": 1,
+      "lastAccessed": 1781950945694,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

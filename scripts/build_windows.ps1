@@ -1,4 +1,7 @@
 #Requires -Version 5.1
+param(
+    [string]$AppVersion = ""   # 예: "1.2.3". 비어있으면 installer.iss 기본값 사용
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -29,7 +32,11 @@ Pop-Location
 # 3. Inno Setup
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (Test-Path $iscc) {
-    & $iscc (Join-Path $Root "packaging\installer.iss")
+    $issArgs = @((Join-Path $Root "packaging\installer.iss"))
+    if ($AppVersion -ne "") {
+        $issArgs = @("/DAppVersion=$AppVersion") + $issArgs
+    }
+    & $iscc @issArgs
     Write-Host "Installer: dist\YouTubeContentManager-setup.exe"
 } else {
     Write-Warning "Inno Setup not found — skipping installer creation."

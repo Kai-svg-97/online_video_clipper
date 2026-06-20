@@ -87,6 +87,8 @@ MAX_CONCURRENT_FEED_WORKERS: int = _load_int("max_concurrent_feed_workers", 4)
 CLIPBOARD_MONITORING: bool = _load_bool("clipboard_monitoring", True)
 DEFAULT_QUALITY: str = _resolve_str("default_quality", "best[ext=mp4]/best")
 DEFAULT_FORMAT: str = _resolve_str("default_format", "mp4")
+AUTO_UPDATE_CHECK: bool = _load_bool("auto_update_check", True)
+LAST_UPDATE_CHECK: float = float(_load_config().get("last_update_check", 0) or 0)
 
 # ---------------------------------------------------------------------------
 # 테마 설정
@@ -124,6 +126,8 @@ def save_setting(key: str, value) -> None:
         "default_quality": "DEFAULT_QUALITY",
         "default_format": "DEFAULT_FORMAT",
         "theme": "THEME",
+        "auto_update_check": "AUTO_UPDATE_CHECK",
+        "last_update_check": "LAST_UPDATE_CHECK",
         "yt_auth_browser": "YT_AUTH_BROWSER",
         "yt_auth_profile": "YT_AUTH_PROFILE",
         "yt_auth_cookiefile": "YT_AUTH_COOKIEFILE",

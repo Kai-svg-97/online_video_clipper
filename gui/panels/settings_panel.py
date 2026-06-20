@@ -372,6 +372,7 @@ class SettingsPanel(QWidget):
 
     hidden_tags_changed = pyqtSignal()
     feed_workers_changed = pyqtSignal(int)
+    check_update_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -796,6 +797,44 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._feed_status_lbl)
         self._refresh_feed_auth_ui()
 
+        # ── 업데이트 섹션 ──
+        layout.addSpacing(28)
+        sep_upd = QFrame()
+        sep_upd.setFrameShape(QFrame.Shape.HLine)
+        sep_upd.setStyleSheet("color: #1a1a1a;")
+        layout.addWidget(sep_upd)
+        layout.addSpacing(24)
+
+        upd_label = QLabel("업데이트")
+        upd_label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+        )
+        layout.addWidget(upd_label)
+        layout.addSpacing(10)
+
+        try:
+            from config import settings as s  # noqa: PLC0415
+            cur_auto_update = s.AUTO_UPDATE_CHECK
+        except Exception:
+            logger.exception("업데이트 설정 로드 실패")
+            cur_auto_update = True
+
+        self._auto_update_check = QCheckBox("시작 시 자동 업데이트 확인")
+        self._auto_update_check.setChecked(cur_auto_update)
+        self._auto_update_check.checkStateChanged.connect(self._on_auto_update_changed)
+        layout.addWidget(self._auto_update_check)
+        layout.addSpacing(10)
+
+        upd_btn_row = QHBoxLayout()
+        upd_btn = QPushButton("업데이트 확인")
+        upd_btn.setFixedWidth(120)
+        upd_btn.clicked.connect(self.check_update_requested.emit)
+        upd_btn_row.addWidget(upd_btn)
+        upd_btn_row.addStretch()
+        layout.addLayout(upd_btn_row)
+        layout.addSpacing(4)
+
         layout.addStretch()
 
     # ------------------------------------------------------------------
@@ -841,6 +880,10 @@ class SettingsPanel(QWidget):
         from config import settings as s
         fmt = self._format_combo.currentText()
         s.save_setting("default_format", fmt)
+
+    def _on_auto_update_changed(self, state) -> None:
+        from config import settings as s
+        s.save_setting("auto_update_check", state == Qt.CheckState.Checked)
 
     # ------------------------------------------------------------------
     def _on_theme_changed(self, tokens: ThemeTokens) -> None:
