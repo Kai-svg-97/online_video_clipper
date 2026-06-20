@@ -3,7 +3,8 @@ import platform
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 _win = platform.system() == "Windows"
-_ffmpeg_src = "bin/ffmpeg.exe" if _win else "bin/ffmpeg"
+# spec 파일은 packaging/ 기준이므로 루트 bin/으로 한 단계 올라간다
+_ffmpeg_src = "../bin/ffmpeg.exe" if _win else "../bin/ffmpeg"
 _icon = "assets/icon.ico" if _win else "assets/icon.png"
 
 a = Analysis(
