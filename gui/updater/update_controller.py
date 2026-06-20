@@ -81,12 +81,13 @@ class UpdateController(QObject):
         )
         self._worker.start()
 
-        # 체크 시각 갱신
-        try:
-            from config import settings as s  # noqa: PLC0415
-            s.save_setting("last_update_check", time.time())
-        except Exception:
-            logger.exception("last_update_check 저장 실패")
+        # 자동 체크 시에만 타임스탬프 갱신 — 수동 확인은 24h 인터벌에 영향 없음
+        if not interactive:
+            try:
+                from config import settings as s  # noqa: PLC0415
+                s.save_setting("last_update_check", time.time())
+            except Exception:
+                logger.exception("last_update_check 저장 실패")
 
     def _on_found(self, dto: UpdateDTO, *, interactive: bool) -> None:  # noqa: ARG002
         # domain UpdateInfo 를 재구성 (DTO에서 복원)
