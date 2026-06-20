@@ -20,7 +20,7 @@ Source: "..\dist\windows\YouTubeContentManager.exe"; DestDir: "{app}"
 
 [Icons]
 Name: "{group}\YouTube Content Manager"; Filename: "{app}\YouTubeContentManager.exe"
-Name: "{commondesktop}\YouTube Content Manager"; Filename: "{app}\YouTubeContentManager.exe"
+Name: "{userdesktop}\YouTube Content Manager"; Filename: "{app}\YouTubeContentManager.exe"
 
 [Run]
 Filename: "{app}\YouTubeContentManager.exe"; Description: "Launch YouTube Content Manager"; Flags: postinstall nowait
