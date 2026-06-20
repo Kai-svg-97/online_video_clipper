@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import PRESETS, ThemeTokens
+from version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -831,6 +832,9 @@ class SettingsPanel(QWidget):
         upd_btn.setFixedWidth(120)
         upd_btn.clicked.connect(self.check_update_requested.emit)
         upd_btn_row.addWidget(upd_btn)
+        ver_lbl = QLabel(f"현재 버전: v{__version__}")
+        ver_lbl.setStyleSheet("font-size: 11px; color: #888;")
+        upd_btn_row.addWidget(ver_lbl)
         upd_btn_row.addStretch()
         layout.addLayout(upd_btn_row)
         layout.addSpacing(4)
