@@ -157,9 +157,9 @@ class UpdateDialog(QDialog):
     def _apply_update(self, installer_path: str) -> None:
         if sys.platform == "win32":
             try:
-                proc = subprocess.Popen(
-                    [installer_path, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"]
-                )
+                # /CLOSEAPPLICATIONS 제거: 우리가 직접 quit() 호출
+                # /RESTARTAPPLICATIONS 제거: PyInstaller onefile의 임시 DLL 추출 실패 오류 방지
+                proc = subprocess.Popen([installer_path, "/SILENT"])
             except OSError:
                 logger.exception("설치 프로그램 실행 실패")
                 QMessageBox.warning(
@@ -177,6 +177,7 @@ class UpdateDialog(QDialog):
                     f"설치 프로그램이 예기치 않게 종료되었습니다.\n파일 위치: {installer_path}",
                 )
                 return
+            self._status_lbl.setText("설치 중… 완료 후 앱을 다시 실행해주세요.")
             QApplication.instance().quit()
         else:
             # Linux: AppImage 교체 안내 (v1 범위 외 — 파일 위치 표시)
