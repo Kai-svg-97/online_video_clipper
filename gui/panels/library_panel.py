@@ -6,6 +6,7 @@ a video replaces the list area with VideoDetailWidget inline (no modal dialog).
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -4427,6 +4428,16 @@ class LibraryPanel(QWidget):
         rel = _relative_time(v.published_at)
         if rel:
             meta.append(rel)
+        # YouTube URL에서 영상 ID 추출 — 썸네일 파일이 없을 때 CDN 폴백용
+        yt_vid_id = ""
+        thumb_url = ""
+        if v.url:
+            m = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", v.url)
+            if not m:
+                m = re.search(r"youtu\.be/([A-Za-z0-9_-]{11})", v.url)
+            if m:
+                yt_vid_id = m.group(1)
+                thumb_url = f"https://i.ytimg.com/vi/{yt_vid_id}/hqdefault.jpg"
         return RelatedItem(
             key=str(v.id),
             title=v.title,
@@ -4435,6 +4446,8 @@ class LibraryPanel(QWidget):
             meta_text="  ·  ".join(meta),
             payload=v.id,
             thumb_path=v.thumbnail_path or "",
+            thumb_url=thumb_url,
+            yt_video_id=yt_vid_id,
         )
 
     def _feed_related_items(self, clicked) -> list[RelatedItem]:

@@ -130,7 +130,7 @@ class _RelatedRow(QFrame):
         self._thumb = _RoundedThumbLabel(self._TW, self._TH)
         if item.duration_sec:
             self._thumb.set_duration(_fmt_dur(item.duration_sec))
-        row.addWidget(self._thumb)
+        row.addWidget(self._thumb, 0, Qt.AlignmentFlag.AlignTop)
 
         self._cache_key = ""
         self._load_thumb(item)
@@ -239,7 +239,7 @@ class _RelatedList(QScrollArea):
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setMinimumWidth(280)
+        self.setMinimumWidth(360)
         self._inner = QWidget()
         self._layout = QVBoxLayout(self._inner)
         self._layout.setContentsMargins(8, 8, 8, 8)
@@ -473,7 +473,7 @@ class VideoDetailWidget(QWidget):
 
         main_split.setStretchFactor(0, 3)
         main_split.setStretchFactor(1, 1)
-        main_split.setSizes([720, 300])
+        main_split.setSizes([720, 360])
         root.addWidget(main_split, stretch=1)
 
     # ── 이벤트 필터 (마우스 뒤로가기 버튼 감지) ───────────────────────
