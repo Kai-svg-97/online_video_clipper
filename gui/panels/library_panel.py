@@ -651,12 +651,24 @@ class _IconDelegate(QStyledItemDelegate):
                 painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignRight, cat_name)
         painter.restore()
 
-        # Selection border (drawn last, on top of everything)
+        # Hover / Selection border (drawn last, on top of everything)
         from PyQt6.QtWidgets import QStyle  # noqa: PLC0415
-        if option.state & QStyle.StateFlag.State_Selected:
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_hovered  = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        if is_selected:
             painter.save()
             pen = QPen(QColor(tok.selected_border))
             pen.setWidth(2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(rect.adjusted(1, 1, -1, -1))
+            painter.restore()
+        elif is_hovered:
+            painter.save()
+            c = QColor(tok.accent)
+            c.setAlpha(120)
+            pen = QPen(c)
+            pen.setWidth(1)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect.adjusted(1, 1, -1, -1))
@@ -784,12 +796,24 @@ class _ListDelegate(QStyledItemDelegate):
             )
             painter.restore()
 
-        # Selection border (drawn last, on top of everything)
+        # Hover / Selection border (drawn last, on top of everything)
         from PyQt6.QtWidgets import QStyle  # noqa: PLC0415
-        if option.state & QStyle.StateFlag.State_Selected:
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_hovered  = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        if is_selected:
             painter.save()
             pen = QPen(QColor(tok.selected_border))
             pen.setWidth(2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(rect.adjusted(1, 1, -2, -1))
+            painter.restore()
+        elif is_hovered:
+            painter.save()
+            c = QColor(tok.accent)
+            c.setAlpha(120)
+            pen = QPen(c)
+            pen.setWidth(1)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect.adjusted(1, 1, -2, -1))
@@ -2347,7 +2371,37 @@ class _PlaylistThumbLabel(QLabel):
         painter.end()
 
 
-class _FolderCard(QFrame):
+class _BaseCard(QFrame):
+    """hover 테두리 효과를 공통 제공하는 카드 기반 클래스."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._hovered = False
+
+    def enterEvent(self, event) -> None:
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._hovered:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            c = self.palette().highlight().color()
+            c.setAlpha(120)
+            painter.setPen(QPen(c, 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
+            painter.end()
+
+
+class _FolderCard(_BaseCard):
     """섹션 루트 뷰의 폴더 디렉터리 카드."""
 
     clicked = pyqtSignal(object)   # folder UUID
@@ -2377,7 +2431,7 @@ class _FolderCard(QFrame):
         super().mousePressEvent(event)
 
 
-class _UnfiledCard(QFrame):
+class _UnfiledCard(_BaseCard):
     """섹션 루트 뷰의 '미분류' 디렉터리 카드."""
 
     clicked = pyqtSignal()
@@ -2405,7 +2459,7 @@ class _UnfiledCard(QFrame):
         super().mousePressEvent(event)
 
 
-class _PlaylistCard(QFrame):
+class _PlaylistCard(_BaseCard):
     """폴더 뷰의 재생목록 카드 한 장."""
 
     clicked = pyqtSignal(object)   # playlist UUID
@@ -3564,6 +3618,7 @@ class LibraryPanel(QWidget):
         self._icon_view.setItemDelegate(self._icon_delegate)
         self._icon_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._icon_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._icon_view.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         self._view_stack.addWidget(self._icon_view)
 
         # List view
@@ -3576,6 +3631,7 @@ class LibraryPanel(QWidget):
         self._list_view.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self._list_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list_view.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         self._view_stack.addWidget(self._list_view)
 
         # Detail table
@@ -4282,8 +4338,8 @@ class LibraryPanel(QWidget):
         self._current_cat_id = cat_id
         self._current_playlist_id = None
         self._current_folder_id = None
-        # 폴더 카드 뷰/피드 뷰에서 카테고리를 고르면 영상 리스트 뷰로 복귀
-        if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED):
+        # 폴더 카드 뷰/피드 뷰/채널 뷰에서 카테고리를 고르면 영상 리스트 뷰로 복귀
+        if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS):
             self._switch_view(self._view_group.checkedId())
         self._active_tag_ids.clear()
         self._tag_list.blockSignals(True)
@@ -5679,7 +5735,7 @@ class LibraryPanel(QWidget):
         self._vm.set_playlist_filter(playlist_id, node_key=node_key)
         self._icon_view.set_playlist_context(playlist_id)
         self._list_view.set_playlist_context(playlist_id)
-        if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED):
+        if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS):
             self._switch_view(self._view_group.checkedId())
         self._current_playlist_id = playlist_id
         self._current_folder_id = None
