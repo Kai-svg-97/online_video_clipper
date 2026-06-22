@@ -89,6 +89,7 @@ DEFAULT_QUALITY: str = _resolve_str("default_quality", "best[ext=mp4]/best")
 DEFAULT_FORMAT: str = _resolve_str("default_format", "mp4")
 AUTO_UPDATE_CHECK: bool = _load_bool("auto_update_check", True)
 LAST_UPDATE_CHECK: float = float(_load_config().get("last_update_check", 0) or 0)
+SNOOZED_UPDATE_VERSION: str = _resolve_str("snoozed_update_version", "")
 
 # ---------------------------------------------------------------------------
 # 테마 설정
@@ -128,6 +129,7 @@ def save_setting(key: str, value) -> None:
         "theme": "THEME",
         "auto_update_check": "AUTO_UPDATE_CHECK",
         "last_update_check": "LAST_UPDATE_CHECK",
+        "snoozed_update_version": "SNOOZED_UPDATE_VERSION",
         "yt_auth_browser": "YT_AUTH_BROWSER",
         "yt_auth_profile": "YT_AUTH_PROFILE",
         "yt_auth_cookiefile": "YT_AUTH_COOKIEFILE",

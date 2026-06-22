@@ -95,7 +95,7 @@ class UpdateDialog(QDialog):
 
         self._later_btn = QPushButton("나중에")
         self._later_btn.setFixedWidth(80)
-        self._later_btn.clicked.connect(self.reject)
+        self._later_btn.clicked.connect(self._on_later)
         btn_row.addWidget(self._later_btn)
 
         self._install_btn = QPushButton("다운로드 및 설치")
@@ -107,6 +107,15 @@ class UpdateDialog(QDialog):
         layout.addLayout(btn_row)
 
     # ------------------------------------------------------------------
+    def _on_later(self) -> None:
+        """나중에 클릭 — 이 버전을 스누즈로 저장하고 다이얼로그를 닫는다."""
+        try:
+            from config.settings import save_setting  # noqa: PLC0415
+            save_setting("snoozed_update_version", self._dto.version)
+        except Exception:
+            logger.exception("snoozed_update_version 저장 실패")
+        self.reject()
+
     def _start_download(self) -> None:
         self._install_btn.setEnabled(False)
         self._later_btn.setEnabled(False)

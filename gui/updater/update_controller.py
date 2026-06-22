@@ -16,7 +16,7 @@ from gui.updater.update_dialog import UpdateDialog
 
 logger = logging.getLogger(__name__)
 
-_CHECK_INTERVAL_SEC = 86_400  # 24시간
+_CHECK_INTERVAL_SEC = 3_600  # 1시간
 
 
 class UpdateController(QObject):
@@ -89,8 +89,16 @@ class UpdateController(QObject):
             except Exception:
                 logger.exception("last_update_check 저장 실패")
 
-    def _on_found(self, dto: UpdateDTO, *, interactive: bool) -> None:  # noqa: ARG002
-        # domain UpdateInfo 를 재구성 (DTO에서 복원)
+    def _on_found(self, dto: UpdateDTO, *, interactive: bool) -> None:
+        # 자동 체크 시 사용자가 이미 "나중에"를 눌렀던 버전이면 알림 생략
+        if not interactive:
+            try:
+                from config import settings as s  # noqa: PLC0415
+                if dto.version == getattr(s, "SNOOZED_UPDATE_VERSION", ""):
+                    return
+            except Exception:
+                logger.exception("snoozed_update_version 확인 실패")
+
         self._last_dto = dto
         self._last_info = UpdateInfo(
             version=dto.version,
