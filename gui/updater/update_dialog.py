@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -156,28 +155,20 @@ class UpdateDialog(QDialog):
 
     def _apply_update(self, installer_path: str) -> None:
         if sys.platform == "win32":
+            # 앱이 완전히 종료된 뒤 설치 프로그램을 실행해야 파일 잠금(재시도 창)을 피할 수 있다.
+            # installer 경로를 pending 파일에 기록해두고, main.py의 app.exec() 반환 후에 실행한다.
+            pending = Path(tempfile.gettempdir()) / "ovc_pending_update.txt"
             try:
-                # /CLOSEAPPLICATIONS 제거: 우리가 직접 quit() 호출
-                # /RESTARTAPPLICATIONS 제거: PyInstaller onefile의 임시 DLL 추출 실패 오류 방지
-                proc = subprocess.Popen([installer_path, "/SILENT"])
+                pending.write_text(installer_path, encoding="utf-8")
             except OSError:
-                logger.exception("설치 프로그램 실행 실패")
+                logger.exception("pending update 파일 작성 실패")
                 QMessageBox.warning(
                     self,
                     "설치 실패",
-                    f"설치 프로그램을 실행하지 못했습니다.\n파일 위치: {installer_path}",
+                    f"업데이트 파일을 준비하지 못했습니다.\n파일 위치: {installer_path}",
                 )
                 return
-            # 프로세스가 정상 기동됐는지 확인 후 앱 종료
-            if proc.poll() is not None and proc.returncode not in (0, None):
-                logger.error("설치 프로그램이 즉시 종료됨: returncode=%s", proc.returncode)
-                QMessageBox.warning(
-                    self,
-                    "설치 실패",
-                    f"설치 프로그램이 예기치 않게 종료되었습니다.\n파일 위치: {installer_path}",
-                )
-                return
-            self._status_lbl.setText("설치 중… 완료 후 앱을 다시 실행해주세요.")
+            self._status_lbl.setText("앱 종료 후 설치가 자동으로 시작됩니다…")
             QApplication.instance().quit()
         else:
             # Linux: AppImage 교체 안내 (v1 범위 외 — 파일 위치 표시)

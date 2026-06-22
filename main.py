@@ -1,5 +1,8 @@
 import os
+import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 # Qt6 DirectWrite가 구형 비트맵 폰트(MS Sans Serif)를 처리하지 못해 발생하는
 # 무해한 경고를 억제한다. 앱 동작에는 영향 없음.
@@ -335,7 +338,21 @@ def main() -> int:
     window.set_update_controller(_update_ctrl)
 
     window.show()
-    return app.exec()
+    exit_code = app.exec()
+
+    # 앱 완전 종료 후 pending 업데이트 installer 실행 (파일 잠금 방지)
+    if sys.platform == "win32":
+        _pending = Path(tempfile.gettempdir()) / "ovc_pending_update.txt"
+        if _pending.exists():
+            _inst = _pending.read_text(encoding="utf-8").strip()
+            _pending.unlink(missing_ok=True)
+            if _inst and Path(_inst).exists():
+                try:
+                    subprocess.Popen([_inst, "/SILENT"])
+                except OSError:
+                    pass
+
+    return exit_code
 
 
 if __name__ == "__main__":
