@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTabWidget,
     QTimeEdit,
@@ -116,6 +117,8 @@ class _RelatedRow(QFrame):
         self._loader = None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFrameShape(QFrame.Shape.NoFrame)
+        # 행이 자연 높이(썸네일 기준 ~102px)를 초과해 세로로 늘어나지 않도록 고정
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._build_ui(item)
         self._apply_theme(ThemeManager.instance().current())
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
