@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -374,6 +374,7 @@ class SettingsPanel(QWidget):
     hidden_tags_changed = pyqtSignal()
     feed_workers_changed = pyqtSignal(int)
     check_update_requested = pyqtSignal()
+    install_update_requested = pyqtSignal(object)   # UpdateDTO
 
     def __init__(
         self,
@@ -386,6 +387,9 @@ class SettingsPanel(QWidget):
         self._yt_oauth = yt_oauth
         self._theme_cards: dict[str, _ThemeCard] = {}
         self._yt_auth_worker = None
+        self._pending_dto = None
+        self._flash_timer = None
+        self._flash_count = 0
         self._build_ui()
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
         self._on_theme_changed(ThemeManager.instance().current())
@@ -393,6 +397,7 @@ class SettingsPanel(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         scroll = QScrollArea(self)
+        self._scroll_area = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
@@ -814,6 +819,33 @@ class SettingsPanel(QWidget):
         layout.addWidget(upd_label)
         layout.addSpacing(10)
 
+        # 업데이트 컨테이너 (깜빡임 효과 대상)
+        self._update_section_frame = QFrame()
+        self._update_section_frame.setObjectName("updateSectionFrame")
+        upd_inner = QVBoxLayout(self._update_section_frame)
+        upd_inner.setContentsMargins(8, 8, 8, 8)
+        upd_inner.setSpacing(8)
+
+        # 새 버전 알림 행 (평소엔 숨김 — set_pending_update 시 표시)
+        self._upd_avail_row = QFrame()
+        self._upd_avail_row.setObjectName("updAvailRow")
+        self._upd_avail_row.setStyleSheet(
+            "#updAvailRow { background: rgba(91,155,213,18); border-radius: 6px; }"
+        )
+        avail_layout = QHBoxLayout(self._upd_avail_row)
+        avail_layout.setContentsMargins(10, 8, 10, 8)
+        avail_layout.setSpacing(8)
+        self._upd_avail_lbl = QLabel()
+        self._upd_avail_lbl.setStyleSheet("font-size: 11px; font-weight: 600;")
+        avail_layout.addWidget(self._upd_avail_lbl)
+        avail_layout.addStretch()
+        self._upd_install_btn = QPushButton("지금 설치")
+        self._upd_install_btn.setFixedWidth(80)
+        self._upd_install_btn.clicked.connect(self._on_install_update)
+        avail_layout.addWidget(self._upd_install_btn)
+        self._upd_avail_row.hide()
+        upd_inner.addWidget(self._upd_avail_row)
+
         try:
             from config import settings as s  # noqa: PLC0415
             cur_auto_update = s.AUTO_UPDATE_CHECK
@@ -824,22 +856,63 @@ class SettingsPanel(QWidget):
         self._auto_update_check = QCheckBox("시작 시 자동 업데이트 확인")
         self._auto_update_check.setChecked(cur_auto_update)
         self._auto_update_check.checkStateChanged.connect(self._on_auto_update_changed)
-        layout.addWidget(self._auto_update_check)
-        layout.addSpacing(10)
+        upd_inner.addWidget(self._auto_update_check)
 
         upd_btn_row = QHBoxLayout()
-        upd_btn = QPushButton("업데이트 확인")
-        upd_btn.setFixedWidth(120)
-        upd_btn.clicked.connect(self.check_update_requested.emit)
-        upd_btn_row.addWidget(upd_btn)
+        self._upd_check_btn = QPushButton("업데이트 확인")
+        self._upd_check_btn.clicked.connect(self.check_update_requested.emit)
+        upd_btn_row.addWidget(self._upd_check_btn)
         ver_lbl = QLabel(f"현재 버전: v{__version__}")
         ver_lbl.setStyleSheet("font-size: 11px; color: #888;")
         upd_btn_row.addWidget(ver_lbl)
         upd_btn_row.addStretch()
-        layout.addLayout(upd_btn_row)
+        upd_inner.addLayout(upd_btn_row)
+
+        layout.addWidget(self._update_section_frame)
         layout.addSpacing(4)
 
         layout.addStretch()
+
+    # ------------------------------------------------------------------
+    def set_pending_update(self, dto) -> None:
+        """자동 체크에서 새 버전 발견 시 호출 — 버튼 텍스트를 업데이트 버전으로 교체한다."""
+        self._pending_dto = dto
+        self._upd_check_btn.setText(f"v{dto.version}으로 업데이트하기")
+        self._upd_check_btn.clicked.disconnect()
+        self._upd_check_btn.clicked.connect(self._on_install_update)
+        size_mb = dto.size_bytes / (1024 * 1024)
+        self._upd_avail_lbl.setText(f"다운로드 크기: {size_mb:.1f} MB")
+        self._upd_install_btn.hide()
+        self._upd_avail_row.show()
+
+    def scroll_and_flash_update_section(self) -> None:
+        """설정 버튼 배지 클릭 후 업데이트 섹션으로 스크롤하고 깜빡임 효과를 준다."""
+        self._scroll_area.ensureWidgetVisible(self._update_section_frame)
+        self._flash_count = 0
+        if self._flash_timer is not None:
+            self._flash_timer.stop()
+        self._flash_timer = QTimer(self)
+        self._flash_timer.timeout.connect(self._do_flash)
+        self._flash_timer.start(280)
+
+    def _do_flash(self) -> None:
+        if self._flash_count >= 6:
+            self._flash_timer.stop()
+            self._update_section_frame.setStyleSheet("")
+            return
+        if self._flash_count % 2 == 0:
+            self._update_section_frame.setStyleSheet(
+                "#updateSectionFrame { background: rgba(91,155,213,30);"
+                " border-radius: 8px; }"
+            )
+        else:
+            self._update_section_frame.setStyleSheet("")
+        self._flash_count += 1
+
+    def _on_install_update(self) -> None:
+        """'지금 설치' 버튼 — 저장된 DTO로 UpdateDialog를 열어 설치를 진행한다."""
+        if self._pending_dto is not None:
+            self.install_update_requested.emit(self._pending_dto)
 
     # ------------------------------------------------------------------
     def showEvent(self, event) -> None:  # type: ignore[override]

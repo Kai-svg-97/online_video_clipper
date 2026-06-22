@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import QSize, QTimer, Qt
-from PyQt6.QtGui import QCloseEvent, QIcon, QPainter, QPixmap, QPixmapCache
+from PyQt6.QtCore import QSize, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QCloseEvent, QColor, QIcon, QPainter, QPixmap, QPixmapCache
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
     QApplication,
@@ -141,6 +141,22 @@ class _NavButton(QPushButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._apply_theme(ThemeManager.instance().current())
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
+        self._show_badge = False
+
+    def set_badge(self, visible: bool) -> None:
+        self._show_badge = visible
+        self.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        super().paintEvent(event)
+        if self._show_badge:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(210, 55, 55))
+            r = 5
+            p.drawEllipse(self.width() - r * 2 - 2, 2, r * 2, r * 2)
+            p.end()
 
     def _apply_theme(self, tokens: ThemeTokens) -> None:
         icon_color = tokens.text_secondary
@@ -174,6 +190,8 @@ class _NavButton(QPushButton):
 
 class _SideBar(QWidget):
     """48px 고정 너비 아이콘 사이드바."""
+
+    settings_navigated_with_badge = pyqtSignal()
 
     def __init__(self, stack: QStackedWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -218,10 +236,10 @@ class _SideBar(QWidget):
         layout.addWidget(self._account_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # 설정 버튼 (하단)
-        settings_btn = _NavButton(_SVG_SETTINGS, "설정")
-        settings_btn.clicked.connect(lambda: self._navigate(_PAGE_SETTINGS))
-        layout.addWidget(settings_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-        self._buttons.append(settings_btn)
+        self._settings_btn = _NavButton(_SVG_SETTINGS, "설정")
+        self._settings_btn.clicked.connect(lambda: self._navigate(_PAGE_SETTINGS))
+        layout.addWidget(self._settings_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._buttons.append(self._settings_btn)
 
         # 첫 번째(라이브러리) 선택
         self._buttons[0].setChecked(True)
@@ -231,7 +249,15 @@ class _SideBar(QWidget):
         tip = "YouTube 연결됨 — 설정에서 관리" if is_connected else "YouTube 미연결 — 설정에서 연동"
         self._account_btn.setToolTip(tip)
 
+    def show_update_badge(self, visible: bool) -> None:
+        self._settings_btn.set_badge(visible)
+
     def _navigate(self, page: int) -> None:
+        if page == _PAGE_SETTINGS \
+                and getattr(self, "_settings_btn", None) \
+                and self._settings_btn._show_badge:
+            self._settings_btn.set_badge(False)
+            self.settings_navigated_with_badge.emit()
         self._stack.setCurrentIndex(page)
         page_to_btn = {
             _PAGE_LIBRARY:  0,
@@ -589,13 +615,23 @@ class MainWindow(QMainWindow):
     def set_update_controller(self, controller) -> None:
         """composition root에서 창 생성 후 주입. 시작 시 업데이트 체크를 예약한다."""
         self._update_controller = controller
-        # 윈도우가 완전히 렌더링된 후 2초 뒤 조용히 확인 (메인 스레드 블로킹 없음)
         QTimer.singleShot(2000, controller.check_silently)
-        # 설정 패널의 "업데이트 확인" 버튼 연결
         if hasattr(self._settings_panel, "check_update_requested"):
             self._settings_panel.check_update_requested.connect(
                 controller.check_interactively
             )
+        if hasattr(self._settings_panel, "install_update_requested"):
+            self._settings_panel.install_update_requested.connect(
+                controller._show_update_dialog
+            )
+        controller.update_notification.connect(self._on_update_notification)
+        self._sidebar.settings_navigated_with_badge.connect(
+            self._settings_panel.scroll_and_flash_update_section
+        )
+
+    def _on_update_notification(self, dto) -> None:
+        self._sidebar.show_update_badge(True)
+        self._settings_panel.set_pending_update(dto)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.

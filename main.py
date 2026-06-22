@@ -341,6 +341,8 @@ def main() -> int:
     exit_code = app.exec()
 
     # 앱 완전 종료 후 pending 업데이트 installer 실행 (파일 잠금 방지)
+    # 직접 Popen 대신 batch 파일로 지연 실행: 현재 프로세스가 완전히 종료되어
+    # _MEI* 임시 디렉터리가 정리된 뒤 설치가 시작되도록 PID 소멸을 감시한다.
     if sys.platform == "win32":
         _pending = Path(tempfile.gettempdir()) / "ovc_pending_update.txt"
         if _pending.exists():
@@ -348,8 +350,28 @@ def main() -> int:
             _pending.unlink(missing_ok=True)
             if _inst and Path(_inst).exists():
                 try:
-                    subprocess.Popen([_inst, "/SILENT"])
-                except OSError:
+                    _pid = os.getpid()
+                    _bat = Path(tempfile.gettempdir()) / "ovc_update_launcher.bat"
+                    _bat.write_text(
+                        "@echo off\r\n"
+                        ":wait\r\n"
+                        f"tasklist /FI \"PID eq {_pid}\" 2>nul"
+                        f" | find /I \"{_pid}\" >nul\r\n"
+                        "if not errorlevel 1 (\r\n"
+                        "    ping -n 2 127.0.0.1 >nul\r\n"
+                        "    goto wait\r\n"
+                        ")\r\n"
+                        f"\"{_inst}\" /SILENT\r\n"
+                        "del \"%~f0\"\r\n",
+                        encoding="utf-8",
+                    )
+                    subprocess.Popen(
+                        ["cmd", "/c", str(_bat)],
+                        creationflags=subprocess.DETACHED_PROCESS
+                        | subprocess.CREATE_NEW_PROCESS_GROUP,
+                        close_fds=True,
+                    )
+                except (OSError, IOError):
                     pass
 
     return exit_code

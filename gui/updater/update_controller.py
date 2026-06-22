@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import time
 
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 
 from application.updater.commands import DownloadUpdateHandler
@@ -21,6 +21,8 @@ _CHECK_INTERVAL_SEC = 3_600  # 1시간
 
 class UpdateController(QObject):
     """업데이트 확인·다이얼로그 표시를 담당. MainWindow가 소유하며 shutdown()으로 정리."""
+
+    update_notification = pyqtSignal(object)   # UpdateDTO — 자동 체크에서 새 버전 발견 시
 
     def __init__(
         self,
@@ -90,7 +92,6 @@ class UpdateController(QObject):
                 logger.exception("last_update_check 저장 실패")
 
     def _on_found(self, dto: UpdateDTO, *, interactive: bool) -> None:
-        # 자동 체크 시 사용자가 이미 "나중에"를 눌렀던 버전이면 알림 생략
         if not interactive:
             try:
                 from config import settings as s  # noqa: PLC0415
@@ -108,6 +109,13 @@ class UpdateController(QObject):
             sha256=dto.sha256,
             release_notes=dto.release_notes,
         )
+
+        if interactive:
+            self._show_update_dialog(dto)
+        else:
+            self.update_notification.emit(dto)
+
+    def _show_update_dialog(self, dto: UpdateDTO) -> None:
         dlg = UpdateDialog(
             dto=dto,
             info=self._last_info,
