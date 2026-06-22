@@ -13,8 +13,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
-CloseApplications=yes
-RestartApplications=no
+CloseApplications=no
 
 [Files]
 Source: "..\dist\windows\YouTubeContentManager.exe"; DestDir: "{app}"
