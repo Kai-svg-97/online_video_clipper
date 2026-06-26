@@ -484,7 +484,8 @@ def _make_related_item(v):
 # DownloadPanel — 단일 화면 (카드 그리드 ↔ 영상 상세 스택)
 # ──────────────────────────────────────────────────────────────────
 class DownloadPanel(QWidget):
-    retry_requested = pyqtSignal(object)  # failed 카드 클릭 → DownloadJobDTO
+    retry_requested                 = pyqtSignal(object)  # failed 카드 클릭 → DownloadJobDTO
+    navigate_to_category_requested  = pyqtSignal(object)  # (category_id: UUID)
 
     def __init__(
         self,
@@ -555,17 +556,6 @@ class DownloadPanel(QWidget):
         detail_layout.setContentsMargins(0, 0, 0, 0)
         detail_layout.setSpacing(0)
 
-        # 브레드크럼 바
-        crumb_frame = QFrame()
-        crumb_frame.setObjectName("crumb_frame")
-        crumb_row = QHBoxLayout(crumb_frame)
-        crumb_row.setContentsMargins(8, 4, 8, 4)
-        self._breadcrumb_label = QLabel()
-        self._breadcrumb_label.setStyleSheet("font-size:9pt; color:#888;")
-        crumb_row.addWidget(self._breadcrumb_label)
-        crumb_row.addStretch()
-        detail_layout.addWidget(crumb_frame)
-
         self._detail_widget = VideoDetailWidget(download_vm=self._vm)
         self._detail_widget.back_requested.connect(self._on_detail_back)
         self._detail_widget.item_selected.connect(self._on_related_item_selected)
@@ -573,6 +563,9 @@ class DownloadPanel(QWidget):
             lambda url, title, settings: self._vm.start_download(url, title, settings)
         )
         self._detail_widget.notes_saved.connect(self._on_notes_saved)
+        self._detail_widget.category_path_clicked.connect(
+            self.navigate_to_category_requested.emit
+        )
         detail_layout.addWidget(self._detail_widget, 1)
         self._page_stack.addWidget(detail_page)
 
@@ -586,16 +579,8 @@ class DownloadPanel(QWidget):
         if detail is None:
             return
 
-        # 브레드크럼
-        if detail.category_id:
-            path = self._library_vm.get_category_path(detail.category_id)
-            if path:
-                self._breadcrumb_label.setText("  ›  ".join(path))
-                self._breadcrumb_label.parentWidget().setVisible(True)
-            else:
-                self._breadcrumb_label.parentWidget().setVisible(False)
-        else:
-            self._breadcrumb_label.parentWidget().setVisible(False)
+        cat_path = (self._library_vm.get_category_path_with_ids(detail.category_id)
+                    if detail.category_id else [])
 
         # 연관 영상 (같은 카테고리 영상들)
         related: list = []
@@ -604,7 +589,8 @@ class DownloadPanel(QWidget):
             related = [_make_related_item(v) for v in cat_videos if v.id != video_id]
 
         tag_ids = {t.name: t.id for t in self._library_vm.tags}
-        self._detail_widget.load(detail, tag_ids, related=related)
+        self._detail_widget.load(detail, tag_ids, related=related,
+                                 category_path=cat_path or None)
         self._page_stack.setCurrentIndex(_PAGE_DETAIL)
 
     def _on_detail_back(self) -> None:

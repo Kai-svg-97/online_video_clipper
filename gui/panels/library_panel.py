@@ -3906,6 +3906,7 @@ class LibraryPanel(QWidget):
         self._detail_widget.notes_saved.connect(
             lambda vid_id, text: self._vm.save_notes(vid_id, text)
         )
+        self._detail_widget.category_path_clicked.connect(self._on_cat_filter_changed)
 
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
         self._feed_grid.video_clicked.connect(self._open_stream_detail)
@@ -4451,6 +4452,10 @@ class LibraryPanel(QWidget):
             # "root" → 로컬 카테고리 전체 영상 (카테고리 필터 해제)
             self._on_cat_filter_changed(None)
 
+    def navigate_to_category(self, cat_id) -> None:
+        """외부(MainWindow 등)에서 특정 카테고리로 이동 요청 시 호출."""
+        self._on_cat_filter_changed(cat_id)
+
     def _on_cat_filter_changed(self, cat_id) -> None:
         self._push_nav_state()          # 전환 직전 화면 보존
         self._leave_detail_if_open()    # 상세 화면이면 목록으로 복귀
@@ -4571,7 +4576,9 @@ class LibraryPanel(QWidget):
             self._related_from_video(v)
             for v in self._vm.videos if v.id != video_id
         ][:30]
-        self._detail_widget.load(detail, tag_ids, resume_ms=0, related=related)
+        cat_path = self._vm.get_category_path_with_ids(detail.category_id) if detail.category_id else []
+        self._detail_widget.load(detail, tag_ids, resume_ms=0, related=related,
+                                 category_path=cat_path or None)
         self._current_detail_payload = video_id
         self._nav_stack.setCurrentIndex(1)
         self._vm.request_thumbnail_refresh(video_id, detail.url)

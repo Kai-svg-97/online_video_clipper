@@ -497,6 +497,9 @@ class MainWindow(QMainWindow):
             library_vm=self._library_vm,
         )
         self._download_panel.retry_requested.connect(self._on_retry_download)
+        self._download_panel.navigate_to_category_requested.connect(
+            self._on_navigate_to_category
+        )
         self._stack.addWidget(self._download_panel)                # 1
 
         # 페이지 2: 채널 모니터링
@@ -654,6 +657,11 @@ class MainWindow(QMainWindow):
             self._download_vm.start_download(job.url, job.title)
         except Exception:
             logger.exception("재다운로드 실패: %s", getattr(job, "url", "?"))
+
+    def _on_navigate_to_category(self, cat_id: object) -> None:
+        """다운로드 상세의 브레드크럼 클릭 → 라이브러리 패널의 해당 카테고리로 이동."""
+        self._sidebar._navigate(_PAGE_LIBRARY)
+        self._library_panel.navigate_to_category(cat_id)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.

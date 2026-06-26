@@ -364,12 +364,13 @@ class VideoDetailWidget(QWidget):
         tags_updated(video_id, tag_names) — user added a tag manually
     """
 
-    back_requested       = pyqtSignal()
-    tag_filter_requested = pyqtSignal(object, str)   # (UUID, str)
-    tags_updated         = pyqtSignal(object, object)  # (UUID, list[str])
-    download_requested   = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
-    item_selected        = pyqtSignal(object)  # 연관 영상 클릭 — payload(UUID | FeedVideoDTO)
-    notes_saved          = pyqtSignal(object, str)   # (video_id, notes)
+    back_requested          = pyqtSignal()
+    tag_filter_requested    = pyqtSignal(object, str)   # (UUID, str)
+    tags_updated            = pyqtSignal(object, object)  # (UUID, list[str])
+    download_requested      = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
+    item_selected           = pyqtSignal(object)  # 연관 영상 클릭 — payload(UUID | FeedVideoDTO)
+    notes_saved             = pyqtSignal(object, str)   # (video_id, notes)
+    category_path_clicked   = pyqtSignal(object)  # (category_id: UUID)
 
     # 하단 탭 인덱스
     _TAB_DOWNLOADS = 0
@@ -412,6 +413,14 @@ class VideoDetailWidget(QWidget):
         back_row.addWidget(self._btn_back)
         back_row.addStretch()
         root.addLayout(back_row)
+
+        # ── 브레드크럼 바 (카테고리 경로) ────────────────────────────
+        self._crumb_bar = QFrame()
+        self._crumb_bar.setVisible(False)
+        self._crumb_layout = QHBoxLayout(self._crumb_bar)
+        self._crumb_layout.setContentsMargins(4, 0, 4, 2)
+        self._crumb_layout.setSpacing(2)
+        root.addWidget(self._crumb_bar)
 
         sep0 = _hline()
         root.addWidget(sep0)
@@ -524,12 +533,14 @@ class VideoDetailWidget(QWidget):
         tag_ids: dict[str, UUID],
         resume_ms: int = 0,
         related: list[RelatedItem] | None = None,
+        category_path: list[tuple] | None = None,
     ) -> None:
         """라이브러리(로컬) 영상 상세를 채운다. resume_ms>0이면 이어서 재생."""
         self._detail = detail
         self._tag_ids = tag_ids
         self._streaming = False
         self._current_url = detail.url
+        self._set_crumb_path(category_path)
 
         self._player.load(detail.url, detail.downloads, resume_ms=resume_ms)
         if resume_ms > 0:
@@ -576,6 +587,7 @@ class VideoDetailWidget(QWidget):
         self._tag_ids = {}
         self._streaming = True
         self._current_url = feed.url
+        self._set_crumb_path(None)
 
         self._player.load(feed.url, [])
         QTimer.singleShot(150, self._player.play)
@@ -1003,6 +1015,33 @@ class VideoDetailWidget(QWidget):
             float(start_sec),
             float(end_sec),
         )
+
+    def _set_crumb_path(self, path: list[tuple] | None) -> None:
+        """브레드크럼 바를 path[(이름, category_id), ...]로 재구성한다."""
+        while self._crumb_layout.count():
+            item = self._crumb_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not path:
+            self._crumb_bar.setVisible(False)
+            return
+        for i, (name, cat_id) in enumerate(path):
+            if i > 0:
+                sep = QLabel(" ›")
+                sep.setStyleSheet("color:#888; font-size:9pt;")
+                self._crumb_layout.addWidget(sep)
+            btn = QPushButton(name)
+            btn.setFlat(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton { color:#5a9fd4; font-size:9pt; border:none; padding:0;"
+                " text-decoration:underline; background:transparent; }"
+                " QPushButton:hover { color:#8dc4f0; }"
+            )
+            btn.clicked.connect(lambda _, cid=cat_id: self.category_path_clicked.emit(cid))
+            self._crumb_layout.addWidget(btn)
+        self._crumb_layout.addStretch()
+        self._crumb_bar.setVisible(True)
 
     def _on_notes_changed(self) -> None:
         if not self._streaming and self._detail is not None:
