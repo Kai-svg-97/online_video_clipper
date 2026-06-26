@@ -554,6 +554,33 @@ class LibraryViewModel(QObject):
             logger.debug("URL로 제목 조회 실패: %s", url)
             return None
 
+    def get_category_videos(self, category_id: UUID, limit: int = 30) -> list:
+        """카테고리 소속 영상 목록 반환 (연관 영상 구성용)."""
+        try:
+            return self._get_videos.handle(
+                GetVideosQuery(category_id=category_id, limit=limit)
+            )
+        except Exception:
+            logger.exception("카테고리 영상 조회 실패: %s", category_id)
+            return []
+
+    def get_category_path(self, category_id: UUID) -> list[str]:
+        """카테고리 계층 경로 반환 (브레드크럼용). 루트→리프 순서."""
+        try:
+            cats = {c.id: c for c in self._categories}
+            path: list[str] = []
+            current = category_id
+            seen: set = set()
+            while current and current in cats and current not in seen:
+                seen.add(current)
+                cat = cats[current]
+                path.insert(0, cat.name)
+                current = cat.parent_id
+            return path
+        except Exception:
+            logger.debug("카테고리 경로 조회 실패: %s", category_id)
+            return []
+
     def create_category(self, name: str, parent_id: UUID | None = None) -> None:
         try:
             self._create_category.handle(CreateCategoryCommand(name=name, parent_id=parent_id))
