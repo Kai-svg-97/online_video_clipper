@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from uuid import UUID
 
 
@@ -119,6 +120,12 @@ class ChannelInfoDTO:
 
 
 @dataclass(frozen=True)
+class FailedDownloadInfoDTO:
+    error_msg: str
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class VideoDetailDTO:
     id: UUID
     url: str
@@ -136,3 +143,4 @@ class VideoDetailDTO:
     description: str
     tags: list[str] = field(default_factory=list)
     downloads: list[DownloadInfoDTO] = field(default_factory=list)
+    failed_downloads: list[FailedDownloadInfoDTO] = field(default_factory=list)

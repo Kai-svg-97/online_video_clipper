@@ -26,6 +26,9 @@ class IDownloadRepository(ABC):
     def find_completed_by_url(self, url: str) -> list[DownloadJob]: ...
 
     @abstractmethod
+    def find_failed_by_url(self, url: str) -> list[DownloadJob]: ...
+
+    @abstractmethod
     def delete_completed_duplicates(
         self, url: str, quality: str, fmt: str, keep_job_id: "UUID"
     ) -> None:

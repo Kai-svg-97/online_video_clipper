@@ -47,6 +47,7 @@ from application.library.queries import (
     GetTagsHandler,
     GetTagsQuery,
     GetVideoDetailHandler,
+    GetVideoIdByUrlHandler,
     GetVideosHandler,
     GetVideosQuery,
     SearchVideosHandler,
@@ -209,9 +210,11 @@ class LibraryViewModel(QObject):
         set_category_order: SetCategoryVideoOrderHandler | None = None,
         import_yt_to_category: ImportYouTubePlaylistToCategoryHandler | None = None,
         refresh_thumbnail: RefreshVideoThumbnailHandler | None = None,
+        get_video_id_by_url: GetVideoIdByUrlHandler | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
+        self._get_video_id_by_url = get_video_id_by_url
         self._get_videos = get_videos
         self._search_videos = search_videos
         self._get_categories = get_categories
@@ -509,6 +512,15 @@ class LibraryViewModel(QObject):
             return self._get_video_detail.handle(video_id)
         except Exception as exc:
             self.error_occurred.emit(str(exc))
+            return None
+
+    def find_video_id_by_url(self, url: str) -> UUID | None:
+        if self._get_video_id_by_url is None:
+            return None
+        try:
+            return self._get_video_id_by_url.handle(url)
+        except Exception:
+            logger.exception("URL로 영상 ID 조회 실패: %s", url)
             return None
 
     def create_category(self, name: str, parent_id: UUID | None = None) -> None:

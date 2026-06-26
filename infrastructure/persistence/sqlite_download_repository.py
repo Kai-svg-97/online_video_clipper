@@ -84,6 +84,18 @@ class SqliteDownloadRepository(IDownloadRepository):
                 jobs.append(self._row_to_job(row))
         return jobs
 
+    def find_failed_by_url(self, url: str) -> list[DownloadJob]:
+        jobs: list[DownloadJob] = []
+        with self._db.connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM download_history WHERE url=? AND status='failed'"
+                " ORDER BY created_at DESC",
+                (url,),
+            )
+            for row in cursor:
+                jobs.append(self._row_to_job(row))
+        return jobs
+
     def delete_completed_duplicates(
         self, url: str, quality: str, fmt: str, keep_job_id: UUID
     ) -> None:

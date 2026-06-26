@@ -9,6 +9,7 @@ from application.library.dtos import (
     CategoryDTO,
     CategoryStatDTO,
     DownloadInfoDTO,
+    FailedDownloadInfoDTO,
     LibraryStatsDTO,
     TagDTO,
     VideoDTO,
@@ -202,6 +203,15 @@ class GetVideoDetailHandler:
 
         published = v.published_at.strftime("%Y-%m-%d") if v.published_at else None
 
+        failed_jobs = self._dl_repo.find_failed_by_url(v.url.value)
+        failed_downloads = [
+            FailedDownloadInfoDTO(
+                error_msg=j.error_msg or "알 수 없는 오류",
+                created_at=j.created_at,
+            )
+            for j in failed_jobs
+        ]
+
         return VideoDetailDTO(
             id=agg.id,
             url=v.url.value,
@@ -219,7 +229,19 @@ class GetVideoDetailHandler:
             description=v.description,
             tags=tag_names,
             downloads=downloads,
+            failed_downloads=failed_downloads,
         )
+
+
+class GetVideoIdByUrlHandler:
+    """URL로 라이브러리 영상 ID 조회 — 다운로드 패널 카드 클릭 시 상세화면 연결에 사용."""
+
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, url: str) -> UUID | None:
+        agg = self._repo.get_by_url(url)
+        return agg.id if agg else None
 
 
 class GetCategoriesHandler:

@@ -490,7 +490,9 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._library_page)                  # 0
 
         # 페이지 1: 다운로드
-        self._stack.addWidget(DownloadPanel(self._download_vm))    # 1
+        self._download_panel = DownloadPanel(self._download_vm)
+        self._download_panel.video_open_requested.connect(self._on_download_video_open)
+        self._stack.addWidget(self._download_panel)                # 1
 
         # 페이지 2: 채널 모니터링
         self._stack.addWidget(MonitoringPanel(self._monitoring_vm))  # 2
@@ -632,6 +634,14 @@ class MainWindow(QMainWindow):
     def _on_update_notification(self, dto) -> None:
         self._sidebar.show_update_badge(True)
         self._settings_panel.set_pending_update(dto)
+
+    def _on_download_video_open(self, url: str) -> None:
+        """다운로드 카드 클릭 → 라이브러리 영상 상세화면 오픈."""
+        video_id = self._library_vm.find_video_id_by_url(url)
+        if video_id is None:
+            return
+        self._sidebar._navigate(_PAGE_LIBRARY)
+        self._library_page.library_panel()._open_detail(video_id)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.

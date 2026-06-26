@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from application.library.dtos import VideoDetailDTO
+from application.library.dtos import FailedDownloadInfoDTO, VideoDetailDTO
 from gui.themes.manager import ThemeManager
 from gui.widgets.video_player import InlinePlayer
 
@@ -542,7 +542,7 @@ class VideoDetailWidget(QWidget):
 
         # 하단 탭 — 모두 활성
         self._set_tabs_enabled(True)
-        self._build_downloads_tab(detail.downloads)
+        self._build_downloads_tab(detail.downloads, detail.failed_downloads)
         self._notes_edit.setReadOnly(False)
         self._notes_edit.setPlainText(detail.notes)
 
@@ -585,7 +585,7 @@ class VideoDetailWidget(QWidget):
 
         # 하단 탭 — 메모/클립 비활성, 다운로드 안내만
         self._set_tabs_enabled(False)
-        self._build_downloads_tab([])
+        self._build_downloads_tab([], [])
         self._notes_edit.setReadOnly(True)
         self._notes_edit.setPlainText("스트리밍 영상입니다. 다운로드 후 메모/클립을 사용할 수 있습니다.")
         self._clip_source_file = None
@@ -706,7 +706,16 @@ class VideoDetailWidget(QWidget):
         if not self._player.is_playing():
             self._player.play()
 
-    def _build_downloads_tab(self, downloads: list) -> None:
+    @staticmethod
+    def _strip_ansi(text: str) -> str:
+        import re
+        return re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+    def _build_downloads_tab(
+        self,
+        downloads: list,
+        failed_downloads: list[FailedDownloadInfoDTO] | None = None,
+    ) -> None:
         if self._dl_tab.layout():
             _clear_layout(self._dl_tab.layout())
             dl_layout = self._dl_tab.layout()
@@ -752,6 +761,30 @@ class VideoDetailWidget(QWidget):
                 dl_layout.addWidget(grp)
         else:
             dl_layout.addWidget(QLabel("다운로드된 파일이 없습니다."))
+
+        # 실패 이력 섹션
+        if failed_downloads:
+            fail_hdr = QLabel("다운로드 실패 이력")
+            fail_hdr.setStyleSheet(
+                f"color:#f44336; font-weight:bold; font-size:9pt; margin-top:8px;"
+            )
+            dl_layout.addWidget(fail_hdr)
+            for fd in failed_downloads:
+                err_text = self._strip_ansi(fd.error_msg)
+                date_str = (
+                    fd.created_at.strftime("%Y-%m-%d %H:%M")
+                    if fd.created_at else ""
+                )
+                row = QGroupBox(date_str or "실패")
+                row.setStyleSheet("QGroupBox { border-left: 3px solid #f44336; }")
+                rl = QVBoxLayout(row)
+                rl.setContentsMargins(10, 6, 10, 8)
+                err_lbl = QLabel(err_text)
+                err_lbl.setWordWrap(True)
+                err_lbl.setStyleSheet("color:#f44336; font-size:8pt;")
+                rl.addWidget(err_lbl)
+                dl_layout.addWidget(row)
+
         dl_layout.addStretch()
 
     def _set_tabs_enabled(self, local: bool) -> None:

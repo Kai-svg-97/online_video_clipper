@@ -108,6 +108,7 @@ def main() -> int:
         GetCategoryVideoOrderHandler,
         GetTagsHandler,
         GetVideoDetailHandler,
+        GetVideoIdByUrlHandler,
         GetVideosHandler,
         LibraryStatsHandler,
         SearchVideosHandler,
@@ -210,6 +211,7 @@ def main() -> int:
     get_cats            = GetCategoriesHandler(video_repo)
     get_tags            = GetTagsHandler(video_repo)
     get_video_detail    = GetVideoDetailHandler(video_repo, download_repo)
+    get_video_id_by_url = GetVideoIdByUrlHandler(video_repo)
     stats_handler       = LibraryStatsHandler(video_repo, download_repo)
     get_cat_order_h        = GetCategoryVideoOrderHandler(video_repo)
     set_cat_order_h        = SetCategoryVideoOrderHandler(video_repo)
@@ -301,6 +303,7 @@ def main() -> int:
         set_category_order=set_cat_order_h,
         import_yt_to_category=import_yt_to_cat_h,
         refresh_thumbnail=refresh_thumbnail_h,
+        get_video_id_by_url=get_video_id_by_url,
     )
     get_yt_playlists_h = GetYouTubePlaylistsHandler(ytdlp, _yt_api)
     playlist_vm = PlaylistViewModel(
