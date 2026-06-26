@@ -13,6 +13,19 @@ from utils.resources import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
 
+_DPAPI_USER_MSG = (
+    "Chrome 쿠키를 복호화할 수 없습니다 (DPAPI 오류).\n"
+    "다음 중 하나를 시도해 주세요:\n"
+    "• Chrome을 완전히 종료한 후 다시 시도\n"
+    "• 설정 > YouTube 계정에서 Firefox를 선택\n"
+    "• 설정 > YouTube 계정에서 재로그인(Playwright 방식)"
+)
+
+
+def _is_dpapi_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "dpapi" in msg or "failed to decrypt" in msg
+
 
 def _height_to_quality_label(height: int | None) -> str:
     """픽셀 높이를 사람이 읽기 쉬운 품질 레이블로 변환한다.
@@ -354,10 +367,15 @@ class YtDlpAdapter:
             "playlistend": limit,
             **(cookie_opts or {}),
         }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(
-                "https://www.youtube.com/feed/subscriptions", download=False
-            ) or {}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(
+                    "https://www.youtube.com/feed/subscriptions", download=False
+                ) or {}
+        except Exception as exc:
+            if _is_dpapi_error(exc):
+                raise RuntimeError(_DPAPI_USER_MSG) from exc
+            raise
         result = []
         for e in (info.get("entries") or [])[:limit]:
             yt_id = e.get("id") or ""
@@ -403,10 +421,15 @@ class YtDlpAdapter:
             "playlistend": 1000,
             **(cookie_opts or {}),
         }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(
-                "https://www.youtube.com/feed/channels", download=False
-            ) or {}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(
+                    "https://www.youtube.com/feed/channels", download=False
+                ) or {}
+        except Exception as exc:
+            if _is_dpapi_error(exc):
+                raise RuntimeError(_DPAPI_USER_MSG) from exc
+            raise
         result = []
         # 지연 제너레이터를 list로 완전히 소진해 continuation을 끝까지 따라간다.
         for e in list(info.get("entries") or []):
@@ -441,8 +464,13 @@ class YtDlpAdapter:
             "playlistend": limit,
             **(cookie_opts or {}),
         }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False) or {}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False) or {}
+        except Exception as exc:
+            if _is_dpapi_error(exc):
+                raise RuntimeError(_DPAPI_USER_MSG) from exc
+            raise
         channel_name = info.get("channel") or info.get("uploader") or info.get("title") or ""
         result = []
         for e in (info.get("entries") or [])[:limit]:
