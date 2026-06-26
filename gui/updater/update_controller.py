@@ -37,6 +37,13 @@ class UpdateController(QObject):
         self._worker: UpdateCheckWorker | None = None
         self._last_dto: UpdateDTO | None = None
         self._last_info: UpdateInfo | None = None
+        # "나중에"는 현재 세션만 억제 — 시작 시 스누즈를 초기화한다
+        try:
+            from config import settings as s  # noqa: PLC0415
+            if getattr(s, "SNOOZED_UPDATE_VERSION", ""):
+                s.save_setting("snoozed_update_version", "")
+        except Exception:
+            logger.exception("snoozed_update_version 초기화 실패")
 
     # ------------------------------------------------------------------
     def check_silently(self) -> None:
