@@ -413,6 +413,22 @@ class _VideoListView(QListView):
         )
         drag = QDrag(self)
         drag.setMimeData(mime)
+
+        # 반투명 드래그 픽스맵 (드롭 위치가 보이도록 55% 불투명도)
+        rects = [self.visualRect(i) for i in indexes]
+        united = rects[0]
+        for r in rects[1:]:
+            united = united.united(r)
+        raw = self.viewport().grab(united)
+        transp = QPixmap(raw.size())
+        transp.fill(Qt.GlobalColor.transparent)
+        _p = QPainter(transp)
+        _p.setOpacity(0.55)
+        _p.drawPixmap(0, 0, raw)
+        _p.end()
+        drag.setPixmap(transp)
+        drag.setHotSpot(united.center() - united.topLeft())
+
         drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
 
     def dragEnterEvent(self, event) -> None:
@@ -1992,6 +2008,20 @@ class _PlaylistTree(QTreeWidget):
             mime.setData(_MIME_YT_PLAYLIST_ID, QByteArray(yt_id.encode()))
         drag = QDrag(self)
         drag.setMimeData(mime)
+
+        # 반투명 드래그 픽스맵
+        item_rect = self.visualItemRect(item)
+        if not item_rect.isEmpty():
+            raw = self.viewport().grab(item_rect)
+            transp = QPixmap(raw.size())
+            transp.fill(Qt.GlobalColor.transparent)
+            _p = QPainter(transp)
+            _p.setOpacity(0.55)
+            _p.drawPixmap(0, 0, raw)
+            _p.end()
+            drag.setPixmap(transp)
+            drag.setHotSpot(item_rect.center() - item_rect.topLeft())
+
         drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
 
     def dragEnterEvent(self, event) -> None:
@@ -2008,6 +2038,15 @@ class _PlaylistTree(QTreeWidget):
     def dragMoveEvent(self, event) -> None:
         target = self.itemAt(event.position().toPoint())
         mime = event.mimeData()
+
+        # 드롭 대상 hover 강조
+        prev = getattr(self, "_drag_hover_item", None)
+        if target is not prev:
+            if prev is not None:
+                prev.setBackground(0, QBrush())
+            if target is not None:
+                target.setBackground(0, QBrush(QColor(100, 160, 255, 80)))
+            self._drag_hover_item = target
 
         if mime.hasFormat(_MIME_VIDEO_ID):
             # 영상 드롭: 재생목록 또는 카테고리 항목 위에서 허용
@@ -2056,7 +2095,18 @@ class _PlaylistTree(QTreeWidget):
         else:
             event.ignore()
 
+    def dragLeaveEvent(self, event) -> None:
+        prev = getattr(self, "_drag_hover_item", None)
+        if prev is not None:
+            prev.setBackground(0, QBrush())
+            self._drag_hover_item = None
+        super().dragLeaveEvent(event)
+
     def dropEvent(self, event) -> None:
+        prev = getattr(self, "_drag_hover_item", None)
+        if prev is not None:
+            prev.setBackground(0, QBrush())
+            self._drag_hover_item = None
         mime   = event.mimeData()
         target = self.itemAt(event.position().toPoint())
 
@@ -3128,6 +3178,20 @@ class _CategoryTree(QTreeWidget):
         mime.setData(_MIME_CAT_ID, QByteArray(str(cat_id).encode()))
         drag = QDrag(self)
         drag.setMimeData(mime)
+
+        # 반투명 드래그 픽스맵
+        item_rect = self.visualItemRect(item)
+        if not item_rect.isEmpty():
+            raw = self.viewport().grab(item_rect)
+            transp = QPixmap(raw.size())
+            transp.fill(Qt.GlobalColor.transparent)
+            _p = QPainter(transp)
+            _p.setOpacity(0.55)
+            _p.drawPixmap(0, 0, raw)
+            _p.end()
+            drag.setPixmap(transp)
+            drag.setHotSpot(item_rect.center() - item_rect.topLeft())
+
         drag.exec(Qt.DropAction.MoveAction)
 
     def dragEnterEvent(self, event) -> None:
@@ -3147,12 +3211,21 @@ class _CategoryTree(QTreeWidget):
             event.ignore()
             return
         item = self.itemAt(event.position().toPoint())
+        prev = getattr(self, "_drag_hover_item", None)
+        if item is not prev:
+            if prev is not None:
+                prev.setBackground(0, QBrush())
+            if item is not None:
+                item.setBackground(0, QBrush(QColor(100, 160, 255, 80)))
+            self._drag_hover_item = item
         if item:
             self.setCurrentItem(item)
-            self._drag_hover_item = item
         event.acceptProposedAction()
 
     def dragLeaveEvent(self, event) -> None:
+        prev = getattr(self, "_drag_hover_item", None)
+        if prev is not None:
+            prev.setBackground(0, QBrush())
         self._drag_hover_item = None
         self._ext_url_drag = False
         self._vid_drag     = False
@@ -3160,6 +3233,10 @@ class _CategoryTree(QTreeWidget):
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
+        prev = getattr(self, "_drag_hover_item", None)
+        if prev is not None:
+            prev.setBackground(0, QBrush())
+            self._drag_hover_item = None
         mime = event.mimeData()
         pos  = event.position().toPoint()
         # itemAt() misses the item when the cursor lands in padding between items;
@@ -4905,15 +4982,10 @@ class LibraryPanel(QWidget):
 
     def _on_item_clicked(self, index: QModelIndex, view: QListView) -> None:
         """단일 클릭 → 상세화면 진입.
-        Ctrl+클릭 → 웹 브라우저로 영상 URL 열기.
         Shift 클릭은 다중 선택·드래그용으로 유지."""
         mods = QApplication.keyboardModifiers()
         dto: VideoDTO | None = self._model.data(index, VideoListModel.DtoRole)
         if not dto:
-            return
-        if mods & Qt.KeyboardModifier.ControlModifier:
-            if dto.url:
-                QDesktopServices.openUrl(QUrl(dto.url))
             return
         if mods & Qt.KeyboardModifier.ShiftModifier:
             return

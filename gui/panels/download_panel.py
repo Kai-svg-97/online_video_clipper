@@ -6,6 +6,10 @@ from uuid import UUID
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -85,7 +89,7 @@ class _HistoryRow(QWidget):
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(6)
 
-        completed = job.status == "COMPLETED"
+        completed = job.status == "completed"
         badge_text = "완료" if completed else "실패"
         badge_color = "#4caf50" if completed else "#f44336"
         badge_lbl = QLabel(badge_text)
@@ -120,6 +124,70 @@ class _HistoryRow(QWidget):
             err_lbl.setStyleSheet("color: #f44336; font-size: 8pt;")
             err_lbl.setToolTip(job.error_msg)
             layout.addWidget(err_lbl, 1)
+
+        detail_btn = QPushButton("상세보기")
+        detail_btn.setFixedWidth(60)
+        detail_btn.clicked.connect(lambda checked=False, j=job: _DetailDialog(j, self).exec())
+        layout.addWidget(detail_btn)
+
+
+class _DetailDialog(QDialog):
+    """다운로드 항목 상세 정보 다이얼로그."""
+
+    def __init__(self, job: DownloadJobDTO, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("다운로드 상세 정보")
+        self.setMinimumWidth(480)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        form = QFormLayout(self)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        title_lbl = QLabel(job.title or "—")
+        title_lbl.setWordWrap(True)
+        form.addRow("제목:", title_lbl)
+
+        url_row = QHBoxLayout()
+        url_lbl = QLabel(job.url or "—")
+        url_lbl.setWordWrap(True)
+        url_row.addWidget(url_lbl, 1)
+        if job.url:
+            copy_url_btn = QPushButton("복사")
+            copy_url_btn.setFixedWidth(44)
+            _url = job.url
+            copy_url_btn.clicked.connect(lambda: QApplication.clipboard().setText(_url))
+            url_row.addWidget(copy_url_btn)
+        form.addRow("URL:", url_row)
+
+        _status_map = {"completed": "완료", "failed": "실패", "cancelled": "취소",
+                       "pending": "대기", "running": "진행 중"}
+        form.addRow("상태:", QLabel(_status_map.get(job.status, job.status)))
+
+        if job.file_path:
+            fp = Path(job.file_path)
+            path_row = QHBoxLayout()
+            path_lbl = QLabel(job.file_path)
+            path_lbl.setWordWrap(True)
+            path_row.addWidget(path_lbl, 1)
+            copy_path_btn = QPushButton("복사")
+            copy_path_btn.setFixedWidth(44)
+            _fp_str = job.file_path
+            copy_path_btn.clicked.connect(lambda: QApplication.clipboard().setText(_fp_str))
+            path_row.addWidget(copy_path_btn)
+            form.addRow("파일 경로:", path_row)
+            size = fp.stat().st_size if fp.exists() else None
+            form.addRow("파일 크기:", QLabel(_fmt_size(size)))
+
+        if job.error_msg:
+            err_lbl = QLabel(job.error_msg)
+            err_lbl.setWordWrap(True)
+            err_lbl.setStyleSheet("color: #f44336;")
+            form.addRow("오류:", err_lbl)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
 
 
 class _QueueTab(QWidget):
