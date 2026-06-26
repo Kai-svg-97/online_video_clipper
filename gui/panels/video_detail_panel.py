@@ -724,47 +724,60 @@ class VideoDetailWidget(QWidget):
         dl_layout.setContentsMargins(8, 8, 8, 4)
         dl_layout.setSpacing(8)
         if downloads:
-            from PyQt6.QtWidgets import QFrame  # noqa: PLC0415
-            for dl in downloads:
+            from PyQt6.QtWidgets import QGridLayout  # noqa: PLC0415
+            # 폴더 열기 버튼 — 첫 번째 존재하는 파일의 폴더 기준, 우측 정렬
+            first_folder = next(
+                (str(Path(dl.file_path).parent)
+                 for dl in downloads
+                 if dl.file_path and Path(dl.file_path).exists()),
+                None,
+            )
+            hdr_row = QHBoxLayout()
+            hdr_row.addStretch()
+            if first_folder:
+                folder_btn = QPushButton("폴더 열기")
+                folder_btn.setFixedHeight(26)
+                folder_btn.setToolTip("파일 위치를 탐색기에서 열기")
+                folder_btn.clicked.connect(lambda _, f=first_folder: _open_folder(f))
+                hdr_row.addWidget(folder_btn)
+            dl_layout.addLayout(hdr_row)
+
+            # 표 그리드: 품질 | 포맷 | 크기 | 파일 열기
+            grid_w = QWidget()
+            grid = QGridLayout(grid_w)
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setSpacing(6)
+            grid.setColumnStretch(3, 1)
+
+            tok = _t()
+            for row_idx, dl in enumerate(downloads):
                 fp = Path(dl.file_path) if dl.file_path else None
                 exists = fp is not None and fp.exists()
-                filename = fp.name if fp else "—"
-                info = "  ·  ".join(filter(None, [
-                    dl.quality or None,
-                    dl.fmt.upper() if dl.fmt else None,
-                    _fmt_size(dl.file_size_bytes) if dl.file_size_bytes else None,
-                    "파일 있음 ✓" if exists else "파일 없음 ✗",
-                ]))
-                grp = QFrame()
-                grp.setStyleSheet(
-                    f"QFrame {{ border: 1px solid {_t().border}; border-radius: 4px; }}"
-                )
-                gl = QVBoxLayout(grp)
-                gl.setContentsMargins(10, 8, 10, 10)
-                gl.setSpacing(4)
-                fname_lbl = QLabel(filename)
-                fname_lbl.setStyleSheet(f"color:{_t().text_primary}; font-size:9pt; font-weight:bold; border:none;")
-                fname_lbl.setWordWrap(True)
-                gl.addWidget(fname_lbl)
-                info_lbl = QLabel(info)
-                info_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-size:9pt; border:none;")
-                gl.addWidget(info_lbl)
+                size_bytes = fp.stat().st_size if exists else dl.file_size_bytes
+
+                quality = dl.quality or "—"
+                fmt = dl.fmt.upper() if dl.fmt else "—"
+
+                for col_idx, (text, style) in enumerate([
+                    (quality, f"color:{tok.text_primary}; font-size:9pt;"),
+                    (fmt,     f"color:{tok.text_secondary}; font-size:9pt;"),
+                    (_fmt_size(size_bytes), f"color:{tok.text_secondary}; font-size:9pt;"),
+                ]):
+                    lbl = QLabel(text)
+                    lbl.setStyleSheet(style)
+                    grid.addWidget(lbl, row_idx, col_idx)
+
                 if exists:
-                    btn_row = QHBoxLayout()
-                    btn_row.setSpacing(6)
-                    folder_btn = QPushButton("폴더 열기")
-                    folder_btn.setFixedHeight(28)
-                    folder_btn.setToolTip("파일 위치를 탐색기에서 열기")
-                    folder_btn.clicked.connect(lambda _, p=dl.file_path: _open_folder(p))
-                    btn_row.addWidget(folder_btn)
                     open_btn = QPushButton("파일 열기")
-                    open_btn.setFixedHeight(28)
-                    open_btn.setToolTip("기본 앱으로 파일 열기 / 재생")
+                    open_btn.setFixedHeight(24)
                     open_btn.clicked.connect(lambda _, p=dl.file_path: _open_file(p))
-                    btn_row.addWidget(open_btn)
-                    btn_row.addStretch()
-                    gl.addLayout(btn_row)
-                dl_layout.addWidget(grp)
+                    grid.addWidget(open_btn, row_idx, 3, Qt.AlignmentFlag.AlignLeft)
+                else:
+                    na_lbl = QLabel("파일 없음")
+                    na_lbl.setStyleSheet("color:#f44336; font-size:8pt;")
+                    grid.addWidget(na_lbl, row_idx, 3)
+
+            dl_layout.addWidget(grid_w)
         else:
             dl_layout.addWidget(QLabel("다운로드된 파일이 없습니다."))
 

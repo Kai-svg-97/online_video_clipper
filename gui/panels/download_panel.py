@@ -81,6 +81,27 @@ def _fmt_size(b: int | None) -> str:
     return f"{b:.1f} TB"
 
 
+def _dedupe_by_url(jobs: list[DownloadJobDTO]) -> list[DownloadJobDTO]:
+    """동일 URL을 하나의 카드로 합침.
+
+    jobs는 created_at DESC 정렬 가정 — 첫 등장이 최신이므로 상태 배지는 최신 기준.
+    최신 항목의 title이 없거나 URL과 동일하면 구 항목에서 더 나은 title을 빌려온다.
+    """
+    import dataclasses  # noqa: PLC0415
+    seen: dict[str, DownloadJobDTO] = {}
+    for job in jobs:
+        url = job.url
+        if url not in seen:
+            seen[url] = job
+        else:
+            existing = seen[url]
+            # 최신 항목 title이 없으면 구 항목 title로 보완
+            if (not existing.title or existing.title == existing.url) and \
+               job.title and job.title != job.url:
+                seen[url] = dataclasses.replace(existing, title=job.title)
+    return list(seen.values())
+
+
 def _resolve_thumb(job: DownloadJobDTO) -> str | None:
     """yt-dlp가 영상 옆에 생성하는 동행 썸네일 파일 경로를 반환한다."""
     if not job.file_path:
@@ -447,7 +468,8 @@ class _HistoryTab(QWidget):
 
     def refresh(self) -> None:
         all_jobs = self._vm.load_history()
-        jobs = [j for j in all_jobs if _is_listable_history(j)]
+        filtered = [j for j in all_jobs if _is_listable_history(j)]
+        jobs = _dedupe_by_url(filtered)
         self._model.set_jobs(jobs, self._thumb_provider)
         self._start_thumb_worker()
 
