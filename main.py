@@ -6,14 +6,34 @@ from pathlib import Path
 
 # Qt6 DirectWrite가 구형 비트맵 폰트(MS Sans Serif)를 처리하지 못해 발생하는
 # 무해한 경고를 억제한다. 앱 동작에는 영향 없음.
-os.environ.setdefault(
-    "QT_LOGGING_RULES",
-    "qt.qpa.fonts=false;qt.multimedia.ffmpeg*=false",
-)
+os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts=false")
 
-from PyQt6.QtCore import Qt, QRect
+# FFmpeg av_log 레벨을 ERROR(16)로 설정 — [h264]/[tls] 등 Warning 이하 메시지를
+# Qt multimedia 내장 FFmpeg 디코더가 stderr에 직접 출력하는 것을 억제한다.
+# (QT_LOGGING_RULES로는 av_log 직접 출력 경로를 제어할 수 없음)
+import ctypes as _ct
+for _dll in ("avutil-59.dll", "avutil-58.dll", "avutil-57.dll", "avutil-56.dll"):
+    try:
+        _ct.CDLL(_dll).av_log_set_level(16)  # AV_LOG_ERROR = 16
+        break
+    except OSError:
+        pass
+del _ct, _dll
+
+from PyQt6.QtCore import Qt, QRect, QtMsgType, qInstallMessageHandler
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QPixmapCache
 from PyQt6.QtWidgets import QApplication, QSplashScreen
+
+# Qt 내부 QFFmpeg 객체 소멸 시 발생하는 무해한 QObject::disconnect 경고를 필터링한다.
+_MUTED_QT = ("wildcard call disconnects from destroyed signal",)
+
+def _qt_msg_handler(msg_type: QtMsgType, _ctx, message: str) -> None:
+    if any(p in message for p in _MUTED_QT):
+        return
+    if msg_type in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg):
+        print(f"[Qt] {message}", file=sys.stderr)
+
+qInstallMessageHandler(_qt_msg_handler)
 
 from config.settings import ensure_data_dirs
 from utils.logging_config import setup_logging
