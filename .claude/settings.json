@@ -16,5 +16,22 @@
     "frontend-design@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": true
-  }
+  },
+ "agents": {
+    "planner": {},
+    "implementer": {},
+    "tester": {},
+    "reviewer": {},
+    "git-operator": {},
+    "explorer": {}
+  },
+  "allowedTools": [
+    "Read",
+    "Write",
+    "Edit",
+    "Bash(git *)",
+    "Bash(npm *)",
+    "Bash(pnpm *)",
+    "Bash(yarn *)"
+  ]
 }
