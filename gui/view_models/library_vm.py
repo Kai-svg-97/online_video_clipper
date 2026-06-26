@@ -581,6 +581,24 @@ class LibraryViewModel(QObject):
             return path
         except Exception:
             logger.debug("카테고리 경로 조회 실패: %s", category_id)
+
+    def get_category_path_with_ids(self, category_id: UUID) -> list[tuple]:
+        """카테고리 계층 경로 반환 (이름, ID) 쌍 리스트. 루트→리프 순서. 브레드크럼 클릭용."""
+        try:
+            if not self._categories:
+                self._categories = self._get_categories.handle()
+            cats = {c.id: c for c in self._categories}
+            path: list[tuple] = []
+            current = category_id
+            seen: set = set()
+            while current and current in cats and current not in seen:
+                seen.add(current)
+                cat = cats[current]
+                path.insert(0, (cat.name, cat.id))
+                current = cat.parent_id
+            return path
+        except Exception:
+            logger.debug("카테고리 경로(ID) 조회 실패: %s", category_id)
             return []
 
     def create_category(self, name: str, parent_id: UUID | None = None) -> None:
