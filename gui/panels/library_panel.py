@@ -3443,9 +3443,9 @@ class LibraryPanel(QWidget):
         self._active_thumb_loaders: list = []  # GC 방지용 강한 참조 보관
         self._setup_ui()
         self._connect_signals()
-        vm.load()
+        QTimer.singleShot(0, vm.load)
         if playlist_vm is not None:
-            playlist_vm.load()
+            QTimer.singleShot(0, playlist_vm.load)
 
     # ── Layout ─────────────────────────────────────────────────────
 
@@ -3729,7 +3729,7 @@ class LibraryPanel(QWidget):
         # 채널 모니터링 VM — 구독 목록을 YouTube 트리에 반영
         if self._monitoring_vm is not None:
             self._monitoring_vm.subscriptions_changed.connect(self._refresh_unified_tree)
-            self._monitoring_vm.load()
+            QTimer.singleShot(0, self._monitoring_vm.load)
         self._vm.yt_import_finished.connect(self._on_yt_import_finished)
 
         self._view_group.idClicked.connect(self._switch_view)

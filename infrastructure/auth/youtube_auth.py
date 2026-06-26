@@ -10,8 +10,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import yt_dlp
-
 from config.settings import DATA_DIR, save_setting
 
 logger = logging.getLogger(__name__)
@@ -155,6 +153,7 @@ class YouTubeAuthService:
         if not opts:
             return None
         try:
+            import yt_dlp  # noqa: PLC0415
             with yt_dlp.YoutubeDL(self._wl_ydl_opts(opts)) as ydl:
                 info = ydl.extract_info(
                     "https://www.youtube.com/playlist?list=WL", download=False

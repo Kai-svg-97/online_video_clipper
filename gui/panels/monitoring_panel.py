@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -166,7 +166,7 @@ class MonitoringPanel(QWidget):
         vm.subscriptions_changed.connect(self._refresh_list)
         vm.error_occurred.connect(self._show_error)
         vm.import_yt_finished.connect(self._on_import_finished)
-        vm.load()
+        QTimer.singleShot(0, vm.load)
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)

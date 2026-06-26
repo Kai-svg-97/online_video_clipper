@@ -25,10 +25,28 @@ class Database:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.executescript(schema_sql)
-        self._migrate_normalize_urls()
-        self._migrate_playlist_schema()
-        self._migrate_channel_ids()
-        self._migrate_sort_indexes()
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations "
+                "(id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+            )
+        self._run_once("migrate_normalize_urls", self._migrate_normalize_urls)
+        self._run_once("migrate_playlist_schema", self._migrate_playlist_schema)
+        self._run_once("migrate_channel_ids", self._migrate_channel_ids)
+        self._run_once("migrate_sort_indexes", self._migrate_sort_indexes)
+
+    def _run_once(self, migration_id: str, func) -> None:
+        """마이그레이션을 최초 1회만 실행한다 (schema_migrations 테이블로 추적)."""
+        with self.connection() as conn:
+            if conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE id=?", (migration_id,)
+            ).fetchone():
+                return
+        func()
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations(id, applied_at) VALUES (?, datetime('now'))",
+                (migration_id,),
+            )
 
     def _migrate_channel_ids(self) -> None:
         """channel_subscriptions의 URL 형식 channel_id를 UCxxx로 정규화 (idempotent).

@@ -6,7 +6,6 @@ from typing import Callable
 from uuid import UUID
 
 import requests
-import yt_dlp
 
 from config.settings import DOWNLOAD_DIR, THUMBNAIL_DIR
 from domain.download.value_objects import DownloadProgress, DownloadSettings, MediaFormat, Quality
@@ -57,6 +56,7 @@ class YtDlpAdapter:
 
     def fetch_metadata(self, url: str) -> dict:
         """Return video metadata without downloading."""
+        import yt_dlp  # noqa: PLC0415
         opts = {
             "quiet": True,
             "no_warnings": True,
@@ -120,6 +120,7 @@ class YtDlpAdapter:
         If ffmpeg is not available, falls back to a single-stream format that
         requires no post-processing merging.
         """
+        import yt_dlp  # noqa: PLC0415
         out_dir = output_dir or DOWNLOAD_DIR
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -200,6 +201,7 @@ class YtDlpAdapter:
 
         반환: [{"id": "PLxxx", "title": "...", "count": N}, ...]
         """
+        import yt_dlp  # noqa: PLC0415
         opts = cookie_opts or {}
         if not opts:
             return []
@@ -260,6 +262,7 @@ class YtDlpAdapter:
 
         반환: (playlist_title, [{"url": "...", "title": "...", "position": N, "yt_video_id": "..."}, ...])
         """
+        import yt_dlp  # noqa: PLC0415
         url = f"https://www.youtube.com/playlist?list={playlist_id}"
         base_opts = {
             "quiet": True,
@@ -341,6 +344,7 @@ class YtDlpAdapter:
         반환: [{"url", "title", "channel_name", "thumbnail",
                 "published_at", "view_count", "duration_sec"}, ...]
         """
+        import yt_dlp  # noqa: PLC0415
         opts = {
             "quiet": True,
             "no_warnings": True,
@@ -389,6 +393,7 @@ class YtDlpAdapter:
         큰 ``playlistend``를 지정하고 ``entries`` 제너레이터를 끝까지 소진해
         전체 구독 채널을 가져온다. (이전에는 첫 페이지만 반환되는 버그가 있었다.)
         """
+        import yt_dlp  # noqa: PLC0415
         opts = {
             "quiet": True,
             "no_warnings": True,
@@ -423,6 +428,7 @@ class YtDlpAdapter:
 
         반환 키 집합은 ``fetch_subscription_feed``와 동일해 DTO 매핑을 공유한다.
         """
+        import yt_dlp  # noqa: PLC0415
         url = channel_url.rstrip("/")
         if not url.endswith("/videos"):
             url = f"{url}/videos"

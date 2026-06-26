@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import ffmpeg
-
 from domain.clip.value_objects import TimeRange
 from utils.resources import get_ffmpeg_path
 
@@ -21,6 +19,7 @@ class FfmpegAdapter:
         output_path: Path,
     ) -> Path:
         """Extract *time_range* from *source_path* into *output_path*."""
+        import ffmpeg  # noqa: PLC0415
         output_path.parent.mkdir(parents=True, exist_ok=True)
         (
             ffmpeg
@@ -40,6 +39,7 @@ class FfmpegAdapter:
         height: int = 90,
     ) -> Path:
         """Extract a single frame as a JPEG thumbnail."""
+        import ffmpeg  # noqa: PLC0415
         output_path.parent.mkdir(parents=True, exist_ok=True)
         (
             ffmpeg
