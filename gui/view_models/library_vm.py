@@ -523,6 +523,23 @@ class LibraryViewModel(QObject):
             logger.exception("URL로 영상 ID 조회 실패: %s", url)
             return None
 
+    def find_thumbnail_by_url(self, url: str) -> str | None:
+        """URL로 라이브러리 영상의 로컬 썸네일 절대 경로 반환. 없으면 None."""
+        try:
+            vid = self.find_video_id_by_url(url)
+            if vid is None:
+                return None
+            detail = self._get_video_detail.handle(vid)
+            if not detail or not detail.thumbnail_path:
+                return None
+            from config.settings import THUMBNAIL_DIR  # noqa: PLC0415
+            from pathlib import Path  # noqa: PLC0415
+            p = Path(THUMBNAIL_DIR) / detail.thumbnail_path
+            return str(p) if p.exists() else None
+        except Exception:
+            logger.debug("URL로 썸네일 경로 조회 실패: %s", url)
+            return None
+
     def create_category(self, name: str, parent_id: UUID | None = None) -> None:
         try:
             self._create_category.handle(CreateCategoryCommand(name=name, parent_id=parent_id))

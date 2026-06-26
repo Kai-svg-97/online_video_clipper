@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
@@ -169,12 +170,21 @@ class _HistoryModel(QAbstractListModel):
         self._jobs: list[DownloadJobDTO] = []
         self._thumbs: dict[str, str] = {}  # str(job.id) → thumb path
 
-    def set_jobs(self, jobs: list[DownloadJobDTO]) -> None:
+    def set_jobs(
+        self,
+        jobs: list[DownloadJobDTO],
+        thumb_provider: Callable[[str], str | None] | None = None,
+    ) -> None:
         self.beginResetModel()
         self._jobs = jobs
         self._thumbs = {}
         for j in jobs:
             p = _resolve_thumb(j)
+            if p is None and thumb_provider and j.url:
+                try:
+                    p = thumb_provider(j.url)
+                except Exception:
+                    p = None
             if p:
                 self._thumbs[str(j.id)] = p
         self.endResetModel()
@@ -393,9 +403,15 @@ class _QueueTab(QWidget):
 class _HistoryTab(QWidget):
     video_open_requested = pyqtSignal(str)  # URL
 
-    def __init__(self, vm: DownloadViewModel, parent=None) -> None:
+    def __init__(
+        self,
+        vm: DownloadViewModel,
+        thumb_provider: Callable[[str], str | None] | None = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._vm = vm
+        self._thumb_provider = thumb_provider
         self._worker: _ThumbWorker | None = None
 
         outer = QVBoxLayout(self)
@@ -432,7 +448,7 @@ class _HistoryTab(QWidget):
     def refresh(self) -> None:
         all_jobs = self._vm.load_history()
         jobs = [j for j in all_jobs if _is_listable_history(j)]
-        self._model.set_jobs(jobs)
+        self._model.set_jobs(jobs, self._thumb_provider)
         self._start_thumb_worker()
 
     def _start_thumb_worker(self) -> None:
@@ -458,9 +474,15 @@ class _HistoryTab(QWidget):
 class DownloadPanel(QWidget):
     video_open_requested = pyqtSignal(str)  # URL — 카드 클릭 시 라이브러리 상세화면으로 이동
 
-    def __init__(self, vm: DownloadViewModel, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        vm: DownloadViewModel,
+        thumb_provider: Callable[[str], str | None] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._vm = vm
+        self._thumb_provider = thumb_provider
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -474,7 +496,7 @@ class DownloadPanel(QWidget):
 
         tabs = QTabWidget()
         self._queue_tab = _QueueTab(self._vm)
-        self._history_tab = _HistoryTab(self._vm)
+        self._history_tab = _HistoryTab(self._vm, self._thumb_provider)
         self._history_tab.video_open_requested.connect(self.video_open_requested)
         tabs.addTab(self._queue_tab, "진행 중")
         tabs.addTab(self._history_tab, "완료 이력")

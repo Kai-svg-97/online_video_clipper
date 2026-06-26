@@ -490,7 +490,10 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._library_page)                  # 0
 
         # 페이지 1: 다운로드
-        self._download_panel = DownloadPanel(self._download_vm)
+        self._download_panel = DownloadPanel(
+            self._download_vm,
+            thumb_provider=self._library_vm.find_thumbnail_by_url,
+        )
         self._download_panel.video_open_requested.connect(self._on_download_video_open)
         self._stack.addWidget(self._download_panel)                # 1
 

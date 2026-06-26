@@ -764,9 +764,10 @@ class VideoDetailWidget(QWidget):
 
         # 실패 이력 섹션
         if failed_downloads:
+            from PyQt6.QtWidgets import QFrame  # noqa: PLC0415
             fail_hdr = QLabel("다운로드 실패 이력")
             fail_hdr.setStyleSheet(
-                f"color:#f44336; font-weight:bold; font-size:9pt; margin-top:8px;"
+                "color:#f44336; font-weight:bold; font-size:9pt; margin-top:8px;"
             )
             dl_layout.addWidget(fail_hdr)
             for fd in failed_downloads:
@@ -775,10 +776,18 @@ class VideoDetailWidget(QWidget):
                     fd.created_at.strftime("%Y-%m-%d %H:%M")
                     if fd.created_at else ""
                 )
-                row = QGroupBox(date_str or "실패")
-                row.setStyleSheet("QGroupBox { border-left: 3px solid #f44336; }")
+                row = QFrame()
+                row.setStyleSheet(
+                    "QFrame { border-left: 3px solid #f44336;"
+                    " background: transparent; }"
+                )
                 rl = QVBoxLayout(row)
-                rl.setContentsMargins(10, 6, 10, 8)
+                rl.setContentsMargins(10, 4, 10, 6)
+                rl.setSpacing(2)
+                if date_str:
+                    date_lbl = QLabel(date_str)
+                    date_lbl.setStyleSheet("color:#888; font-size:8pt;")
+                    rl.addWidget(date_lbl)
                 err_lbl = QLabel(err_text)
                 err_lbl.setWordWrap(True)
                 err_lbl.setStyleSheet("color:#f44336; font-size:8pt;")
