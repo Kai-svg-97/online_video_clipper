@@ -53,7 +53,7 @@ CARD_PAD = 6
 
 
 def _t():
-    return ThemeManager.instance().current_tokens()
+    return ThemeManager.instance().current()
 
 
 def _is_listable_history(job: DownloadJobDTO) -> bool:
