@@ -572,6 +572,7 @@ class DownloadPanel(QWidget):
         self._detail_widget.download_requested.connect(
             lambda url, title, settings: self._vm.start_download(url, title, settings)
         )
+        self._detail_widget.notes_saved.connect(self._on_notes_saved)
         detail_layout.addWidget(self._detail_widget, 1)
         self._page_stack.addWidget(detail_page)
 
@@ -608,6 +609,10 @@ class DownloadPanel(QWidget):
 
     def _on_detail_back(self) -> None:
         self._page_stack.setCurrentIndex(_PAGE_LIST)
+
+    def _on_notes_saved(self, video_id, notes: str) -> None:
+        if self._library_vm is not None:
+            self._library_vm.save_notes(video_id, notes)
 
     def _on_related_item_selected(self, payload: object) -> None:
         if isinstance(payload, UUID):

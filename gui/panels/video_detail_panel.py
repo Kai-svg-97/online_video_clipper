@@ -369,6 +369,7 @@ class VideoDetailWidget(QWidget):
     tags_updated         = pyqtSignal(object, object)  # (UUID, list[str])
     download_requested   = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
     item_selected        = pyqtSignal(object)  # 연관 영상 클릭 — payload(UUID | FeedVideoDTO)
+    notes_saved          = pyqtSignal(object, str)   # (video_id, notes)
 
     # 하단 탭 인덱스
     _TAB_DOWNLOADS = 0
@@ -387,6 +388,10 @@ class VideoDetailWidget(QWidget):
         self._current_url = ""           # 브라우저 열기/재생 실패 폴백용
         self._active_dl_frame: QFrame | None = None
         self._active_dl_bar: QProgressBar | None = None
+        self._notes_timer = QTimer(self)
+        self._notes_timer.setSingleShot(True)
+        self._notes_timer.setInterval(1000)
+        self._notes_timer.timeout.connect(self._save_notes)
         if download_vm is not None:
             download_vm.queue_changed.connect(self._on_queue_changed)
         self._setup_skeleton()
@@ -457,12 +462,10 @@ class VideoDetailWidget(QWidget):
         note_tab = QWidget()
         note_layout = QVBoxLayout(note_tab)
         note_layout.setContentsMargins(8, 8, 8, 8)
-        note_grp = QGroupBox("내 메모")
-        note_inner = QVBoxLayout(note_grp)
         self._notes_edit = QPlainTextEdit()
         self._notes_edit.setPlaceholderText("메모를 입력하세요…")
-        note_inner.addWidget(self._notes_edit)
-        note_layout.addWidget(note_grp)
+        self._notes_edit.textChanged.connect(self._on_notes_changed)
+        note_layout.addWidget(self._notes_edit)
         self._tabs.addTab(_wrap(note_tab), "내 메모")
 
         self._clip_tab_widget = QWidget()
@@ -550,7 +553,9 @@ class VideoDetailWidget(QWidget):
         self._set_tabs_enabled(True)
         self._build_downloads_tab(detail.downloads, detail.failed_downloads)
         self._notes_edit.setReadOnly(False)
-        self._notes_edit.setPlainText(detail.notes)
+        self._notes_edit.blockSignals(True)
+        self._notes_edit.setPlainText(detail.notes or "")
+        self._notes_edit.blockSignals(False)
 
         # 클립 탭 — 로컬 파일 탐색 및 탭 초기화
         self._clip_source_file = None
@@ -593,7 +598,9 @@ class VideoDetailWidget(QWidget):
         self._set_tabs_enabled(False)
         self._build_downloads_tab([], [])
         self._notes_edit.setReadOnly(True)
+        self._notes_edit.blockSignals(True)
         self._notes_edit.setPlainText("스트리밍 영상입니다. 다운로드 후 메모/클립을 사용할 수 있습니다.")
+        self._notes_edit.blockSignals(False)
         self._clip_source_file = None
         _clear_layout(self._clip_tab_layout)
         info = QLabel("스트리밍 영상은 클립을 추출할 수 없습니다.\n다운로드 후 다시 시도해 주세요.")
@@ -996,6 +1003,15 @@ class VideoDetailWidget(QWidget):
             float(start_sec),
             float(end_sec),
         )
+
+    def _on_notes_changed(self) -> None:
+        if not self._streaming and self._detail is not None:
+            self._notes_timer.start()
+
+    def _save_notes(self) -> None:
+        if self._detail is None or self._streaming:
+            return
+        self.notes_saved.emit(self._detail.id, self._notes_edit.toPlainText())
 
     def _on_tab_changed(self, index: int) -> None:
         if (

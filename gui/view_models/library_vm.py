@@ -567,6 +567,8 @@ class LibraryViewModel(QObject):
     def get_category_path(self, category_id: UUID) -> list[str]:
         """카테고리 계층 경로 반환 (브레드크럼용). 루트→리프 순서."""
         try:
+            if not self._categories:
+                self._categories = self._get_categories.handle()
             cats = {c.id: c for c in self._categories}
             path: list[str] = []
             current = category_id
@@ -799,6 +801,13 @@ class LibraryViewModel(QObject):
     def _refresh_tags(self) -> None:
         self._tags = self._get_tags.handle()
         self.tags_changed.emit()
+
+    def save_notes(self, video_id: UUID, notes: str) -> None:
+        """영상 메모 저장."""
+        try:
+            self._update_video.handle(UpdateVideoCommand(video_id=video_id, notes=notes))
+        except Exception:
+            logger.exception("메모 저장 실패: %s", video_id)
 
     def update_video_tags(self, video_id: UUID, tag_names: list[str]) -> None:
         """Replace the tag list for a single video (used from detail panel)."""

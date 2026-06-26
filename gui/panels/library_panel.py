@@ -3903,6 +3903,9 @@ class LibraryPanel(QWidget):
         self._detail_widget.tags_updated.connect(self._on_detail_tags_updated)
         self._detail_widget.download_requested.connect(self.download_requested.emit)
         self._detail_widget.item_selected.connect(self._on_related_item_selected)
+        self._detail_widget.notes_saved.connect(
+            lambda vid_id, text: self._vm.save_notes(vid_id, text)
+        )
 
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
         self._feed_grid.video_clicked.connect(self._open_stream_detail)
