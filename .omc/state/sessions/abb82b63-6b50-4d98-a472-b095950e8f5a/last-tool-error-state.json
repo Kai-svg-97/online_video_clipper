@@ -1,7 +1,0 @@
-{
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"C:\\\\Users\\\\kai\\\\.claude\\\\projects\\\\C--Users-kai-OneDrive-Documents-projects-online-video-clipper\\\\abb82b63-6b50-4d98-a472-b095950e8f5a\\\\tool-results\\\\buctblk8k.txt\",\"offset\":119,\"limit\":...",
-  "error": "File content (45591 tokens) exceeds maximum allowed tokens (25000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
-  "timestamp": "2026-06-20T10:09:07.527Z",
-  "retry_count": 2
-}
