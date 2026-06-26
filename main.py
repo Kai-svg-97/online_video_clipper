@@ -8,17 +8,28 @@ from pathlib import Path
 # 무해한 경고를 억제한다. 앱 동작에는 영향 없음.
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts=false")
 
-# FFmpeg av_log 레벨을 ERROR(16)로 설정 — [h264]/[tls] 등 Warning 이하 메시지를
-# Qt multimedia 내장 FFmpeg 디코더가 stderr에 직접 출력하는 것을 억제한다.
-# (QT_LOGGING_RULES로는 av_log 직접 출력 경로를 제어할 수 없음)
+# Qt multimedia 내장 FFmpeg가 av_log로 직접 stderr에 출력하는
+# INFO·WARNING 메시지([h264] Late SEI, Input #0, Stream # 등)를 억제한다.
+# PyQt6 번들 avutil DLL을 찾아 av_log_set_level(AV_LOG_ERROR=16)을 호출.
 import ctypes as _ct
-for _dll in ("avutil-59.dll", "avutil-58.dll", "avutil-57.dll", "avutil-56.dll"):
-    try:
-        _ct.CDLL(_dll).av_log_set_level(16)  # AV_LOG_ERROR = 16
-        break
-    except OSError:
-        pass
-del _ct, _dll
+import importlib.util as _ilu
+
+def _suppress_av_log() -> None:
+    spec = _ilu.find_spec("PyQt6")
+    qt_bin = ""
+    if spec and spec.submodule_search_locations:
+        qt_bin = os.path.join(list(spec.submodule_search_locations)[0], "Qt6", "bin")
+    for _name in ("avutil-59.dll", "avutil-58.dll", "avutil-57.dll", "avutil-56.dll"):
+        for _base in ([qt_bin] if qt_bin else []) + [""]:
+            _path = os.path.join(_base, _name) if _base else _name
+            try:
+                _ct.CDLL(_path).av_log_set_level(16)  # AV_LOG_ERROR = 16
+                return
+            except OSError:
+                pass
+
+_suppress_av_log()
+del _ct, _ilu, _suppress_av_log
 
 from PyQt6.QtCore import Qt, QRect, QtMsgType, qInstallMessageHandler
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QPixmapCache
