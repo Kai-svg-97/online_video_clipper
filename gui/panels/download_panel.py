@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
@@ -25,14 +26,19 @@ from PyQt6.QtGui import (
     QPixmap,
 )
 from PyQt6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListView,
     QPushButton,
+    QStackedWidget,
     QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
+
+_PAGE_LIST   = 0
+_PAGE_DETAIL = 1
 
 from application.download.dtos import DownloadJobDTO
 from gui.themes.manager import ThemeManager
@@ -442,23 +448,57 @@ class _HistoryCardDelegate(QStyledItemDelegate):
 
 
 # ──────────────────────────────────────────────────────────────────
-# DownloadPanel — 단일 카드 그리드 화면 (탭 없음)
+# 연관 영상 RelatedItem 생성 헬퍼 (라이브러리 VideoDTO → RelatedItem)
+# ──────────────────────────────────────────────────────────────────
+def _make_related_item(v):
+    """VideoDTO를 RelatedItem으로 변환."""
+    from gui.panels.video_detail_panel import RelatedItem  # noqa: PLC0415
+    meta: list[str] = []
+    if v.view_count:
+        meta.append(f"조회수 {v.view_count:,}회")
+    if v.published_at:
+        meta.append(str(v.published_at))
+    yt_vid_id = ""
+    thumb_url = ""
+    if v.url:
+        m = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", v.url)
+        if not m:
+            m = re.search(r"youtu\.be/([A-Za-z0-9_-]{11})", v.url)
+        if m:
+            yt_vid_id = m.group(1)
+            thumb_url = f"https://i.ytimg.com/vi/{yt_vid_id}/hqdefault.jpg"
+    return RelatedItem(
+        key=str(v.id),
+        title=v.title,
+        channel=v.channel_name,
+        duration_sec=v.duration_sec,
+        meta_text="  ·  ".join(meta),
+        payload=v.id,
+        thumb_path=v.thumbnail_path or "",
+        thumb_url=thumb_url,
+        yt_video_id=yt_vid_id,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────
+# DownloadPanel — 단일 화면 (카드 그리드 ↔ 영상 상세 스택)
 # ──────────────────────────────────────────────────────────────────
 class DownloadPanel(QWidget):
-    video_open_requested = pyqtSignal(str)    # completed 카드 클릭 → URL
-    retry_requested      = pyqtSignal(object) # failed 카드 클릭 → DownloadJobDTO
+    retry_requested = pyqtSignal(object)  # failed 카드 클릭 → DownloadJobDTO
 
     def __init__(
         self,
         vm: DownloadViewModel,
         thumb_provider: Callable[[str], str | None] | None = None,
         title_provider: Callable[[str], str | None] | None = None,
+        library_vm=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._vm = vm
         self._thumb_provider = thumb_provider
         self._title_provider = title_provider
+        self._library_vm = library_vm
         self._worker: _ThumbWorker | None = None
         self._setup_ui()
 
@@ -467,8 +507,17 @@ class DownloadPanel(QWidget):
 
     def _setup_ui(self) -> None:
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(4, 4, 4, 4)
-        outer.setSpacing(4)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._page_stack = QStackedWidget()
+        outer.addWidget(self._page_stack)
+
+        # ── 페이지 0: 카드 그리드 목록 ───────────────────────────────
+        list_page = QWidget()
+        list_layout = QVBoxLayout(list_page)
+        list_layout.setContentsMargins(4, 4, 4, 4)
+        list_layout.setSpacing(4)
 
         header_row = QHBoxLayout()
         header_row.setContentsMargins(2, 0, 2, 0)
@@ -480,7 +529,7 @@ class DownloadPanel(QWidget):
         header_row.addWidget(hdr)
         header_row.addStretch()
         header_row.addWidget(refresh_btn)
-        outer.addLayout(header_row)
+        list_layout.addLayout(header_row)
 
         self._model    = _HistoryModel()
         self._delegate = _HistoryCardDelegate()
@@ -496,7 +545,73 @@ class DownloadPanel(QWidget):
         self._list.setSelectionMode(QListView.SelectionMode.SingleSelection)
         self._list.setMouseTracking(True)
         self._list.clicked.connect(self._on_card_clicked)
-        outer.addWidget(self._list)
+        list_layout.addWidget(self._list)
+        self._page_stack.addWidget(list_page)
+
+        # ── 페이지 1: 영상 상세 (VideoDetailWidget 임베드) ────────────
+        from gui.panels.video_detail_panel import VideoDetailWidget  # noqa: PLC0415
+        detail_page = QWidget()
+        detail_layout = QVBoxLayout(detail_page)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(0)
+
+        # 브레드크럼 바
+        crumb_frame = QFrame()
+        crumb_frame.setObjectName("crumb_frame")
+        crumb_row = QHBoxLayout(crumb_frame)
+        crumb_row.setContentsMargins(8, 4, 8, 4)
+        self._breadcrumb_label = QLabel()
+        self._breadcrumb_label.setStyleSheet("font-size:9pt; color:#888;")
+        crumb_row.addWidget(self._breadcrumb_label)
+        crumb_row.addStretch()
+        detail_layout.addWidget(crumb_frame)
+
+        self._detail_widget = VideoDetailWidget(download_vm=self._vm)
+        self._detail_widget.back_requested.connect(self._on_detail_back)
+        self._detail_widget.item_selected.connect(self._on_related_item_selected)
+        self._detail_widget.download_requested.connect(
+            lambda url, title, settings: self._vm.start_download(url, title, settings)
+        )
+        detail_layout.addWidget(self._detail_widget, 1)
+        self._page_stack.addWidget(detail_page)
+
+    # ── 상세화면 오픈 ────────────────────────────────────────────────
+
+    def open_video_detail(self, video_id: UUID) -> None:
+        """라이브러리 영상 상세화면을 패널 내에서 연다."""
+        if self._library_vm is None:
+            return
+        detail = self._library_vm.get_video_detail(video_id)
+        if detail is None:
+            return
+
+        # 브레드크럼
+        if detail.category_id:
+            path = self._library_vm.get_category_path(detail.category_id)
+            if path:
+                self._breadcrumb_label.setText("  ›  ".join(path))
+                self._breadcrumb_label.parentWidget().setVisible(True)
+            else:
+                self._breadcrumb_label.parentWidget().setVisible(False)
+        else:
+            self._breadcrumb_label.parentWidget().setVisible(False)
+
+        # 연관 영상 (같은 카테고리 영상들)
+        related: list = []
+        if detail.category_id:
+            cat_videos = self._library_vm.get_category_videos(detail.category_id, limit=30)
+            related = [_make_related_item(v) for v in cat_videos if v.id != video_id]
+
+        tag_ids = {t.name: t.id for t in self._library_vm.tags}
+        self._detail_widget.load(detail, tag_ids, related=related)
+        self._page_stack.setCurrentIndex(_PAGE_DETAIL)
+
+    def _on_detail_back(self) -> None:
+        self._page_stack.setCurrentIndex(_PAGE_LIST)
+
+    def _on_related_item_selected(self, payload: object) -> None:
+        if isinstance(payload, UUID):
+            self.open_video_detail(payload)
 
     # ── 데이터 갱신 ─────────────────────────────────────────────────
 
@@ -536,4 +651,11 @@ class DownloadPanel(QWidget):
         if job.status == "failed":
             self.retry_requested.emit(job)
         elif job.url:
-            self.video_open_requested.emit(job.url)
+            # URL → video_id 조회 후 패널 내 상세 오픈
+            if self._library_vm is not None:
+                video_id = self._library_vm.find_video_id_by_url(job.url)
+                if video_id is not None:
+                    self.open_video_detail(video_id)
+                    return
+            # 라이브러리에 없으면 외부 핸들러로 fallback (이전 동작)
+            # (연결된 슬롯 없으므로 무시됨)
