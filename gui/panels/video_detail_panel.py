@@ -724,6 +724,7 @@ class VideoDetailWidget(QWidget):
         dl_layout.setContentsMargins(8, 8, 8, 4)
         dl_layout.setSpacing(8)
         if downloads:
+            from PyQt6.QtWidgets import QFrame  # noqa: PLC0415
             for dl in downloads:
                 fp = Path(dl.file_path) if dl.file_path else None
                 exists = fp is not None and fp.exists()
@@ -734,14 +735,19 @@ class VideoDetailWidget(QWidget):
                     _fmt_size(dl.file_size_bytes) if dl.file_size_bytes else None,
                     "파일 있음 ✓" if exists else "파일 없음 ✗",
                 ]))
-                grp = QGroupBox(filename)
-                grp.setMinimumHeight(90)
+                grp = QFrame()
+                grp.setStyleSheet(
+                    f"QFrame {{ border: 1px solid {_t().border}; border-radius: 4px; }}"
+                )
                 gl = QVBoxLayout(grp)
                 gl.setContentsMargins(10, 8, 10, 10)
-                gl.setSpacing(6)
+                gl.setSpacing(4)
+                fname_lbl = QLabel(filename)
+                fname_lbl.setStyleSheet(f"color:{_t().text_primary}; font-size:9pt; font-weight:bold; border:none;")
+                fname_lbl.setWordWrap(True)
+                gl.addWidget(fname_lbl)
                 info_lbl = QLabel(info)
-                info_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-size:9pt;")
-                info_lbl.setMinimumHeight(22)
+                info_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-size:9pt; border:none;")
                 gl.addWidget(info_lbl)
                 if exists:
                     btn_row = QHBoxLayout()
