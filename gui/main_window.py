@@ -493,8 +493,10 @@ class MainWindow(QMainWindow):
         self._download_panel = DownloadPanel(
             self._download_vm,
             thumb_provider=self._library_vm.find_thumbnail_by_url,
+            title_provider=self._library_vm.find_title_by_url,
         )
         self._download_panel.video_open_requested.connect(self._on_download_video_open)
+        self._download_panel.retry_requested.connect(self._on_retry_download)
         self._stack.addWidget(self._download_panel)                # 1
 
         # 페이지 2: 채널 모니터링
@@ -645,6 +647,13 @@ class MainWindow(QMainWindow):
             return
         self._sidebar._navigate(_PAGE_LIBRARY)
         self._library_page.library_panel()._open_detail(video_id)
+
+    def _on_retry_download(self, job: object) -> None:
+        """실패 카드 클릭 → 동일 URL 재다운로드."""
+        try:
+            self._download_vm.start_download(job.url, job.title)
+        except Exception:
+            logger.exception("재다운로드 실패: %s", getattr(job, "url", "?"))
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.

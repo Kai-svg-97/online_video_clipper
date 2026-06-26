@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -374,15 +375,20 @@ class VideoDetailWidget(QWidget):
     _TAB_NOTES = 1
     _TAB_CLIPS = 2
 
-    def __init__(self, clip_vm=None, parent: QWidget | None = None) -> None:
+    def __init__(self, clip_vm=None, download_vm=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._detail: VideoDetailDTO | None = None
         self._tag_add_input: QLineEdit | None = None
         self._clip_vm = clip_vm
+        self._download_vm = download_vm
         self._clip_source_file: str | None = None
         self._filter_on = False
         self._streaming = False          # 스트리밍(피드/채널) 모드 여부
         self._current_url = ""           # 브라우저 열기/재생 실패 폴백용
+        self._active_dl_frame: QFrame | None = None
+        self._active_dl_bar: QProgressBar | None = None
+        if download_vm is not None:
+            download_vm.queue_changed.connect(self._on_queue_changed)
         self._setup_skeleton()
 
     # ── Skeleton (built once) ──────────────────────────────────────
@@ -711,6 +717,25 @@ class VideoDetailWidget(QWidget):
         import re
         return re.sub(r'\x1b\[[0-9;]*m', '', text)
 
+    def _on_queue_changed(self) -> None:
+        """다운로드 진행 중 progress bar 실시간 갱신."""
+        if not self._download_vm or not self._current_url:
+            return
+        active_job = next(
+            (j for j in self._download_vm.queue if j.url == self._current_url),
+            None,
+        )
+        if self._active_dl_bar is None or self._active_dl_frame is None:
+            return
+        if active_job:
+            pct = int(active_job.progress.percent)
+            self._active_dl_bar.setValue(pct)
+            speed = active_job.progress.speed_formatted()
+            self._active_dl_bar.setFormat(f"{pct}%  {speed}")
+            self._active_dl_frame.setVisible(True)
+        else:
+            self._active_dl_frame.setVisible(False)
+
     def _build_downloads_tab(
         self,
         downloads: list,
@@ -723,6 +748,40 @@ class VideoDetailWidget(QWidget):
             dl_layout = QVBoxLayout(self._dl_tab)
         dl_layout.setContentsMargins(8, 8, 8, 4)
         dl_layout.setSpacing(8)
+
+        # ── 진행 중 다운로드 섹션 (최상단, 조건부 표시) ──────────────
+        active_frame = QFrame()
+        active_row = QHBoxLayout(active_frame)
+        active_row.setContentsMargins(0, 0, 0, 4)
+        active_row.setSpacing(8)
+        active_lbl = QLabel("⬇ 다운로드 중")
+        active_lbl.setStyleSheet("font-size:9pt; font-weight:bold;")
+        active_bar = QProgressBar()
+        active_bar.setRange(0, 100)
+        active_bar.setTextVisible(True)
+        active_bar.setMaximumHeight(18)
+        active_row.addWidget(active_lbl)
+        active_row.addWidget(active_bar, 1)
+        dl_layout.addWidget(active_frame)
+        self._active_dl_frame = active_frame
+        self._active_dl_bar = active_bar
+
+        # 현재 진행 중 여부 확인
+        if self._download_vm and self._current_url:
+            active_job = next(
+                (j for j in self._download_vm.queue if j.url == self._current_url),
+                None,
+            )
+            if active_job:
+                pct = int(active_job.progress.percent)
+                active_bar.setValue(pct)
+                active_bar.setFormat(f"{pct}%  {active_job.progress.speed_formatted()}")
+                active_frame.setVisible(True)
+            else:
+                active_frame.setVisible(False)
+        else:
+            active_frame.setVisible(False)
+
         if downloads:
             from PyQt6.QtWidgets import QGridLayout  # noqa: PLC0415
             # 폴더 열기 버튼 — 첫 번째 존재하는 파일의 폴더 기준, 우측 정렬
