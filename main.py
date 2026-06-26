@@ -6,7 +6,10 @@ from pathlib import Path
 
 # Qt6 DirectWrite가 구형 비트맵 폰트(MS Sans Serif)를 처리하지 못해 발생하는
 # 무해한 경고를 억제한다. 앱 동작에는 영향 없음.
-os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts=false")
+os.environ.setdefault(
+    "QT_LOGGING_RULES",
+    "qt.qpa.fonts=false;qt.multimedia.ffmpeg*=false",
+)
 
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QPixmapCache

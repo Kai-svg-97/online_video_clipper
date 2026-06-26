@@ -812,7 +812,16 @@ class InlinePlayer(QWidget):
         self._cleanup_temp()
         self._hide_timer.stop()
         if self._worker:
+            # 시그널 먼저 해제 — 스레드가 늦게 결과를 내보내도 무시
+            try:
+                self._worker.stream_ready.disconnect()
+                self._worker.progress.disconnect()
+                self._worker.failed.disconnect()
+            except (TypeError, RuntimeError):
+                pass
             self._worker.quit()
+            # 즉시 참조를 버리지 않고 Qt에 위임 — 스레드 종료 후 안전하게 삭제
+            self._worker.deleteLater()
             self._worker = None
         self._visual_stack.setCurrentIndex(0)
         self._status_lbl.hide()
