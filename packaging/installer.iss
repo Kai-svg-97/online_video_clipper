@@ -16,7 +16,7 @@ PrivilegesRequired=lowest
 CloseApplications=no
 
 [Files]
-Source: "..\dist\windows\YouTubeContentManager.exe"; DestDir: "{app}"
+Source: "..\dist\windows\YouTubeContentManager\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\YouTube Content Manager"; Filename: "{app}\YouTubeContentManager.exe"

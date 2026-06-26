@@ -8,118 +8,174 @@ from pathlib import Path
 # 무해한 경고를 억제한다. 앱 동작에는 영향 없음.
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts=false")
 
-from PyQt6.QtGui import QFont, QIcon
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QPixmapCache
+from PyQt6.QtWidgets import QApplication, QSplashScreen
 
 from config.settings import ensure_data_dirs
 from utils.logging_config import setup_logging
 from utils.resources import get_resource_path
-from infrastructure.event_bus import EventBus
-from infrastructure.persistence.database import Database
-from infrastructure.persistence.sqlite_video_repository import SqliteVideoRepository
-from infrastructure.persistence.sqlite_download_repository import SqliteDownloadRepository
-from infrastructure.persistence.sqlite_clip_repository import SqliteClipRepository
-from infrastructure.persistence.sqlite_channel_repository import SqliteChannelRepository
-from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
-from infrastructure.ffmpeg.ffmpeg_adapter import FfmpegAdapter
 
-from domain.download.aggregates import DownloadQueueAggregate
 
-from application.library.commands import (
-    AddVideoHandler,
-    AssignCategoryHandler,
-    CreateCategoryHandler,
-    DeleteCategoryHandler,
-    DeleteTagHandler,
-    DeleteVideoHandler,
-    ImportYouTubePlaylistToCategoryHandler,
-    MarkWatchedHandler,
-    MoveCategoryHandler,
-    RefreshCategoryMetadataHandler,
-    RefreshVideoThumbnailHandler,
-    RenameCategoryHandler,
-    SetCategoryVideoOrderHandler,
-    UpdateVideoHandler,
-)
-from application.library.queries import (
-    GetCategoriesHandler,
-    GetCategoryVideoOrderHandler,
-    GetTagsHandler,
-    GetVideoDetailHandler,
-    GetVideosHandler,
-    LibraryStatsHandler,
-    SearchVideosHandler,
-)
-from application.download.commands import CancelDownloadHandler, StartDownloadHandler
-from application.download.event_bridge import DownloadEventBridge
-from application.download.queries import GetDownloadHistoryHandler, GetDownloadQueueHandler
-from application.clip.commands import DeleteClipHandler, ExtractClipHandler
-from application.clip.queries import GetClipsHandler
-from application.monitoring.commands import (
-    SetMonitoringRuleHandler,
-    SubscribeChannelHandler,
-    UnsubscribeChannelHandler,
-)
-from application.monitoring.queries import GetSubscriptionsHandler
-from application.library.playlist_commands import (
-    AddUrlToPlaylistHandler,
-    AddVideoToPlaylistHandler,
-    CopyYouTubePlaylistToLocalHandler,
-    CreatePlaylistFolderHandler,
-    CreatePlaylistHandler,
-    DeletePlaylistFolderHandler,
-    DeletePlaylistHandler,
-    ImportYouTubePlaylistHandler,
-    MovePlaylistToFolderHandler,
-    MoveVideoToPlaylistHandler,
-    PushPlaylistToYouTubeHandler,
-    RemoveVideoFromPlaylistHandler,
-    RenamePlaylistHandler,
-    RenamePlaylistFolderHandler,
-    ReorderPlaylistHandler,
-)
-from application.monitoring.commands import ImportYouTubeSubscriptionsHandler
-from infrastructure.youtube.oauth_adapter import YouTubeOAuthAdapter
-from infrastructure.youtube.youtube_api_adapter import YouTubeApiAdapter
-from application.library.playlist_queries import (
-    GetChannelVideosHandler,
-    GetPlaylistFoldersHandler,
-    GetPlaylistItemsHandler,
-    GetPlaylistsHandler,
-    GetSubscribedChannelInfosHandler,
-    GetSubscriptionFeedHandler,
-    GetYouTubePlaylistsHandler,
-)
-from infrastructure.persistence.sqlite_playlist_repository import (
-    SqlitePlaylistFolderRepository,
-    SqlitePlaylistRepository,
-)
-from infrastructure.auth.youtube_auth import YouTubeAuthService
+def _build_splash_pixmap() -> QPixmap:
+    W, H = 480, 240
+    pix = QPixmap(W, H)
+    pix.fill(QColor("#242424"))
 
-from version import __version__
-from infrastructure.updater.update_checker import GithubUpdateChecker
-from application.updater.queries import CheckForUpdateHandler
-from application.updater.commands import DownloadUpdateHandler
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-from gui.main_window import MainWindow
-from gui.view_models.clip_vm import ClipViewModel
-from gui.view_models.download_vm import DownloadViewModel
-from gui.view_models.feed_vm import FeedViewModel
-from gui.view_models.library_vm import LibraryViewModel
-from gui.view_models.monitoring_vm import MonitoringViewModel
-from gui.view_models.playlist_vm import PlaylistViewModel
+    icon_path = get_resource_path("assets/icon.ico")
+    if icon_path.exists():
+        icon_pix = QPixmap(str(icon_path)).scaled(
+            80, 80,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        painter.drawPixmap((W - icon_pix.width()) // 2, 28, icon_pix)
+
+    painter.setPen(QColor("#ffffff"))
+    painter.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+    painter.drawText(QRect(0, 122, W, 36), Qt.AlignmentFlag.AlignHCenter, "YouTube Content Manager")
+
+    painter.setPen(QColor("#888888"))
+    painter.setFont(QFont("Segoe UI", 9))
+    painter.drawText(QRect(0, 172, W, 26), Qt.AlignmentFlag.AlignHCenter, "로딩 중…")
+
+    painter.end()
+    return pix
 
 
 def main() -> int:
-    # 1. Bootstrap data directories
+    # 1. QApplication 가장 먼저 생성 — 스플래시 화면 즉시 표시를 위해 초기화 전에 배치
+    app = QApplication(sys.argv)
+    app.setApplicationName("YouTube Content Manager")
+    app.setFont(QFont("Segoe UI", 9))
+    QPixmapCache.setCacheLimit(30720)  # 30 MB
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "YTContentManager.App.1.0"
+            )
+        except Exception:
+            pass
+
+    _icon_path = get_resource_path("assets/icon.ico")
+    if _icon_path.exists():
+        app.setWindowIcon(QIcon(str(_icon_path)))
+
+    # 2. 스플래시 화면 즉시 표시 (무거운 임포트 전)
+    _splash = QSplashScreen(_build_splash_pixmap())
+    _splash.show()
+    app.processEvents()
+
+    # 3. Bootstrap
     ensure_data_dirs()
     setup_logging()
 
-    # 2. Initialize database
+    # 4. 무거운 임포트 — 스플래시가 보이는 동안 수행
+    from infrastructure.event_bus import EventBus
+    from infrastructure.persistence.database import Database
+    from infrastructure.persistence.sqlite_video_repository import SqliteVideoRepository
+    from infrastructure.persistence.sqlite_download_repository import SqliteDownloadRepository
+    from infrastructure.persistence.sqlite_clip_repository import SqliteClipRepository
+    from infrastructure.persistence.sqlite_channel_repository import SqliteChannelRepository
+    from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
+    from infrastructure.ffmpeg.ffmpeg_adapter import FfmpegAdapter
+
+    from domain.download.aggregates import DownloadQueueAggregate
+
+    from application.library.commands import (
+        AddVideoHandler,
+        AssignCategoryHandler,
+        CreateCategoryHandler,
+        DeleteCategoryHandler,
+        DeleteTagHandler,
+        DeleteVideoHandler,
+        ImportYouTubePlaylistToCategoryHandler,
+        MarkWatchedHandler,
+        MoveCategoryHandler,
+        RefreshCategoryMetadataHandler,
+        RefreshVideoThumbnailHandler,
+        RenameCategoryHandler,
+        SetCategoryVideoOrderHandler,
+        UpdateVideoHandler,
+    )
+    from application.library.queries import (
+        GetCategoriesHandler,
+        GetCategoryVideoOrderHandler,
+        GetTagsHandler,
+        GetVideoDetailHandler,
+        GetVideosHandler,
+        LibraryStatsHandler,
+        SearchVideosHandler,
+    )
+    from application.download.commands import CancelDownloadHandler, StartDownloadHandler
+    from application.download.event_bridge import DownloadEventBridge
+    from application.download.queries import GetDownloadHistoryHandler, GetDownloadQueueHandler
+    from application.clip.commands import DeleteClipHandler, ExtractClipHandler
+    from application.clip.queries import GetClipsHandler
+    from application.monitoring.commands import (
+        SetMonitoringRuleHandler,
+        SubscribeChannelHandler,
+        UnsubscribeChannelHandler,
+    )
+    from application.monitoring.queries import GetSubscriptionsHandler
+    from application.library.playlist_commands import (
+        AddUrlToPlaylistHandler,
+        AddVideoToPlaylistHandler,
+        CopyYouTubePlaylistToLocalHandler,
+        CreatePlaylistFolderHandler,
+        CreatePlaylistHandler,
+        DeletePlaylistFolderHandler,
+        DeletePlaylistHandler,
+        ImportYouTubePlaylistHandler,
+        MovePlaylistToFolderHandler,
+        MoveVideoToPlaylistHandler,
+        PushPlaylistToYouTubeHandler,
+        RemoveVideoFromPlaylistHandler,
+        RenamePlaylistHandler,
+        RenamePlaylistFolderHandler,
+        ReorderPlaylistHandler,
+    )
+    from application.monitoring.commands import ImportYouTubeSubscriptionsHandler
+    from infrastructure.youtube.oauth_adapter import YouTubeOAuthAdapter
+    from infrastructure.youtube.youtube_api_adapter import YouTubeApiAdapter
+    from application.library.playlist_queries import (
+        GetChannelVideosHandler,
+        GetPlaylistFoldersHandler,
+        GetPlaylistItemsHandler,
+        GetPlaylistsHandler,
+        GetSubscribedChannelInfosHandler,
+        GetSubscriptionFeedHandler,
+        GetYouTubePlaylistsHandler,
+    )
+    from infrastructure.persistence.sqlite_playlist_repository import (
+        SqlitePlaylistFolderRepository,
+        SqlitePlaylistRepository,
+    )
+    from infrastructure.auth.youtube_auth import YouTubeAuthService
+
+    from version import __version__
+    from infrastructure.updater.update_checker import GithubUpdateChecker
+    from application.updater.queries import CheckForUpdateHandler
+    from application.updater.commands import DownloadUpdateHandler
+
+    from gui.main_window import MainWindow
+    from gui.view_models.clip_vm import ClipViewModel
+    from gui.view_models.download_vm import DownloadViewModel
+    from gui.view_models.feed_vm import FeedViewModel
+    from gui.view_models.library_vm import LibraryViewModel
+    from gui.view_models.monitoring_vm import MonitoringViewModel
+    from gui.view_models.playlist_vm import PlaylistViewModel
+
+    # 5. Initialize database
     db = Database()
     db.initialize()
 
-    # 3. Repositories
+    # 6. Repositories
     video_repo    = SqliteVideoRepository(db)
     download_repo = SqliteDownloadRepository(db)
     clip_repo     = SqliteClipRepository(db)
@@ -127,17 +183,17 @@ def main() -> int:
     playlist_repo  = SqlitePlaylistRepository(db)
     folder_repo    = SqlitePlaylistFolderRepository(db)
 
-    # 4. Infrastructure services
+    # 7. Infrastructure services
     event_bus    = EventBus()
     ytdlp        = YtDlpAdapter()
     yt_oauth     = YouTubeOAuthAdapter(db)
     ffmpeg       = FfmpegAdapter()
     auth_service = YouTubeAuthService()
 
-    # 5. Download queue (in-memory aggregate)
+    # 8. Download queue (in-memory aggregate)
     dl_queue = DownloadQueueAggregate()
 
-    # 6. Application handlers — Library
+    # 9. Application handlers — Library
     add_video           = AddVideoHandler(video_repo, event_bus, ytdlp)
     update_video        = UpdateVideoHandler(video_repo, event_bus)
     delete_video        = DeleteVideoHandler(video_repo, event_bus)
@@ -162,7 +218,7 @@ def main() -> int:
         video_repo, event_bus, ytdlp, add_video_handler=add_video
     )
 
-    # 7. Application handlers — Download
+    # 10. Application handlers — Download
     start_dl  = StartDownloadHandler(
         dl_queue, download_repo, ytdlp, event_bus,
         make_downloader=lambda cb: YtDlpAdapter(on_progress=cb),
@@ -171,19 +227,18 @@ def main() -> int:
     get_queue = GetDownloadQueueHandler(dl_queue)
     get_hist  = GetDownloadHistoryHandler(download_repo)
 
-    # 8. Application handlers — Clip
+    # 11. Application handlers — Clip
     extract_clip = ExtractClipHandler(clip_repo, ffmpeg, event_bus)
     delete_clip  = DeleteClipHandler(clip_repo, event_bus)
     get_clips    = GetClipsHandler(clip_repo)
 
-    # 9. Application handlers — Monitoring
+    # 12. Application handlers — Monitoring
     subscribe_ch   = SubscribeChannelHandler(channel_repo, event_bus, ytdlp)
     unsubscribe_ch = UnsubscribeChannelHandler(channel_repo, event_bus)
     set_rule       = SetMonitoringRuleHandler(channel_repo)
     get_subs       = GetSubscriptionsHandler(channel_repo)
 
-    # 9b. Application handlers — Playlist
-    # YouTube API 어댑터 (인증되어 있으면 활성화)
+    # 13. Application handlers — Playlist & YouTube API
     _yt_creds      = yt_oauth.get_credentials()
     _yt_api        = None
     if _yt_creds is not None:
@@ -208,7 +263,6 @@ def main() -> int:
     get_ch_infos_h     = GetSubscribedChannelInfosHandler(_yt_api)
     add_url_to_pl_h    = AddUrlToPlaylistHandler(add_video, playlist_repo)
 
-    # 9c. Playlist folder + YouTube API handlers
     rename_playlist_h  = RenamePlaylistHandler(playlist_repo, yt_api=_yt_api)
     create_folder_h    = CreatePlaylistFolderHandler(folder_repo)
     rename_folder_h    = RenamePlaylistFolderHandler(folder_repo)
@@ -219,13 +273,12 @@ def main() -> int:
     push_to_yt_h       = PushPlaylistToYouTubeHandler(playlist_repo, video_repo, _yt_api) if _yt_api else None
     move_video_pl_h    = MoveVideoToPlaylistHandler(playlist_repo, video_repo, _yt_api)
 
-    # 9d. YouTube 구독 채널 일괄 가져오기 (OAuth 우선, fallback: yt-dlp)
     import_yt_subs_h   = ImportYouTubeSubscriptionsHandler(subscribe_ch, ytdlp, _yt_api)
 
-    # 10. Event bridge (translates domain events → application-level callbacks)
+    # 14. Event bridge (translates domain events → application-level callbacks)
     dl_bridge = DownloadEventBridge(event_bus)
 
-    # 11. ViewModels
+    # 15. ViewModels
     library_vm = LibraryViewModel(
         get_videos=get_videos,
         search_videos=search_videos,
@@ -298,28 +351,7 @@ def main() -> int:
         auth_service=auth_service,
     )
 
-    # 12. Launch GUI
-    app = QApplication(sys.argv)
-    app.setApplicationName("YouTube Content Manager")
-    # 앱 기본 폰트를 Windows 표준 폰트로 설정 — MS Sans Serif fallback 방지
-    _default_font = QFont("Segoe UI", 9)
-    app.setFont(_default_font)
-
-    # 태스크바·윈도우 아이콘 설정
-    _icon_path = get_resource_path("assets/icon.ico")
-    if _icon_path.exists():
-        _app_icon = QIcon(str(_icon_path))
-        app.setWindowIcon(_app_icon)
-    # Windows: 태스크바 그룹핑 AppUserModelID 설정
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "YTContentManager.App.1.0"
-            )
-        except Exception:
-            pass
-
+    # 16. Launch GUI
     window = MainWindow(
         library_vm, download_vm, clip_vm, monitoring_vm,
         stats_handler,
@@ -337,6 +369,8 @@ def main() -> int:
     _update_ctrl     = UpdateController(_check_update_h, _dl_update_h, window)
     window.set_update_controller(_update_ctrl)
 
+    # 17. 스플래시 닫기 + 메인 창 표시
+    _splash.finish(window)
     window.show()
     exit_code = app.exec()
 

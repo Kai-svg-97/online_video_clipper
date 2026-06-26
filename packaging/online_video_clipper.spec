@@ -30,11 +30,17 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
+    [],
+    [],
     name="YouTubeContentManager",
     debug=False,
     console=False,
     icon=f"../{_icon}",
-    onefile=True,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    name="YouTubeContentManager",
 )
