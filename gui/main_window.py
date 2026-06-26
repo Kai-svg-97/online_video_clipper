@@ -494,8 +494,8 @@ class MainWindow(QMainWindow):
             self._download_vm,
             thumb_provider=self._library_vm.find_thumbnail_by_url,
             title_provider=self._library_vm.find_title_by_url,
+            library_vm=self._library_vm,
         )
-        self._download_panel.video_open_requested.connect(self._on_download_video_open)
         self._download_panel.retry_requested.connect(self._on_retry_download)
         self._stack.addWidget(self._download_panel)                # 1
 
