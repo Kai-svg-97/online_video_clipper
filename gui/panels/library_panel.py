@@ -3773,7 +3773,10 @@ class LibraryPanel(QWidget):
         centre_layout.addWidget(self._view_stack, stretch=1)
         self._nav_stack.addWidget(centre_content)
 
-        self._detail_widget = VideoDetailWidget(clip_vm=self._clip_vm)
+        self._detail_widget = VideoDetailWidget(
+            clip_vm=self._clip_vm,
+            download_vm=self._download_vm,
+        )
         self._nav_stack.addWidget(self._detail_widget)
 
         outer_splitter.addWidget(self._nav_stack)

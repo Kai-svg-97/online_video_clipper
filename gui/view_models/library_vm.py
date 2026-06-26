@@ -540,6 +540,20 @@ class LibraryViewModel(QObject):
             logger.debug("URL로 썸네일 경로 조회 실패: %s", url)
             return None
 
+    def find_title_by_url(self, url: str) -> str | None:
+        """URL로 라이브러리 영상의 제목 반환. 없으면 None."""
+        try:
+            vid = self.find_video_id_by_url(url)
+            if vid is None:
+                return None
+            detail = self._get_video_detail.handle(vid)
+            if not detail or not detail.title or detail.title == url:
+                return None
+            return detail.title
+        except Exception:
+            logger.debug("URL로 제목 조회 실패: %s", url)
+            return None
+
     def create_category(self, name: str, parent_id: UUID | None = None) -> None:
         try:
             self._create_category.handle(CreateCategoryCommand(name=name, parent_id=parent_id))
