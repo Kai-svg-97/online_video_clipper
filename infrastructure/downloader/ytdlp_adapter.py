@@ -144,6 +144,7 @@ class YtDlpAdapter:
 
         if has_ffmpeg:
             opts["ffmpeg_location"] = ffmpeg
+            opts["merge_output_format"] = "mp4"  # 병합 출력을 항상 mp4로 고정
 
             if settings.subtitle_langs:
                 opts["writesubtitles"] = True
@@ -474,15 +475,26 @@ class YtDlpAdapter:
     # ------------------------------------------------------------------
 
     def _build_format_spec(self, settings: DownloadSettings) -> str:
-        """Format spec when ffmpeg IS available (allows merging video+audio)."""
+        """Format spec when ffmpeg IS available (allows merging video+audio).
+
+        H.264(avc1)+AAC(mp4a)를 우선 선택해 mp4 병합 호환성을 높인다.
+        해당 코덱이 없으면 임의 포맷으로 폴백.
+        """
         if settings.quality == Quality.AUDIO:
-            return "bestaudio/best"
+            return "bestaudio[acodec^=mp4a]/bestaudio/best"
         if settings.quality == Quality.BEST:
-            return "bestvideo+bestaudio/best"
+            return (
+                "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]"
+                "/bestvideo+bestaudio/best"
+            )
         if settings.quality == Quality.WORST:
             return "worstvideo+worstaudio/worst"
         h = settings.quality.value.rstrip("p")
-        return f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
+        return (
+            f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[acodec^=mp4a]"
+            f"/bestvideo[height<={h}]+bestaudio"
+            f"/best[height<={h}]/best"
+        )
 
     def _build_format_spec_no_ffmpeg(self, settings: DownloadSettings) -> str:
         """Format spec when ffmpeg is NOT available (single-stream, no merging)."""
