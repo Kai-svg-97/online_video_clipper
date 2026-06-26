@@ -842,7 +842,6 @@ class VideoDetailWidget(QWidget):
 
         # 실패 이력 섹션
         if failed_downloads:
-            from PyQt6.QtWidgets import QFrame  # noqa: PLC0415
             fail_hdr = QLabel("다운로드 실패 이력")
             fail_hdr.setStyleSheet(
                 "color:#f44336; font-weight:bold; font-size:9pt; margin-top:8px;"
