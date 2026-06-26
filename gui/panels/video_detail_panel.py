@@ -792,7 +792,7 @@ class VideoDetailWidget(QWidget):
             for fd in failed_downloads:
                 err_text = self._strip_ansi(fd.error_msg)
                 date_str = (
-                    fd.created_at.strftime("%Y-%m-%d %H:%M")
+                    fd.created_at.astimezone(tz=None).strftime("%Y-%m-%d %H:%M")
                     if fd.created_at else ""
                 )
                 row = QFrame()

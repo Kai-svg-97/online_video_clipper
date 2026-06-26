@@ -1,9 +1,27 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
+
+_QUALITY_LABELS = frozenset({"UHD (4K)", "QHD (2K)", "FHD", "HD", "SD", "LD"})
+_BRACKET_RE = re.compile(r'\[([^\]]+)\]')
+
+
+def _actual_quality(file_path: str | None, fallback: str) -> str:
+    """파일명에 삽입된 실제 품질 레이블을 반환한다.
+
+    ytdlp_adapter가 다운로드 완료 후 '{stem} [FHD].mp4' 형태로 파일명을 수정한다.
+    해당 레이블이 없으면 fallback(요청 품질 값)을 그대로 반환.
+    """
+    if file_path:
+        matches = _BRACKET_RE.findall(Path(file_path).stem)
+        label = next((m for m in reversed(matches) if m in _QUALITY_LABELS), None)
+        if label:
+            return label
+    return fallback
 
 from application.library.dtos import (
     CategoryDTO,
@@ -195,7 +213,7 @@ class GetVideoDetailHandler:
             fp = Path(j.file_path) if j.file_path else None
             size = fp.stat().st_size if fp and fp.exists() else None
             downloads.append(DownloadInfoDTO(
-                quality=j.settings.quality.value,
+                quality=_actual_quality(j.file_path, j.settings.quality.value),
                 fmt=j.settings.format.value,
                 file_path=j.file_path,
                 file_size_bytes=size,
