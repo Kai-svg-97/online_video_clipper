@@ -387,34 +387,32 @@ class _VideoListView(QListView):
         super().mousePressEvent(event)
 
     def startDrag(self, actions) -> None:
-        """재생목록 뷰 상태일 때 영상 ID를 MIME에 추가해 플레이리스트 트리로 DnD 가능하게 한다."""
-        if self._current_playlist_id is None:
-            super().startDrag(actions)
-            return
-        indexes = self.selectedIndexes()
+        """영상 카드 드래그 — 두 경로 모두 반투명 픽스맵 적용."""
+        indexes = [i for i in self.selectedIndexes() if i.column() == 0]
         if not indexes:
             return
-        video_ids = []
-        for idx in indexes:
-            vid_uuid = self.model().data(idx, VideoListModel.VideoIdRole)
-            if vid_uuid:
-                video_ids.append(str(vid_uuid))
-        if not video_ids:
-            super().startDrag(actions)
-            return
-        mime = QMimeData()
-        mime.setData(
-            _MIME_VIDEO_ID,
-            QByteArray(",".join(video_ids).encode()),
-        )
-        mime.setData(
-            "application/x-source-playlist-id",
-            QByteArray(str(self._current_playlist_id).encode()),
-        )
-        drag = QDrag(self)
-        drag.setMimeData(mime)
 
-        # 반투명 드래그 픽스맵 (드롭 위치가 보이도록 55% 불투명도)
+        # MIME 구성: 재생목록 모드는 source-playlist-id 추가
+        if self._current_playlist_id is not None:
+            video_ids = [
+                str(self.model().data(i, VideoListModel.VideoIdRole))
+                for i in indexes
+                if self.model().data(i, VideoListModel.VideoIdRole)
+            ]
+            if not video_ids:
+                return
+            mime = QMimeData()
+            mime.setData(_MIME_VIDEO_ID, QByteArray(",".join(video_ids).encode()))
+            mime.setData(
+                "application/x-source-playlist-id",
+                QByteArray(str(self._current_playlist_id).encode()),
+            )
+        else:
+            mime = self.model().mimeData(indexes)
+            if not mime:
+                return
+
+        # 반투명 드래그 픽스맵
         rects = [self.visualRect(i) for i in indexes]
         united = rects[0]
         for r in rects[1:]:
@@ -426,10 +424,12 @@ class _VideoListView(QListView):
         _p.setOpacity(0.55)
         _p.drawPixmap(0, 0, raw)
         _p.end()
+
+        drag = QDrag(self)
+        drag.setMimeData(mime)
         drag.setPixmap(transp)
         drag.setHotSpot(united.center() - united.topLeft())
-
-        drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
+        drag.exec(actions)
 
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasFormat(_MIME_VIDEO_ID):
@@ -1986,6 +1986,35 @@ class _PlaylistTree(QTreeWidget):
 
     # ── 드래그 앤 드롭 ────────────────────────────────────────────────────────
 
+    # ── 드롭 대상 오버레이 (QSS를 우회하는 QFrame 기반 hover 강조) ─────────────
+
+    def _ensure_drop_indicator(self):
+        if not hasattr(self, "_drop_ind"):
+            from PyQt6.QtWidgets import QFrame
+            ind = QFrame(self.viewport())
+            ind.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            ind.setStyleSheet(
+                "QFrame { border: 2px solid rgba(100,160,255,220);"
+                " border-radius: 3px; background: rgba(100,160,255,45); }"
+            )
+            ind.hide()
+            self._drop_ind = ind
+        return self._drop_ind
+
+    def _show_drop_on(self, item) -> None:
+        ind = self._ensure_drop_indicator()
+        if item is not None:
+            r = self.visualItemRect(item)
+            ind.setGeometry(r)
+            ind.show()
+            ind.raise_()
+        else:
+            ind.hide()
+
+    def _hide_drop_ind(self) -> None:
+        if hasattr(self, "_drop_ind"):
+            self._drop_ind.hide()
+
     def startDrag(self, supported_actions) -> None:
         item = self.currentItem()
         if item is None:
@@ -2039,14 +2068,8 @@ class _PlaylistTree(QTreeWidget):
         target = self.itemAt(event.position().toPoint())
         mime = event.mimeData()
 
-        # 드롭 대상 hover 강조
-        prev = getattr(self, "_drag_hover_item", None)
-        if target is not prev:
-            if prev is not None:
-                prev.setBackground(0, QBrush())
-            if target is not None:
-                target.setBackground(0, QBrush(QColor(100, 160, 255, 80)))
-            self._drag_hover_item = target
+        # 드롭 대상 hover 강조 (QFrame 오버레이)
+        self._show_drop_on(target)
 
         if mime.hasFormat(_MIME_VIDEO_ID):
             # 영상 드롭: 재생목록 또는 카테고리 항목 위에서 허용
@@ -2096,17 +2119,11 @@ class _PlaylistTree(QTreeWidget):
             event.ignore()
 
     def dragLeaveEvent(self, event) -> None:
-        prev = getattr(self, "_drag_hover_item", None)
-        if prev is not None:
-            prev.setBackground(0, QBrush())
-            self._drag_hover_item = None
+        self._hide_drop_ind()
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
-        prev = getattr(self, "_drag_hover_item", None)
-        if prev is not None:
-            prev.setBackground(0, QBrush())
-            self._drag_hover_item = None
+        self._hide_drop_ind()
         mime   = event.mimeData()
         target = self.itemAt(event.position().toPoint())
 
@@ -3164,6 +3181,35 @@ class _CategoryTree(QTreeWidget):
 
     # ── Drag-and-drop ──────────────────────────────────────────────
 
+    # ── 드롭 대상 오버레이 ────────────────────────────────────────────
+
+    def _ensure_drop_indicator(self):
+        if not hasattr(self, "_drop_ind"):
+            from PyQt6.QtWidgets import QFrame
+            ind = QFrame(self.viewport())
+            ind.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            ind.setStyleSheet(
+                "QFrame { border: 2px solid rgba(100,160,255,220);"
+                " border-radius: 3px; background: rgba(100,160,255,45); }"
+            )
+            ind.hide()
+            self._drop_ind = ind
+        return self._drop_ind
+
+    def _show_drop_on(self, item) -> None:
+        ind = self._ensure_drop_indicator()
+        if item is not None:
+            r = self.visualItemRect(item)
+            ind.setGeometry(r)
+            ind.show()
+            ind.raise_()
+        else:
+            ind.hide()
+
+    def _hide_drop_ind(self) -> None:
+        if hasattr(self, "_drop_ind"):
+            self._drop_ind.hide()
+
     def startDrag(self, supported_actions) -> None:
         # Cancel any pending edit — startDrag() blocks in its own event loop
         self._edit_timer.stop()
@@ -3211,21 +3257,14 @@ class _CategoryTree(QTreeWidget):
             event.ignore()
             return
         item = self.itemAt(event.position().toPoint())
-        prev = getattr(self, "_drag_hover_item", None)
-        if item is not prev:
-            if prev is not None:
-                prev.setBackground(0, QBrush())
-            if item is not None:
-                item.setBackground(0, QBrush(QColor(100, 160, 255, 80)))
-            self._drag_hover_item = item
+        self._drag_hover_item = item  # dropEvent fallback용
+        self._show_drop_on(item)
         if item:
             self.setCurrentItem(item)
         event.acceptProposedAction()
 
     def dragLeaveEvent(self, event) -> None:
-        prev = getattr(self, "_drag_hover_item", None)
-        if prev is not None:
-            prev.setBackground(0, QBrush())
+        self._hide_drop_ind()
         self._drag_hover_item = None
         self._ext_url_drag = False
         self._vid_drag     = False
@@ -3233,10 +3272,7 @@ class _CategoryTree(QTreeWidget):
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
-        prev = getattr(self, "_drag_hover_item", None)
-        if prev is not None:
-            prev.setBackground(0, QBrush())
-            self._drag_hover_item = None
+        self._hide_drop_ind()
         mime = event.mimeData()
         pos  = event.position().toPoint()
         # itemAt() misses the item when the cursor lands in padding between items;
