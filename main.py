@@ -23,7 +23,7 @@ def _suppress_av_log() -> None:
         for _base in ([qt_bin] if qt_bin else []) + [""]:
             _path = os.path.join(_base, _name) if _base else _name
             try:
-                _ct.CDLL(_path).av_log_set_level(16)  # AV_LOG_ERROR = 16
+                _ct.CDLL(_path).av_log_set_level(-8)  # AV_LOG_QUIET = -8
                 return
             except OSError:
                 pass
