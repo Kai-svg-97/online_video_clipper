@@ -14,6 +14,7 @@ from PyQt6.QtCore import (
     QSize,
     Qt,
     QThread,
+    QTimer,
     pyqtSignal,
 )
 from PyQt6.QtGui import (
@@ -505,6 +506,8 @@ class DownloadPanel(QWidget):
 
         vm.queue_changed.connect(self._on_queue_changed)
         vm.history_changed.connect(self.refresh)
+
+        QTimer.singleShot(0, self.refresh)
 
     def _setup_ui(self) -> None:
         outer = QVBoxLayout(self)
