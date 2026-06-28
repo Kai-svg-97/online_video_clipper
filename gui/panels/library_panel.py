@@ -5623,6 +5623,7 @@ class LibraryPanel(QWidget):
 
         self._feed_status = QLabel()
         self._feed_status.setContentsMargins(12, 6, 12, 6)
+        self._feed_status.setWordWrap(True)
         self._feed_status.hide()
         v.addWidget(self._feed_status)
 
@@ -5648,6 +5649,7 @@ class LibraryPanel(QWidget):
 
         self._channels_status = QLabel()
         self._channels_status.setContentsMargins(12, 6, 12, 6)
+        self._channels_status.setWordWrap(True)
         self._channels_status.hide()
         v.addWidget(self._channels_status)
 
@@ -5827,10 +5829,24 @@ class LibraryPanel(QWidget):
         idx = self._view_stack.currentIndex()
         if idx not in (_VIEW_FEED, _VIEW_CHANNELS):
             return
-        if "cookie" in msg.lower() or "Could not copy" in msg:
-            display = "YouTube 로그인 필요 — 사이드바 계정 버튼에서 로그인하세요."
+        ml = msg.lower()
+        if "could not copy" in ml or ("database" in ml and "lock" in ml):
+            display = (
+                "Chrome이 실행 중입니다 — Chrome을 완전히 종료 후 재시도하거나,\n"
+                "설정 > YouTube 계정에서 브라우저를 Firefox로 변경하세요."
+            )
+        elif "복호화" in msg or "dpapi" in ml or "failed to decrypt" in ml:
+            # ytdlp_adapter가 이미 한국어 안내문으로 변환한 DPAPI 메시지를 그대로 표시
+            display = msg
+        elif "cookie" in ml or "쿠키" in msg:
+            display = (
+                "쿠키 인증 실패 — 설정 > YouTube 계정에서 Firefox로 변경하거나\n"
+                "Chrome을 완전히 종료 후 재시도하세요."
+            )
+        elif "sign in" in ml or "로그인" in msg:
+            display = "YouTube 로그인 필요 — 설정 > YouTube 계정에서 로그인하세요."
         else:
-            display = f"오류: {msg[:120]}"
+            display = f"오류: {msg[:200]}"
         status = self._feed_status if idx == _VIEW_FEED else self._channels_status
         status.setText(display)
         status.show()
