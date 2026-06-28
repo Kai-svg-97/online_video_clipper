@@ -167,7 +167,8 @@ class UpdateDialog(QDialog):
         if sys.platform == "win32":
             pending = Path(tempfile.gettempdir()) / "ovc_pending_update.txt"
             try:
-                pending.write_text(installer_path, encoding="utf-8")
+                exe = sys.executable if getattr(sys, "frozen", False) else ""
+                pending.write_text(installer_path + "\n" + exe, encoding="utf-8")
             except OSError:
                 logger.exception("pending update 파일 작성 실패")
                 QMessageBox.warning(

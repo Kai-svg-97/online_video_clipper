@@ -1,8 +1,11 @@
+import logging
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Qt6 DirectWrite가 구형 비트맵 폰트(MS Sans Serif)를 처리하지 못해 발생하는
 # 무해한 경고를 억제한다. 앱 동작에는 영향 없음.
@@ -412,30 +415,30 @@ def main() -> int:
     exit_code = app.exec()
 
     # 앱 완전 종료 후 pending 업데이트 installer 실행 (파일 잠금 방지)
-    # 직접 Popen 대신 batch 파일로 지연 실행: 현재 프로세스가 완전히 종료되어
-    # _MEI* 임시 디렉터리가 정리된 뒤 설치가 시작되도록 PID 소멸을 감시한다.
+    # batch 파일로 지연 실행: 5초 대기 후 설치 → 설치 완료 후 앱 자동 재실행
     if sys.platform == "win32":
         _pending = Path(tempfile.gettempdir()) / "ovc_pending_update.txt"
         if _pending.exists():
-            _inst = _pending.read_text(encoding="utf-8").strip()
+            try:
+                _lines = _pending.read_text(encoding="utf-8").splitlines()
+                _inst = _lines[0].strip() if _lines else ""
+                _exe = _lines[1].strip() if len(_lines) > 1 else ""
+            except OSError:
+                logger.exception("pending 업데이트 파일 읽기 실패")
+                _inst = _exe = ""
             _pending.unlink(missing_ok=True)
             if _inst and Path(_inst).exists():
                 try:
-                    _pid = os.getpid()
                     _bat = Path(tempfile.gettempdir()) / "ovc_update_launcher.bat"
-                    _bat.write_text(
+                    _bat_content = (
                         "@echo off\r\n"
-                        ":wait\r\n"
-                        f"tasklist /FI \"PID eq {_pid}\" 2>nul"
-                        f" | find /I \"{_pid}\" >nul\r\n"
-                        "if not errorlevel 1 (\r\n"
-                        "    ping -n 2 127.0.0.1 >nul\r\n"
-                        "    goto wait\r\n"
-                        ")\r\n"
-                        f"\"{_inst}\" /SILENT\r\n"
-                        "del \"%~f0\"\r\n",
-                        encoding="utf-8",
+                        "timeout /t 5 /nobreak >nul\r\n"
+                        f"\"{_inst}\" /VERYSILENT /NORESTART\r\n"
                     )
+                    if _exe:
+                        _bat_content += f"start \"\" \"{_exe}\"\r\n"
+                    _bat_content += "del \"%~f0\"\r\n"
+                    _bat.write_text(_bat_content, encoding="mbcs")
                     subprocess.Popen(
                         ["cmd", "/c", str(_bat)],
                         creationflags=subprocess.DETACHED_PROCESS
@@ -443,7 +446,7 @@ def main() -> int:
                         close_fds=True,
                     )
                 except (OSError, IOError):
-                    pass
+                    logger.exception("업데이트 launcher 실행 실패")
 
     return exit_code
 
