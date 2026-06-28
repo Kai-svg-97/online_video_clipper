@@ -573,6 +573,16 @@ class InlinePlayer(QWidget):
     _SHOW_MS = 1_000   # 마우스 감지 1초 후 표시
     _last_quality_fmt: str = _DEFAULT_QUALITY_FMT  # 세션 내 품질 선택 공유
     _last_quality_merge: bool = _DEFAULT_QUALITY_MERGE
+    _last_quality_short: str = _QUALITY_OPTIONS[0][2]  # "자동"
+    # 재생 품질 단축 라벨 → 다운로드 품질 문자열 매핑
+    # DownloadInfoDTO.quality는 Quality Enum 값("1080p" 등) 또는 파일명 레이블("FHD" 등)
+    _SHORT_TO_QUALITIES: dict[str, set[str]] = {
+        "1080p": {"1080p", "FHD"},
+        "720p":  {"720p",  "HD"},
+        "480p":  {"480p",  "SD"},
+        "360p":  {"360p",  "LD"},
+        "240p":  {"240p"},
+    }
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -586,6 +596,7 @@ class InlinePlayer(QWidget):
         self._filter_on = False
         self._current_quality_fmt = InlinePlayer._last_quality_fmt
         self._current_merge: bool = InlinePlayer._last_quality_merge
+        self._current_quality_short: str = InlinePlayer._last_quality_short
         self._resume_ms: int = 0
         self._stream_quality_label: str = ""  # yt-dlp 보고 품질 레이블
         self._temp_stream_path: str = ""      # 고화질 병합 임시 파일(재생 후 정리)
@@ -784,8 +795,9 @@ class InlinePlayer(QWidget):
         self._video_title = title
         self._downloads   = downloads
         self._resume_ms   = resume_ms
-        self._current_quality_fmt = InlinePlayer._last_quality_fmt
-        self._current_merge       = InlinePlayer._last_quality_merge
+        self._current_quality_fmt   = InlinePlayer._last_quality_fmt
+        self._current_merge         = InlinePlayer._last_quality_merge
+        self._current_quality_short = InlinePlayer._last_quality_short
         self._stream_quality_label = ""
         self._visual_stack.setCurrentIndex(0)
         if thumbnail_pixmap and not thumbnail_pixmap.isNull():
@@ -799,11 +811,22 @@ class InlinePlayer(QWidget):
         self._bar.raise_()
         self._hide_timer.stop()
 
-    def play(self) -> None:
+    def _find_local_for_quality(self, short: str) -> str | None:
+        """선택 품질과 일치하는 다운로드 파일 경로 반환.
+        "자동"이면 품질 무관 첫 번째 파일, 없으면 None."""
+        target = InlinePlayer._SHORT_TO_QUALITIES.get(short)  # None → 자동
         for dl in reversed(self._downloads):
-            if dl.file_path and Path(dl.file_path).exists():
-                self._start_local(dl.file_path)
-                return
+            if not (dl.file_path and Path(dl.file_path).exists()):
+                continue
+            if target is None or dl.quality in target:
+                return dl.file_path
+        return None
+
+    def play(self) -> None:
+        local = self._find_local_for_quality(self._current_quality_short)
+        if local:
+            self._start_local(local)
+            return
         self._fetch_stream()
 
     def stop(self) -> None:
@@ -1046,18 +1069,25 @@ class InlinePlayer(QWidget):
             self.playback_failed.emit(error_string)
 
     def _on_quality_changed(self, fmt: str, short: str, merge: bool) -> None:
-        self._current_quality_fmt = fmt
-        self._current_merge = merge
-        InlinePlayer._last_quality_fmt = fmt
+        self._current_quality_fmt   = fmt
+        self._current_merge         = merge
+        self._current_quality_short = short
+        InlinePlayer._last_quality_fmt   = fmt
         InlinePlayer._last_quality_merge = merge
+        InlinePlayer._last_quality_short = short
         state = self._player.playbackState()
         if state != QMediaPlayer.PlaybackState.StoppedState:
             # 현재 재생 위치를 저장해 새 화질에서 이어서 재생
             self._resume_ms = self._player.position()
-            self._bar.set_quality("전환 중…")
             self._player.stop()
             self._visual_stack.setCurrentIndex(0)
-            self._fetch_stream()
+            local = self._find_local_for_quality(short)
+            if local:
+                self._bar.set_quality(short)
+                self._start_local(local)
+            else:
+                self._bar.set_quality("전환 중…")
+                self._fetch_stream()
 
     def _on_metadata_changed(self) -> None:
         """yt-dlp 보고 품질이 없을 때만 Qt 메타데이터 해상도로 뱃지를 보완한다."""
