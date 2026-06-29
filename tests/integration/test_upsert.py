@@ -234,3 +234,45 @@ class TestTagExtraction:
         assert "kpop" in names
         assert "mv" in names
         assert "official" in names
+
+
+# ---------------------------------------------------------------------------
+# Upsert: category assignment
+# ---------------------------------------------------------------------------
+
+class TestUpsertCategoryAssignment:
+    def test_drag_drop_assigns_category_to_existing_video(self, repo, bus):
+        """드래그-드롭 재현: 이미 등록된 영상 URL을 카테고리에 드롭하면 category_id가 업데이트되어야 한다."""
+        from domain.library.entities import Category
+        cat = Category.create("TestCat")
+        repo.save_category(cat)
+
+        # 1차 등록: 카테고리 없음
+        AddVideoHandler(repo, bus, ytdlp=_make_stub_ytdlp()).handle(
+            AddVideoCommand(url=URL_CANONICAL)
+        )
+        assert repo.get_by_url(URL_CANONICAL).category_id is None
+
+        # 2차 등록: 카테고리 지정 (드래그-드롭 시나리오)
+        AddVideoHandler(repo, bus, ytdlp=_make_stub_ytdlp()).handle(
+            AddVideoCommand(url=URL_CANONICAL, category_id=cat.id)
+        )
+        agg = repo.get_by_url(URL_CANONICAL)
+        assert agg.category_id == cat.id
+
+    def test_upsert_without_category_preserves_existing_category(self, repo, bus):
+        """category_id=None으로 upsert해도 기존 카테고리가 유지되어야 한다."""
+        from domain.library.entities import Category
+        cat = Category.create("TestCat")
+        repo.save_category(cat)
+
+        AddVideoHandler(repo, bus, ytdlp=_make_stub_ytdlp()).handle(
+            AddVideoCommand(url=URL_CANONICAL, category_id=cat.id)
+        )
+        assert repo.get_by_url(URL_CANONICAL).category_id == cat.id
+
+        # 카테고리 미지정으로 다시 등록
+        AddVideoHandler(repo, bus, ytdlp=_make_stub_ytdlp()).handle(
+            AddVideoCommand(url=URL_CANONICAL)
+        )
+        assert repo.get_by_url(URL_CANONICAL).category_id == cat.id

@@ -154,6 +154,8 @@ class AddVideoHandler:
             )
             if tag_ids:
                 existing.set_tags(tag_ids)
+            if cmd.category_id is not None:
+                existing.assign_category(cmd.category_id)
             if thumbnail_url and self._ytdlp and not existing.video.thumbnail_path:
                 thumb_path = self._ytdlp.download_thumbnail(existing.id, thumbnail_url)
                 if thumb_path:
