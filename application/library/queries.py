@@ -248,6 +248,7 @@ class GetVideoDetailHandler:
             tags=tag_names,
             downloads=downloads,
             failed_downloads=failed_downloads,
+            gemini_summary=v.gemini_summary,
         )
 
 

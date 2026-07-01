@@ -144,3 +144,4 @@ class VideoDetailDTO:
     tags: list[str] = field(default_factory=list)
     downloads: list[DownloadInfoDTO] = field(default_factory=list)
     failed_downloads: list[FailedDownloadInfoDTO] = field(default_factory=list)
+    gemini_summary: str = ""

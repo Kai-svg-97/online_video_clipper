@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS videos (
     favorite        INTEGER NOT NULL DEFAULT 0,
     watched         INTEGER NOT NULL DEFAULT 0,
     notes           TEXT    NOT NULL DEFAULT '',
+    gemini_summary  TEXT    NOT NULL DEFAULT '',
     thumbnail_path  TEXT    NOT NULL DEFAULT '',
     category_id     TEXT    REFERENCES categories(id) ON DELETE SET NULL,
     created_at      TEXT    NOT NULL,

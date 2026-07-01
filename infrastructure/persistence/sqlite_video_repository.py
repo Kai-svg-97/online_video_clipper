@@ -53,6 +53,7 @@ def _row_to_video(row) -> Video:
         favorite=bool(row["favorite"]),
         watched=bool(row["watched"]),
         notes=row["notes"] or "",
+        gemini_summary=row["gemini_summary"] if "gemini_summary" in row.keys() else "",
         thumbnail_path=row["thumbnail_path"] or "",
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
@@ -75,8 +76,8 @@ class SqliteVideoRepository(IVideoRepository):
                 INSERT INTO videos
                     (id, url, title, channel_name, channel_url, channel_id,
                      duration_sec, published_at, view_count, favorite, watched,
-                     notes, thumbnail_path, category_id, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     notes, gemini_summary, thumbnail_path, category_id, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title,
                     channel_name=excluded.channel_name,
@@ -88,6 +89,7 @@ class SqliteVideoRepository(IVideoRepository):
                     favorite=excluded.favorite,
                     watched=excluded.watched,
                     notes=excluded.notes,
+                    gemini_summary=excluded.gemini_summary,
                     thumbnail_path=excluded.thumbnail_path,
                     category_id=excluded.category_id,
                     updated_at=excluded.updated_at
@@ -101,7 +103,7 @@ class SqliteVideoRepository(IVideoRepository):
                     _fmt_dt(v.published_at) if v.published_at else None,
                     v.view_count,
                     int(v.favorite), int(v.watched),
-                    v.notes, v.thumbnail_path,
+                    v.notes, v.gemini_summary, v.thumbnail_path,
                     str(aggregate.category_id) if aggregate.category_id else None,
                     _fmt_dt(v.created_at), _fmt_dt(v.updated_at),
                 ),

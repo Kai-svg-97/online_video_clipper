@@ -96,6 +96,7 @@ class VideoAggregate:
         duration: Duration | None = None,
         published_at: datetime | None = None,
         view_count: int | None = None,
+        gemini_summary: str | None = None,
     ) -> None:
         changed: list[str] = []
         if title is not None and title != self._video.title:
@@ -125,6 +126,9 @@ class VideoAggregate:
         if view_count is not None and view_count != self._video.view_count:
             self._video.view_count = view_count
             changed.append("view_count")
+        if gemini_summary is not None and gemini_summary != self._video.gemini_summary:
+            self._video.gemini_summary = gemini_summary
+            changed.append("gemini_summary")
         if changed:
             self._video.updated_at = _now()
             self._raise(VideoUpdated(video_id=self._video.id, changed_fields=tuple(changed)))

@@ -120,7 +120,7 @@ class StartDownloadHandler:
                 logger.debug("Gemini 요약 없음 (버튼 미발견 또는 미로그인): %s", url)
                 return
             from application.library.commands import AddVideoCommand  # noqa: PLC0415
-            self._add_video.handle(AddVideoCommand(url=url, initial_notes=summary))
+            self._add_video.handle(AddVideoCommand(url=url, initial_gemini_summary=summary))
             logger.info("Gemini 요약 메모 저장 완료 (%d자): %s", len(summary), url)
         except Exception:
             logger.exception("Gemini 요약 라이브러리 저장 실패 (무시)")

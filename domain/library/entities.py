@@ -28,6 +28,7 @@ class Video:
     updated_at: datetime
     # description is loaded on demand (GetVideoByIdQuery), not stored here
     description: str = field(default="", repr=False)
+    gemini_summary: str = field(default="", repr=False)
 
     @classmethod
     def create(

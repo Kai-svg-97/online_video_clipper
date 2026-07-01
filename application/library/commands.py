@@ -29,7 +29,7 @@ class AddVideoCommand:
     prefetched_thumbnail_url: str | None = None
     prefetched_upload_date: str | None = None
     prefetched_view_count: int | None = None
-    initial_notes: str | None = None
+    initial_gemini_summary: str | None = None
 
 
 @dataclass
@@ -40,6 +40,7 @@ class UpdateVideoCommand:
     favorite: bool | None = None
     category_id: UUID | None = None
     tags: list[str] | None = None
+    gemini_summary: str | None = None
 
 
 @dataclass
@@ -161,9 +162,9 @@ class AddVideoHandler:
                 thumb_path = self._ytdlp.download_thumbnail(existing.id, thumbnail_url)
                 if thumb_path:
                     existing.update_metadata(thumbnail_path=thumb_path)
-            # 기존 메모가 비어있을 때만 initial_notes로 채운다
-            if cmd.initial_notes and not existing.video.notes:
-                existing.update_metadata(notes=cmd.initial_notes)
+            # 기존 Gemini 요약이 비어있을 때만 initial_gemini_summary로 채운다
+            if cmd.initial_gemini_summary and not existing.video.gemini_summary:
+                existing.update_metadata(gemini_summary=cmd.initial_gemini_summary)
             self._repo.save(existing)
             self._bus.publish_all(existing.pull_events())
             return existing
@@ -182,8 +183,8 @@ class AddVideoHandler:
         )
         if description:
             agg.update_metadata(description=description)
-        if cmd.initial_notes:
-            agg.update_metadata(notes=cmd.initial_notes)
+        if cmd.initial_gemini_summary:
+            agg.update_metadata(gemini_summary=cmd.initial_gemini_summary)
         agg.set_tags(tag_ids)
 
         if thumbnail_url and self._ytdlp:
@@ -210,6 +211,7 @@ class UpdateVideoHandler:
             title=cmd.title,
             notes=cmd.notes,
             favorite=cmd.favorite,
+            gemini_summary=cmd.gemini_summary,
         )
         if cmd.category_id is not None:
             agg.assign_category(cmd.category_id)
