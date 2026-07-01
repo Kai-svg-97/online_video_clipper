@@ -6,6 +6,8 @@ QThread 안에서만 호출해야 한다 (Playwright sync API는 메인 이벤�
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -61,7 +63,20 @@ class GeminiExtractor:
 
         cookie_path = self._get_cookie_path()
 
+        import config.settings as _s  # noqa: PLC0415
+        profile = getattr(_s, "YT_AUTH_PROFILE", None)
+
         with sync_playwright() as p:
+            # 방법 1: Chrome 프로필 직접 사용 — 쿠키 파일 없을 때 우선 시도.
+            # Chrome v127+는 DPAPI로 쿠키를 암호화하므로 yt-dlp 추출이 불가하다.
+            # launch_persistent_context로 Chrome 자체 복호화를 활용한다.
+            if not cookie_path and profile:
+                result = self._extract_via_chrome_profile(p, url, profile)
+                if result is not None:
+                    return result
+                logger.debug("Chrome 프로필 방식 실패 — 쿠키 파일 방식으로 폴백")
+
+            # 방법 2: 헤드리스 Chromium + 쿠키 파일 주입
             browser = p.chromium.launch(headless=True)
             try:
                 context = browser.new_context(
@@ -76,7 +91,6 @@ class GeminiExtractor:
                     self._load_netscape_cookies(context, cookie_path)
 
                 page = context.new_page()
-                # 이미지·폰트 차단 — 메모리/속도 최적화
                 page.route(
                     "**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,otf}",
                     lambda r: r.abort(),
@@ -85,7 +99,6 @@ class GeminiExtractor:
                 logger.info("Gemini 추출: 페이지 로드 중 %s", url)
                 page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_LOAD_TIMEOUT_MS)
 
-                # SPA 렌더링 대기 — ytd-app이 마운트될 때까지
                 try:
                     page.wait_for_selector("ytd-watch-flexy", timeout=_PAGE_LOAD_TIMEOUT_MS)
                 except Exception:
@@ -98,9 +111,65 @@ class GeminiExtractor:
                 except Exception:
                     logger.debug("Playwright 브라우저 종료 실패")
 
+    def _extract_via_chrome_profile(self, p, url: str, profile: str) -> str | None:
+        """Chrome 프로필을 직접 열어 네이티브 인증으로 Gemini 요약을 추출한다.
+
+        Chrome이 해당 프로필로 실행 중이면 프로필 잠금으로 실패하고 None을 반환한다.
+        """
+        try:
+            if sys.platform == "win32":
+                user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+            elif sys.platform == "darwin":
+                user_data_dir = os.path.expanduser(
+                    "~/Library/Application Support/Google/Chrome"
+                )
+            else:
+                user_data_dir = os.path.expanduser("~/.config/google-chrome")
+
+            if not Path(user_data_dir).exists():
+                logger.debug("Chrome User Data 경로 없음: %s", user_data_dir)
+                return None
+
+            logger.info("Chrome 프로필로 Gemini 추출 시도: profile=%s", profile)
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                channel="chrome",
+                args=[
+                    f"--profile-directory={profile}",
+                    "--disable-extensions",
+                    "--disable-component-extensions-with-background-pages",
+                    "--no-first-run",
+                ],
+                headless=True,
+                timeout=_PAGE_LOAD_TIMEOUT_MS,
+            )
+            try:
+                page = context.new_page()
+                page.route(
+                    "**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,otf}",
+                    lambda r: r.abort(),
+                )
+                logger.info("Chrome 프로필: 페이지 로드 중 %s", url)
+                page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_LOAD_TIMEOUT_MS)
+                try:
+                    page.wait_for_selector("ytd-watch-flexy", timeout=_PAGE_LOAD_TIMEOUT_MS)
+                except Exception:
+                    logger.debug("ytd-watch-flexy 미발견 — 계속 시도")
+                return self._click_and_extract(page)
+            finally:
+                try:
+                    context.close()
+                except Exception:
+                    logger.debug("Chrome 컨텍스트 종료 실패")
+        except Exception:
+            logger.debug(
+                "Chrome 프로필 컨텍스트 생성 실패 (Chrome 실행 중이거나 프로필 잠금): %s",
+                profile,
+            )
+            return None
+
     def _click_and_extract(self, page) -> str | None:
         """Ask 버튼 클릭 후 응답 텍스트를 추출한다."""
-        # Ask 버튼 탐색 (여러 셀렉터 순서대로 시도)
         ask_btn = None
         for sel in _ASK_BUTTON_SELECTORS:
             try:
@@ -118,7 +187,6 @@ class GeminiExtractor:
 
         ask_btn.click()
 
-        # 응답 컨테이너 대기 및 텍스트 추출
         for sel in _SUMMARY_CONTAINER_SELECTORS:
             try:
                 container = page.locator(sel).first
@@ -135,13 +203,26 @@ class GeminiExtractor:
 
     @staticmethod
     def _get_cookie_path() -> str | None:
-        """설정에서 YouTube 인증 쿠키 파일 경로를 읽는다."""
+        """YouTube 인증 쿠키 파일 경로를 반환한다.
+
+        우선순위:
+        1. YT_AUTH_COOKIEFILE 설정에 파일이 있으면 그대로 사용
+        2. Playwright 로그인으로 저장된 data/auth/youtube_cookies.txt
+        """
         try:
-            from config.settings import YT_AUTH_COOKIEFILE  # noqa: PLC0415
-            if YT_AUTH_COOKIEFILE and Path(YT_AUTH_COOKIEFILE).exists():
-                return YT_AUTH_COOKIEFILE
+            import config.settings as _s  # noqa: PLC0415
+            cookiefile = getattr(_s, "YT_AUTH_COOKIEFILE", None)
+            if cookiefile and Path(cookiefile).exists():
+                return cookiefile
+
+            data_dir = getattr(_s, "DATA_DIR", None)
+            if data_dir:
+                playwright_cookie = Path(data_dir) / "auth" / "youtube_cookies.txt"
+                if playwright_cookie.exists() and playwright_cookie.stat().st_size > 0:
+                    logger.debug("Playwright 저장 쿠키 사용: %s", playwright_cookie)
+                    return str(playwright_cookie)
         except Exception:
-            pass
+            logger.debug("쿠키 경로 확인 실패")
         return None
 
     @staticmethod
@@ -160,7 +241,11 @@ class GeminiExtractor:
                     if len(parts) < 7:
                         continue
                     domain, _, path, secure, expiry, name, value = parts[:7]
-                    expires = int(expiry) if expiry.lstrip("-").isdigit() else int(time.time()) + 86400
+                    expires = (
+                        int(expiry)
+                        if expiry.lstrip("-").isdigit()
+                        else int(time.time()) + 86400
+                    )
                     cookies.append({
                         "name": name,
                         "value": value,
