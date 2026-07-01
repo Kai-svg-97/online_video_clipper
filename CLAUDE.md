@@ -158,6 +158,8 @@ online_video_clipper/
 │   │   └── ytdlp_adapter.py         # yt-dlp 래퍼 — domain.shared.ports.IMediaSource를 구조적으로 만족
 │   ├── ffmpeg/
 │   │   └── ffmpeg_adapter.py        # ffmpeg wrapper for clip extraction
+│   ├── browser/
+│   │   └── gemini_extractor.py      # Playwright 기반 YouTube Gemini AI 요약 추출기 (QThread에서만 호출)
 │   ├── auth/
 │   │   └── youtube_auth.py          # 브라우저 프로필 탐지 + Netscape 쿠키 추출 (playwright 로그인)
 │   ├── youtube/
@@ -214,6 +216,7 @@ online_video_clipper/
 - **Domain Events over direct calls** — when a download completes, `DownloadCompleted` event triggers library update and UI notification independently.
 - **ffmpeg resolved via `get_ffmpeg_path()`** — checks `bin/` first (bundled), falls back to system PATH.
 - **Ports over concrete infra in application** — application 레이어는 `EventBus`/`YtDlpAdapter`/`FfmpegAdapter`를 직접 import하지 않고 `domain/shared/ports.py`의 Protocol(`IEventBus`·`IMediaSource`·`IClipExtractor`)에 의존한다. 어댑터는 구조적 타이핑으로 이를 만족(상속 불필요)하며, 구체 인스턴스 주입은 composition root(`main.py`)가 담당한다. 작업별 진행률 훅이 필요한 다운로드처럼 인스턴스를 새로 만들어야 하는 경우는 **팩토리 콜백을 주입**한다(`make_downloader`, `yt_api_factory`).
+- **Gemini AI 요약 자동 메모 저장** — `DownloadSettings.capture_gemini=True`이면 다운로드 완료 후 `GeminiExtractor`(Playwright sync API)가 YouTube 페이지에서 Gemini Ask 버튼을 클릭해 요약 텍스트를 추출하고, `AddVideoHandler`를 통해 라이브러리 영상 `notes` 필드에 저장한다(`initial_notes` — 기존 메모가 비어있을 때만 덮어씀). 추출 실패는 완전히 격리돼 다운로드 결과에 영향을 주지 않는다. `infrastructure/browser/gemini_extractor.py`는 반드시 QThread에서만 호출한다.
 - **GUI→infra 예외 경계** — `gui/main_window.py`·`gui/dialogs/youtube_auth_dialog.py`는 `infrastructure.auth`를 직접 참조한다. 로그인 플로우가 playwright 구동·쿠키 파일 작성 등 **본질적으로 인프라**라 포트로 감싸도 런타임 의존이 사라지지 않으므로, composition-root 인접의 **수용된 경계**로 둔다(application 레이어는 이런 예외가 없어야 함).
 
 ## 에러 처리 & 로깅 규칙 (mandatory)
