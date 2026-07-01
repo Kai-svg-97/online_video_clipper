@@ -33,6 +33,7 @@ class Database:
         self._run_once("migrate_playlist_schema", self._migrate_playlist_schema)
         self._run_once("migrate_channel_ids", self._migrate_channel_ids)
         self._run_once("migrate_sort_indexes", self._migrate_sort_indexes)
+        self._run_once("migrate_gemini_summary", self._migrate_gemini_summary)
 
     def _run_once(self, migration_id: str, func) -> None:
         """마이그레이션을 최초 1회만 실행한다 (schema_migrations 테이블로 추적)."""
@@ -108,6 +109,17 @@ class Database:
                 except Exception:
                     logger.debug("플레이리스트 스키마 마이그레이션 건너뜀 (이미 컬럼 존재 가능)")
                     pass  # 이미 컬럼이 존재하면 무시
+
+    def _migrate_gemini_summary(self) -> None:
+        """download_history 테이블에 gemini_summary 컬럼을 추가한다 (idempotent)."""
+        with self.connection() as conn:
+            try:
+                conn.execute(
+                    "ALTER TABLE download_history ADD COLUMN gemini_summary TEXT DEFAULT ''"
+                )
+                logger.info("download_history.gemini_summary 컬럼 추가 완료")
+            except Exception:
+                logger.debug("gemini_summary 컬럼 이미 존재 — 건너뜀")
 
     def _migrate_normalize_urls(self) -> None:
         """Idempotent: normalize existing YouTube URLs to canonical ?v=ID form.

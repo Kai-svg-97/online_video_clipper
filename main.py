@@ -258,9 +258,13 @@ def main() -> int:
     )
 
     # 10. Application handlers — Download
+    from infrastructure.browser.gemini_extractor import GeminiExtractor
+    _gemini_extractor = GeminiExtractor()
     start_dl  = StartDownloadHandler(
         dl_queue, download_repo, ytdlp, event_bus,
         make_downloader=lambda cb: YtDlpAdapter(on_progress=cb),
+        add_video_handler=add_video,
+        gemini_extractor=_gemini_extractor,
     )
     cancel_dl = CancelDownloadHandler(dl_queue, event_bus)
     get_queue = GetDownloadQueueHandler(dl_queue)

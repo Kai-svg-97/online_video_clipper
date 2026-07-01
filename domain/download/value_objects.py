@@ -29,6 +29,7 @@ class DownloadSettings:
         "subtitle_langs",
         "include_thumbnail",
         "include_metadata",
+        "capture_gemini",
     )
 
     def __init__(
@@ -38,12 +39,14 @@ class DownloadSettings:
         subtitle_langs: tuple[str, ...] = (),
         include_thumbnail: bool = True,
         include_metadata: bool = True,
+        capture_gemini: bool = False,
     ) -> None:
         self.quality = quality
         self.format = fmt
         self.subtitle_langs = subtitle_langs
         self.include_thumbnail = include_thumbnail
         self.include_metadata = include_metadata
+        self.capture_gemini = capture_gemini
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DownloadSettings):
@@ -54,10 +57,11 @@ class DownloadSettings:
             and self.subtitle_langs == other.subtitle_langs
             and self.include_thumbnail == other.include_thumbnail
             and self.include_metadata == other.include_metadata
+            and self.capture_gemini == other.capture_gemini
         )
 
     def __hash__(self) -> int:
-        return hash((self.quality, self.format, self.subtitle_langs))
+        return hash((self.quality, self.format, self.subtitle_langs, self.capture_gemini))
 
 
 class DownloadProgress:

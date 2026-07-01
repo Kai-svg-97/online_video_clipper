@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS download_history (
     file_size_bytes INTEGER,
     error_msg       TEXT NOT NULL DEFAULT '',
     retry_count     INTEGER NOT NULL DEFAULT 0,
+    gemini_summary  TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );

@@ -29,6 +29,7 @@ class AddVideoCommand:
     prefetched_thumbnail_url: str | None = None
     prefetched_upload_date: str | None = None
     prefetched_view_count: int | None = None
+    initial_notes: str | None = None
 
 
 @dataclass
@@ -160,6 +161,9 @@ class AddVideoHandler:
                 thumb_path = self._ytdlp.download_thumbnail(existing.id, thumbnail_url)
                 if thumb_path:
                     existing.update_metadata(thumbnail_path=thumb_path)
+            # 기존 메모가 비어있을 때만 initial_notes로 채운다
+            if cmd.initial_notes and not existing.video.notes:
+                existing.update_metadata(notes=cmd.initial_notes)
             self._repo.save(existing)
             self._bus.publish_all(existing.pull_events())
             return existing
@@ -178,6 +182,8 @@ class AddVideoHandler:
         )
         if description:
             agg.update_metadata(description=description)
+        if cmd.initial_notes:
+            agg.update_metadata(notes=cmd.initial_notes)
         agg.set_tags(tag_ids)
 
         if thumbnail_url and self._ytdlp:

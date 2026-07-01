@@ -57,6 +57,15 @@ class BatchDownloadDialog(QDialog):
         self._skip_check.setChecked(True)
         layout.addWidget(self._skip_check)
 
+        self._gemini_check = QCheckBox("Gemini AI 요약을 메모에 자동 저장 (YouTube 로그인 필요)")
+        self._gemini_check.setChecked(False)
+        self._gemini_check.setToolTip(
+            "다운로드 완료 후 YouTube의 Gemini Ask 버튼을 자동으로 클릭해\n"
+            "AI 요약 텍스트를 라이브러리 영상 메모에 저장합니다.\n"
+            "YouTube 계정 로그인 필요 / 영상당 약 30초 추가됩니다."
+        )
+        layout.addWidget(self._gemini_check)
+
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -67,7 +76,11 @@ class BatchDownloadDialog(QDialog):
     def build_settings(self) -> DownloadSettings:
         quality: Quality = self._quality_combo.currentData()
         fmt: MediaFormat = self._format_combo.currentData()
-        return DownloadSettings(quality=quality, fmt=fmt)
+        return DownloadSettings(
+            quality=quality,
+            fmt=fmt,
+            capture_gemini=self._gemini_check.isChecked(),
+        )
 
     @property
     def skip_existing(self) -> bool:
