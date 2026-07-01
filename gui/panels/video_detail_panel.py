@@ -1203,7 +1203,9 @@ class VideoDetailWidget(QWidget):
             if self._detail is not None:
                 self.gemini_summary_saved.emit(self._detail.id, summary)
         else:
-            self._summary_status_lbl.setText("요약 추출 실패 (YouTube 로그인 또는 미지원)")
+            self._summary_status_lbl.setText(
+                "요약 추출 실패 — Chrome을 닫고 재시도하거나, YouTube 설정에서 Playwright 로그인 후 이용하세요"
+            )
 
 
 # ------------------------------------------------------------------

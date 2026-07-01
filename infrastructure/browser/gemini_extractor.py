@@ -112,10 +112,16 @@ class GeminiExtractor:
                     logger.debug("Playwright 브라우저 종료 실패")
 
     def _extract_via_chrome_profile(self, p, url: str, profile: str) -> str | None:
-        """Chrome 프로필을 직접 열어 네이티브 인증으로 Gemini 요약을 추출한다.
+        """Chrome 프로필 복사본으로 Gemini 요약을 추출한다.
 
-        Chrome이 해당 프로필로 실행 중이면 프로필 잠금으로 실패하고 None을 반환한다.
+        Chrome이 실행 중이어도 동작하도록, 핵심 파일(Local State + Cookies + Preferences)을
+        임시 디렉토리에 복사해 프로필 잠금(exitCode=21)을 우회한다.
+        Chrome v127+ Application Bound Encryption은 Chrome 바이너리·Windows 사용자에
+        바인딩되므로, 같은 Chrome 실행 파일(channel="chrome")로 복사본에서도 복호화된다.
         """
+        import shutil  # noqa: PLC0415
+        import tempfile  # noqa: PLC0415
+
         try:
             if sys.platform == "win32":
                 user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
@@ -126,45 +132,69 @@ class GeminiExtractor:
             else:
                 user_data_dir = os.path.expanduser("~/.config/google-chrome")
 
-            if not Path(user_data_dir).exists():
-                logger.debug("Chrome User Data 경로 없음: %s", user_data_dir)
+            src = Path(user_data_dir)
+            src_profile = src / profile
+            if not src_profile.exists():
+                logger.debug("Chrome 프로필 경로 없음: %s", src_profile)
                 return None
 
-            logger.info("Chrome 프로필로 Gemini 추출 시도: profile=%s", profile)
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=user_data_dir,
-                channel="chrome",
-                args=[
-                    f"--profile-directory={profile}",
-                    "--disable-extensions",
-                    "--disable-component-extensions-with-background-pages",
-                    "--no-first-run",
-                ],
-                headless=True,
-                timeout=_PAGE_LOAD_TIMEOUT_MS,
-            )
+            # 핵심 파일만 임시 디렉토리로 복사 (프로필 잠금 우회)
+            tmp_dir = Path(tempfile.mkdtemp(prefix="ovc_chrome_"))
             try:
-                page = context.new_page()
-                page.route(
-                    "**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,otf}",
-                    lambda r: r.abort(),
+                local_state = src / "Local State"
+                if local_state.exists():
+                    shutil.copy2(local_state, tmp_dir / "Local State")
+
+                dst_profile = tmp_dir / profile
+                dst_profile.mkdir(parents=True, exist_ok=True)
+                for fname in ("Cookies", "Preferences", "Secure Preferences"):
+                    f = src_profile / fname
+                    if f.exists():
+                        shutil.copy2(f, dst_profile / fname)
+
+                logger.info(
+                    "Chrome 프로필 임시 복사 완료: %s → %s (잠금 우회)", src_profile, dst_profile
                 )
-                logger.info("Chrome 프로필: 페이지 로드 중 %s", url)
-                page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_LOAD_TIMEOUT_MS)
+
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=str(tmp_dir),
+                    channel="chrome",
+                    args=[
+                        f"--profile-directory={profile}",
+                        "--disable-extensions",
+                        "--disable-component-extensions-with-background-pages",
+                        "--no-first-run",
+                    ],
+                    headless=True,
+                    timeout=_PAGE_LOAD_TIMEOUT_MS,
+                )
                 try:
-                    page.wait_for_selector("ytd-watch-flexy", timeout=_PAGE_LOAD_TIMEOUT_MS)
-                except Exception:
-                    logger.debug("ytd-watch-flexy 미발견 — 계속 시도")
-                return self._click_and_extract(page)
+                    page = context.new_page()
+                    page.route(
+                        "**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,otf}",
+                        lambda r: r.abort(),
+                    )
+                    logger.info("Chrome 프로필(임시): 페이지 로드 중 %s", url)
+                    page.goto(
+                        url, wait_until="domcontentloaded", timeout=_PAGE_LOAD_TIMEOUT_MS
+                    )
+                    try:
+                        page.wait_for_selector(
+                            "ytd-watch-flexy", timeout=_PAGE_LOAD_TIMEOUT_MS
+                        )
+                    except Exception:
+                        logger.debug("ytd-watch-flexy 미발견 — 계속 시도")
+                    return self._click_and_extract(page)
+                finally:
+                    try:
+                        context.close()
+                    except Exception:
+                        logger.debug("Chrome 컨텍스트 종료 실패")
             finally:
-                try:
-                    context.close()
-                except Exception:
-                    logger.debug("Chrome 컨텍스트 종료 실패")
+                shutil.rmtree(tmp_dir, ignore_errors=True)
         except Exception:
-            logger.debug(
-                "Chrome 프로필 컨텍스트 생성 실패 (Chrome 실행 중이거나 프로필 잠금): %s",
-                profile,
+            logger.warning(
+                "Chrome 프로필 컨텍스트 생성 실패: %s", profile, exc_info=True
             )
             return None
 
