@@ -827,6 +827,13 @@ class LibraryViewModel(QObject):
         except Exception:
             logger.exception("메모 저장 실패: %s", video_id)
 
+    def save_gemini_summary(self, video_id: UUID, summary: str) -> None:
+        """Gemini AI 요약 저장."""
+        try:
+            self._update_video.handle(UpdateVideoCommand(video_id=video_id, gemini_summary=summary))
+        except Exception:
+            logger.exception("Gemini 요약 저장 실패: %s", video_id)
+
     def update_video_tags(self, video_id: UUID, tag_names: list[str]) -> None:
         """Replace the tag list for a single video (used from detail panel)."""
         try:

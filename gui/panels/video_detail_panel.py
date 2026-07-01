@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from PyQt6.QtCore import QEvent, QTime, QTimer, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QThread, QTime, QTimer, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont, QImage
 from PyQt6.QtWidgets import (
     QApplication,
@@ -371,11 +371,14 @@ class VideoDetailWidget(QWidget):
     item_selected           = pyqtSignal(object)  # 연관 영상 클릭 — payload(UUID | FeedVideoDTO)
     notes_saved             = pyqtSignal(object, str)   # (video_id, notes)
     category_path_clicked   = pyqtSignal(object)  # (category_id: UUID)
+    gemini_summary_saved    = pyqtSignal(object, str)   # (video_id, summary)
+    downloads_refresh_requested = pyqtSignal(object)    # video_id
 
     # 하단 탭 인덱스
     _TAB_DOWNLOADS = 0
     _TAB_NOTES = 1
     _TAB_CLIPS = 2
+    _TAB_SUMMARY = 3
 
     def __init__(self, clip_vm=None, download_vm=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -393,8 +396,10 @@ class VideoDetailWidget(QWidget):
         self._notes_timer.setSingleShot(True)
         self._notes_timer.setInterval(1000)
         self._notes_timer.timeout.connect(self._save_notes)
+        self._gemini_worker: object | None = None  # _GeminiSummaryWorker | None
         if download_vm is not None:
             download_vm.queue_changed.connect(self._on_queue_changed)
+            download_vm.history_changed.connect(self._on_history_changed)
         self._setup_skeleton()
 
     # ── Skeleton (built once) ──────────────────────────────────────
@@ -482,6 +487,28 @@ class VideoDetailWidget(QWidget):
         self._clip_tab_layout.setContentsMargins(8, 8, 8, 8)
         self._tabs.addTab(_wrap(self._clip_tab_widget), "클립")
 
+        # 요약 탭 (Gemini AI 요약)
+        summary_tab = QWidget()
+        summary_layout = QVBoxLayout(summary_tab)
+        summary_layout.setContentsMargins(8, 8, 8, 8)
+        summary_layout.setSpacing(6)
+        refresh_row = QHBoxLayout()
+        self._summary_refresh_btn = QPushButton("⟳ Gemini 요약 갱신")
+        self._summary_refresh_btn.setFixedHeight(26)
+        self._summary_refresh_btn.clicked.connect(self._on_refresh_summary)
+        refresh_row.addWidget(self._summary_refresh_btn)
+        self._summary_status_lbl = QLabel("")
+        self._summary_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+        refresh_row.addWidget(self._summary_status_lbl, 1)
+        summary_layout.addLayout(refresh_row)
+        self._summary_edit = QPlainTextEdit()
+        self._summary_edit.setReadOnly(True)
+        self._summary_edit.setPlaceholderText(
+            "Gemini AI 요약이 없습니다.\n⟳ 버튼으로 갱신하세요. (YouTube 로그인 필요)"
+        )
+        summary_layout.addWidget(self._summary_edit)
+        self._tabs.addTab(_wrap(summary_tab), "요약")
+
         self._tabs.currentChanged.connect(self._on_tab_changed)
         left_layout.addWidget(self._tabs)
 
@@ -567,6 +594,9 @@ class VideoDetailWidget(QWidget):
         self._notes_edit.blockSignals(True)
         self._notes_edit.setPlainText(detail.notes or "")
         self._notes_edit.blockSignals(False)
+        self._summary_edit.setPlainText(detail.gemini_summary or "")
+        self._summary_status_lbl.setText("")
+        self._summary_refresh_btn.setEnabled(True)
 
         # 클립 탭 — 로컬 파일 탐색 및 탭 초기화
         self._clip_source_file = None
@@ -893,9 +923,10 @@ class VideoDetailWidget(QWidget):
         dl_layout.addStretch()
 
     def _set_tabs_enabled(self, local: bool) -> None:
-        """스트리밍 모드면 메모·클립 탭 비활성."""
+        """스트리밍 모드면 메모·클립·요약 탭 비활성."""
         self._tabs.setTabEnabled(self._TAB_NOTES, local)
         self._tabs.setTabEnabled(self._TAB_CLIPS, local)
+        self._tabs.setTabEnabled(self._TAB_SUMMARY, local)
 
     # ── 연관 영상 ──────────────────────────────────────────────────
 
@@ -905,6 +936,12 @@ class VideoDetailWidget(QWidget):
     # ── Clip tab ───────────────────────────────────────────────────
 
     def _build_clip_tab(self) -> None:
+        # 오류3 방지: 레이아웃 삭제 전에 시그널 먼저 해제
+        if self._clip_vm is not None:
+            try:
+                self._clip_vm.clips_changed.disconnect(self._refresh_clip_list)
+            except Exception:
+                logger.debug("클립 시그널 미연결 상태 — 첫 빌드 시 정상")
         _clear_layout(self._clip_tab_layout)
 
         if self._clip_vm is None or self._detail is None:
@@ -979,11 +1016,6 @@ class VideoDetailWidget(QWidget):
 
         self._clip_tab_layout.addStretch()
 
-        # 클립 VM 연결 (중복 연결 방지)
-        try:
-            self._clip_vm.clips_changed.disconnect(self._refresh_clip_list)
-        except Exception:
-            logger.exception("클립 시그널 중복 연결 해제 실패")
         self._clip_vm.clips_changed.connect(self._refresh_clip_list)
 
     def _set_start_from_player(self) -> None:
@@ -1064,7 +1096,11 @@ class VideoDetailWidget(QWidget):
     def _refresh_clip_list(self) -> None:
         if not hasattr(self, "_clip_list_layout"):
             return
-        _clear_layout(self._clip_list_layout)
+        try:
+            _clear_layout(self._clip_list_layout)
+        except RuntimeError:
+            logger.debug("_clip_list_layout 이미 삭제됨 — 갱신 생략")
+            return
         self._clip_status_lbl.setText("")
         clips = self._clip_vm.clips if self._clip_vm else []
         if not clips:
@@ -1135,10 +1171,63 @@ class VideoDetailWidget(QWidget):
     def stop_player(self) -> None:
         self._player.stop()
 
+    # ── 다운로드 히스토리 갱신 (오류2) ────────────────────────────────
+
+    def _on_history_changed(self) -> None:
+        """다운로드 완료/실패 시 호출 — 상세화면이 열려있으면 부모에 갱신 요청."""
+        if self._detail is not None and not self._streaming:
+            self.downloads_refresh_requested.emit(self._detail.id)
+
+    def refresh_downloads(self, downloads: list, failed_downloads: list) -> None:
+        """다운로드 파일 탭만 새로 그린다."""
+        self._build_downloads_tab(downloads, failed_downloads)
+
+    # ── Gemini 요약 갱신 (오류4) ──────────────────────────────────────
+
+    def _on_refresh_summary(self) -> None:
+        if self._detail is None or self._streaming:
+            return
+        self._summary_refresh_btn.setEnabled(False)
+        self._summary_status_lbl.setText("추출 중…")
+        worker = _GeminiSummaryWorker(self._detail.url, self)
+        worker.done.connect(self._on_gemini_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+        self._gemini_worker = worker
+
+    def _on_gemini_done(self, summary: str) -> None:
+        self._summary_refresh_btn.setEnabled(True)
+        if summary:
+            self._summary_edit.setPlainText(summary)
+            self._summary_status_lbl.setText("")
+            if self._detail is not None:
+                self.gemini_summary_saved.emit(self._detail.id, summary)
+        else:
+            self._summary_status_lbl.setText("요약 추출 실패 (YouTube 로그인 또는 미지원)")
+
 
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+class _GeminiSummaryWorker(QThread):
+    """백그라운드에서 Gemini AI 요약을 추출한다."""
+
+    done = pyqtSignal(str)  # 요약 텍스트 (실패 시 빈 문자열)
+
+    def __init__(self, url: str, parent=None) -> None:
+        super().__init__(parent)
+        self._url = url
+
+    def run(self) -> None:
+        try:
+            from infrastructure.browser.gemini_extractor import GeminiExtractor  # noqa: PLC0415
+            result = GeminiExtractor().extract(self._url)
+            self.done.emit(result or "")
+        except Exception:
+            logger.exception("Gemini 요약 워커 실패")
+            self.done.emit("")
+
 
 def _bold_font(size: int) -> QFont:
     f = QFont()

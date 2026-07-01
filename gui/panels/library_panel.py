@@ -3906,6 +3906,12 @@ class LibraryPanel(QWidget):
         self._detail_widget.notes_saved.connect(
             lambda vid_id, text: self._vm.save_notes(vid_id, text)
         )
+        self._detail_widget.gemini_summary_saved.connect(
+            lambda vid_id, text: self._vm.save_gemini_summary(vid_id, text)
+        )
+        self._detail_widget.downloads_refresh_requested.connect(
+            self._on_detail_downloads_refresh
+        )
         self._detail_widget.category_path_clicked.connect(self._on_cat_filter_changed)
 
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
@@ -4677,6 +4683,18 @@ class LibraryPanel(QWidget):
     def _on_detail_tags_updated(self, video_id: UUID, tags: list) -> None:
         """Called when user manually adds a tag in the detail view."""
         self._vm.update_video_tags(video_id, tags)
+
+    def _on_detail_downloads_refresh(self, video_id: object) -> None:
+        """다운로드 완료 후 상세화면의 다운로드 파일 탭을 갱신한다."""
+        from uuid import UUID as _UUID  # noqa: PLC0415
+        if not isinstance(video_id, _UUID):
+            return
+        try:
+            detail = self._vm.get_video_detail(video_id)
+            if detail is not None:
+                self._detail_widget.refresh_downloads(detail.downloads, detail.failed_downloads)
+        except Exception:
+            logger.exception("다운로드 탭 갱신 실패: %s", video_id)
         if self._nav_stack.currentIndex() == 1:
             detail = self._vm.get_video_detail(video_id)
             if detail:

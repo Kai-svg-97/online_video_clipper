@@ -175,7 +175,7 @@ online_video_clipper/
 │   │   ├── feed_panel.py            # 피드 카드 부품(_FeedGrid·_FeedCard: 썸네일 좌하단 채널 배지·리사이즈 reflow, **단일 클릭→`video_clicked`(FeedVideoDTO) 방출**, 인라인 추가버튼 제거·우클릭 메뉴로 일원화) + 채널 카드 부품(_ChannelGrid·_ChannelCard: 아바타·구독자/영상수에 더해 **"최근 영상 N일 전"** 라벨=`latest_video_published_at`) + 연관영상 행에서 재사용하는 `_RoundedThumbLabel`·`_ThumbLoader` 정의 — library_panel/video_detail_panel이 재사용. `_FeedCard`·`_ChannelCard`는 `_relative_time`(YYYYMMDD·ISO·`Z` 처리)로 등록 시점을 상대시간 표기. (구버전 FeedPanel 컨테이너는 더 이상 사이드바 메뉴로 노출되지 않음)
 │   │   ├── monitoring_panel.py      # 채널 구독 & 모니터링 규칙 관리
 │   │   ├── stats_panel.py           # 라이브러리 통계 대시보드
-│   │   ├── video_detail_panel.py    # YouTube 시청 페이지형 상세화면 — 좌(큰 플레이어+제목/메타/태그/챕터/설명+하단 탭:다운로드·메모·클립) | 우(`_RelatedList` 연관영상). `load`(로컬)/`load_stream`(스트리밍, 메모·클립 비활성) + `set_related`. 설명에서 `_parse_chapters`로 타임스탬프 추출→클릭 시 `InlinePlayer.seek_to_ms`. `RelatedItem` dataclass + `item_selected` 시그널
+│   │   ├── video_detail_panel.py    # YouTube 시청 페이지형 상세화면 — 좌(큰 플레이어+제목/메타/태그/챕터/설명+하단 탭:다운로드·메모·클립·요약) | 우(`_RelatedList` 연관영상). `load`(로컬)/`load_stream`(스트리밍, 메모·클립·요약 비활성) + `set_related`. 설명에서 `_parse_chapters`로 타임스탬프 추출→클릭 시 `InlinePlayer.seek_to_ms`. `RelatedItem` dataclass + `item_selected` 시그널. 요약 탭은 `gemini_summary` 필드를 표시하며 ⟳ 버튼으로 `_GeminiSummaryWorker`(QThread) 실행 → `GeminiExtractor` 호출 → `gemini_summary_saved` 시그널 방출.
 │   │   ├── settings_panel.py        # 전체 설정 패널 (다운로드 경로, 테마 등)
 │   │   └── settings_dialog.py       # 간략 설정 다이얼로그 (레거시, 42줄)
 │   ├── dialogs/
@@ -217,7 +217,7 @@ online_video_clipper/
 - **ffmpeg resolved via `get_ffmpeg_path()`** — checks `bin/` first (bundled), falls back to system PATH.
 - **Ports over concrete infra in application** — application 레이어는 `EventBus`/`YtDlpAdapter`/`FfmpegAdapter`를 직접 import하지 않고 `domain/shared/ports.py`의 Protocol(`IEventBus`·`IMediaSource`·`IClipExtractor`)에 의존한다. 어댑터는 구조적 타이핑으로 이를 만족(상속 불필요)하며, 구체 인스턴스 주입은 composition root(`main.py`)가 담당한다. 작업별 진행률 훅이 필요한 다운로드처럼 인스턴스를 새로 만들어야 하는 경우는 **팩토리 콜백을 주입**한다(`make_downloader`, `yt_api_factory`).
 - **Gemini AI 요약 자동 메모 저장** — `DownloadSettings.capture_gemini=True`이면 다운로드 완료 후 `GeminiExtractor`(Playwright sync API)가 YouTube 페이지에서 Gemini Ask 버튼을 클릭해 요약 텍스트를 추출하고, `AddVideoHandler`를 통해 라이브러리 영상 `notes` 필드에 저장한다(`initial_notes` — 기존 메모가 비어있을 때만 덮어씀). 추출 실패는 완전히 격리돼 다운로드 결과에 영향을 주지 않는다. `infrastructure/browser/gemini_extractor.py`는 반드시 QThread에서만 호출한다.
-- **GUI→infra 예외 경계** — `gui/main_window.py`·`gui/dialogs/youtube_auth_dialog.py`는 `infrastructure.auth`를 직접 참조한다. 로그인 플로우가 playwright 구동·쿠키 파일 작성 등 **본질적으로 인프라**라 포트로 감싸도 런타임 의존이 사라지지 않으므로, composition-root 인접의 **수용된 경계**로 둔다(application 레이어는 이런 예외가 없어야 함).
+- **GUI→infra 예외 경계** — `gui/main_window.py`·`gui/dialogs/youtube_auth_dialog.py`는 `infrastructure.auth`를 직접 참조한다. `gui/panels/video_detail_panel.py`의 `_GeminiSummaryWorker`는 `infrastructure.browser.gemini_extractor.GeminiExtractor`를 지연 import한다. 로그인/Gemini 추출 플로우가 playwright 구동 등 **본질적으로 인프라**라 포트로 감싸도 런타임 의존이 사라지지 않으므로, composition-root 인접의 **수용된 경계**로 둔다(application 레이어는 이런 예외가 없어야 함).
 
 ## 에러 처리 & 로깅 규칙 (mandatory)
 
