@@ -6,8 +6,6 @@ QThread 안에서만 호출해야 한다 (Playwright sync API는 메인 이벤�
 from __future__ import annotations
 
 import logging
-import os
-import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -41,7 +39,14 @@ _RESPONSE_TIMEOUT_MS = 30_000
 
 
 class GeminiExtractor:
-    """YouTube 영상 페이지에서 Gemini AI 요약 텍스트를 추출한다."""
+    """YouTube 영상 페이지에서 Gemini AI 요약 텍스트를 추출한다.
+
+    인증은 반드시 쿠키 파일(Netscape 포맷)로만 이루어진다. Chrome v127+는
+    쿠키를 App-Bound Encryption으로 암호화해 프로필 직접 접근·복사·yt-dlp
+    cookiesfrombrowser 어떤 방식으로도 외부에서 복호화할 수 없으므로(DPAPI
+    오류), 설정 > YouTube 계정의 "새 계정으로 로그인…"(Playwright 로그인)
+    플로우로 저장된 data/auth/youtube_cookies.txt에 의존한다.
+    """
 
     def extract(self, url: str) -> str | None:
         """Gemini 요약 텍스트를 반환한다. 실패·미지원 시 None.
@@ -62,21 +67,14 @@ class GeminiExtractor:
             return None
 
         cookie_path = self._get_cookie_path()
-
-        import config.settings as _s  # noqa: PLC0415
-        profile = getattr(_s, "YT_AUTH_PROFILE", None)
+        if not cookie_path:
+            logger.info(
+                "YouTube 인증 쿠키 없음 — 설정 > YouTube 계정에서 "
+                "'새 계정으로 로그인…'을 먼저 실행하세요"
+            )
+            return None
 
         with sync_playwright() as p:
-            # 방법 1: Chrome 프로필 직접 사용 — 쿠키 파일 없을 때 우선 시도.
-            # Chrome v127+는 DPAPI로 쿠키를 암호화하므로 yt-dlp 추출이 불가하다.
-            # launch_persistent_context로 Chrome 자체 복호화를 활용한다.
-            if not cookie_path and profile:
-                result = self._extract_via_chrome_profile(p, url, profile)
-                if result is not None:
-                    return result
-                logger.debug("Chrome 프로필 방식 실패 — 쿠키 파일 방식으로 폴백")
-
-            # 방법 2: 헤드리스 Chromium + 쿠키 파일 주입
             browser = p.chromium.launch(headless=True)
             try:
                 context = browser.new_context(
@@ -87,8 +85,7 @@ class GeminiExtractor:
                     ),
                     locale="ko-KR",
                 )
-                if cookie_path:
-                    self._load_netscape_cookies(context, cookie_path)
+                self._load_netscape_cookies(context, cookie_path)
 
                 page = context.new_page()
                 page.route(
@@ -110,93 +107,6 @@ class GeminiExtractor:
                     browser.close()
                 except Exception:
                     logger.debug("Playwright 브라우저 종료 실패")
-
-    def _extract_via_chrome_profile(self, p, url: str, profile: str) -> str | None:
-        """Chrome 프로필 복사본으로 Gemini 요약을 추출한다.
-
-        Chrome이 실행 중이어도 동작하도록, 핵심 파일(Local State + Cookies + Preferences)을
-        임시 디렉토리에 복사해 프로필 잠금(exitCode=21)을 우회한다.
-        Chrome v127+ Application Bound Encryption은 Chrome 바이너리·Windows 사용자에
-        바인딩되므로, 같은 Chrome 실행 파일(channel="chrome")로 복사본에서도 복호화된다.
-        """
-        import shutil  # noqa: PLC0415
-        import tempfile  # noqa: PLC0415
-
-        try:
-            if sys.platform == "win32":
-                user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-            elif sys.platform == "darwin":
-                user_data_dir = os.path.expanduser(
-                    "~/Library/Application Support/Google/Chrome"
-                )
-            else:
-                user_data_dir = os.path.expanduser("~/.config/google-chrome")
-
-            src = Path(user_data_dir)
-            src_profile = src / profile
-            if not src_profile.exists():
-                logger.debug("Chrome 프로필 경로 없음: %s", src_profile)
-                return None
-
-            # 핵심 파일만 임시 디렉토리로 복사 (프로필 잠금 우회)
-            tmp_dir = Path(tempfile.mkdtemp(prefix="ovc_chrome_"))
-            try:
-                local_state = src / "Local State"
-                if local_state.exists():
-                    shutil.copy2(local_state, tmp_dir / "Local State")
-
-                dst_profile = tmp_dir / profile
-                dst_profile.mkdir(parents=True, exist_ok=True)
-                for fname in ("Cookies", "Preferences", "Secure Preferences"):
-                    f = src_profile / fname
-                    if f.exists():
-                        shutil.copy2(f, dst_profile / fname)
-
-                logger.info(
-                    "Chrome 프로필 임시 복사 완료: %s → %s (잠금 우회)", src_profile, dst_profile
-                )
-
-                context = p.chromium.launch_persistent_context(
-                    user_data_dir=str(tmp_dir),
-                    channel="chrome",
-                    args=[
-                        f"--profile-directory={profile}",
-                        "--disable-extensions",
-                        "--disable-component-extensions-with-background-pages",
-                        "--no-first-run",
-                    ],
-                    headless=True,
-                    timeout=_PAGE_LOAD_TIMEOUT_MS,
-                )
-                try:
-                    page = context.new_page()
-                    page.route(
-                        "**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,otf}",
-                        lambda r: r.abort(),
-                    )
-                    logger.info("Chrome 프로필(임시): 페이지 로드 중 %s", url)
-                    page.goto(
-                        url, wait_until="domcontentloaded", timeout=_PAGE_LOAD_TIMEOUT_MS
-                    )
-                    try:
-                        page.wait_for_selector(
-                            "ytd-watch-flexy", timeout=_PAGE_LOAD_TIMEOUT_MS
-                        )
-                    except Exception:
-                        logger.debug("ytd-watch-flexy 미발견 — 계속 시도")
-                    return self._click_and_extract(page)
-                finally:
-                    try:
-                        context.close()
-                    except Exception:
-                        logger.debug("Chrome 컨텍스트 종료 실패")
-            finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-        except Exception:
-            logger.warning(
-                "Chrome 프로필 컨텍스트 생성 실패: %s", profile, exc_info=True
-            )
-            return None
 
     def _click_and_extract(self, page) -> str | None:
         """Ask 버튼 클릭 후 응답 텍스트를 추출한다."""
