@@ -41,11 +41,19 @@ _RESPONSE_TIMEOUT_MS = 30_000
 class GeminiExtractor:
     """YouTube 영상 페이지에서 Gemini AI 요약 텍스트를 추출한다.
 
-    인증은 반드시 쿠키 파일(Netscape 포맷)로만 이루어진다. Chrome v127+는
-    쿠키를 App-Bound Encryption으로 암호화해 프로필 직접 접근·복사·yt-dlp
-    cookiesfrombrowser 어떤 방식으로도 외부에서 복호화할 수 없으므로(DPAPI
-    오류), 설정 > YouTube 계정의 "새 계정으로 로그인…"(Playwright 로그인)
-    플로우로 저장된 data/auth/youtube_cookies.txt에 의존한다.
+    인증은 반드시 쿠키 파일(Netscape 포맷)로만 이루어진다.
+
+    쿠키 파일 확보 우선순위:
+    1. `YT_AUTH_COOKIEFILE` 설정 파일
+    2. Playwright 로그인(설정 > YouTube 계정 > "새 계정으로 로그인…")으로 저장된
+       ``data/auth/youtube_cookies.txt``
+    3. `YT_AUTH_BROWSER`/`YT_AUTH_PROFILE`(브라우저 계정 탭) 설정을 yt-dlp
+       `cookiesfrombrowser`로 임시 내보내기 — Firefox 등 대부분의 브라우저에서 동작한다.
+
+    **Chrome v127+ 예외**: Chrome은 쿠키를 App-Bound Encryption으로 암호화해
+    외부 프로세스가 복호화할 수 없다(DPAPI 오류). 프로필 직접 실행·프로필 파일
+    복사·yt-dlp cookiesfrombrowser 세 가지 방식 모두 실패가 확인됐다. Chrome
+    사용자는 방법 1·2(쿠키 파일 직접 등록 또는 Playwright 로그인)만 유효하다.
     """
 
     def extract(self, url: str) -> str | None:
@@ -67,6 +75,11 @@ class GeminiExtractor:
             return None
 
         cookie_path = self._get_cookie_path()
+        temp_cookie_path: str | None = None
+        if not cookie_path:
+            temp_cookie_path = self._export_browser_cookies()
+            cookie_path = temp_cookie_path
+
         if not cookie_path:
             logger.info(
                 "YouTube 인증 쿠키 없음 — 설정 > YouTube 계정에서 "
@@ -74,39 +87,47 @@ class GeminiExtractor:
             )
             return None
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            try:
-                context = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
-                    ),
-                    locale="ko-KR",
-                )
-                self._load_netscape_cookies(context, cookie_path)
-
-                page = context.new_page()
-                page.route(
-                    "**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,otf}",
-                    lambda r: r.abort(),
-                )
-
-                logger.info("Gemini 추출: 페이지 로드 중 %s", url)
-                page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_LOAD_TIMEOUT_MS)
-
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
                 try:
-                    page.wait_for_selector("ytd-watch-flexy", timeout=_PAGE_LOAD_TIMEOUT_MS)
-                except Exception:
-                    logger.debug("ytd-watch-flexy 미발견 — 계속 시도")
+                    context = browser.new_context(
+                        user_agent=(
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/120.0.0.0 Safari/537.36"
+                        ),
+                        locale="ko-KR",
+                    )
+                    self._load_netscape_cookies(context, cookie_path)
 
-                return self._click_and_extract(page)
-            finally:
-                try:
-                    browser.close()
-                except Exception:
-                    logger.debug("Playwright 브라우저 종료 실패")
+                    page = context.new_page()
+                    page.route(
+                        "**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,otf}",
+                        lambda r: r.abort(),
+                    )
+
+                    logger.info("Gemini 추출: 페이지 로드 중 %s", url)
+                    page.goto(
+                        url, wait_until="domcontentloaded", timeout=_PAGE_LOAD_TIMEOUT_MS
+                    )
+
+                    try:
+                        page.wait_for_selector(
+                            "ytd-watch-flexy", timeout=_PAGE_LOAD_TIMEOUT_MS
+                        )
+                    except Exception:
+                        logger.debug("ytd-watch-flexy 미발견 — 계속 시도")
+
+                    return self._click_and_extract(page)
+                finally:
+                    try:
+                        browser.close()
+                    except Exception:
+                        logger.debug("Playwright 브라우저 종료 실패")
+        finally:
+            if temp_cookie_path:
+                Path(temp_cookie_path).unlink(missing_ok=True)
 
     def _click_and_extract(self, page) -> str | None:
         """Ask 버튼 클릭 후 응답 텍스트를 추출한다."""
@@ -163,6 +184,53 @@ class GeminiExtractor:
                     return str(playwright_cookie)
         except Exception:
             logger.debug("쿠키 경로 확인 실패")
+        return None
+
+    @staticmethod
+    def _export_browser_cookies() -> str | None:
+        """`YT_AUTH_BROWSER`/`YT_AUTH_PROFILE` 설정으로 yt-dlp를 통해 쿠키를
+        임시 Netscape 파일로 내보낸다.
+
+        Firefox 등 대부분의 브라우저에서 동작한다. Chrome v127+는 App-Bound
+        Encryption(DPAPI)으로 인해 실패하며, 이 경우 예외를 잡아 로그만 남기고
+        None을 반환한다(호출자가 '로그인 필요' 상태로 처리).
+
+        반환된 경로는 호출자가 사용 후 반드시 삭제해야 하는 임시 파일이다.
+        """
+        import tempfile  # noqa: PLC0415
+
+        import yt_dlp  # noqa: PLC0415
+        import config.settings as _s  # noqa: PLC0415
+
+        profile = getattr(_s, "YT_AUTH_PROFILE", None)
+        if not profile:
+            return None
+        browser = getattr(_s, "YT_AUTH_BROWSER", None) or "firefox"
+
+        fd, tmp_path = tempfile.mkstemp(prefix="ovc_gemini_cookies_", suffix=".txt")
+        import os  # noqa: PLC0415
+        os.close(fd)
+
+        try:
+            with yt_dlp.YoutubeDL({
+                "cookiesfrombrowser": (browser, profile),
+                "cookiefile": tmp_path,
+                "quiet": True,
+                "no_warnings": True,
+            }):
+                pass  # __exit__ 시 쿠키가 cookiefile에 플러시된다
+
+            if Path(tmp_path).stat().st_size > 100:
+                logger.info("브라우저(%s) 쿠키 임시 내보내기 성공: profile=%s", browser, profile)
+                return tmp_path
+            logger.debug("브라우저 쿠키 내보내기 결과 비어있음")
+        except Exception:
+            logger.warning(
+                "브라우저 쿠키 내보내기 실패 (%s/%s) — Chrome v127+는 DPAPI 제약으로 "
+                "동작하지 않을 수 있음. Playwright 로그인을 이용하세요",
+                browser, profile, exc_info=True,
+            )
+        Path(tmp_path).unlink(missing_ok=True)
         return None
 
     @staticmethod
