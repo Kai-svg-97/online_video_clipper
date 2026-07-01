@@ -244,9 +244,18 @@ class GeminiExtractor:
         cookies = []
         try:
             with open(cookie_path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    # HttpOnly 쿠키는 "#HttpOnly_domain\t..." 형식으로 저장된다
+                    # (SID/HSID/SSID 등 로그인 필수 쿠키 대부분이 여기 해당) —
+                    # 진짜 주석("# ...")과 구분해 접두사만 제거하고 계속 처리한다.
+                    http_only = False
+                    if line.startswith("#HttpOnly_"):
+                        http_only = True
+                        line = line[len("#HttpOnly_"):]
+                    elif line.startswith("#"):
                         continue
                     parts = line.split("\t")
                     if len(parts) < 7:
@@ -264,7 +273,7 @@ class GeminiExtractor:
                         "path": path,
                         "expires": expires,
                         "secure": secure.upper() == "TRUE",
-                        "httpOnly": False,
+                        "httpOnly": http_only,
                         "sameSite": "None",
                     })
             if cookies:
