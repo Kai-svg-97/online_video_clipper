@@ -1204,7 +1204,7 @@ class VideoDetailWidget(QWidget):
                 self.gemini_summary_saved.emit(self._detail.id, summary)
         else:
             self._summary_status_lbl.setText(
-                "요약 추출 실패 — 설정 > YouTube 계정에서 '새 계정으로 로그인…'을 먼저 실행하세요"
+                "요약 추출 실패 — 설정에서 브라우저/프로필을 선택하거나 쿠키 파일을 등록하세요"
             )
 
 

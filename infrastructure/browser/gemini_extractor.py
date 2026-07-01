@@ -43,17 +43,17 @@ class GeminiExtractor:
 
     인증은 반드시 쿠키 파일(Netscape 포맷)로만 이루어진다.
 
-    쿠키 파일 확보 우선순위:
-    1. `YT_AUTH_COOKIEFILE` 설정 파일
-    2. Playwright 로그인(설정 > YouTube 계정 > "새 계정으로 로그인…")으로 저장된
-       ``data/auth/youtube_cookies.txt``
-    3. `YT_AUTH_BROWSER`/`YT_AUTH_PROFILE`(브라우저 계정 탭) 설정을 yt-dlp
-       `cookiesfrombrowser`로 임시 내보내기 — Firefox 등 대부분의 브라우저에서 동작한다.
+    쿠키 파일 확보 우선순위 (모두 설정 화면의 "구독 피드 — 브라우저 쿠키" 섹션에서 등록):
+    1. "또는 쿠키 파일"에 등록한 Netscape 포맷 쿠키 파일 (`YT_AUTH_COOKIEFILE`)
+    2. `data/auth/youtube_cookies.txt` — 별도 로그인 플로우가 앱에 연결되어 있지
+       않아 현재는 수동으로 파일을 이 경로에 두었을 때만 사용된다.
+    3. "브라우저"/"프로필" 드롭다운(`YT_AUTH_BROWSER`/`YT_AUTH_PROFILE`) 설정을
+       yt-dlp `cookiesfrombrowser`로 임시 내보내기 — Firefox 등 대부분의 브라우저에서 동작한다.
 
     **Chrome v127+ 예외**: Chrome은 쿠키를 App-Bound Encryption으로 암호화해
     외부 프로세스가 복호화할 수 없다(DPAPI 오류). 프로필 직접 실행·프로필 파일
     복사·yt-dlp cookiesfrombrowser 세 가지 방식 모두 실패가 확인됐다. Chrome
-    사용자는 방법 1·2(쿠키 파일 직접 등록 또는 Playwright 로그인)만 유효하다.
+    사용자는 방법 1(쿠키 파일 직접 등록)만 유효하다.
     """
 
     def extract(self, url: str) -> str | None:
@@ -82,8 +82,8 @@ class GeminiExtractor:
 
         if not cookie_path:
             logger.info(
-                "YouTube 인증 쿠키 없음 — 설정 > YouTube 계정에서 "
-                "'새 계정으로 로그인…'을 먼저 실행하세요"
+                "YouTube 인증 쿠키 없음 — 설정 화면의 '구독 피드 — 브라우저 쿠키'에서 "
+                "브라우저/프로필을 선택하거나 쿠키 파일을 등록하세요"
             )
             return None
 
@@ -197,6 +197,7 @@ class GeminiExtractor:
 
         반환된 경로는 호출자가 사용 후 반드시 삭제해야 하는 임시 파일이다.
         """
+        import os  # noqa: PLC0415
         import tempfile  # noqa: PLC0415
 
         import yt_dlp  # noqa: PLC0415
@@ -208,8 +209,11 @@ class GeminiExtractor:
         browser = getattr(_s, "YT_AUTH_BROWSER", None) or "firefox"
 
         fd, tmp_path = tempfile.mkstemp(prefix="ovc_gemini_cookies_", suffix=".txt")
-        import os  # noqa: PLC0415
-        os.close(fd)
+        # yt-dlp는 cookiejar 속성 최초 접근 시(close() 시점) cookiefile을 먼저 읽으려
+        # 시도한다 — mkstemp가 만든 빈 파일은 Netscape 헤더가 없어 LoadError가 나므로
+        # 유효한 빈 쿠키 파일로 미리 초기화해 둔다.
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("# Netscape HTTP Cookie File\n\n")
 
         try:
             with yt_dlp.YoutubeDL({
@@ -226,8 +230,7 @@ class GeminiExtractor:
             logger.debug("브라우저 쿠키 내보내기 결과 비어있음")
         except Exception:
             logger.warning(
-                "브라우저 쿠키 내보내기 실패 (%s/%s) — Chrome v127+는 DPAPI 제약으로 "
-                "동작하지 않을 수 있음. Playwright 로그인을 이용하세요",
+                "브라우저 쿠키 내보내기 실패 (%s/%s)",
                 browser, profile, exc_info=True,
             )
         Path(tmp_path).unlink(missing_ok=True)
