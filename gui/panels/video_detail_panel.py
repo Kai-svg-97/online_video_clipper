@@ -82,30 +82,8 @@ def _fmt_pub(value: str | None) -> str:
     return value
 
 
+# 설명·요약의 타임스탬프(MM:SS / HH:MM:SS)를 seek 링크로 변환할 때 쓰는 정규식.
 _TS_RE = re.compile(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})")
-
-
-def _parse_chapters(description: str) -> list[tuple[int, str]]:
-    """설명에서 타임스탬프(챕터)를 추출한다.
-
-    각 줄에서 `MM:SS` 또는 `HH:MM:SS` 형태를 찾아 (초, 라벨)로 변환.
-    라벨은 타임스탬프 뒤 텍스트(없으면 앞 텍스트). 2개 이상일 때만 챕터로 본다.
-    """
-    if not description:
-        return []
-    chapters: list[tuple[int, str]] = []
-    strip_chars = " \t-–—:·•.)]"
-    for line in description.splitlines():
-        m = _TS_RE.search(line)
-        if not m:
-            continue
-        h = int(m.group(1)) if m.group(1) else 0
-        sec = h * 3600 + int(m.group(2)) * 60 + int(m.group(3))
-        label = line[m.end():].strip(strip_chars)
-        if not label:
-            label = line[:m.start()].strip(strip_chars)
-        chapters.append((sec, label or _fmt_dur(sec)))
-    return chapters if len(chapters) >= 2 else []
 
 
 class _RelatedRow(QFrame):
@@ -628,7 +606,7 @@ class VideoDetailWidget(QWidget):
         self._notes_edit.blockSignals(True)
         self._notes_edit.setPlainText(detail.notes or "")
         self._notes_edit.blockSignals(False)
-        self._summary_edit.setHtml(self._render_summary_html(detail.gemini_summary or ""))
+        self._summary_edit.setHtml(self._render_timestamped_html(detail.gemini_summary or ""))
         self._summary_status_lbl.setText("")
         self._summary_refresh_btn.setEnabled(True)
 
@@ -768,39 +746,21 @@ class VideoDetailWidget(QWidget):
             tag_add_row.addWidget(add_btn)
             self._info_layout.addLayout(tag_add_row)
 
-        # 챕터(타임라인) — 설명에서 추출, 클릭 시 해당 위치로 seek
-        chapters = _parse_chapters(description or "")
-        if chapters:
-            self._info_layout.addWidget(QLabel("<b>챕터:</b>"))
-            for sec, label in chapters:
-                btn = QPushButton(f"{_fmt_dur(sec)}  {label}")
-                btn.setFlat(True)
-                btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                btn.setStyleSheet(
-                    f"QPushButton{{text-align:left; border:none; padding:2px 4px;"
-                    f" color:{_t().accent}; font-size:9pt;}}"
-                    f"QPushButton:hover{{text-decoration:underline;}}"
-                )
-                btn.clicked.connect(lambda _, s=sec: self._on_chapter_clicked(s))
-                self._info_layout.addWidget(btn)
-
-        # 설명
+        # 설명 (타임라인/챕터 포함) — 타임스탬프를 클릭 가능한 seek 링크로 렌더링.
+        # 별도 "챕터" 섹션은 설명 속 타임라인과 정보가 중복되므로 설명 하나로 병합한다.
         if description:
             self._info_layout.addWidget(QLabel("<b>설명:</b>"))
-            desc_edit = QPlainTextEdit()
-            desc_edit.setReadOnly(True)
-            desc_edit.setPlainText(description)
-            desc_edit.setMaximumHeight(220)
-            self._info_layout.addWidget(desc_edit)
+            desc_view = QTextBrowser()
+            desc_view.setOpenLinks(False)
+            desc_view.setOpenExternalLinks(False)
+            desc_view.setMaximumHeight(260)
+            desc_view.setHtml(self._render_timestamped_html(description))
+            desc_view.anchorClicked.connect(self._on_summary_anchor_clicked)
+            self._info_layout.addWidget(desc_view)
 
         self._info_layout.addStretch()
 
-    def _on_chapter_clicked(self, sec: int) -> None:
-        self._player.seek_to_ms(sec * 1000)
-        if not self._player.is_playing():
-            self._player.play()
-
-    def _render_summary_html(self, text: str) -> str:
+    def _render_timestamped_html(self, text: str) -> str:
         """요약 텍스트를 HTML로 렌더링하되 타임스탬프를 seek 링크로 변환한다.
 
         `MM:SS`·`HH:MM:SS` 형태를 `<a href="seek:초">` 링크로 감싸고, 클릭 시
@@ -1034,6 +994,8 @@ class VideoDetailWidget(QWidget):
         # ── 구간 설정 영역 ──────────────────────────────────────────
         range_grp = QGroupBox("구간 설정")
         range_layout = QVBoxLayout(range_grp)
+        # 상단 여백을 넉넉히 둬 QGroupBox 제목이 첫 행(시작 시간)과 겹치지 않게 한다.
+        range_layout.setContentsMargins(10, 18, 10, 10)
         range_layout.setSpacing(8)
 
         time_row = QHBoxLayout()
@@ -1086,6 +1048,8 @@ class VideoDetailWidget(QWidget):
         # ── 클립 목록 ──────────────────────────────────────────────
         list_grp = QGroupBox("추출된 클립 목록")
         self._clip_list_layout = QVBoxLayout(list_grp)
+        # 제목이 목록 첫 항목("추출된 클립이 없습니다.")과 겹치지 않게 상단 여백 확보.
+        self._clip_list_layout.setContentsMargins(10, 18, 10, 10)
         self._clip_tab_layout.addWidget(list_grp)
 
         self._clip_tab_layout.addStretch()
@@ -1277,7 +1241,7 @@ class VideoDetailWidget(QWidget):
     def _on_gemini_done(self, summary: str) -> None:
         self._summary_refresh_btn.setEnabled(True)
         if summary:
-            self._summary_edit.setHtml(self._render_summary_html(summary))
+            self._summary_edit.setHtml(self._render_timestamped_html(summary))
             self._summary_status_lbl.setText("")
             if self._detail is not None:
                 self.gemini_summary_saved.emit(self._detail.id, summary)
