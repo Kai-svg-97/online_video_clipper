@@ -45,9 +45,12 @@ class TestDownloadPanel:
 
         panel = DownloadPanel(vm=download_vm)
         qtbot.addWidget(panel)
+        # DownloadPanel은 자체 QTabWidget이 없고 상세 페이지로 VideoDetailWidget을
+        # 임베드하므로, findChild(QTabWidget)는 상세 화면의 탭을 찾는다:
+        # 설명 / 요약 / 다운로드·클립 = 3개.
         tabs = panel.findChild(QTabWidget)
         assert tabs is not None
-        assert tabs.count() == 2
+        assert tabs.count() == 3
 
 
 class TestFeedPanel:

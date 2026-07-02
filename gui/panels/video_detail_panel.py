@@ -378,8 +378,9 @@ class VideoDetailWidget(QWidget):
     detail_refresh_requested    = pyqtSignal(object)    # video_id — 제목행 ⟳ 버튼
 
     # 하단 탭 인덱스
-    _TAB_FILES = 0      # 다운로드 + 클립 병합
+    _TAB_INFO = 0       # 설명(태그~메모)
     _TAB_SUMMARY = 1
+    _TAB_FILES = 2      # 다운로드 + 클립 병합
 
     def __init__(self, clip_vm=None, download_vm=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -410,23 +411,21 @@ class VideoDetailWidget(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        # ── Back button (‹ 아이콘, Esc 키로도 동작) ──────────────────
-        back_row = QHBoxLayout()
+        # ── 상단 행: 뒤로가기 + 카테고리 경로(브레드크럼) 같은 줄 ──────────
+        top_row = QHBoxLayout()
         self._btn_back = QPushButton("‹")
         self._btn_back.setFixedSize(28, 28)
         self._btn_back.setToolTip("목록으로 (Esc)")
         self._btn_back.clicked.connect(self.back_requested.emit)
-        back_row.addWidget(self._btn_back)
-        back_row.addStretch()
-        root.addLayout(back_row)
-
-        # ── 브레드크럼 바 (카테고리 경로) ────────────────────────────
+        top_row.addWidget(self._btn_back)
         self._crumb_bar = QFrame()
         self._crumb_bar.setVisible(False)
         self._crumb_layout = QHBoxLayout(self._crumb_bar)
-        self._crumb_layout.setContentsMargins(4, 0, 4, 2)
+        self._crumb_layout.setContentsMargins(6, 0, 4, 0)
         self._crumb_layout.setSpacing(2)
-        root.addWidget(self._crumb_bar)
+        top_row.addWidget(self._crumb_bar)
+        top_row.addStretch()
+        root.addLayout(top_row)
 
         sep0 = _hline()
         root.addWidget(sep0)
@@ -441,12 +440,14 @@ class VideoDetailWidget(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
 
+        # 플레이어 — 상단 고정. 16:9 자연 높이(여백 없음); 창이 넓어지면 커지고
+        # 나머지 요소는 아래 탭이 남는 공간을 흡수하며 자연스럽게 따라 내려간다.
         self._player = InlinePlayer(left_w)
         self._player.playback_failed.connect(self._on_play_failed)
         self._player.download_requested.connect(self.download_requested.emit)
-        left_layout.addWidget(self._player, stretch=3)
+        left_layout.addWidget(self._player)
 
-        # ── 제목 행 (플레이어 바로 아래, 고정): 제목 + ⟳상세갱신 + 🌐브라우저 ──
+        # ── 제목 행 (플레이어 바로 아래): 제목 + ⟳상세갱신 + 🌐브라우저 ──
         title_row = QHBoxLayout()
         title_row.setContentsMargins(4, 2, 4, 0)
         title_row.setSpacing(4)
@@ -469,44 +470,41 @@ class VideoDetailWidget(QWidget):
         title_row.addWidget(self._btn_browser, 0, Qt.AlignmentFlag.AlignTop)
         left_layout.addLayout(title_row)
 
-        # 정보 스크롤 (메타·상태·태그·챕터·설명 — 제목은 위 고정 행으로 이동)
+        # ── 메타 행 (채널·조회수·등록일·재생시간 + 상태) — 제목 아래 고정 ──
+        self._meta_widget = QWidget()
+        self._meta_layout = QVBoxLayout(self._meta_widget)
+        self._meta_layout.setContentsMargins(4, 0, 4, 2)
+        self._meta_layout.setSpacing(2)
+        left_layout.addWidget(self._meta_widget)
+
+        # ── 하단 탭 3개: 설명(태그~메모) · 요약 · 다운로드/클립 ──
+        self._tabs = QTabWidget()
+
+        # 탭0: 설명 — 스크롤(태그·챕터·설명) + 메모(영속). _wrap 미사용
+        #       (자체 내부 스크롤 + 하단 고정 메모 구조라 이중 스크롤 방지).
+        info_tab = QWidget()
+        info_tab_layout = QVBoxLayout(info_tab)
+        info_tab_layout.setContentsMargins(4, 4, 4, 4)
+        info_tab_layout.setSpacing(4)
         info_scroll = QScrollArea()
         info_scroll.setWidgetResizable(True)
         info_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._meta_widget = QWidget()
-        self._meta_layout = QVBoxLayout(self._meta_widget)
-        self._meta_layout.setContentsMargins(4, 4, 4, 4)
-        self._meta_layout.setSpacing(6)
-        info_scroll.setWidget(self._meta_widget)
-        left_layout.addWidget(info_scroll, stretch=2)
-
-        # ── 메모 섹션 (설명 아래, 스크롤·클리어 대상 밖에 영속 배치) ──
+        self._info_widget = QWidget()
+        self._info_layout = QVBoxLayout(self._info_widget)
+        self._info_layout.setContentsMargins(0, 0, 0, 0)
+        self._info_layout.setSpacing(6)
+        info_scroll.setWidget(self._info_widget)
+        info_tab_layout.addWidget(info_scroll, 1)
         note_hdr = QLabel("<b>메모</b>")
-        note_hdr.setContentsMargins(4, 0, 0, 0)
-        left_layout.addWidget(note_hdr)
+        info_tab_layout.addWidget(note_hdr)
         self._notes_edit = QPlainTextEdit()
         self._notes_edit.setPlaceholderText("메모를 입력하세요…")
         self._notes_edit.setMaximumHeight(120)
         self._notes_edit.textChanged.connect(self._on_notes_changed)
-        left_layout.addWidget(self._notes_edit)
+        info_tab_layout.addWidget(self._notes_edit)
+        self._tabs.addTab(info_tab, "설명")
 
-        # ── 하단 탭 2개 (다운로드/클립 병합 · 요약) ──
-        self._tabs = QTabWidget()
-        self._tabs.setMaximumHeight(300)
-
-        # 탭1: 다운로드(상단) + 클립(하단) 병합 — 수직 스플리터
-        files_split = QSplitter(Qt.Orientation.Vertical)
-        self._dl_tab = QWidget()
-        files_split.addWidget(self._dl_tab)
-        self._clip_tab_widget = QWidget()
-        self._clip_tab_layout = QVBoxLayout(self._clip_tab_widget)
-        self._clip_tab_layout.setContentsMargins(8, 8, 8, 8)
-        files_split.addWidget(self._clip_tab_widget)
-        files_split.setStretchFactor(0, 1)   # 다운로드 우선
-        files_split.setStretchFactor(1, 1)
-        self._tabs.addTab(_wrap(files_split), "다운로드 / 클립")
-
-        # 탭2: 요약 (헤더 라벨 + ⟳ 아이콘 갱신 버튼 + 상태 라벨)
+        # 탭1: 요약 (헤더 라벨 + ⟳ 아이콘 갱신 버튼 + 상태 라벨)
         summary_tab = QWidget()
         summary_layout = QVBoxLayout(summary_tab)
         summary_layout.setContentsMargins(8, 8, 8, 8)
@@ -533,8 +531,20 @@ class VideoDetailWidget(QWidget):
         summary_layout.addWidget(self._summary_edit)
         self._tabs.addTab(_wrap(summary_tab), "요약")
 
+        # 탭2: 다운로드(상단) + 클립(하단) 병합 — 수직 스플리터
+        files_split = QSplitter(Qt.Orientation.Vertical)
+        self._dl_tab = QWidget()
+        files_split.addWidget(self._dl_tab)
+        self._clip_tab_widget = QWidget()
+        self._clip_tab_layout = QVBoxLayout(self._clip_tab_widget)
+        self._clip_tab_layout.setContentsMargins(8, 8, 8, 8)
+        files_split.addWidget(self._clip_tab_widget)
+        files_split.setStretchFactor(0, 1)   # 다운로드 우선
+        files_split.setStretchFactor(1, 1)
+        self._tabs.addTab(_wrap(files_split), "다운로드 / 클립")
+
         self._tabs.currentChanged.connect(self._on_tab_changed)
-        left_layout.addWidget(self._tabs)
+        left_layout.addWidget(self._tabs, stretch=1)
 
         main_split.addWidget(left_w)
 
@@ -701,12 +711,13 @@ class VideoDetailWidget(QWidget):
         allow_tag_edit: bool,
     ) -> None:
         _clear_layout(self._meta_layout)
+        _clear_layout(self._info_layout)
         self._tag_add_input = None
 
-        # 제목은 스크롤 밖 고정 행(_title_lbl)에 표시
+        # 제목은 플레이어 아래 고정 행(_title_lbl)에 표시
         self._title_lbl.setText(title)
 
-        # 채널 · 조회수 · 업로드일 한 줄
+        # ── 제목 아래 메타 행: 채널 · 조회수 · 등록일 · 재생시간 (+ 상태) ──
         meta_parts = []
         if channel:
             meta_parts.append(channel)
@@ -732,12 +743,13 @@ class VideoDetailWidget(QWidget):
             st_lbl.setStyleSheet(f"color:{_t().text_muted};")
             self._meta_layout.addWidget(st_lbl)
 
+        # ── "설명" 탭 내용: 태그 · 챕터 · 설명 (메모는 영속 위젯) ──
         # 태그 칩
         if tags:
-            self._meta_layout.addWidget(QLabel("<b>태그:</b>"))
-            flow = _TagFlow(tags, tag_ids, self._meta_widget)
+            self._info_layout.addWidget(QLabel("<b>태그:</b>"))
+            flow = _TagFlow(tags, tag_ids, self._info_widget)
             flow.tag_clicked.connect(self.tag_filter_requested.emit)
-            self._meta_layout.addWidget(flow)
+            self._info_layout.addWidget(flow)
 
         # 수동 태그 추가 (로컬 영상만)
         if allow_tag_edit:
@@ -754,12 +766,12 @@ class VideoDetailWidget(QWidget):
             add_btn.setStyleSheet("font-size:11pt; font-weight:bold;")
             add_btn.clicked.connect(self._on_add_tag)
             tag_add_row.addWidget(add_btn)
-            self._meta_layout.addLayout(tag_add_row)
+            self._info_layout.addLayout(tag_add_row)
 
         # 챕터(타임라인) — 설명에서 추출, 클릭 시 해당 위치로 seek
         chapters = _parse_chapters(description or "")
         if chapters:
-            self._meta_layout.addWidget(QLabel("<b>챕터:</b>"))
+            self._info_layout.addWidget(QLabel("<b>챕터:</b>"))
             for sec, label in chapters:
                 btn = QPushButton(f"{_fmt_dur(sec)}  {label}")
                 btn.setFlat(True)
@@ -770,18 +782,18 @@ class VideoDetailWidget(QWidget):
                     f"QPushButton:hover{{text-decoration:underline;}}"
                 )
                 btn.clicked.connect(lambda _, s=sec: self._on_chapter_clicked(s))
-                self._meta_layout.addWidget(btn)
+                self._info_layout.addWidget(btn)
 
         # 설명
         if description:
-            self._meta_layout.addWidget(QLabel("<b>설명:</b>"))
+            self._info_layout.addWidget(QLabel("<b>설명:</b>"))
             desc_edit = QPlainTextEdit()
             desc_edit.setReadOnly(True)
             desc_edit.setPlainText(description)
-            desc_edit.setMaximumHeight(160)
-            self._meta_layout.addWidget(desc_edit)
+            desc_edit.setMaximumHeight(220)
+            self._info_layout.addWidget(desc_edit)
 
-        self._meta_layout.addStretch()
+        self._info_layout.addStretch()
 
     def _on_chapter_clicked(self, sec: int) -> None:
         self._player.seek_to_ms(sec * 1000)
