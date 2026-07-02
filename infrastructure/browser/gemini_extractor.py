@@ -150,6 +150,19 @@ class GeminiExtractor:
             pass
         logger.info("Gemini 추출: 로그인 상태 판별 불가 (셀렉터 미매칭)")
 
+    @staticmethod
+    def _save_debug_screenshot(page) -> None:
+        """Ask 버튼 미발견 시 진단용 스크린샷을 로그 폴더에 저장한다."""
+        try:
+            import config.settings as _s  # noqa: PLC0415
+            log_dir = Path(getattr(_s, "LOG_DIR", "."))
+            log_dir.mkdir(parents=True, exist_ok=True)
+            shot_path = log_dir / "gemini_debug.png"
+            page.screenshot(path=str(shot_path))
+            logger.info("Gemini 디버그 스크린샷 저장: %s", shot_path)
+        except Exception:
+            logger.debug("디버그 스크린샷 저장 실패")
+
     def _click_and_extract(self, page) -> str | None:
         """Ask 버튼 클릭 후 응답 텍스트를 추출한다."""
         ask_btn = None
@@ -164,7 +177,8 @@ class GeminiExtractor:
                 continue
 
         if ask_btn is None:
-            logger.debug("Gemini Ask 버튼 미발견 — 로그인 필요 또는 미지원 영상")
+            logger.info("Gemini Ask 버튼 미발견 — 로그인 필요 또는 미지원 영상")
+            self._save_debug_screenshot(page)
             return None
 
         ask_btn.click()
