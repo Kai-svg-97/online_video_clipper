@@ -119,6 +119,8 @@ class GeminiExtractor:
                     except Exception:
                         logger.debug("ytd-watch-flexy 미발견 — 계속 시도")
 
+                    self._log_login_state(page)
+
                     return self._click_and_extract(page)
                 finally:
                     try:
@@ -128,6 +130,25 @@ class GeminiExtractor:
         finally:
             if temp_cookie_path:
                 Path(temp_cookie_path).unlink(missing_ok=True)
+
+    @staticmethod
+    def _log_login_state(page) -> None:
+        """쿠키 주입 후 실제 로그인 상태인지 진단 로그를 남긴다."""
+        try:
+            signed_in = page.locator("ytd-topbar-menu-button-renderer #avatar-btn").first
+            if signed_in.is_visible(timeout=3_000):
+                logger.info("Gemini 추출: 로그인 상태로 페이지 로드됨")
+                return
+        except Exception:
+            pass
+        try:
+            signed_out = page.locator("a[aria-label='로그인'], tp-yt-paper-button:has-text('로그인'), a:has-text('Sign in')").first
+            if signed_out.is_visible(timeout=3_000):
+                logger.info("Gemini 추출: 비로그인 상태로 페이지 로드됨 — 쿠키 미적용 또는 만료")
+                return
+        except Exception:
+            pass
+        logger.info("Gemini 추출: 로그인 상태 판별 불가 (셀렉터 미매칭)")
 
     def _click_and_extract(self, page) -> str | None:
         """Ask 버튼 클릭 후 응답 텍스트를 추출한다."""
