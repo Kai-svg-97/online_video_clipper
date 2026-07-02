@@ -1,0 +1,241 @@
+# 배포 패키지 계획
+
+## 목표
+
+| 플랫폼  | 배포 형식                       | 도구                          |
+|---------|---------------------------------|-------------------------------|
+| Windows | `.exe` 설치 파일 (Inno Setup)   | PyInstaller + Inno Setup 6    |
+| Linux   | `.AppImage` (단일 실행 파일)    | PyInstaller + appimagetool    |
+
+사용자는 Python, ffmpeg, yt-dlp를 별도 설치할 필요 없음 — 모두 패키지에 포함.
+
+---
+
+## 핵심 코드 패턴 (개발 시 반드시 준수)
+
+### 1. 리소스 경로: `utils/resources.py`
+
+```python
+import sys
+from pathlib import Path
+
+def get_resource_path(relative: str) -> Path:
+    """PyInstaller 번들과 개발 환경 모두에서 올바른 경로를 반환."""
+    base = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(__file__).parent.parent
+    return base / relative
+```
+
+사용 예: `get_resource_path("assets/icon.ico")`
+
+- `assets/`, `bin/ffmpeg` 등 번들 리소스는 **반드시 이 함수로 참조**
+- 하드코딩된 절대 경로 금지
+
+### 2. 사용자 데이터 경로: `config/settings.py`
+
+```python
+from platformdirs import user_data_dir, user_log_dir
+from pathlib import Path
+
+APP_NAME = "YouTubeContentManager"
+APP_AUTHOR = "KaiDev"
+
+# OS별 표준 경로 자동 선택
+# Windows: %APPDATA%\YouTubeContentManager\
+# Linux:   ~/.local/share/YouTubeContentManager/
+DATA_DIR  = Path(user_data_dir(APP_NAME, APP_AUTHOR))
+LOG_DIR   = Path(user_log_dir(APP_NAME, APP_AUTHOR))
+
+DB_PATH       = DATA_DIR / "library.db"
+DOWNLOAD_DIR  = DATA_DIR / "downloads"
+BACKUP_DIR    = DATA_DIR / "backups"
+```
+
+- DB, 로그, 다운로드 파일은 **앱 설치 폴더가 아닌 사용자 데이터 폴더에 저장**
+- 앱 업데이트 시 사용자 데이터 보존됨
+
+### 3. ffmpeg 경로 해석
+
+```python
+import shutil
+from utils.resources import get_resource_path
+
+def get_ffmpeg_path() -> str:
+    # 1순위: 번들 bin/ 폴더
+    bundled = get_resource_path("bin/ffmpeg")
+    if bundled.exists():
+        return str(bundled)
+    # 2순위: 시스템 PATH
+    system = shutil.which("ffmpeg")
+    if system:
+        return system
+    raise FileNotFoundError("ffmpeg not found. Install ffmpeg or place it in bin/")
+```
+
+---
+
+## PyInstaller 스펙 (`packaging/online_video_clipper.spec`)
+
+```python
+# -*- mode: python -*-
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+import sys, platform
+
+is_windows = platform.system() == "Windows"
+ffmpeg_bin = ("bin/ffmpeg.exe", "bin") if is_windows else ("bin/ffmpeg", "bin")
+
+a = Analysis(
+    ["../main.py"],
+    pathex=[".."],
+    binaries=[ffmpeg_bin],
+    datas=[
+        ("../assets", "assets"),
+        *collect_data_files("yt_dlp"),
+        *collect_data_files("PyQt6"),
+    ],
+    hiddenimports=[
+        *collect_submodules("yt_dlp"),
+        "PyQt6.sip",
+        "sqlite3",
+    ],
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz, a.scripts, a.binaries, a.datas,
+    name="YouTubeContentManager",
+    debug=False,
+    console=False,           # GUI app — no terminal window
+    icon="../assets/icon.ico" if is_windows else "../assets/icon.png",
+    onefile=True,            # 단일 실행 파일
+)
+```
+
+---
+
+## 빌드 스크립트
+
+### Windows (`scripts/build_windows.ps1`)
+
+```powershell
+# 1. ffmpeg 다운로드 (없을 경우)
+if (-not (Test-Path "..\bin\ffmpeg.exe")) {
+    Write-Host "Downloading ffmpeg for Windows..."
+    # ffmpeg-release-essentials.zip 다운로드 후 bin/ 에 복사
+}
+
+# 2. PyInstaller 실행
+pyinstaller build/online_video_clipper.spec --distpath dist/windows --workpath build/tmp
+
+# 3. Inno Setup으로 설치 파일 생성
+iscc build/installer.iss
+Write-Host "Output: dist/YouTubeContentManager-setup.exe"
+```
+
+### Linux (`scripts/build_linux.sh`)
+
+```bash
+#!/usr/bin/env bash
+set -e
+
+# 1. ffmpeg 다운로드 (없을 경우)
+if [ ! -f ../bin/ffmpeg ]; then
+    echo "Downloading ffmpeg for Linux..."
+    # ffmpeg static build 다운로드 후 bin/ 에 복사
+    chmod +x ../bin/ffmpeg
+fi
+
+# 2. PyInstaller 실행
+pyinstaller build/online_video_clipper.spec --distpath dist/linux --workpath build/tmp
+
+# 3. AppImage 생성
+mkdir -p AppDir/usr/bin
+cp dist/linux/YouTubeContentManager AppDir/usr/bin/
+appimagetool AppDir dist/YouTubeContentManager-x86_64.AppImage
+echo "Output: dist/YouTubeContentManager-x86_64.AppImage"
+```
+
+---
+
+## Inno Setup 스크립트 (`build/installer.iss`)
+
+```ini
+[Setup]
+AppName=YouTube Content Manager
+AppVersion=1.0.0
+DefaultDirName={autopf}\YouTubeContentManager
+DefaultGroupName=YouTube Content Manager
+OutputDir=..\dist
+OutputBaseFilename=YouTubeContentManager-setup
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+
+[Files]
+Source: "..\dist\windows\YouTubeContentManager.exe"; DestDir: "{app}"
+
+[Icons]
+Name: "{group}\YouTube Content Manager"; Filename: "{app}\YouTubeContentManager.exe"
+Name: "{commondesktop}\YouTube Content Manager"; Filename: "{app}\YouTubeContentManager.exe"
+
+[Run]
+Filename: "{app}\YouTubeContentManager.exe"; Description: "Launch app"; Flags: postinstall nowait
+```
+
+> **파일 잠금(업데이트 시) 방지 — 필수**: `[Setup]`에 `CloseApplications=force` + `RestartApplications=no`를 둔다. 실행 중인 앱이 `.pyd`/`.exe`를 잠그면 재설치·업데이트 시 `DeleteFile failed; code 5. 액세스가 거부되었습니다` 오류가 난다. `force`는 Restart Manager로 실행 중인 앱을 강제 종료 후 파일을 교체하고, 앱 재실행은 자동 업데이트 배치(`main.py`의 pending-update 런처)와 `[Run] postinstall`이 담당하므로 Inno 자동 재시작은 끈다(중복 실행 방지). **주의: 이 설정은 해당 설정을 포함해 빌드된 setup.exe부터 효력이 있다** — 이미 설치된 구버전을 덮어쓸 때가 아니라, 새 버전의 setup.exe가 구버전을 닫을 때 적용된다.
+
+---
+
+## requirements 분리
+
+**`requirements.txt`** (런타임 — 번들에 포함):
+
+```text
+PyQt6>=6.6
+yt-dlp>=2024.1
+requests>=2.31
+beautifulsoup4>=4.12
+playwright>=1.40
+ffmpeg-python>=0.2
+platformdirs>=4.1
+```
+
+**`requirements-dev.txt`** (빌드/테스트 전용 — 번들 제외):
+
+```text
+-r requirements.txt
+pyinstaller>=6.3
+pytest>=8.0
+ruff>=0.3
+```
+
+---
+
+## 빌드 전 체크리스트
+
+- [ ] `utils/resources.py`의 `get_resource_path()` 로 리소스 참조
+- [ ] DB/로그/다운로드 경로가 `platformdirs` 기반인지 확인
+- [ ] `bin/ffmpeg[.exe]` 빌드 머신에 존재하는지 확인
+- [ ] `assets/icon.ico` (Windows), `assets/icon.png` (Linux) 존재 확인
+- [ ] `pyinstaller build/online_video_clipper.spec` 로컬 테스트 통과
+- [ ] 번들 실행 파일이 Python 없는 환경에서 실행되는지 검증
+
+---
+
+## 디렉토리 구조 요약
+
+```text
+online_video_clipper/
+├── bin/                    # ffmpeg 바이너리 (VCS 제외 — .gitignore)
+├── assets/                 # 아이콘 등 번들 리소스
+├── build/
+│   ├── online_video_clipper.spec
+│   ├── installer.iss
+│   └── appimage/
+├── scripts/
+│   ├── build_windows.ps1
+│   └── build_linux.sh
+└── utils/
+    └── resources.py        # get_resource_path()
+```
