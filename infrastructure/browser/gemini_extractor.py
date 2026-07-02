@@ -10,19 +10,18 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Gemini Ask 버튼 셀렉터 (다층 fallback — YouTube DOM 변경에 대응)
+# Gemini Ask 버튼 셀렉터 (다층 fallback — YouTube DOM 변경에 대응).
+# 최신 YouTube는 좋아요/공유 옆 액션 행에 "질문하기"를 새 yt-button-view-model
+# 구조로 렌더링해 ytd-button-renderer 기반 셀렉터가 매칭되지 않는다. 텍스트
+# 기반 셀렉터는 감싸는 커스텀 엘리먼트 이름과 무관하게 동작해 더 견고하다.
 _ASK_BUTTON_SELECTORS = [
+    "button:has-text('질문하기')",
+    "button:has-text('Ask')",
     # aria-label 기반 (접근성 속성은 변경 빈도가 낮다)
-    "button[aria-label*='Ask']",
     "button[aria-label*='질문하기']",
+    "button[aria-label*='Ask']",
     "button[aria-label*='Summarize']",
     "button[aria-label*='AI 요약']",
-    # YouTube custom element 내부 버튼
-    "ytd-button-renderer:has-text('Ask') button",
-    "ytd-button-renderer:has-text('질문하기') button",
-    # chip 형태
-    "yt-chip-cloud-chip-renderer:has-text('Ask')",
-    "yt-chip-cloud-chip-renderer:has-text('질문하기')",
 ]
 
 # 요약 결과 컨테이너 셀렉터
@@ -194,7 +193,8 @@ class GeminiExtractor:
             except Exception:
                 continue
 
-        logger.debug("Gemini 응답 컨테이너 미발견")
+        logger.info("Gemini 응답 컨테이너 미발견")
+        self._save_debug_screenshot(page)
         return None
 
     @staticmethod
