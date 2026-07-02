@@ -97,12 +97,13 @@ class GeminiExtractor:
 
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,
-                    # Gemini 백엔드가 자동화 브라우저를 감지해 요청을 거부하는
-                    # 사례가 있어 자동화 흔적을 최대한 숨긴다.
-                    args=["--disable-blink-features=AutomationControlled"],
-                )
+                browser = self._launch_browser(p)
+                if browser is None:
+                    logger.warning(
+                        "브라우저 실행 실패 — Chrome/Edge 미설치 및 번들 Chromium 없음. "
+                        "Chrome 또는 Edge를 설치하세요"
+                    )
+                    return None
                 try:
                     context = browser.new_context(
                         user_agent=(
@@ -261,6 +262,34 @@ class GeminiExtractor:
         self._save_debug_screenshot(page)
         self._save_debug_html(page)
         return None
+
+    @staticmethod
+    def _launch_browser(p):
+        """Chromium 계열 브라우저를 실행한다.
+
+        패키징된 앱에는 Playwright의 Chromium 바이너리가 번들되지 않으므로
+        시스템에 설치된 Chrome/Edge(channel)를 우선 사용하고, 둘 다 없으면
+        번들 Chromium(dev 환경)으로 폴백한다. 자동화 감지를 완화하는 인자를 공통 적용.
+        """
+        launch_args = {
+            "headless": True,
+            "args": ["--disable-blink-features=AutomationControlled"],
+        }
+        # 1) 시스템 Chrome → 2) 시스템 Edge → 3) 번들 Chromium(dev)
+        for channel in ("chrome", "msedge"):
+            try:
+                browser = p.chromium.launch(channel=channel, **launch_args)
+                logger.info("Gemini 추출: 시스템 브라우저 실행 (channel=%s)", channel)
+                return browser
+            except Exception:
+                logger.debug("channel=%s 실행 실패 — 다음 후보 시도", channel)
+        try:
+            browser = p.chromium.launch(**launch_args)
+            logger.info("Gemini 추출: 번들 Chromium 실행")
+            return browser
+        except Exception:
+            logger.debug("번들 Chromium 실행도 실패")
+            return None
 
     @staticmethod
     def _robust_click(locator) -> None:
