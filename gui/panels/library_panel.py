@@ -3912,6 +3912,9 @@ class LibraryPanel(QWidget):
         self._detail_widget.downloads_refresh_requested.connect(
             self._on_detail_downloads_refresh
         )
+        self._detail_widget.detail_refresh_requested.connect(
+            self._on_detail_refresh_requested
+        )
         self._detail_widget.category_path_clicked.connect(self._on_cat_filter_changed)
 
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
@@ -4704,6 +4707,30 @@ class LibraryPanel(QWidget):
                     for v in self._vm.videos if v.id != video_id
                 ][:30]
                 self._detail_widget.load(detail, tag_ids, related=related)
+
+    def _on_detail_refresh_requested(self, video_id: object) -> None:
+        """제목행 ⟳ — 상세 정보를 제자리에서 재조회해 다시 로드한다(nav 히스토리 미변경)."""
+        if not isinstance(video_id, UUID):
+            return
+        try:
+            detail = self._vm.get_video_detail(video_id)
+            if detail is None:
+                return
+            tag_ids = {t.name: t.id for t in self._vm.tags}
+            related = [
+                self._related_from_video(v)
+                for v in self._vm.videos if v.id != video_id
+            ][:30]
+            cat_path = (
+                self._vm.get_category_path_with_ids(detail.category_id)
+                if detail.category_id else []
+            )
+            self._detail_widget.load(
+                detail, tag_ids, related=related, category_path=cat_path or None
+            )
+            self._vm.request_thumbnail_refresh(video_id, detail.url)
+        except Exception:
+            logger.exception("상세 정보 갱신 실패: %s", video_id)
 
     def _on_sort_changed(self, index: int) -> None:
         sort_by, sort_asc = self._sort_combo.itemData(index)

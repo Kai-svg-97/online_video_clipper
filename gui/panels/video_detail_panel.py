@@ -375,12 +375,11 @@ class VideoDetailWidget(QWidget):
     category_path_clicked   = pyqtSignal(object)  # (category_id: UUID)
     gemini_summary_saved    = pyqtSignal(object, str)   # (video_id, summary)
     downloads_refresh_requested = pyqtSignal(object)    # video_id
+    detail_refresh_requested    = pyqtSignal(object)    # video_id — 제목행 ⟳ 버튼
 
     # 하단 탭 인덱스
-    _TAB_DOWNLOADS = 0
-    _TAB_NOTES = 1
-    _TAB_CLIPS = 2
-    _TAB_SUMMARY = 3
+    _TAB_FILES = 0      # 다운로드 + 클립 병합
+    _TAB_SUMMARY = 1
 
     def __init__(self, clip_vm=None, download_vm=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -447,17 +446,30 @@ class VideoDetailWidget(QWidget):
         self._player.download_requested.connect(self.download_requested.emit)
         left_layout.addWidget(self._player, stretch=3)
 
-        # 액션 행: 브라우저 열기 버튼
-        action_row = QHBoxLayout()
-        action_row.setContentsMargins(0, 0, 0, 0)
-        self._btn_browser = QPushButton("🌐 브라우저에서 열기")
-        self._btn_browser.setFixedHeight(26)
+        # ── 제목 행 (플레이어 바로 아래, 고정): 제목 + ⟳상세갱신 + 🌐브라우저 ──
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(4, 2, 4, 0)
+        title_row.setSpacing(4)
+        self._title_lbl = QLabel("")
+        self._title_lbl.setFont(_bold_font(13))
+        self._title_lbl.setWordWrap(True)
+        self._title_lbl.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        title_row.addWidget(self._title_lbl, 1)
+        self._btn_refresh = QPushButton("⟳")
+        self._btn_refresh.setFixedSize(28, 28)
+        self._btn_refresh.setToolTip("상세 정보 갱신")
+        self._btn_refresh.clicked.connect(self._on_refresh_detail)
+        title_row.addWidget(self._btn_refresh, 0, Qt.AlignmentFlag.AlignTop)
+        self._btn_browser = QPushButton("🌐")
+        self._btn_browser.setFixedSize(28, 28)
+        self._btn_browser.setToolTip("브라우저에서 열기")
         self._btn_browser.clicked.connect(self._on_open_browser)
-        action_row.addWidget(self._btn_browser)
-        action_row.addStretch()
-        left_layout.addLayout(action_row)
+        title_row.addWidget(self._btn_browser, 0, Qt.AlignmentFlag.AlignTop)
+        left_layout.addLayout(title_row)
 
-        # 정보 스크롤 (제목·메타·태그·챕터·설명)
+        # 정보 스크롤 (메타·상태·태그·챕터·설명 — 제목은 위 고정 행으로 이동)
         info_scroll = QScrollArea()
         info_scroll.setWidgetResizable(True)
         info_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -468,40 +480,48 @@ class VideoDetailWidget(QWidget):
         info_scroll.setWidget(self._meta_widget)
         left_layout.addWidget(info_scroll, stretch=2)
 
-        # ── 하단 탭 (다운로드 파일 / 내 메모 / 클립) ──
-        self._tabs = QTabWidget()
-        self._tabs.setMaximumHeight(240)
-
-        self._dl_tab = QWidget()
-        self._tabs.addTab(_wrap(self._dl_tab), "다운로드 파일")
-
-        note_tab = QWidget()
-        note_layout = QVBoxLayout(note_tab)
-        note_layout.setContentsMargins(8, 8, 8, 8)
+        # ── 메모 섹션 (설명 아래, 스크롤·클리어 대상 밖에 영속 배치) ──
+        note_hdr = QLabel("<b>메모</b>")
+        note_hdr.setContentsMargins(4, 0, 0, 0)
+        left_layout.addWidget(note_hdr)
         self._notes_edit = QPlainTextEdit()
         self._notes_edit.setPlaceholderText("메모를 입력하세요…")
+        self._notes_edit.setMaximumHeight(120)
         self._notes_edit.textChanged.connect(self._on_notes_changed)
-        note_layout.addWidget(self._notes_edit)
-        self._tabs.addTab(_wrap(note_tab), "내 메모")
+        left_layout.addWidget(self._notes_edit)
 
+        # ── 하단 탭 2개 (다운로드/클립 병합 · 요약) ──
+        self._tabs = QTabWidget()
+        self._tabs.setMaximumHeight(300)
+
+        # 탭1: 다운로드(상단) + 클립(하단) 병합 — 수직 스플리터
+        files_split = QSplitter(Qt.Orientation.Vertical)
+        self._dl_tab = QWidget()
+        files_split.addWidget(self._dl_tab)
         self._clip_tab_widget = QWidget()
         self._clip_tab_layout = QVBoxLayout(self._clip_tab_widget)
         self._clip_tab_layout.setContentsMargins(8, 8, 8, 8)
-        self._tabs.addTab(_wrap(self._clip_tab_widget), "클립")
+        files_split.addWidget(self._clip_tab_widget)
+        files_split.setStretchFactor(0, 1)   # 다운로드 우선
+        files_split.setStretchFactor(1, 1)
+        self._tabs.addTab(_wrap(files_split), "다운로드 / 클립")
 
-        # 요약 탭 (Gemini AI 요약)
+        # 탭2: 요약 (헤더 라벨 + ⟳ 아이콘 갱신 버튼 + 상태 라벨)
         summary_tab = QWidget()
         summary_layout = QVBoxLayout(summary_tab)
         summary_layout.setContentsMargins(8, 8, 8, 8)
         summary_layout.setSpacing(6)
         refresh_row = QHBoxLayout()
-        self._summary_refresh_btn = QPushButton("⟳ Gemini 요약 갱신")
-        self._summary_refresh_btn.setFixedHeight(26)
-        self._summary_refresh_btn.clicked.connect(self._on_refresh_summary)
-        refresh_row.addWidget(self._summary_refresh_btn)
+        refresh_row.addWidget(QLabel("<b>요약</b>"))
+        refresh_row.addStretch()
         self._summary_status_lbl = QLabel("")
         self._summary_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
-        refresh_row.addWidget(self._summary_status_lbl, 1)
+        refresh_row.addWidget(self._summary_status_lbl)
+        self._summary_refresh_btn = QPushButton("⟳")
+        self._summary_refresh_btn.setFixedSize(28, 28)
+        self._summary_refresh_btn.setToolTip("Gemini 요약 갱신")
+        self._summary_refresh_btn.clicked.connect(self._on_refresh_summary)
+        refresh_row.addWidget(self._summary_refresh_btn)
         summary_layout.addLayout(refresh_row)
         self._summary_edit = QTextBrowser()
         self._summary_edit.setOpenLinks(False)
@@ -609,7 +629,11 @@ class VideoDetailWidget(QWidget):
                 self._clip_source_file = dl.file_path
                 break
         self._build_clip_tab()
+        # 병합 탭이 기본 노출되므로 클립을 즉시 로드(지연 로드 불필요)
+        if self._clip_vm is not None:
+            self._clip_vm.load_clips(detail.id)
 
+        self._btn_refresh.setEnabled(True)
         self.set_related(related or [])
 
     def load_stream(self, feed, related: list[RelatedItem] | None = None) -> None:
@@ -654,8 +678,9 @@ class VideoDetailWidget(QWidget):
         info.setStyleSheet("color:#888; font-size:10pt; padding:24px;")
         self._clip_tab_layout.addWidget(info)
         self._clip_tab_layout.addStretch()
-        self._tabs.setCurrentIndex(self._TAB_DOWNLOADS)
+        self._tabs.setCurrentIndex(self._TAB_FILES)
 
+        self._btn_refresh.setEnabled(False)  # 스트리밍은 안정적 id 없음
         self.set_related(related or [])
 
     # ── 정보 영역 (제목·메타·태그·챕터·설명) ─────────────────────────
@@ -678,10 +703,8 @@ class VideoDetailWidget(QWidget):
         _clear_layout(self._meta_layout)
         self._tag_add_input = None
 
-        title_lbl = QLabel(title)
-        title_lbl.setFont(_bold_font(13))
-        title_lbl.setWordWrap(True)
-        self._meta_layout.addWidget(title_lbl)
+        # 제목은 스크롤 밖 고정 행(_title_lbl)에 표시
+        self._title_lbl.setText(title)
 
         # 채널 · 조회수 · 업로드일 한 줄
         meta_parts = []
@@ -964,9 +987,7 @@ class VideoDetailWidget(QWidget):
         dl_layout.addStretch()
 
     def _set_tabs_enabled(self, local: bool) -> None:
-        """스트리밍 모드면 메모·클립·요약 탭 비활성."""
-        self._tabs.setTabEnabled(self._TAB_NOTES, local)
-        self._tabs.setTabEnabled(self._TAB_CLIPS, local)
+        """스트리밍 모드면 요약 탭 비활성(메모·클립은 병합 탭/스크롤로 이동)."""
         self._tabs.setTabEnabled(self._TAB_SUMMARY, local)
 
     # ── 연관 영상 ──────────────────────────────────────────────────
@@ -1127,7 +1148,7 @@ class VideoDetailWidget(QWidget):
 
     def _on_tab_changed(self, index: int) -> None:
         if (
-            index == self._TAB_CLIPS
+            index == self._TAB_FILES
             and not self._streaming
             and self._clip_vm is not None
             and self._detail is not None
@@ -1204,6 +1225,11 @@ class VideoDetailWidget(QWidget):
     def _on_open_browser(self) -> None:
         if self._current_url:
             QDesktopServices.openUrl(QUrl(self._current_url))
+
+    def _on_refresh_detail(self) -> None:
+        """제목행 ⟳ — 현재 상세 정보를 부모에 재조회 요청(제자리 갱신)."""
+        if self._detail is not None and not self._streaming:
+            self.detail_refresh_requested.emit(self._detail.id)
 
     def _on_play_failed(self, err: str) -> None:
         if self._current_url:
