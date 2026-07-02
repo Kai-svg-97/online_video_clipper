@@ -24,17 +24,15 @@ _ASK_BUTTON_SELECTORS = [
     "button[aria-label*='AI 요약']",
 ]
 
-# 요약 결과 컨테이너 셀렉터
-_SUMMARY_CONTAINER_SELECTORS = [
-    "ytd-engagement-panel-section-list-renderer[target-id*='gemini']",
-    "ytd-engagement-panel-section-list-renderer[target-id*='ai']",
-    "ytd-engagement-panel-section-list-renderer[target-id*='searchable-transcript']",
-    "#engagement-panel-searchable-transcript",
-]
+# "질문하기" 클릭 시 뜨는 패널의 요약 추천 칩 텍스트
+_SUMMARIZE_CHIP_TEXT = "동영상을 요약해 줘"
 
 _PAGE_LOAD_TIMEOUT_MS = 20_000
 _BUTTON_SCAN_TIMEOUT_MS = 5_000
 _RESPONSE_TIMEOUT_MS = 30_000
+# 응답 스트리밍이 끝났다고 판단하기까지 텍스트가 변하지 않아야 하는 시간
+_STABLE_POLL_INTERVAL_MS = 1_000
+_STABLE_REQUIRED_COUNT = 3
 
 
 class GeminiExtractor:
@@ -163,7 +161,11 @@ class GeminiExtractor:
             logger.debug("디버그 스크린샷 저장 실패")
 
     def _click_and_extract(self, page) -> str | None:
-        """Ask 버튼 클릭 후 응답 텍스트를 추출한다."""
+        """Ask 버튼 클릭 → 요약 칩 클릭 → 응답 안정화 대기 후 텍스트를 추출한다.
+
+        "질문하기" 클릭은 채팅 패널을 열 뿐이며, 실제 요약은 추천 칩
+        (예: "동영상을 요약해 줘")을 다시 클릭해야 생성된다.
+        """
         ask_btn = None
         for sel in _ASK_BUTTON_SELECTORS:
             try:
@@ -182,20 +184,84 @@ class GeminiExtractor:
 
         ask_btn.click()
 
-        for sel in _SUMMARY_CONTAINER_SELECTORS:
-            try:
-                container = page.locator(sel).first
-                container.wait_for(state="visible", timeout=_RESPONSE_TIMEOUT_MS)
-                text = container.inner_text()
-                if text and text.strip():
-                    logger.info("Gemini 요약 추출 성공 (%d자)", len(text))
-                    return text.strip()
-            except Exception:
-                continue
+        try:
+            chip = page.get_by_text(_SUMMARIZE_CHIP_TEXT, exact=False).first
+            chip.wait_for(state="visible", timeout=_RESPONSE_TIMEOUT_MS)
+        except Exception:
+            logger.info("'%s' 추천 칩 미발견", _SUMMARIZE_CHIP_TEXT)
+            self._save_debug_screenshot(page)
+            self._save_debug_html(page)
+            return None
 
-        logger.info("Gemini 응답 컨테이너 미발견")
+        try:
+            # 칩을 감싸는 패널 컨테이너를 폴링용으로 미리 확보해 둔다
+            # (칩 자체는 클릭 후 대화 내용으로 대체되어 사라질 수 있다).
+            panel_handle = chip.evaluate_handle(
+                "el => { let p = el; for (let i = 0; i < 6 && p.parentElement; i++) "
+                "p = p.parentElement; return p; }"
+            )
+        except Exception:
+            logger.debug("패널 컨테이너 확보 실패 — 칩 자체로 폴백")
+            panel_handle = None
+
+        chip.click()
+
+        text = self._wait_for_stable_text(page, panel_handle, chip)
+        if text:
+            logger.info("Gemini 요약 추출 성공 (%d자)", len(text))
+            return text
+
+        logger.info("Gemini 응답 텍스트 안정화 실패 (타임아웃)")
         self._save_debug_screenshot(page)
+        self._save_debug_html(page)
         return None
+
+    @staticmethod
+    def _wait_for_stable_text(page, panel_handle, fallback_locator) -> str | None:
+        """패널 텍스트가 일정 횟수 연속으로 변하지 않을 때까지 대기 후 반환한다.
+
+        Gemini 응답은 스트리밍으로 채워지므로 고정 지연 대신 텍스트 안정화를
+        기준으로 완료를 판단한다.
+        """
+        import time  # noqa: PLC0415
+
+        last_text = ""
+        stable_count = 0
+        deadline = time.time() + _RESPONSE_TIMEOUT_MS / 1000
+
+        while time.time() < deadline:
+            page.wait_for_timeout(_STABLE_POLL_INTERVAL_MS)
+            try:
+                current = (
+                    panel_handle.evaluate("el => el.innerText")
+                    if panel_handle is not None
+                    else fallback_locator.inner_text()
+                ) or ""
+            except Exception:
+                current = ""
+            current = current.strip()
+            if current and current == last_text:
+                stable_count += 1
+                if stable_count >= _STABLE_REQUIRED_COUNT:
+                    return current
+            else:
+                stable_count = 0
+            last_text = current
+
+        return last_text or None
+
+    @staticmethod
+    def _save_debug_html(page) -> None:
+        """응답 추출 실패 시 진단용 페이지 HTML을 로그 폴더에 저장한다."""
+        try:
+            import config.settings as _s  # noqa: PLC0415
+            log_dir = Path(getattr(_s, "LOG_DIR", "."))
+            log_dir.mkdir(parents=True, exist_ok=True)
+            html_path = log_dir / "gemini_debug.html"
+            html_path.write_text(page.content(), encoding="utf-8")
+            logger.info("Gemini 디버그 HTML 저장: %s", html_path)
+        except Exception:
+            logger.debug("디버그 HTML 저장 실패")
 
     @staticmethod
     def _get_cookie_path() -> str | None:
