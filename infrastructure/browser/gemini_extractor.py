@@ -199,13 +199,23 @@ class GeminiExtractor:
         ask_btn.click()
 
         try:
-            chip = page.get_by_text(_SUMMARIZE_CHIP_TEXT, exact=False).first
-            chip.wait_for(state="visible", timeout=_RESPONSE_TIMEOUT_MS)
+            chip_text = page.get_by_text(_SUMMARIZE_CHIP_TEXT, exact=False).first
+            chip_text.wait_for(state="visible", timeout=_RESPONSE_TIMEOUT_MS)
         except Exception:
             logger.info("'%s' 추천 칩 미발견", _SUMMARIZE_CHIP_TEXT)
             self._save_debug_screenshot(page)
             self._save_debug_html(page)
             return None
+
+        # get_by_text는 텍스트를 담은 가장 안쪽 노드(span/div)를 잡을 수 있어
+        # 클릭 핸들러가 실제로 걸린 button 조상을 우선 사용한다. button 조상이
+        # 없으면(텍스트 자체가 클릭 대상) 원래 요소로 폴백한다.
+        try:
+            btn_ancestor = chip_text.locator("xpath=ancestor-or-self::button[1]")
+            btn_ancestor.wait_for(state="visible", timeout=2_000)
+            chip = btn_ancestor
+        except Exception:
+            chip = chip_text
 
         try:
             # 칩을 감싸는 패널 컨테이너를 폴링용으로 미리 확보해 둔다
@@ -218,16 +228,20 @@ class GeminiExtractor:
             logger.debug("패널 컨테이너 확보 실패 — 칩 자체로 폴백")
             panel_handle = None
 
+        baseline_text = self._read_panel_text(panel_handle, chip)
+
         chip.click()
         text = self._wait_for_stable_text(page, panel_handle, chip)
 
         retries = 0
-        while text and _ERROR_PHRASE in text and retries < _MAX_ERROR_RETRIES:
+        while (
+            text
+            and (text == baseline_text or _ERROR_PHRASE in text)
+            and retries < _MAX_ERROR_RETRIES
+        ):
             retries += 1
-            logger.info(
-                "Gemini 응답 오류 감지(자동화 차단 가능성) — 재시도 %d/%d",
-                retries, _MAX_ERROR_RETRIES,
-            )
+            reason = "오류 문구 감지" if text and _ERROR_PHRASE in text else "클릭 미반영(상태 불변)"
+            logger.info("Gemini 응답 재시도 %d/%d (%s)", retries, _MAX_ERROR_RETRIES, reason)
             try:
                 chip.click()
             except Exception:
@@ -237,6 +251,12 @@ class GeminiExtractor:
 
         if text and _ERROR_PHRASE in text:
             logger.info("Gemini 응답이 계속 오류 상태 — 추출 실패 처리")
+            self._save_debug_html(page)
+            return None
+
+        if text and text == baseline_text:
+            logger.info("칩 클릭이 반영되지 않음(상태 불변) — 추출 실패 처리")
+            self._save_debug_screenshot(page)
             self._save_debug_html(page)
             return None
 
@@ -250,7 +270,20 @@ class GeminiExtractor:
         return None
 
     @staticmethod
-    def _wait_for_stable_text(page, panel_handle, fallback_locator) -> str | None:
+    def _read_panel_text(panel_handle, fallback_locator) -> str:
+        """패널(또는 폴백 요소)의 현재 텍스트를 읽는다. 실패 시 빈 문자열."""
+        try:
+            current = (
+                panel_handle.evaluate("el => el.innerText")
+                if panel_handle is not None
+                else fallback_locator.inner_text()
+            ) or ""
+        except Exception:
+            current = ""
+        return current.strip()
+
+    @classmethod
+    def _wait_for_stable_text(cls, page, panel_handle, fallback_locator) -> str | None:
         """패널 텍스트가 일정 횟수 연속으로 변하지 않을 때까지 대기 후 반환한다.
 
         Gemini 응답은 스트리밍으로 채워지므로 고정 지연 대신 텍스트 안정화를
@@ -264,15 +297,7 @@ class GeminiExtractor:
 
         while time.time() < deadline:
             page.wait_for_timeout(_STABLE_POLL_INTERVAL_MS)
-            try:
-                current = (
-                    panel_handle.evaluate("el => el.innerText")
-                    if panel_handle is not None
-                    else fallback_locator.inner_text()
-                ) or ""
-            except Exception:
-                current = ""
-            current = current.strip()
+            current = cls._read_panel_text(panel_handle, fallback_locator)
             if current and current == last_text:
                 stable_count += 1
                 if stable_count >= _STABLE_REQUIRED_COUNT:
