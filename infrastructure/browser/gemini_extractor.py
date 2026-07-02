@@ -27,6 +27,10 @@ _ASK_BUTTON_SELECTORS = [
 # "질문하기" 클릭 시 뜨는 패널의 요약 추천 칩 텍스트
 _SUMMARIZE_CHIP_TEXT = "동영상을 요약해 줘"
 
+# Gemini 백엔드가 요청을 거부했을 때 패널에 표시되는 오류 문구
+_ERROR_PHRASE = "문제가 발생했습니다"
+_MAX_ERROR_RETRIES = 2
+
 _PAGE_LOAD_TIMEOUT_MS = 20_000
 _BUTTON_SCAN_TIMEOUT_MS = 5_000
 _RESPONSE_TIMEOUT_MS = 30_000
@@ -86,7 +90,12 @@ class GeminiExtractor:
 
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+                browser = p.chromium.launch(
+                    headless=True,
+                    # Gemini 백엔드가 자동화 브라우저를 감지해 요청을 거부하는
+                    # 사례가 있어 자동화 흔적을 최대한 숨긴다.
+                    args=["--disable-blink-features=AutomationControlled"],
+                )
                 try:
                     context = browser.new_context(
                         user_agent=(
@@ -95,6 +104,11 @@ class GeminiExtractor:
                             "Chrome/120.0.0.0 Safari/537.36"
                         ),
                         locale="ko-KR",
+                        viewport={"width": 1366, "height": 900},
+                    )
+                    context.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', "
+                        "{get: () => undefined});"
                     )
                     self._load_netscape_cookies(context, cookie_path)
 
@@ -205,8 +219,27 @@ class GeminiExtractor:
             panel_handle = None
 
         chip.click()
-
         text = self._wait_for_stable_text(page, panel_handle, chip)
+
+        retries = 0
+        while text and _ERROR_PHRASE in text and retries < _MAX_ERROR_RETRIES:
+            retries += 1
+            logger.info(
+                "Gemini 응답 오류 감지(자동화 차단 가능성) — 재시도 %d/%d",
+                retries, _MAX_ERROR_RETRIES,
+            )
+            try:
+                chip.click()
+            except Exception:
+                logger.debug("재시도 클릭 실패 — 칩이 더 이상 존재하지 않음")
+                break
+            text = self._wait_for_stable_text(page, panel_handle, chip)
+
+        if text and _ERROR_PHRASE in text:
+            logger.info("Gemini 응답이 계속 오류 상태 — 추출 실패 처리")
+            self._save_debug_html(page)
+            return None
+
         if text:
             logger.info("Gemini 요약 추출 성공 (%d자)", len(text))
             return text
