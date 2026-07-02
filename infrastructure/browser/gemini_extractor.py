@@ -27,6 +27,13 @@ _ASK_BUTTON_SELECTORS = [
 # "질문하기" 클릭 시 뜨는 패널의 요약 추천 칩 텍스트
 _SUMMARIZE_CHIP_TEXT = "동영상을 요약해 줘"
 
+# 요약 본문 뒤에 붙는 면책/추천질문 블록의 시작 앵커 — 이 지점부터 잘라낸다.
+_TRAILING_ANCHORS = (
+    "AI도 실수를 할 수 있으니",
+    "AI can make mistakes",
+    "AI의 응답에는 실수가",
+)
+
 # Gemini 백엔드가 요청을 거부했을 때 패널에 표시되는 오류 문구
 _ERROR_PHRASE = "문제가 발생했습니다"
 _MAX_ERROR_RETRIES = 2
@@ -221,53 +228,51 @@ class GeminiExtractor:
             # 칩을 감싸는 패널 컨테이너를 폴링용으로 미리 확보해 둔다
             # (칩 자체는 클릭 후 대화 내용으로 대체되어 사라질 수 있다).
             panel_handle = chip.evaluate_handle(
-                "el => { let p = el; for (let i = 0; i < 6 && p.parentElement; i++) "
+                "el => { let p = el; for (let i = 0; i < 8 && p.parentElement; i++) "
                 "p = p.parentElement; return p; }"
             )
         except Exception:
             logger.debug("패널 컨테이너 확보 실패 — 칩 자체로 폴백")
             panel_handle = None
 
-        baseline_text = self._read_panel_text(panel_handle, chip)
-
-        chip.click()
-        text = self._wait_for_stable_text(page, panel_handle, chip)
+        self._robust_click(chip)
+        summary = self._wait_for_summary(page, panel_handle, chip)
 
         retries = 0
         while (
-            text
-            and (text == baseline_text or _ERROR_PHRASE in text)
+            (not summary or _ERROR_PHRASE in summary)
             and retries < _MAX_ERROR_RETRIES
         ):
             retries += 1
-            reason = "오류 문구 감지" if text and _ERROR_PHRASE in text else "클릭 미반영(상태 불변)"
+            reason = "오류 문구 감지" if summary and _ERROR_PHRASE in summary else "응답 없음"
             logger.info("Gemini 응답 재시도 %d/%d (%s)", retries, _MAX_ERROR_RETRIES, reason)
             try:
-                chip.click()
+                self._robust_click(chip)
             except Exception:
                 logger.debug("재시도 클릭 실패 — 칩이 더 이상 존재하지 않음")
                 break
-            text = self._wait_for_stable_text(page, panel_handle, chip)
+            summary = self._wait_for_summary(page, panel_handle, chip)
 
-        if text and _ERROR_PHRASE in text:
-            logger.info("Gemini 응답이 계속 오류 상태 — 추출 실패 처리")
-            self._save_debug_html(page)
-            return None
+        if summary and _ERROR_PHRASE not in summary:
+            logger.info("Gemini 요약 추출 성공 (%d자)", len(summary))
+            return summary
 
-        if text and text == baseline_text:
-            logger.info("칩 클릭이 반영되지 않음(상태 불변) — 추출 실패 처리")
-            self._save_debug_screenshot(page)
-            self._save_debug_html(page)
-            return None
-
-        if text:
-            logger.info("Gemini 요약 추출 성공 (%d자)", len(text))
-            return text
-
-        logger.info("Gemini 응답 텍스트 안정화 실패 (타임아웃)")
+        logger.info("Gemini 요약 추출 실패 — 응답이 없거나 오류 상태")
         self._save_debug_screenshot(page)
         self._save_debug_html(page)
         return None
+
+    @staticmethod
+    def _robust_click(locator) -> None:
+        """칩을 뷰에 스크롤한 뒤 클릭한다. 일반 클릭 실패 시 강제 클릭으로 폴백."""
+        try:
+            locator.scroll_into_view_if_needed(timeout=2_000)
+        except Exception:
+            pass
+        try:
+            locator.click(timeout=5_000)
+        except Exception:
+            locator.click(timeout=5_000, force=True)
 
     @staticmethod
     def _read_panel_text(panel_handle, fallback_locator) -> str:
@@ -282,31 +287,59 @@ class GeminiExtractor:
             current = ""
         return current.strip()
 
-    @classmethod
-    def _wait_for_stable_text(cls, page, panel_handle, fallback_locator) -> str | None:
-        """패널 텍스트가 일정 횟수 연속으로 변하지 않을 때까지 대기 후 반환한다.
+    @staticmethod
+    def _clean_summary(full_text: str) -> str:
+        """전체 패널 텍스트에서 순수 요약 본문만 잘라낸다.
 
-        Gemini 응답은 스트리밍으로 채워지므로 고정 지연 대신 텍스트 안정화를
-        기준으로 완료를 판단한다.
+        패널에는 인사말·추천 질문·요약 본문·면책 문구·추천 질문이 모두 담긴다.
+        요약 본문은 마지막 "동영상을 요약해 줘"(클릭된 질문의 에코) 이후부터
+        면책 문구("AI도 실수를 할 수 있으니…") 직전까지의 구간이다.
+        """
+        if not full_text:
+            return ""
+        idx = full_text.rfind(_SUMMARIZE_CHIP_TEXT)
+        body = (
+            full_text[idx + len(_SUMMARIZE_CHIP_TEXT):]
+            if idx >= 0
+            else full_text
+        )
+        for anchor in _TRAILING_ANCHORS:
+            pos = body.find(anchor)
+            if pos >= 0:
+                body = body[:pos]
+                break
+        return body.strip()
+
+    @classmethod
+    def _wait_for_summary(cls, page, panel_handle, fallback_locator) -> str | None:
+        """정제된 요약 본문이 비어있지 않고 안정될 때까지 폴링 후 반환한다.
+
+        전체 패널이 아닌 '정제된 요약 영역'만 기준으로 판단하므로, 인사말/추천
+        질문만 있는 상태(요약 미생성)를 성공으로 오인하지 않는다. 응답은 스트리밍
+        으로 채워지므로 본문이 `_STABLE_REQUIRED_COUNT`회 연속 동일할 때 완료로 본다.
+        오류 문구가 감지되면 즉시 반환해 상위 재시도 루프가 처리하게 한다.
         """
         import time  # noqa: PLC0415
 
-        last_text = ""
+        last_summary = ""
         stable_count = 0
         deadline = time.time() + _RESPONSE_TIMEOUT_MS / 1000
 
         while time.time() < deadline:
             page.wait_for_timeout(_STABLE_POLL_INTERVAL_MS)
-            current = cls._read_panel_text(panel_handle, fallback_locator)
-            if current and current == last_text:
+            full = cls._read_panel_text(panel_handle, fallback_locator)
+            if _ERROR_PHRASE in full:
+                return cls._clean_summary(full) or _ERROR_PHRASE
+            summary = cls._clean_summary(full)
+            if summary and summary == last_summary:
                 stable_count += 1
                 if stable_count >= _STABLE_REQUIRED_COUNT:
-                    return current
+                    return summary
             else:
                 stable_count = 0
-            last_text = current
+            last_summary = summary
 
-        return last_text or None
+        return last_summary or None
 
     @staticmethod
     def _save_debug_html(page) -> None:

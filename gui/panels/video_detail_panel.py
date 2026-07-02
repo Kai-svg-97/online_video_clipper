@@ -5,6 +5,7 @@ It includes a back button, inline player, metadata, and clickable tags.
 """
 from __future__ import annotations
 
+import html
 import logging
 import re
 import subprocess
@@ -29,6 +30,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QTabWidget,
+    QTextBrowser,
     QTimeEdit,
     QVBoxLayout,
     QWidget,
@@ -501,11 +503,13 @@ class VideoDetailWidget(QWidget):
         self._summary_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
         refresh_row.addWidget(self._summary_status_lbl, 1)
         summary_layout.addLayout(refresh_row)
-        self._summary_edit = QPlainTextEdit()
-        self._summary_edit.setReadOnly(True)
+        self._summary_edit = QTextBrowser()
+        self._summary_edit.setOpenLinks(False)
+        self._summary_edit.setOpenExternalLinks(False)
         self._summary_edit.setPlaceholderText(
             "Gemini AI 요약이 없습니다.\n⟳ 버튼으로 갱신하세요. (YouTube 로그인 필요)"
         )
+        self._summary_edit.anchorClicked.connect(self._on_summary_anchor_clicked)
         summary_layout.addWidget(self._summary_edit)
         self._tabs.addTab(_wrap(summary_tab), "요약")
 
@@ -594,7 +598,7 @@ class VideoDetailWidget(QWidget):
         self._notes_edit.blockSignals(True)
         self._notes_edit.setPlainText(detail.notes or "")
         self._notes_edit.blockSignals(False)
-        self._summary_edit.setPlainText(detail.gemini_summary or "")
+        self._summary_edit.setHtml(self._render_summary_html(detail.gemini_summary or ""))
         self._summary_status_lbl.setText("")
         self._summary_refresh_btn.setEnabled(True)
 
@@ -757,6 +761,43 @@ class VideoDetailWidget(QWidget):
         self._meta_layout.addStretch()
 
     def _on_chapter_clicked(self, sec: int) -> None:
+        self._player.seek_to_ms(sec * 1000)
+        if not self._player.is_playing():
+            self._player.play()
+
+    def _render_summary_html(self, text: str) -> str:
+        """요약 텍스트를 HTML로 렌더링하되 타임스탬프를 seek 링크로 변환한다.
+
+        `MM:SS`·`HH:MM:SS` 형태를 `<a href="seek:초">` 링크로 감싸고, 클릭 시
+        `_on_summary_anchor_clicked`가 해당 위치로 재생 위치를 이동한다.
+        """
+        if not text:
+            return ""
+        accent = _t().accent
+
+        def _link(m: re.Match) -> str:
+            h = int(m.group(1)) if m.group(1) else 0
+            sec = h * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+            return (
+                f'<a href="seek:{sec}" style="color:{accent}; '
+                f'text-decoration:none; font-weight:bold;">{m.group(0)}</a>'
+            )
+
+        parts = []
+        for line in text.splitlines():
+            # 타임스탬프는 특수문자가 없어 escape 후 정규식을 적용해도 안전하다.
+            parts.append(_TS_RE.sub(_link, html.escape(line)))
+        return "<br>".join(parts)
+
+    def _on_summary_anchor_clicked(self, url: QUrl) -> None:
+        """요약 내 타임스탬프 링크 클릭 시 해당 위치로 재생 위치를 이동한다."""
+        s = url.toString()
+        if not s.startswith("seek:"):
+            return
+        try:
+            sec = int(s[len("seek:"):])
+        except ValueError:
+            return
         self._player.seek_to_ms(sec * 1000)
         if not self._player.is_playing():
             self._player.play()
@@ -1198,7 +1239,7 @@ class VideoDetailWidget(QWidget):
     def _on_gemini_done(self, summary: str) -> None:
         self._summary_refresh_btn.setEnabled(True)
         if summary:
-            self._summary_edit.setPlainText(summary)
+            self._summary_edit.setHtml(self._render_summary_html(summary))
             self._summary_status_lbl.setText("")
             if self._detail is not None:
                 self.gemini_summary_saved.emit(self._detail.id, summary)
