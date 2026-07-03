@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
+    QSizeGrip,
     QSizePolicy,
     QSlider,
     QStackedWidget,
@@ -261,6 +262,7 @@ class _ControlBar(QWidget):
     volume_changed     = pyqtSignal(int)   # 0-100
     mute_toggled       = pyqtSignal()
     fullscreen_toggled = pyqtSignal()
+    pip_toggled        = pyqtSignal()         # 화면 속 화면(PiP) 토글
     download_requested = pyqtSignal(object)   # DownloadSettings
     quality_changed    = pyqtSignal(str, str, bool) # (fmt_string, short_label, merge)
 
@@ -333,6 +335,7 @@ class _ControlBar(QWidget):
         self._btn_quality.clicked.connect(self._show_quality_menu)
 
         self._btn_dl = btn("⬇", "다운로드", self._show_download_menu)
+        self._btn_pip = btn("⧉", "화면 속 화면  (P)", self.pip_toggled.emit)
         self._btn_fs = btn("⛶", "전체화면  (F)", self.fullscreen_toggled.emit)
 
         for w in (self._btn_play, self._btn_back, self._btn_fwd,
@@ -342,6 +345,7 @@ class _ControlBar(QWidget):
         row.addWidget(self._quality_lbl)
         row.addWidget(self._btn_quality)
         row.addWidget(self._btn_dl)
+        row.addWidget(self._btn_pip)
         row.addWidget(self._btn_fs)
         outer.addLayout(row)
 
@@ -534,6 +538,99 @@ class _VideoView(QGraphicsView):
 
 # ── Dedicated fullscreen window ───────────────────────────────────
 
+class _PipWindow(QWidget):
+    """화면 속 화면(PiP) — 항상 위에 뜨는 작은 플로팅 재생 창.
+
+    `_FullscreenWindow`와 동일하게 공유 `QMediaPlayer`의 출력을 자체 `_VideoView`로
+    리다이렉트한다(재생 위치·볼륨·상태는 그대로 유지). 전체화면 구현과 달리
+    **컨트롤바 신호는 외부(InlinePlayer)에서 반드시 배선**해야 버튼이 동작한다.
+
+    프레임리스·항상 위이며, 영상 영역 드래그로 이동하고 우하단 `QSizeGrip`으로
+    크기를 조절한다. 닫기(창 X/Esc/PiP 버튼/더블클릭)는 `exit_requested`로 알린다.
+    """
+
+    exit_requested = pyqtSignal()
+
+    _DEFAULT_W = 480
+    _DEFAULT_H = 270
+
+    def __init__(self, player: QMediaPlayer, audio: QAudioOutput, key_handler=None) -> None:
+        super().__init__(
+            None,
+            Qt.WindowType.Window
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint,
+        )
+        self.setStyleSheet("background:#000;")
+        self.setWindowTitle("화면 속 화면")
+        self._player = player
+        self._key_handler = key_handler
+        self._drag_offset: QPoint | None = None
+
+        self._vw = _VideoView(self)
+        # 영상 영역은 마우스 이벤트를 투명 처리 → 창 드래그가 영상 위에서도 동작
+        self._vw.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._vw.viewport().setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        self.bar = _ControlBar(self)
+        # PiP 창에서는 전체화면 버튼 숨기고, PiP 버튼은 '인라인 복귀' 용도
+        self.bar._btn_fs.hide()
+        self.bar._btn_pip.setToolTip("인라인으로 복귀")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self._vw)
+
+        player.setVideoOutput(self._vw.video_item)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        self._grip = QSizeGrip(self)
+        self.resize(self._DEFAULT_W, self._DEFAULT_H)
+        QTimer.singleShot(0, self._layout_children)
+
+    def _layout_children(self) -> None:
+        bh = _ControlBar._HEIGHT
+        self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
+        self.bar.raise_()
+        self.bar.show()
+        gs = 16
+        self._grip.setGeometry(self.width() - gs, self.height() - gs, gs, gs)
+        self._grip.raise_()
+
+    def resizeEvent(self, event) -> None:
+        self._layout_children()
+        super().resizeEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if self._key_handler:
+            self._key_handler(event)
+        else:
+            super().keyPressEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = (
+                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            )
+            event.accept()
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_offset = None
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.exit_requested.emit()
+
+    def closeEvent(self, event) -> None:
+        self.exit_requested.emit()
+        event.ignore()
+
+
 class _FullscreenWindow(QWidget):
     """Top-level fullscreen window on the target screen.
 
@@ -637,6 +734,7 @@ class InlinePlayer(QWidget):
         self._video_title: str  = ""
         self._worker: _StreamWorker | None  = None
         self._fs_win: _FullscreenWindow | None = None
+        self._pip_win: _PipWindow | None = None
         self._volume    = 100
         self._is_muted  = False
         self._filter_on = False
@@ -711,6 +809,7 @@ class InlinePlayer(QWidget):
         self._bar.volume_changed.connect(self._on_volume_changed)
         self._bar.mute_toggled.connect(self._toggle_mute)
         self._bar.fullscreen_toggled.connect(self._toggle_fullscreen)
+        self._bar.pip_toggled.connect(self._toggle_pip)
         self._bar.download_requested.connect(self._on_download_requested)
         self._bar.quality_changed.connect(self._on_quality_changed)
 
@@ -742,6 +841,10 @@ class InlinePlayer(QWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:
+        if self._pip_win:
+            self._exit_pip()
+        if self._fs_win:
+            self._exit_fullscreen()
         self._remove_filter()
         super().closeEvent(event)
 
@@ -876,6 +979,11 @@ class InlinePlayer(QWidget):
         self._fetch_stream()
 
     def stop(self) -> None:
+        # 분리 재생 창(PiP/전체화면)이 열려 있으면 출력을 인라인으로 복귀 후 정리
+        if self._pip_win:
+            self._exit_pip()
+        if self._fs_win:
+            self._exit_fullscreen()
         self._player.stop()
         self._player.setSource(QUrl())   # 파일 핸들 해제 후 임시 파일 삭제 가능
         self._cleanup_temp()
@@ -938,10 +1046,14 @@ class InlinePlayer(QWidget):
             self._change_volume(-5)
         elif key == Qt.Key.Key_M:
             self._toggle_mute()
+        elif key == Qt.Key.Key_P:
+            self._toggle_pip()
         elif key in (Qt.Key.Key_F, Qt.Key.Key_Escape):
-            # F toggles; Escape only exits (never enters) fullscreen
+            # F toggles; Escape only exits (never enters) PiP/fullscreen
             if key == Qt.Key.Key_Escape:
-                if self._fs_win and self._fs_win.isVisible():
+                if self._pip_win and self._pip_win.isVisible():
+                    self._exit_pip()
+                elif self._fs_win and self._fs_win.isVisible():
                     self._exit_fullscreen()
             else:
                 self._toggle_fullscreen()
@@ -1010,6 +1122,86 @@ class InlinePlayer(QWidget):
             self._fs_win = None
         self.setFocus()
 
+    # ── Picture-in-Picture (화면 속 화면) ───────────────────────────
+
+    def _toggle_pip(self) -> None:
+        if self._pip_win and self._pip_win.isVisible():
+            self._exit_pip()
+        else:
+            self._enter_pip()
+
+    def _enter_pip(self) -> None:
+        # 전체화면과 동시 분리는 하지 않는다.
+        if self._fs_win and self._fs_win.isVisible():
+            self._exit_fullscreen()
+
+        self._pip_win = _PipWindow(
+            self._player, self._audio, key_handler=self.keyPressEvent
+        )
+        bar = self._pip_win.bar
+        # PiP 바 → 플레이어 (인라인 바와 동일한 핸들러 재사용)
+        bar.play_toggled.connect(self._toggle_play)
+        bar.seek_relative.connect(self._seek_relative)
+        bar.seek_to_ms.connect(self._player.setPosition)
+        bar.volume_changed.connect(self._on_volume_changed)
+        bar.mute_toggled.connect(self._toggle_mute)
+        bar.download_requested.connect(self._on_download_requested)
+        bar.quality_changed.connect(self._on_quality_changed)
+        bar.pip_toggled.connect(self._exit_pip)
+        # 플레이어 → PiP 바 (재생시간). 위치/재생상태는 _on_position/_on_playback_state가 fan-out.
+        self._player.durationChanged.connect(bar.update_duration)
+        # 현재 상태를 PiP 바에 1회 반영
+        dur = self._player.duration()
+        bar.update_duration(dur)
+        bar.update_position(self._player.position(), dur)
+        bar.set_playing(self.is_playing())
+        bar.set_volume(self._volume)
+        bar.set_muted(self._is_muted)
+        bar.set_quality(
+            "" if self._current_quality_short == "자동" else self._current_quality_short
+        )
+
+        self._pip_win.exit_requested.connect(self._exit_pip)
+        self._show_pip_placeholder(True)
+
+        # 화면 우하단에 배치
+        center = self.mapToGlobal(QPoint(self.width() // 2, self.height() // 2))
+        screen = QApplication.screenAt(center) or QApplication.primaryScreen()
+        geo = screen.availableGeometry()
+        w, h = _PipWindow._DEFAULT_W, _PipWindow._DEFAULT_H
+        self._pip_win.setGeometry(geo.right() - w - 24, geo.bottom() - h - 24, w, h)
+        self._pip_win.show()
+        self._pip_win.raise_()
+        self._pip_win.setFocus()
+
+    def _exit_pip(self) -> None:
+        # 출력 복귀 먼저, 그다음 창 정리
+        self._player.setVideoOutput(self._video_view.video_item)
+        if self._pip_win:
+            try:
+                self._player.durationChanged.disconnect(self._pip_win.bar.update_duration)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                self._pip_win.exit_requested.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self._pip_win.close()
+            self._pip_win.deleteLater()
+            self._pip_win = None
+        self._show_pip_placeholder(False)
+        self.setFocus()
+
+    def _show_pip_placeholder(self, on: bool) -> None:
+        """PiP 활성 시 인라인 영역에 안내(썸네일/문구)를 표시한다."""
+        if on:
+            pm = self._thumb_label.pixmap()
+            if pm is None or pm.isNull():
+                self._thumb_label.setText("화면 속 화면으로 재생 중")
+            self._visual_stack.setCurrentIndex(0)
+        elif self._player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
+            self._visual_stack.setCurrentIndex(1)
+
     def _on_volume_changed(self, vol: int) -> None:
         self._volume = vol
         self._audio.setVolume(vol / 100.0)
@@ -1020,11 +1212,16 @@ class InlinePlayer(QWidget):
             self._bar.set_muted(muted)
 
     def _on_position(self, pos: int) -> None:
-        self._bar.update_position(pos, self._player.duration())
+        dur = self._player.duration()
+        self._bar.update_position(pos, dur)
+        if self._pip_win:
+            self._pip_win.bar.update_position(pos, dur)
 
     def _on_playback_state(self, state: QMediaPlayer.PlaybackState) -> None:
         playing = state == QMediaPlayer.PlaybackState.PlayingState
         self._bar.set_playing(playing)
+        if self._pip_win:
+            self._pip_win.bar.set_playing(playing)
         if playing:
             self._bar.show()
             self._bar.raise_()
