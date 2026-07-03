@@ -214,13 +214,15 @@ class _TrackSlider(QSlider):
     QGraphicsVideoItem(영상) 위에 컨트롤바가 겹쳐진 상황에서는 Qt 스타일시트의
     `QSlider::groove`/`::add-page` 서브컨트롤이 색을 무시하고 검게 렌더되는 문제가
     있다(영상 오버레이 위 서브컨트롤 렌더 제약). 반면 위젯 배경·sub-page 같은
-    직접 채움은 정상 렌더되므로, 트랙 전체를 직접 페인팅해 불투명 라이트 트랙을
-    보장한다.
+    직접 채움은 정상 렌더되므로, 트랙 전체를 `paintEvent`에서 QPainter로 직접
+    그린다. 직접 채움은 반투명 알파도 영상 위에 정상 합성되므로, 미채움 트랙은
+    **반투명 화이트**로 그려 영상이 비쳐 보이게 한다(사용자 요구 = 반투명).
     """
 
     _TRACK_H = 4
     _HANDLE_R = 6
-    _TRACK_BG = "#a8adb5"  # 미채움 트랙 — 불투명 라이트 그레이(영상 위에서도 또렷)
+    # 미채움 트랙 — 반투명 화이트(영상이 비쳐 보이는 옅은 반투명)
+    _TRACK_ALPHA = 115
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 시그니처)
         painter = QPainter(self)
@@ -239,10 +241,10 @@ class _TrackSlider(QSlider):
         r = th / 2
 
         painter.setPen(Qt.PenStyle.NoPen)
-        # 미채움 트랙(전체)
-        painter.setBrush(QColor(self._TRACK_BG))
+        # 미채움 트랙(전체) — 반투명 화이트로 영상이 비침
+        painter.setBrush(QColor(255, 255, 255, self._TRACK_ALPHA))
         painter.drawRoundedRect(QRectF(x0, cy - th / 2, span, th), r, r)
-        # 채움(핸들 왼쪽)
+        # 채움(핸들 왼쪽) — 불투명 progress_fg로 진행분을 또렷하게
         painter.setBrush(QColor(tok.progress_fg))
         painter.drawRoundedRect(QRectF(x0, cy - th / 2, hx - x0, th), r, r)
         # 핸들
