@@ -12,8 +12,19 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QSizeF, QThread, QTimer, QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QCursor, QKeyEvent
+from PyQt6.QtCore import (
+    QEvent,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSizeF,
+    QThread,
+    QTimer,
+    QUrl,
+    Qt,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QBrush, QColor, QCursor, QKeyEvent, QPainter
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QGraphicsVideoItem
 from PyQt6.QtWidgets import (
@@ -162,21 +173,8 @@ QToolButton {{
 }}
 QToolButton:hover {{ color: {tok.accent_hover}; background: rgba(255,255,255,15); border-radius: 3px; }}
 QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 9pt; }}
-QSlider::groove:horizontal {{
-    height: 4px; background: rgba(255,255,255,60); border-radius: 2px;
-    border: none;
-}}
-QSlider::sub-page:horizontal {{
-    height: 4px; background: {tok.progress_fg}; border-radius: 2px;
-}}
-QSlider::add-page:horizontal {{
-    height: 4px; background: rgba(255,255,255,60); border-radius: 2px;
-}}
-QSlider::handle:horizontal {{
-    width: 10px; height: 10px;
-    margin: -4px 0;
-    background: {tok.text_primary}; border-radius: 5px;
-}}
+/* 슬라이더(_TrackSlider)는 QPainter로 직접 그린다 — 영상 오버레이 위에서
+   QSlider::groove/add-page 서브컨트롤이 검게 렌더되는 문제를 회피하기 위함. */
 """
 
 
@@ -210,6 +208,50 @@ _DEFAULT_QUALITY_FMT = _QUALITY_OPTIONS[0][1]
 _DEFAULT_QUALITY_MERGE = _QUALITY_OPTIONS[0][3]
 
 
+class _TrackSlider(QSlider):
+    """트랙·핸들을 QPainter로 직접 그리는 QSlider.
+
+    QGraphicsVideoItem(영상) 위에 컨트롤바가 겹쳐진 상황에서는 Qt 스타일시트의
+    `QSlider::groove`/`::add-page` 서브컨트롤이 색을 무시하고 검게 렌더되는 문제가
+    있다(영상 오버레이 위 서브컨트롤 렌더 제약). 반면 위젯 배경·sub-page 같은
+    직접 채움은 정상 렌더되므로, 트랙 전체를 직접 페인팅해 불투명 라이트 트랙을
+    보장한다.
+    """
+
+    _TRACK_H = 4
+    _HANDLE_R = 6
+    _TRACK_BG = "#a8adb5"  # 미채움 트랙 — 불투명 라이트 그레이(영상 위에서도 또렷)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt 시그니처)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        tok = ThemeManager.instance().current()
+        rect = self.rect()
+        cy = rect.height() / 2
+        pad = self._HANDLE_R + 1
+        x0 = float(pad)
+        span = max(1.0, rect.width() - 2 * pad)
+        mn, mx = self.minimum(), self.maximum()
+        frac = 0.0 if mx <= mn else (self.value() - mn) / (mx - mn)
+        frac = min(1.0, max(0.0, frac))
+        hx = x0 + span * frac
+        th = self._TRACK_H
+        r = th / 2
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        # 미채움 트랙(전체)
+        painter.setBrush(QColor(self._TRACK_BG))
+        painter.drawRoundedRect(QRectF(x0, cy - th / 2, span, th), r, r)
+        # 채움(핸들 왼쪽)
+        painter.setBrush(QColor(tok.progress_fg))
+        painter.drawRoundedRect(QRectF(x0, cy - th / 2, hx - x0, th), r, r)
+        # 핸들
+        hr = self._HANDLE_R
+        painter.setBrush(QColor(tok.text_primary))
+        painter.drawEllipse(QPointF(hx, cy), float(hr), float(hr))
+        painter.end()
+
+
 class _ControlBar(QWidget):
     play_toggled       = pyqtSignal()
     seek_relative      = pyqtSignal(int)   # delta in seconds
@@ -241,7 +283,7 @@ class _ControlBar(QWidget):
         outer.setSpacing(4)
 
         # Progress slider (full width)
-        self._progress = QSlider(Qt.Orientation.Horizontal)
+        self._progress = _TrackSlider(Qt.Orientation.Horizontal)
         self._progress.setRange(0, 0)
         self._progress.setToolTip("재생 위치")
         self._progress.sliderPressed.connect(lambda: setattr(self, "_dragging", True))
@@ -265,7 +307,7 @@ class _ControlBar(QWidget):
         self._btn_fwd  = btn("⏩", "10초 앞으로  (L)", lambda: self.seek_relative.emit(10))
         self._btn_mute = btn("🔊", "음소거  (M)", self.mute_toggled.emit)
 
-        self._vol = QSlider(Qt.Orientation.Horizontal)
+        self._vol = _TrackSlider(Qt.Orientation.Horizontal)
         self._vol.setRange(0, 100)
         self._vol.setValue(100)
         self._vol.setFixedWidth(68)
