@@ -150,7 +150,7 @@ def _bar_style() -> str:
     return f"""
 QWidget#ctrlbar {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(0,0,0,0), stop:1 rgba(0,0,0,200));
+        stop:0 rgba(0,0,0,0), stop:0.45 rgba(0,0,0,45), stop:1 rgba(0,0,0,110));
 }}
 QToolButton {{
     color: {tok.text_primary};
@@ -164,14 +164,14 @@ QToolButton {{
 QToolButton:hover {{ color: {tok.accent_hover}; background: rgba(255,255,255,15); border-radius: 3px; }}
 QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 9pt; }}
 QSlider::groove:horizontal {{
-    height: 3px; background: rgba(255,255,255,28); border-radius: 1px;
-    border: 1px solid rgba(255,255,255,40);
+    height: 4px; background: rgba(255,255,255,60); border-radius: 2px;
+    border: none;
 }}
 QSlider::sub-page:horizontal {{
-    height: 3px; background: {tok.progress_fg}; border-radius: 1px;
+    height: 4px; background: {tok.progress_fg}; border-radius: 2px;
 }}
 QSlider::add-page:horizontal {{
-    height: 3px; background: rgba(255,255,255,38); border-radius: 1px;
+    height: 4px; background: rgba(255,255,255,60); border-radius: 2px;
 }}
 QSlider::handle:horizontal {{
     width: 10px; height: 10px;
