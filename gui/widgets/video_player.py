@@ -150,7 +150,7 @@ def _bar_style() -> str:
     return f"""
 QWidget#ctrlbar {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(0,0,0,0), stop:0.45 rgba(0,0,0,45), stop:1 rgba(0,0,0,110));
+        stop:0 rgba(0,0,0,0), stop:0.5 rgba(0,0,0,25), stop:1 rgba(0,0,0,85));
 }}
 QToolButton {{
     color: {tok.text_primary};
