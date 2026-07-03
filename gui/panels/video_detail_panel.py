@@ -85,6 +85,9 @@ def _fmt_pub(value: str | None) -> str:
 # 설명·요약의 타임스탬프(MM:SS / HH:MM:SS)를 seek 링크로 변환할 때 쓰는 정규식.
 _TS_RE = re.compile(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})")
 
+# 설명·요약 속 URL을 클릭 가능한 링크로 변환할 때 쓰는 정규식.
+_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+
 
 class _RelatedRow(QFrame):
     """연관 영상 1행 — 작은 썸네일 + 제목 2줄 + 채널/메타. 단일 클릭으로 선택."""
@@ -761,10 +764,11 @@ class VideoDetailWidget(QWidget):
         self._info_layout.addStretch()
 
     def _render_timestamped_html(self, text: str) -> str:
-        """요약 텍스트를 HTML로 렌더링하되 타임스탬프를 seek 링크로 변환한다.
+        """요약/설명 텍스트를 HTML로 렌더링한다.
 
-        `MM:SS`·`HH:MM:SS` 형태를 `<a href="seek:초">` 링크로 감싸고, 클릭 시
-        `_on_summary_anchor_clicked`가 해당 위치로 재생 위치를 이동한다.
+        `MM:SS`·`HH:MM:SS` 타임스탬프는 `<a href="seek:초">` 링크로, URL은
+        `<a href="http…">` 링크로 변환한다. 클릭 시 `_on_summary_anchor_clicked`가
+        seek 링크는 재생 위치 이동, URL은 기본 브라우저 열기로 라우팅한다.
         """
         if not text:
             return ""
@@ -778,15 +782,36 @@ class VideoDetailWidget(QWidget):
                 f'text-decoration:none; font-weight:bold;">{m.group(0)}</a>'
             )
 
-        parts = []
-        for line in text.splitlines():
-            # 타임스탬프는 특수문자가 없어 escape 후 정규식을 적용해도 안전하다.
-            parts.append(_TS_RE.sub(_link, html.escape(line)))
-        return "<br>".join(parts)
+        def _render_line(line: str) -> str:
+            # URL 구간과 비-URL 구간을 분리해 처리한다(타임스탬프 링크와 이중
+            # 래핑되지 않도록). URL은 원본에서 뽑아 href에 넣고, 나머지 텍스트만
+            # escape 후 타임스탬프 링크화한다.
+            out = []
+            pos = 0
+            for m in _URL_RE.finditer(line):
+                before = line[pos:m.start()]
+                out.append(_TS_RE.sub(_link, html.escape(before)))
+                url = m.group(0)
+                url_attr = html.escape(url, quote=True)
+                out.append(
+                    f'<a href="{url_attr}" style="color:{accent};">'
+                    f'{html.escape(url)}</a>'
+                )
+                pos = m.end()
+            out.append(_TS_RE.sub(_link, html.escape(line[pos:])))
+            return "".join(out)
+
+        return "<br>".join(_render_line(line) for line in text.splitlines())
 
     def _on_summary_anchor_clicked(self, url: QUrl) -> None:
-        """요약 내 타임스탬프 링크 클릭 시 해당 위치로 재생 위치를 이동한다."""
+        """설명/요약 내 링크 클릭을 라우팅한다.
+
+        `seek:` 링크는 재생 위치를 이동하고, http/https URL은 기본 브라우저로 연다.
+        """
         s = url.toString()
+        if s.startswith(("http://", "https://")):
+            QDesktopServices.openUrl(url)
+            return
         if not s.startswith("seek:"):
             return
         try:
@@ -1232,19 +1257,25 @@ class VideoDetailWidget(QWidget):
             return
         self._summary_refresh_btn.setEnabled(False)
         self._summary_status_lbl.setText("추출 중…")
-        worker = _GeminiSummaryWorker(self._detail.url, self)
+        worker = _GeminiSummaryWorker(self._detail.url, self._detail.id, self)
         worker.done.connect(self._on_gemini_done)
         worker.finished.connect(worker.deleteLater)
         worker.start()
         self._gemini_worker = worker
 
-    def _on_gemini_done(self, summary: str) -> None:
+    def _on_gemini_done(self, video_id, summary: str) -> None:
+        # 요청 시점의 영상과 현재 표시 중인 영상이 다르면(사용자가 다른 영상으로
+        # 이동) 화면은 건드리지 않는다. 단, 유효한 요약은 원래 요청 영상 id로
+        # 저장해 데이터 정합을 유지한다.
+        is_current = self._detail is not None and video_id == self._detail.id
+        if summary:
+            self.gemini_summary_saved.emit(video_id, summary)
+        if not is_current:
+            return
         self._summary_refresh_btn.setEnabled(True)
         if summary:
             self._summary_edit.setHtml(self._render_timestamped_html(summary))
             self._summary_status_lbl.setText("")
-            if self._detail is not None:
-                self.gemini_summary_saved.emit(self._detail.id, summary)
         else:
             self._summary_status_lbl.setText(
                 "요약 추출 실패 — 설정에서 브라우저/프로필을 선택하거나 쿠키 파일을 등록하세요"
@@ -1258,20 +1289,21 @@ class VideoDetailWidget(QWidget):
 class _GeminiSummaryWorker(QThread):
     """백그라운드에서 Gemini AI 요약을 추출한다."""
 
-    done = pyqtSignal(str)  # 요약 텍스트 (실패 시 빈 문자열)
+    done = pyqtSignal(object, str)  # (video_id, 요약 텍스트) — 실패 시 빈 문자열
 
-    def __init__(self, url: str, parent=None) -> None:
+    def __init__(self, url: str, video_id, parent=None) -> None:
         super().__init__(parent)
         self._url = url
+        self._video_id = video_id
 
     def run(self) -> None:
         try:
             from infrastructure.browser.gemini_extractor import GeminiExtractor  # noqa: PLC0415
             result = GeminiExtractor().extract(self._url)
-            self.done.emit(result or "")
+            self.done.emit(self._video_id, result or "")
         except Exception:
             logger.exception("Gemini 요약 워커 실패")
-            self.done.emit("")
+            self.done.emit(self._video_id, "")
 
 
 def _bold_font(size: int) -> QFont:

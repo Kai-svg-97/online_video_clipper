@@ -6,6 +6,7 @@ QThread 안에서만 호출해야 한다 (Playwright sync API는 메인 이벤�
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,25 @@ _ASK_BUTTON_SELECTORS = [
 
 # "질문하기" 클릭 시 뜨는 패널의 요약 추천 칩 텍스트
 _SUMMARIZE_CHIP_TEXT = "동영상을 요약해 줘"
+# 칩 텍스트 공백 표기 흔들림("동영상을 요약해줘" 등)까지 잡는 공백 무시 패턴
+_SUMMARIZE_CHIP_RE = re.compile(r"동영상을\s*요약해\s*줘")
+
+# 칩 클릭 후 요약 대신 나타날 수 있는 추천 질문/메뉴 칩 라벨(비-요약).
+# 이런 문구만으로 구성된 응답은 요약이 아니므로 성공으로 인정하지 않는다.
+# 오검출(정상 요약을 메뉴로 오판)을 피하기 위해 보수적으로 시작한다.
+_MENU_PHRASES = (
+    "동영상을 요약해 줘",
+    "동영상을 요약해줘",
+    "타임라인을 만들어 줘",
+    "타임라인을 만들어줘",
+    "핵심 내용을 알려 줘",
+    "핵심 내용을 알려줘",
+    "이 동영상에 대해 질문하기",
+    "질문하기",
+    "다른 질문",
+)
+# 요약 본문으로 인정하기 위한 최소 길이(자). 이보다 짧으면 칩/메뉴 라벨로 간주.
+_MIN_SUMMARY_LEN = 40
 
 # 요약 본문 뒤에 붙는 면책/추천질문 블록의 시작 앵커 — 이 지점부터 잘라낸다.
 _TRAILING_ANCHORS = (
@@ -207,7 +227,7 @@ class GeminiExtractor:
         ask_btn.click()
 
         try:
-            chip_text = page.get_by_text(_SUMMARIZE_CHIP_TEXT, exact=False).first
+            chip_text = page.get_by_text(_SUMMARIZE_CHIP_RE).first
             chip_text.wait_for(state="visible", timeout=_RESPONSE_TIMEOUT_MS)
         except Exception:
             logger.info("'%s' 추천 칩 미발견", _SUMMARIZE_CHIP_TEXT)
@@ -241,11 +261,16 @@ class GeminiExtractor:
 
         retries = 0
         while (
-            (not summary or _ERROR_PHRASE in summary)
+            (not summary or _ERROR_PHRASE in summary or not self._looks_like_summary(summary))
             and retries < _MAX_ERROR_RETRIES
         ):
             retries += 1
-            reason = "오류 문구 감지" if summary and _ERROR_PHRASE in summary else "응답 없음"
+            if summary and _ERROR_PHRASE in summary:
+                reason = "오류 문구 감지"
+            elif summary and not self._looks_like_summary(summary):
+                reason = "요약 대신 메뉴/추천칩 감지"
+            else:
+                reason = "응답 없음"
             logger.info("Gemini 응답 재시도 %d/%d (%s)", retries, _MAX_ERROR_RETRIES, reason)
             try:
                 self._robust_click(chip)
@@ -254,11 +279,11 @@ class GeminiExtractor:
                 break
             summary = self._wait_for_summary(page, panel_handle, chip)
 
-        if summary and _ERROR_PHRASE not in summary:
+        if summary and _ERROR_PHRASE not in summary and self._looks_like_summary(summary):
             logger.info("Gemini 요약 추출 성공 (%d자)", len(summary))
             return summary
 
-        logger.info("Gemini 요약 추출 실패 — 응답이 없거나 오류 상태")
+        logger.info("Gemini 요약 추출 실패 — 응답이 없거나 오류/메뉴 상태")
         self._save_debug_screenshot(page)
         self._save_debug_html(page)
         return None
@@ -338,6 +363,24 @@ class GeminiExtractor:
                 body = body[:pos]
                 break
         return body.strip()
+
+    @staticmethod
+    def _looks_like_summary(text: str) -> bool:
+        """추출된 텍스트가 실제 요약 본문인지(추천칩/메뉴가 아닌지) 판정한다.
+
+        칩 클릭 후 요약이 생성되지 않고 추천 질문/메뉴만 다시 뜨는 경우, 그
+        정적 라벨 텍스트가 안정화 조건을 즉시 만족해 요약으로 오인될 수 있다.
+        이를 걸러내기 위해 (1) 메뉴 문구를 제거한 뒤 (2) 남은 본문의 길이로
+        판정한다. 보수적으로 판단해 정상 요약을 메뉴로 오판하지 않도록 한다.
+        """
+        if not text:
+            return False
+        residual = text
+        for phrase in _MENU_PHRASES:
+            residual = residual.replace(phrase, " ")
+        # 메뉴 라벨을 제거하고 공백을 정리한 뒤에도 충분한 본문이 남아야 요약.
+        residual = re.sub(r"\s+", " ", residual).strip()
+        return len(residual) >= _MIN_SUMMARY_LEN
 
     @classmethod
     def _wait_for_summary(cls, page, panel_handle, fallback_locator) -> str | None:

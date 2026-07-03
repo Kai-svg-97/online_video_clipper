@@ -164,11 +164,14 @@ QToolButton {{
 QToolButton:hover {{ color: {tok.accent_hover}; background: rgba(255,255,255,15); border-radius: 3px; }}
 QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 9pt; }}
 QSlider::groove:horizontal {{
-    height: 3px; background: transparent; border-radius: 1px;
+    height: 3px; background: rgba(255,255,255,28); border-radius: 1px;
     border: 1px solid rgba(255,255,255,40);
 }}
 QSlider::sub-page:horizontal {{
     height: 3px; background: {tok.progress_fg}; border-radius: 1px;
+}}
+QSlider::add-page:horizontal {{
+    height: 3px; background: rgba(255,255,255,38); border-radius: 1px;
 }}
 QSlider::handle:horizontal {{
     width: 10px; height: 10px;
