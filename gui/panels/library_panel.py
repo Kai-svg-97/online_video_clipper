@@ -3527,6 +3527,7 @@ class LibraryPanel(QWidget):
         playlist_vm=None,
         feed_vm=None,
         monitoring_vm=None,
+        song_vm=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -3536,6 +3537,7 @@ class LibraryPanel(QWidget):
         self._playlist_vm = playlist_vm
         self._feed_vm = feed_vm
         self._monitoring_vm = monitoring_vm
+        self._song_vm = song_vm
         self._all_tags: list = []
         self._active_tag_ids: set[UUID] = set()
         self._current_cat_id: UUID | None = None
@@ -3917,6 +3919,18 @@ class LibraryPanel(QWidget):
             self._on_detail_refresh_requested
         )
         self._detail_widget.category_path_clicked.connect(self._on_cat_filter_changed)
+
+        # 노래 탭 ↔ SongViewModel 배선
+        if self._song_vm is not None:
+            self._song_vm.song_info_changed.connect(self._detail_widget.set_song_info)
+            self._song_vm.busy_changed.connect(self._detail_widget.set_song_busy)
+            self._song_vm.error_occurred.connect(
+                lambda err: self._vm.error_occurred.emit(err)
+            )
+            self._detail_widget.song_field_saved.connect(self._song_vm.save_field)
+            self._detail_widget.song_lyrics_saved.connect(self._song_vm.save_lyrics)
+            self._detail_widget.song_refresh_requested.connect(self._song_vm.refresh)
+            self._detail_widget.song_flag_toggled.connect(self._song_vm.toggle_song)
 
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
         self._feed_grid.video_clicked.connect(self._open_stream_detail)
@@ -4592,6 +4606,8 @@ class LibraryPanel(QWidget):
         self._current_detail_payload = video_id
         self._nav_stack.setCurrentIndex(1)
         self._vm.request_thumbnail_refresh(video_id, detail.url)
+        if self._song_vm is not None:
+            self._song_vm.load(video_id)
 
     def _open_stream_detail(self, feed_dto) -> None:
         """구독 피드/채널의 스트리밍 영상 상세화면을 연다. 연관 목록 = 같은 채널의
@@ -4749,6 +4765,8 @@ class LibraryPanel(QWidget):
             self._detail_widget.load(
                 detail, tag_ids, related=related, category_path=cat_path or None
             )
+            if self._song_vm is not None:
+                self._song_vm.load(video_id)
         except Exception:
             logger.exception("상세 정보 재로드 실패: %s", video_id)
 

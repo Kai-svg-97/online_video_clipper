@@ -29,7 +29,9 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QDesktopServices, QFont, QFontMetrics, QImage
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -48,6 +50,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from application.song.dtos import SongInfoDTO
+from domain.song.value_objects import LyricsLine
 
 from application.library.dtos import FailedDownloadInfoDTO, VideoDetailDTO
 from gui.themes.manager import ThemeManager
@@ -488,6 +493,287 @@ class _AutoHeightPlainEdit(QPlainTextEdit):
         self._sync_height()
 
 
+class _DblClickLabel(QLabel):
+    """더블클릭 시 신호를 내는 QLabel — 노래 정보 필드 인라인 편집 진입용."""
+
+    double_clicked = pyqtSignal()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        self.double_clicked.emit()
+        super().mouseDoubleClickEvent(event)
+
+
+class _EditableField(QStackedWidget):
+    """더블클릭하면 QLineEdit로 바뀌어 편집, Enter/포커스아웃 시 저장하는 값 위젯.
+
+    가수/앨범/노래제목/발매년도 필드에 재사용한다. 값이 비면 '—'(muted)로 표시하고,
+    편집 가능(``editable``)일 때만 더블클릭이 편집을 연다.
+    """
+
+    edited = pyqtSignal(str)
+
+    def __init__(self, placeholder: str = "정보 없음", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._value = ""
+        self._editable = True
+        self._placeholder = placeholder
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        self._lbl = _DblClickLabel("—")
+        self._lbl.setWordWrap(True)
+        self._lbl.setToolTip("더블클릭하여 편집")
+        self._lbl.double_clicked.connect(self._enter_edit)
+        self.addWidget(self._lbl)
+
+        self._edit = QLineEdit()
+        self._edit.editingFinished.connect(self._commit)
+        self.addWidget(self._edit)
+        self.setCurrentWidget(self._lbl)
+        self._apply_theme()
+
+    def set_editable(self, editable: bool) -> None:
+        self._editable = editable
+        self._lbl.setToolTip("더블클릭하여 편집" if editable else "")
+
+    def set_value(self, value: str) -> None:
+        self._value = value or ""
+        self._render()
+        self.setCurrentWidget(self._lbl)
+
+    def _render(self) -> None:
+        tok = _t()
+        if self._value:
+            self._lbl.setText(html.escape(self._value))
+            self._lbl.setStyleSheet(f"color:{tok.text_primary};")
+        else:
+            self._lbl.setText(self._placeholder)
+            self._lbl.setStyleSheet(f"color:{tok.text_muted}; font-style:italic;")
+
+    def _enter_edit(self) -> None:
+        if not self._editable:
+            return
+        self._edit.setText(self._value)
+        self.setCurrentWidget(self._edit)
+        self._edit.setFocus()
+        self._edit.selectAll()
+
+    def _commit(self) -> None:
+        if self.currentWidget() is not self._edit:
+            return
+        new_val = self._edit.text().strip()
+        self.setCurrentWidget(self._lbl)
+        if new_val != self._value:
+            self._value = new_val
+            self._render()
+            self.edited.emit(new_val)
+
+    def _apply_theme(self) -> None:
+        self._render()
+
+
+class _SongTab(QWidget):
+    """상세화면 '노래' 탭 — 가수/앨범/제목/발매년도 + 가사(원문·한글 병행).
+
+    필드는 더블클릭으로 인라인 편집하고, 가사는 표시 영역 더블클릭 → 편집 모드
+    (원문 한 줄당 한 줄). ⟳로 정보를 재수집하고, '노래로 표시' 토글로 노래 여부를
+    수동 지정한다. 실제 저장·조회는 상위(VideoDetailWidget→LibraryPanel→SongViewModel)가
+    담당하며, 이 위젯은 신호만 방출한다.
+    """
+
+    field_edited = pyqtSignal(str, str)      # (field_key, value)
+    lyrics_edited = pyqtSignal(object)       # list[LyricsLine]
+    refresh_requested = pyqtSignal()
+    flag_toggled = pyqtSignal(bool)
+
+    _FIELDS = (
+        ("artist", "가수"),
+        ("album", "앨범"),
+        ("song_title", "노래 제목"),
+        ("release_year", "발매년도"),
+    )
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._editable = True
+        self._lyrics_lines: list[LyricsLine] = []
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
+
+        # 헤더: 제목 + 노래 토글 + 상태 + 갱신
+        header = QHBoxLayout()
+        header.addWidget(QLabel("<b>노래 정보</b>"))
+        header.addStretch()
+        self._flag_chk = QCheckBox("노래로 표시")
+        self._flag_chk.setToolTip("이 영상을 노래로 표시/해제")
+        self._flag_chk.toggled.connect(self._on_flag_toggled)
+        header.addWidget(self._flag_chk)
+        self._status_lbl = QLabel("")
+        self._status_lbl.setStyleSheet("font-size:9pt; color:#888;")
+        header.addWidget(self._status_lbl)
+        self._refresh_btn = QPushButton("⟳")
+        self._refresh_btn.setFixedSize(28, 28)
+        self._refresh_btn.setToolTip("노래 정보 갱신 (가사 출처 재조회)")
+        self._refresh_btn.clicked.connect(self.refresh_requested.emit)
+        header.addWidget(self._refresh_btn)
+        root.addLayout(header)
+
+        # 필드 그리드
+        grid_w = QWidget()
+        grid = QGridLayout(grid_w)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+        self._fields: dict[str, _EditableField] = {}
+        for row, (key, label) in enumerate(self._FIELDS):
+            name_lbl = QLabel(label)
+            name_lbl.setFixedWidth(64)
+            name_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-weight:bold;")
+            name_lbl.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            field = _EditableField()
+            field.edited.connect(lambda v, k=key: self.field_edited.emit(k, v))
+            grid.addWidget(name_lbl, row, 0)
+            grid.addWidget(field, row, 1)
+            self._fields[key] = field
+        root.addWidget(grid_w)
+
+        # 가사 헤더 (출처 + 편집 힌트)
+        lyr_header = QHBoxLayout()
+        lyr_header.addWidget(QLabel("<b>가사</b>"))
+        self._src_lbl = QLabel("")
+        self._src_lbl.setStyleSheet("font-size:8pt; color:#888;")
+        self._src_lbl.setOpenExternalLinks(True)
+        lyr_header.addWidget(self._src_lbl)
+        lyr_header.addStretch()
+        hint = QLabel("(더블클릭하여 편집)")
+        hint.setStyleSheet("font-size:8pt; color:#888;")
+        lyr_header.addWidget(hint)
+        root.addLayout(lyr_header)
+
+        # 가사 표시/편집 스택
+        self._lyrics_stack = QStackedWidget()
+        self._lyrics_scroll = QScrollArea()
+        self._lyrics_scroll.setWidgetResizable(True)
+        self._lyrics_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._lyrics_holder = QWidget()
+        self._lyrics_layout = QVBoxLayout(self._lyrics_holder)
+        self._lyrics_layout.setContentsMargins(4, 4, 4, 4)
+        self._lyrics_layout.setSpacing(2)
+        self._lyrics_scroll.setWidget(self._lyrics_holder)
+        self._lyrics_stack.addWidget(self._lyrics_scroll)     # index 0: 표시
+
+        self._lyrics_editor = QPlainTextEdit()
+        self._lyrics_editor.setPlaceholderText("가사를 입력하세요 (한 줄당 한 줄)…")
+        self._lyrics_stack.addWidget(self._lyrics_editor)     # index 1: 편집
+        root.addWidget(self._lyrics_stack, stretch=1)
+
+    # ── 채우기 ────────────────────────────────────────────────────
+    def set_editable(self, editable: bool) -> None:
+        """스트리밍 영상 등에서 편집을 막는다."""
+        self._editable = editable
+        self._flag_chk.setEnabled(editable)
+        self._refresh_btn.setEnabled(editable)
+        for f in self._fields.values():
+            f.set_editable(editable)
+
+    def set_busy(self, busy: bool) -> None:
+        self._status_lbl.setText("가사 불러오는 중…" if busy else "")
+        self._refresh_btn.setEnabled(self._editable and not busy)
+
+    def set_info(self, dto: SongInfoDTO | None) -> None:
+        is_song = bool(dto and dto.is_song)
+        self._flag_chk.blockSignals(True)
+        self._flag_chk.setChecked(is_song)
+        self._flag_chk.blockSignals(False)
+
+        self._fields["artist"].set_value(dto.artist if dto else "")
+        self._fields["album"].set_value(dto.album if dto else "")
+        self._fields["song_title"].set_value(dto.song_title if dto else "")
+        self._fields["release_year"].set_value(dto.release_year if dto else "")
+
+        # 출처 표시
+        if dto and dto.source_name:
+            if dto.source_url:
+                self._src_lbl.setText(
+                    f'· 출처: <a href="{html.escape(dto.source_url, quote=True)}">'
+                    f'{html.escape(dto.source_name)}</a>'
+                )
+            else:
+                self._src_lbl.setText(f"· 출처: {html.escape(dto.source_name)}")
+        else:
+            self._src_lbl.setText("")
+
+        self._lyrics_lines = list(dto.lyrics_lines) if dto else []
+        self._render_lyrics(dto)
+        self._lyrics_stack.setCurrentIndex(0)
+
+    def _render_lyrics(self, dto: SongInfoDTO | None) -> None:
+        _clear_layout(self._lyrics_layout)
+        if not dto or not dto.lyrics_lines:
+            msg = (
+                "가사 정보가 없습니다.\n⟳ 버튼으로 조회하거나 더블클릭하여 직접 입력하세요."
+                if (dto and dto.is_song)
+                else "노래로 표시하면 가사를 조회합니다."
+            )
+            empty = QLabel(msg)
+            empty.setStyleSheet("color:#888; padding:12px;")
+            empty.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            self._lyrics_layout.addWidget(empty)
+            self._lyrics_layout.addStretch()
+            return
+        tok = _t()
+        for line in dto.lyrics_lines:
+            if not line.original.strip() and not line.translation.strip():
+                spacer = QLabel(" ")
+                spacer.setFixedHeight(8)
+                self._lyrics_layout.addWidget(spacer)
+                continue
+            orig = QLabel(line.original or " ")
+            orig.setWordWrap(True)
+            orig.setStyleSheet(f"color:{tok.text_primary}; font-size:10pt;")
+            self._lyrics_layout.addWidget(orig)
+            if line.translation:
+                trans = QLabel(line.translation)
+                trans.setWordWrap(True)
+                trans.setStyleSheet(f"color:{tok.text_secondary}; font-size:9pt;")
+                self._lyrics_layout.addWidget(trans)
+        self._lyrics_layout.addStretch()
+
+    # ── 편집 상호작용 ─────────────────────────────────────────────
+    def lyrics_viewport(self):
+        return self._lyrics_scroll.viewport()
+
+    def enter_lyrics_edit(self) -> None:
+        if not self._editable:
+            return
+        text = "\n".join(ln.original for ln in self._lyrics_lines)
+        self._lyrics_editor.setPlainText(text)
+        self._lyrics_stack.setCurrentIndex(1)
+        self._lyrics_editor.setFocus()
+
+    def lyrics_editor(self):
+        return self._lyrics_editor
+
+    def commit_lyrics_edit(self) -> None:
+        if self._lyrics_stack.currentIndex() != 1:
+            return
+        text = self._lyrics_editor.toPlainText()
+        self._lyrics_stack.setCurrentIndex(0)
+        new_lines = [LyricsLine(original=ln, translation="") for ln in text.split("\n")]
+        old_originals = [ln.original for ln in self._lyrics_lines]
+        if [ln.original for ln in new_lines] != old_originals:
+            self._lyrics_lines = new_lines
+            self.lyrics_edited.emit(new_lines)
+
+    def _on_flag_toggled(self, checked: bool) -> None:
+        if self._editable:
+            self.flag_toggled.emit(checked)
+
+
 class VideoDetailWidget(QWidget):
     """Full video detail view (embedded, not a dialog).
 
@@ -507,11 +793,16 @@ class VideoDetailWidget(QWidget):
     gemini_summary_saved    = pyqtSignal(object, str)   # (video_id, summary)
     downloads_refresh_requested = pyqtSignal(object)    # video_id
     detail_refresh_requested    = pyqtSignal(object)    # video_id — 제목행 ⟳ 버튼
+    song_field_saved            = pyqtSignal(object, str, str)  # (video_id, field, value)
+    song_lyrics_saved           = pyqtSignal(object, object)    # (video_id, list[LyricsLine])
+    song_refresh_requested      = pyqtSignal(object)    # video_id — 노래 탭 ⟳
+    song_flag_toggled           = pyqtSignal(object, bool)      # (video_id, is_song)
 
     # 하단 탭 인덱스
     _TAB_INFO = 0       # 설명(태그~메모)
     _TAB_SUMMARY = 1
     _TAB_FILES = 2      # 다운로드 + 클립 병합
+    _TAB_SONG = 3       # 노래(가수·앨범·제목·가사)
 
     # 요약 렌더링 줄 간격(px) — Gemini 요약은 개행이 촘촘해 단락 여백을 벌려 읽기 편하게 한다.
     _SUMMARY_LINE_GAP = 1
@@ -718,6 +1009,14 @@ class VideoDetailWidget(QWidget):
         files_split.setStretchFactor(1, 1)
         self._tabs.addTab(_wrap(files_split), "다운로드 / 클립")
 
+        # 탭3: 노래 (가수·앨범·제목·가사)
+        self._song_tab = _SongTab()
+        self._song_tab.field_edited.connect(self._on_song_field_edited)
+        self._song_tab.lyrics_edited.connect(self._on_song_lyrics_edited)
+        self._song_tab.refresh_requested.connect(self._on_song_refresh)
+        self._song_tab.flag_toggled.connect(self._on_song_flag_toggled)
+        self._tabs.addTab(_wrap(self._song_tab), "노래")
+
         self._tabs.currentChanged.connect(self._on_tab_changed)
         left_layout.addWidget(self._tabs, stretch=1)
 
@@ -769,10 +1068,20 @@ class VideoDetailWidget(QWidget):
             ):
                 self._enter_summary_edit()
                 return True
+            # 가사 표시 영역 더블클릭 → 편집 모드 진입(로컬 영상만)
+            if (
+                obj is self._song_tab.lyrics_viewport()
+                and not self._streaming
+                and self._detail is not None
+            ):
+                self._song_tab.enter_lyrics_edit()
+                return True
         elif et == QEvent.Type.FocusOut:
             # 요약 편집기 포커스 아웃 → 저장 후 표시 모드 복귀
             if obj is self._summary_editor:
                 self._commit_summary_edit()
+            elif obj is self._song_tab.lyrics_editor():
+                self._song_tab.commit_lyrics_edit()
         return False
 
     # ── Populate ───────────────────────────────────────────────────
@@ -836,6 +1145,12 @@ class VideoDetailWidget(QWidget):
         if self._clip_vm is not None:
             self._clip_vm.load_clips(detail.id)
 
+        # 노래 탭 — 편집 가능. 실제 데이터는 LibraryPanel이 SongViewModel로 로드해
+        # set_song_info로 채운다. 여기선 잠정적으로 비운다(이전 영상 잔상 방지).
+        self._song_tab.set_editable(True)
+        self._song_tab.set_busy(False)
+        self._song_tab.set_info(None)
+
         self._btn_refresh.setEnabled(True)
         self.set_related(related or [])
 
@@ -882,6 +1197,11 @@ class VideoDetailWidget(QWidget):
         self._clip_tab_layout.addWidget(info)
         self._clip_tab_layout.addStretch()
         self._tabs.setCurrentIndex(self._TAB_FILES)
+
+        # 노래 탭 — 스트리밍은 편집/조회 불가
+        self._song_tab.set_editable(False)
+        self._song_tab.set_busy(False)
+        self._song_tab.set_info(None)
 
         self._btn_refresh.setEnabled(False)  # 스트리밍은 안정적 id 없음
         self.set_related(related or [])
@@ -1254,8 +1574,9 @@ class VideoDetailWidget(QWidget):
         dl_layout.addStretch()
 
     def _set_tabs_enabled(self, local: bool) -> None:
-        """스트리밍 모드면 요약 탭 비활성(메모·클립은 병합 탭/스크롤로 이동)."""
+        """스트리밍 모드면 요약·노래 탭 비활성(안정적 영상 id가 없어 편집 불가)."""
         self._tabs.setTabEnabled(self._TAB_SUMMARY, local)
+        self._tabs.setTabEnabled(self._TAB_SONG, local)
 
     # ── 연관 영상 ──────────────────────────────────────────────────
 
@@ -1510,6 +1831,30 @@ class VideoDetailWidget(QWidget):
         """상세 정보 갱신(⟳) 진행 표시 — 버튼 비활성 + 툴팁 변경."""
         self._btn_refresh.setEnabled(not busy)
         self._btn_refresh.setToolTip("갱신 중… (YouTube에서 정보 가져오는 중)" if busy else "상세 정보 갱신")
+
+    # ── 노래 탭 (외부=LibraryPanel/SongViewModel이 데이터 주입) ─────────
+    def set_song_info(self, dto) -> None:
+        """SongViewModel이 로드/갱신한 노래 정보를 노래 탭에 반영한다."""
+        self._song_tab.set_info(dto)
+
+    def set_song_busy(self, busy: bool) -> None:
+        self._song_tab.set_busy(busy)
+
+    def _on_song_field_edited(self, field: str, value: str) -> None:
+        if self._detail is not None and not self._streaming:
+            self.song_field_saved.emit(self._detail.id, field, value)
+
+    def _on_song_lyrics_edited(self, lines: object) -> None:
+        if self._detail is not None and not self._streaming:
+            self.song_lyrics_saved.emit(self._detail.id, lines)
+
+    def _on_song_refresh(self) -> None:
+        if self._detail is not None and not self._streaming:
+            self.song_refresh_requested.emit(self._detail.id)
+
+    def _on_song_flag_toggled(self, is_song: bool) -> None:
+        if self._detail is not None and not self._streaming:
+            self.song_flag_toggled.emit(self._detail.id, is_song)
 
     def _on_play_failed(self, err: str) -> None:
         if self._current_url:

@@ -368,6 +368,113 @@ class _HiddenTagsSection(QWidget):
 # ---------------------------------------------------------------------------
 
 
+class _LyricsSourcesSection(QWidget):
+    """가사·메타데이터 출처(사이트) 관리형 목록 — 활성/순서/추가/삭제.
+
+    노래 상세 탭이 가사를 조회할 때 이 목록을 priority 순으로 순회한다. 사용자가
+    출처를 켜고/끄고, 순서를 바꾸고, 커스텀 출처를 추가할 수 있게 한다(확장 가능).
+    """
+
+    def __init__(self, song_vm, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._vm = song_vm
+        self._ordered_ids: list = []
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(8)
+
+        self._rows_holder = QWidget()
+        self._rows_layout = QVBoxLayout(self._rows_holder)
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.setSpacing(4)
+        root.addWidget(self._rows_holder)
+
+        add_row = QHBoxLayout()
+        add_row.setSpacing(6)
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("이름 (예: 가사위키)")
+        self._key_edit = QLineEdit()
+        self._key_edit.setPlaceholderText("provider_key (lrclib/genius/melon/bugs/genie)")
+        add_btn = QPushButton("추가")
+        add_btn.clicked.connect(self._on_add)
+        add_row.addWidget(self._name_edit, 2)
+        add_row.addWidget(self._key_edit, 2)
+        add_row.addWidget(add_btn)
+        root.addLayout(add_row)
+
+        hint = QLabel(
+            "위에서 아래 순서로 조회하며 부족한 항목을 채웁니다. 체크 해제 시 건너뜁니다."
+        )
+        hint.setStyleSheet("font-size: 10px; color: #555;")
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        if self._vm is not None:
+            self._vm.sources_changed.connect(self.reload)
+        self.reload()
+
+    def reload(self) -> None:
+        while self._rows_layout.count():
+            item = self._rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if self._vm is None:
+            return
+        sources = self._vm.list_lyrics_sources()
+        self._ordered_ids = [s.id for s in sources]
+        for idx, s in enumerate(sources):
+            self._rows_layout.addWidget(self._build_row(idx, s, len(sources)))
+
+    def _build_row(self, idx: int, src, total: int) -> QWidget:
+        tok = _t()
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(6, 2, 6, 2)
+        rl.setSpacing(8)
+
+        chk = QCheckBox()
+        chk.setChecked(src.enabled)
+        chk.setToolTip("이 출처 사용")
+        chk.toggled.connect(lambda on, sid=src.id: self._vm.update_lyrics_source(sid, enabled=on))
+        rl.addWidget(chk)
+
+        name = QLabel(f"{src.name}  ·  {src.provider_key}")
+        name.setStyleSheet(f"font-size: 11px; color: {tok.text_primary};")
+        rl.addWidget(name, 1)
+
+        up = QPushButton("▲")
+        up.setFixedSize(24, 24)
+        up.setEnabled(idx > 0)
+        up.clicked.connect(lambda _, i=idx: self._move(i, -1))
+        rl.addWidget(up)
+        down = QPushButton("▼")
+        down.setFixedSize(24, 24)
+        down.setEnabled(idx < total - 1)
+        down.clicked.connect(lambda _, i=idx: self._move(i, +1))
+        rl.addWidget(down)
+        dele = QPushButton("삭제")
+        dele.setFixedHeight(24)
+        dele.clicked.connect(lambda _, sid=src.id: self._vm.delete_lyrics_source(sid))
+        rl.addWidget(dele)
+        return row
+
+    def _move(self, idx: int, delta: int) -> None:
+        ids = list(self._ordered_ids)
+        j = idx + delta
+        if 0 <= j < len(ids):
+            ids[idx], ids[j] = ids[j], ids[idx]
+            self._vm.reorder_lyrics_sources(ids)
+
+    def _on_add(self) -> None:
+        name = self._name_edit.text().strip()
+        key = self._key_edit.text().strip()
+        if not name or not key:
+            return
+        self._vm.add_lyrics_source(name, key)
+        self._name_edit.clear()
+        self._key_edit.clear()
+
+
 class SettingsPanel(QWidget):
     """설정 패널 (인라인, QDialog 아님)."""
 
@@ -380,11 +487,13 @@ class SettingsPanel(QWidget):
         self,
         get_tags_fn: Callable | None = None,
         yt_oauth=None,   # YouTubeOAuthAdapter | None
+        song_vm=None,    # SongViewModel | None
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._get_tags_fn = get_tags_fn
         self._yt_oauth = yt_oauth
+        self._song_vm = song_vm
         self._theme_cards: dict[str, _ThemeCard] = {}
         self._yt_auth_worker = None
         self._pending_dto = None
@@ -680,6 +789,24 @@ class SettingsPanel(QWidget):
             no_tags_lbl.setStyleSheet("font-size: 10px; color: #555;")
             layout.addWidget(no_tags_lbl)
             self._hidden_tags_section = None
+
+        # ── 가사 출처 관리 섹션 (노래 탭 가사 조회 순서/사용여부) ──
+        if self._song_vm is not None:
+            layout.addSpacing(24)
+            sep_lyr = QFrame()
+            sep_lyr.setFrameShape(QFrame.Shape.HLine)
+            sep_lyr.setStyleSheet("color: #1a1a1a;")
+            layout.addWidget(sep_lyr)
+            layout.addSpacing(24)
+            lyr_label = QLabel("가사 출처 관리")
+            lyr_label.setStyleSheet(
+                "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+                "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+            )
+            layout.addWidget(lyr_label)
+            layout.addSpacing(10)
+            self._lyrics_sources_section = _LyricsSourcesSection(self._song_vm)
+            layout.addWidget(self._lyrics_sources_section)
 
         # ── YouTube API 연동 섹션 ──
         layout.addSpacing(20)

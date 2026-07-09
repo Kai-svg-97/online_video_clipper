@@ -121,6 +121,9 @@ def main() -> int:
     from infrastructure.persistence.sqlite_channel_repository import SqliteChannelRepository
     from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
     from infrastructure.ffmpeg.ffmpeg_adapter import FfmpegAdapter
+    from infrastructure.persistence.sqlite_song_repository import SqliteSongRepository
+    from infrastructure.song.lyrics_providers import build_default_providers
+    from infrastructure.song.translator import DeepTranslatorAdapter
 
     from domain.download.aggregates import DownloadQueueAggregate
 
@@ -151,6 +154,17 @@ def main() -> int:
         LibraryStatsHandler,
         SearchVideosHandler,
     )
+    from application.song.commands import (
+        AddLyricsSourceHandler,
+        DeleteLyricsSourceHandler,
+        FetchSongInfoHandler,
+        ReorderLyricsSourcesHandler,
+        SetSongFlagHandler,
+        UpdateLyricsSourceHandler,
+        UpdateSongFieldHandler,
+        UpdateSongLyricsHandler,
+    )
+    from application.song.queries import GetSongInfoHandler, ListLyricsSourcesHandler
     from application.download.commands import CancelDownloadHandler, StartDownloadHandler
     from application.download.event_bridge import DownloadEventBridge
     from application.download.queries import GetDownloadHistoryHandler, GetDownloadQueueHandler
@@ -209,6 +223,7 @@ def main() -> int:
     from gui.view_models.library_vm import LibraryViewModel
     from gui.view_models.monitoring_vm import MonitoringViewModel
     from gui.view_models.playlist_vm import PlaylistViewModel
+    from gui.view_models.song_vm import SongViewModel
 
     # 5. Initialize database
     db = Database()
@@ -221,6 +236,7 @@ def main() -> int:
     channel_repo  = SqliteChannelRepository(db)
     playlist_repo  = SqlitePlaylistRepository(db)
     folder_repo    = SqlitePlaylistFolderRepository(db)
+    song_repo      = SqliteSongRepository(db)
 
     # 7. Infrastructure services
     event_bus    = EventBus()
@@ -228,12 +244,21 @@ def main() -> int:
     yt_oauth     = YouTubeOAuthAdapter(db)
     ffmpeg       = FfmpegAdapter()
     auth_service = YouTubeAuthService()
+    lyrics_providers = build_default_providers()
+    translator       = DeepTranslatorAdapter()
 
     # 8. Download queue (in-memory aggregate)
     dl_queue = DownloadQueueAggregate()
 
     # 9. Application handlers — Library
-    add_video           = AddVideoHandler(video_repo, event_bus, ytdlp)
+    # 노래 정보 조회 핸들러 — AddVideoHandler가 등록 시 노래 감지·메타데이터 기록에 사용.
+    fetch_song = FetchSongInfoHandler(
+        song_repo, video_repo, event_bus,
+        lyrics_providers=lyrics_providers,
+        translator=translator,
+        media_source=ytdlp,
+    )
+    add_video           = AddVideoHandler(video_repo, event_bus, ytdlp, song_fetch=fetch_song)
     update_video        = UpdateVideoHandler(video_repo, event_bus)
     delete_video        = DeleteVideoHandler(video_repo, event_bus)
     mark_watched        = MarkWatchedHandler(video_repo, event_bus)
@@ -397,6 +422,19 @@ def main() -> int:
         import_yt_handler=import_yt_subs_h,
         auth_service=auth_service,
     )
+    # 노래 정보 뷰모델 (상세화면 '노래' 탭 + 가사 출처 관리)
+    song_vm = SongViewModel(
+        get_song_info=GetSongInfoHandler(song_repo),
+        fetch_song=fetch_song,
+        set_flag=SetSongFlagHandler(song_repo, event_bus),
+        update_field=UpdateSongFieldHandler(song_repo, event_bus),
+        update_lyrics=UpdateSongLyricsHandler(song_repo, event_bus),
+        list_sources=ListLyricsSourcesHandler(song_repo),
+        add_source=AddLyricsSourceHandler(song_repo),
+        update_source=UpdateLyricsSourceHandler(song_repo),
+        delete_source=DeleteLyricsSourceHandler(song_repo),
+        reorder_sources=ReorderLyricsSourcesHandler(song_repo),
+    )
 
     # 16. Launch GUI
     window = MainWindow(
@@ -406,6 +444,7 @@ def main() -> int:
         feed_vm=feed_vm,
         auth_service=auth_service,
         yt_oauth=yt_oauth,
+        song_vm=song_vm,
     )
 
     # 자동 업데이트 — composition root에서 조립

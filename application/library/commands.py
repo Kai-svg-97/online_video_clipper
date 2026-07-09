@@ -70,10 +70,14 @@ class AddVideoHandler:
         repo: IVideoRepository,
         event_bus: IEventBus,
         ytdlp: IMediaSource | None = None,
+        song_fetch: "object | None" = None,
     ) -> None:
         self._repo = repo
         self._bus = event_bus
         self._ytdlp = ytdlp
+        # 등록 시 노래 감지·메타데이터 기록용 FetchSongInfoHandler (선택 주입).
+        # 가사(외부 네트워크)는 대량 임포트를 막지 않도록 상세 진입 시 조회한다.
+        self._song_fetch = song_fetch
 
     def handle(self, cmd: AddVideoCommand) -> VideoAggregate:
         title: str = cmd.url
@@ -84,6 +88,7 @@ class AddVideoHandler:
         meta_tags: list[str] = []
         thumbnail_url: str = ""
         description: str = ""
+        music_meta: dict = {}   # yt-dlp 조회 시 노래 감지·메타데이터 추출용
 
         # 사전 수집 메타데이터가 있으면 yt-dlp 개별 조회를 생략한다
         _has_prefetch = bool(cmd.prefetched_title or cmd.prefetched_thumbnail_url)
@@ -133,6 +138,12 @@ class AddVideoHandler:
                 meta_tags = list(dict.fromkeys(
                     t.strip() for t in raw_tags if isinstance(t, str) and t.strip()
                 ))
+                # 노래 감지·기본 메타데이터 추출 (등록 시 기록용)
+                try:
+                    from application.song.commands import _music_meta_from_info  # noqa: PLC0415
+                    music_meta = _music_meta_from_info(info)
+                except Exception:
+                    logger.debug("노래 메타데이터 추출 건너뜀")
             except Exception:
                 logger.exception("유튜브 메타데이터 조회 실패")  # proceed with URL-as-title if metadata fetch fails
 
@@ -167,6 +178,7 @@ class AddVideoHandler:
                 existing.update_metadata(gemini_summary=cmd.initial_gemini_summary)
             self._repo.save(existing)
             self._bus.publish_all(existing.pull_events())
+            self._register_song(existing.id, music_meta)
             return existing
 
         # New video
@@ -194,7 +206,25 @@ class AddVideoHandler:
 
         self._repo.save(agg)
         self._bus.publish_all(agg.pull_events())
+        self._register_song(agg.id, music_meta)
         return agg
+
+    def _register_song(self, video_id: UUID, music_meta: dict) -> None:
+        """등록 시 노래 감지·기본 메타데이터를 기록한다(가사 네트워크 조회 생략).
+
+        실패는 완전히 격리해 영상 등록 결과에 영향을 주지 않는다.
+        """
+        if self._song_fetch is None or not music_meta:
+            return
+        try:
+            from application.song.commands import FetchSongInfoCommand  # noqa: PLC0415
+            self._song_fetch.handle(
+                FetchSongInfoCommand(
+                    video_id=video_id, prefetch=music_meta, fetch_lyrics=False
+                )
+            )
+        except Exception:
+            logger.exception("노래 정보 등록 실패(무시): %s", video_id)
 
 
 class UpdateVideoHandler:

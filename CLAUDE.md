@@ -35,6 +35,7 @@ All development follows DDD principles:
 | Local storage | SQLite via `sqlite3` (stdlib) | FTS5 for full-text search |
 | YouTube API | `google-api-python-client`, `google-auth-oauthlib`, `google-auth-httplib2` | OAuth 2.0 인증 + YouTube Data API v3 |
 | Config | `PyYAML` | 테마 등 사용자 설정 영속화 |
+| 번역 | `deep-translator` | 비한국어 가사 → 한글 자동 번역(무키 Google 웹번역, 미설치 시 graceful) |
 | Dev / Test | `pytest`, `pytest-qt` | GUI 스모크 테스트 포함 (`tests/gui/`) |
 | Dev / Build | `ruff`, `pyinstaller` | 린트·포맷·패키징 |
 
@@ -125,12 +126,20 @@ online_video_clipper/
 │   │   ├── repositories.py          # IClipRepository
 │   │   └── events.py                # ClipCreated
 │   │
-│   └── monitoring/                  # [Bounded Context] Channel subscription & monitoring
-│       ├── entities.py              # ChannelSubscription
-│       ├── value_objects.py         # MonitoringRule (keyword/duration filter)
-│       ├── aggregates.py            # ChannelMonitorAggregate (root)
-│       ├── repositories.py          # IChannelRepository
-│       └── events.py                # NewVideoDetected
+│   ├── monitoring/                  # [Bounded Context] Channel subscription & monitoring
+│   │   ├── entities.py              # ChannelSubscription
+│   │   ├── value_objects.py         # MonitoringRule (keyword/duration filter)
+│   │   ├── aggregates.py            # ChannelMonitorAggregate (root)
+│   │   ├── repositories.py          # IChannelRepository
+│   │   └── events.py                # NewVideoDetected
+│   │
+│   └── song/                        # [Bounded Context] 노래 정보 (Video와 1:1)
+│       ├── value_objects.py         # LyricsLine(원문+한글번역), SongSourceRef
+│       ├── entities.py              # SongInfo(가수·앨범·제목·발매년도·가사·is_song·manual_fields) + LyricsSource(출처 레지스트리)
+│       ├── aggregates.py            # SongInfoAggregate — apply_fetched(수동편집 보존)·edit_field·edit_lyrics
+│       ├── repositories.py          # ISongRepository (+ 가사 출처 CRUD)
+│       ├── ports.py                 # ILyricsProvider·ITranslator(Protocol) + LyricsResult
+│       └── events.py                # SongInfoUpdated
 │
 ├── application/                     # Application layer — use cases (commands & queries)
 │   ├── library/
@@ -142,9 +151,13 @@ online_video_clipper/
 │   ├── clip/
 │   │   ├── commands.py              # ExtractClip, DeleteClip
 │   │   └── queries.py               # GetClips
-│   └── monitoring/
-│       ├── commands.py              # SubscribeChannel, UnsubscribeChannel, SetMonitoringRule
-│       └── queries.py               # GetSubscriptions
+│   ├── monitoring/
+│   │   ├── commands.py              # SubscribeChannel, UnsubscribeChannel, SetMonitoringRule
+│   │   └── queries.py               # GetSubscriptions
+│   └── song/
+│       ├── dtos.py                  # SongInfoDTO, LyricsLineDTO, LyricsSourceDTO
+│       ├── commands.py              # FetchSongInfo(출처 체인+번역), UpdateSongField/Lyrics, SetSongFlag, 가사출처 CRUD
+│       └── queries.py               # GetSongInfo, ListLyricsSources
 │
 ├── infrastructure/                  # Concrete implementations (invert dependencies)
 │   ├── persistence/
@@ -153,7 +166,8 @@ online_video_clipper/
 │   │   ├── sqlite_download_repository.py
 │   │   ├── sqlite_clip_repository.py
 │   │   ├── sqlite_channel_repository.py
-│   │   └── sqlite_playlist_repository.py  # 재생목록 + 폴더 저장소
+│   │   ├── sqlite_playlist_repository.py  # 재생목록 + 폴더 저장소
+│   │   └── sqlite_song_repository.py      # song_info(가사 JSON) + lyrics_sources 저장소
 │   ├── downloader/
 │   │   └── ytdlp_adapter.py         # yt-dlp 래퍼 — domain.shared.ports.IMediaSource를 구조적으로 만족
 │   ├── ffmpeg/
@@ -165,6 +179,9 @@ online_video_clipper/
 │   ├── youtube/
 │   │   ├── oauth_adapter.py         # OAuth 2.0 토큰 발급/갱신
 │   │   └── youtube_api_adapter.py   # YouTube Data API v3 래퍼 (requests.Session)
+│   ├── song/
+│   │   ├── lyrics_providers.py      # LRCLIB(무키)·Genius·멜론·벅스·지니 가사 제공자 + build_default_providers (QThread에서만 호출)
+│   │   └── translator.py            # deep-translator 래퍼(ITranslator) — 미설치/실패 시 원문 그대로(graceful)
 │   └── event_bus.py                 # In-process event dispatcher
 │
 ├── gui/                             # Presentation layer (PyQt6, MVVM)
@@ -175,8 +192,8 @@ online_video_clipper/
 │   │   ├── feed_panel.py            # 피드 카드 부품(_FeedGrid·_FeedCard: 썸네일 좌하단 채널 배지·리사이즈 reflow, **단일 클릭→`video_clicked`(FeedVideoDTO) 방출**, 인라인 추가버튼 제거·우클릭 메뉴로 일원화) + 채널 카드 부품(_ChannelGrid·_ChannelCard: 아바타·구독자/영상수에 더해 **"최근 영상 N일 전"** 라벨=`latest_video_published_at`) + 연관영상 행에서 재사용하는 `_RoundedThumbLabel`·`_ThumbLoader` 정의 — library_panel/video_detail_panel이 재사용. `_FeedCard`·`_ChannelCard`는 `_relative_time`(YYYYMMDD·ISO·`Z` 처리)로 등록 시점을 상대시간 표기. (구버전 FeedPanel 컨테이너는 더 이상 사이드바 메뉴로 노출되지 않음)
 │   │   ├── monitoring_panel.py      # 채널 구독 & 모니터링 규칙 관리
 │   │   ├── stats_panel.py           # 라이브러리 통계 대시보드
-│   │   ├── video_detail_panel.py    # YouTube 시청 페이지형 상세화면 — 좌(상단 행: `‹`뒤로+브레드크럼(`_crumb_bar`) 같은 줄 → **상단 고정 플레이어**(stretch 없이 16:9 자연 높이라 여백 없음; 창이 넓어지면 커지고 탭이 남는 공간 흡수) → **제목 행**(제목 `_title_lbl` + 우측 정렬 아이콘 `⟳`상세갱신·`🌐`브라우저) → **메타 행**(`_meta_layout`: 채널·조회수·등록일·재생시간 + 상태) → **하단 탭 3개**(stretch=1)) | 우(`_RelatedList` 연관영상). 탭: `_TAB_INFO`(설명)·`_TAB_SUMMARY`(요약, 헤더 행에 `⟳` 아이콘 갱신 버튼)·`_TAB_FILES`(다운로드/클립 병합 — 수직 `QSplitter`, 위=`_dl_tab` 아래=`_clip_tab_widget`). **설명 탭 레이아웃**(탭 자체 스크롤 없음 — 영속 위젯 세로 스택 `info_col`): `_tags_header`+`_tags_scroll`(태그) → `_tag_add_container`(태그 추가) → `_desc_header`+`_desc_view`(설명) → `_notes_header`+`_notes_edit`(메모) → 맨 아래 `addStretch(1)`. **태그**는 `_TagChip`(글자 길이만큼 Fixed 폭) + `_FlowLayout`(폭에 맞춰 줄바꿈하는 실제 `QLayout` 서브클래스)로 흐르고 `_tags_scroll`(QScrollArea)로 감싸 **최대 3줄까지만 보이고 초과분은 스크롤**한다(`_fit_tags_scroll`이 내용 높이에 맞추되 3줄로 상한). **설명**(`_desc_view` = `_AutoHeightBrowser`)은 내용 높이를 `sizeHint`로 노출해 **남는 세로 공간을 최대로 활용**(설명이 길수록 넓게)하고 공간이 부족할 때만 자체 스크롤한다 — 짧으면 내용 높이에 딱 맞고(맨 아래 stretch가 여백 흡수) 길면 영역을 최대로 차지(그때만 스크롤)하므로 스크롤이 최소화된다. **메모**(`_notes_edit` = `_AutoHeightPlainEdit`)는 설명 바로 아래에서 1~5줄 자동 높이로 **최소 높이가 항상 보장**된다(고정 높이라 설명이 아무리 길어도 안 밀림). `load`(로컬)/`load_stream`(스트리밍: 요약 탭+제목행 `⟳` 비활성) + `set_related`. `_build_info`는 `_meta_layout`만 `_clear_layout`로 재빌드하고 나머지(태그·설명·메모)는 **영속 위젯을 갱신**한다(`_tags_holder_layout`·`_tag_add_layout` clear 후 재구성, `_desc_view.setHtml`, 없으면 `setVisible(False)`). 제목은 `_title_lbl.setText()`, 메모는 `_notes_edit`로 세팅. 설명·요약은 `_render_timestamped_html`로 **마크다운 서식**(제목 `#`, 굵게 `**`/`__`, 기울임 `*`, 불릿 `-`/`*`/`•`/`·`, 번호 `1.`/`1)`, 선행 공백 들여쓰기)을 HTML로 렌더하며 타임스탬프(MM:SS/HH:MM:SS) seek 링크·URL 링크도 유지한다(`_on_summary_anchor_clicked`→`InlinePlayer.seek_to_ms` / 브라우저). URL은 escape/서식 적용 전에 분리해 보존한다. **`line_gap`(px) 인자로 줄마다 하단 여백을 준다** — 설명은 원문에 빈 줄 단락 구분이 있어 0(조밀)이지만, Gemini 요약은 개행이 촘촘해 `_SUMMARY_LINE_GAP`(=8)을 줘 단락·개행 간격을 벌려 읽기 편하게 한다(요약 렌더 3곳 모두 적용). **별도 "챕터" 섹션은 설명 속 타임라인과 중복되므로 제거하고 설명 하나로 병합**(기존 `_parse_chapters`·`_on_chapter_clicked` 삭제됨). `RelatedItem` dataclass + `item_selected` 시그널. **연관영상 행(`_RelatedRow`)**은 제목을 최대 3줄까지 표시(9pt, `AlignTop`, `maximumHeight=lineSpacing*3`)하고 채널명·조회수·등록시기는 7pt로 1pt 줄여 title과 사이에 stretch를 둬 **행 아래쪽에 배치**(제목 가림 최소화). 요약 탭은 `gemini_summary`를 표시(`_summary_edit`)/편집(`_summary_editor`) **`QStackedWidget`(`_summary_stack`)** 2단으로 두고 **표시 영역 더블클릭→편집 모드**(`eventFilter`가 `_summary_edit.viewport()`의 `MouseButtonDblClick` 감지→`_enter_summary_edit`), **편집기 포커스 아웃→저장**(`_commit_summary_edit`이 변경 시 `_summary_raw` 갱신·재렌더 후 `gemini_summary_saved` 방출). ⟳ 버튼으로 `_GeminiSummaryWorker`(QThread) → `GeminiExtractor` 호출 → `gemini_summary_saved` 방출. 요약 원문은 `_summary_raw`에 보관(편집 대상). 제목행 `⟳`(상세 정보 갱신)는 `detail_refresh_requested(video_id)` 방출 → `LibraryPanel._on_detail_refresh_requested`가 `_vm.refresh_video_metadata(video_id)`로 **YouTube(yt-dlp)에서 메타데이터를 백그라운드 재수집**하고 `set_refresh_busy(True)`(⟳ 비활성). 완료 시 VM이 `video_metadata_refreshed(video_id, ok)` 방출 → `_on_video_metadata_refreshed`가 현재 그 영상 상세가 열려 있으면(`current_detail_id()` 일치) `_reload_detail_in_place`로 DB 최신 상세를 재로드(nav 히스토리 미변경). **과거에는 `get_video_detail`로 DB만 재조회해 저장된 오래된/부실(예: `extract_flat` 캡처) 메타데이터가 그대로여서 유튜브 웹과 달랐음** — 이제 실제 재수집으로 제목·설명·조회수·게시일·태그·썸네일을 웹 기준으로 갱신한다.
-│   │   ├── settings_panel.py        # 전체 설정 패널 (다운로드 경로, 테마 등)
+│   │   ├── video_detail_panel.py    # YouTube 시청 페이지형 상세화면 — 좌(상단 행: `‹`뒤로+브레드크럼(`_crumb_bar`) 같은 줄 → **상단 고정 플레이어**(stretch 없이 16:9 자연 높이라 여백 없음; 창이 넓어지면 커지고 탭이 남는 공간 흡수) → **제목 행**(제목 `_title_lbl` + 우측 정렬 아이콘 `⟳`상세갱신·`🌐`브라우저) → **메타 행**(`_meta_layout`: 채널·조회수·등록일·재생시간 + 상태) → **하단 탭 3개**(stretch=1)) | 우(`_RelatedList` 연관영상). 탭: `_TAB_INFO`(설명)·`_TAB_SUMMARY`(요약, 헤더 행에 `⟳` 아이콘 갱신 버튼)·`_TAB_FILES`(다운로드/클립 병합 — 수직 `QSplitter`, 위=`_dl_tab` 아래=`_clip_tab_widget`). **설명 탭 레이아웃**(탭 자체 스크롤 없음 — 영속 위젯 세로 스택 `info_col`): `_tags_header`+`_tags_scroll`(태그) → `_tag_add_container`(태그 추가) → `_desc_header`+`_desc_view`(설명) → `_notes_header`+`_notes_edit`(메모) → 맨 아래 `addStretch(1)`. **태그**는 `_TagChip`(글자 길이만큼 Fixed 폭) + `_FlowLayout`(폭에 맞춰 줄바꿈하는 실제 `QLayout` 서브클래스)로 흐르고 `_tags_scroll`(QScrollArea)로 감싸 **최대 3줄까지만 보이고 초과분은 스크롤**한다(`_fit_tags_scroll`이 내용 높이에 맞추되 3줄로 상한). **설명**(`_desc_view` = `_AutoHeightBrowser`)은 내용 높이를 `sizeHint`로 노출해 **남는 세로 공간을 최대로 활용**(설명이 길수록 넓게)하고 공간이 부족할 때만 자체 스크롤한다 — 짧으면 내용 높이에 딱 맞고(맨 아래 stretch가 여백 흡수) 길면 영역을 최대로 차지(그때만 스크롤)하므로 스크롤이 최소화된다. **메모**(`_notes_edit` = `_AutoHeightPlainEdit`)는 설명 바로 아래에서 1~5줄 자동 높이로 **최소 높이가 항상 보장**된다(고정 높이라 설명이 아무리 길어도 안 밀림). `load`(로컬)/`load_stream`(스트리밍: 요약 탭+제목행 `⟳` 비활성) + `set_related`. `_build_info`는 `_meta_layout`만 `_clear_layout`로 재빌드하고 나머지(태그·설명·메모)는 **영속 위젯을 갱신**한다(`_tags_holder_layout`·`_tag_add_layout` clear 후 재구성, `_desc_view.setHtml`, 없으면 `setVisible(False)`). 제목은 `_title_lbl.setText()`, 메모는 `_notes_edit`로 세팅. 설명·요약은 `_render_timestamped_html`로 **마크다운 서식**(제목 `#`, 굵게 `**`/`__`, 기울임 `*`, 불릿 `-`/`*`/`•`/`·`, 번호 `1.`/`1)`, 선행 공백 들여쓰기)을 HTML로 렌더하며 타임스탬프(MM:SS/HH:MM:SS) seek 링크·URL 링크도 유지한다(`_on_summary_anchor_clicked`→`InlinePlayer.seek_to_ms` / 브라우저). URL은 escape/서식 적용 전에 분리해 보존한다. **`line_gap`(px) 인자로 줄마다 하단 여백을 준다** — 설명은 원문에 빈 줄 단락 구분이 있어 0(조밀)이지만, Gemini 요약은 개행이 촘촘해 `_SUMMARY_LINE_GAP`(=8)을 줘 단락·개행 간격을 벌려 읽기 편하게 한다(요약 렌더 3곳 모두 적용). **별도 "챕터" 섹션은 설명 속 타임라인과 중복되므로 제거하고 설명 하나로 병합**(기존 `_parse_chapters`·`_on_chapter_clicked` 삭제됨). `RelatedItem` dataclass + `item_selected` 시그널. **연관영상 행(`_RelatedRow`)**은 제목을 최대 3줄까지 표시(9pt, `AlignTop`, `maximumHeight=lineSpacing*3`)하고 채널명·조회수·등록시기는 7pt로 1pt 줄여 title과 사이에 stretch를 둬 **행 아래쪽에 배치**(제목 가림 최소화). 요약 탭은 `gemini_summary`를 표시(`_summary_edit`)/편집(`_summary_editor`) **`QStackedWidget`(`_summary_stack`)** 2단으로 두고 **표시 영역 더블클릭→편집 모드**(`eventFilter`가 `_summary_edit.viewport()`의 `MouseButtonDblClick` 감지→`_enter_summary_edit`), **편집기 포커스 아웃→저장**(`_commit_summary_edit`이 변경 시 `_summary_raw` 갱신·재렌더 후 `gemini_summary_saved` 방출). ⟳ 버튼으로 `_GeminiSummaryWorker`(QThread) → `GeminiExtractor` 호출 → `gemini_summary_saved` 방출. 요약 원문은 `_summary_raw`에 보관(편집 대상). 제목행 `⟳`(상세 정보 갱신)는 `detail_refresh_requested(video_id)` 방출 → `LibraryPanel._on_detail_refresh_requested`가 `_vm.refresh_video_metadata(video_id)`로 **YouTube(yt-dlp)에서 메타데이터를 백그라운드 재수집**하고 `set_refresh_busy(True)`(⟳ 비활성). 완료 시 VM이 `video_metadata_refreshed(video_id, ok)` 방출 → `_on_video_metadata_refreshed`가 현재 그 영상 상세가 열려 있으면(`current_detail_id()` 일치) `_reload_detail_in_place`로 DB 최신 상세를 재로드(nav 히스토리 미변경). **과거에는 `get_video_detail`로 DB만 재조회해 저장된 오래된/부실(예: `extract_flat` 캡처) 메타데이터가 그대로여서 유튜브 웹과 달랐음** — 이제 실제 재수집으로 제목·설명·조회수·게시일·태그·썸네일을 웹 기준으로 갱신한다. **탭3 `_TAB_SONG`("노래")**는 `_SongTab` 위젯: 가수/앨범/제목/발매년도(`_EditableField` — 더블클릭 시 QLineEdit 인라인 편집, Enter/포커스아웃 저장→`field_edited`), 가사(원문+한글 병행 표시; 표시 영역 더블클릭→편집 모드 QPlainTextEdit, 포커스아웃 저장→`lyrics_edited`), 출처 링크, `⟳`(가사 출처 재조회→`refresh_requested`), "노래로 표시" 토글(`flag_toggled`). 스트리밍은 편집·조회 불가(안정적 id 없음)로 탭 비활성. 데이터는 위젯이 직접 조회하지 않고 `LibraryPanel`이 `SongViewModel`로 로드해 `set_song_info(dto)`/`set_song_busy(busy)`로 주입, 편집 신호는 `song_field_saved`/`song_lyrics_saved`/`song_refresh_requested`/`song_flag_toggled`로 재방출→`SongViewModel`이 저장. 가사 더블클릭 편집·편집기 포커스아웃은 요약과 동일하게 앱 레벨 `eventFilter`로 감지.
+│   │   ├── settings_panel.py        # 전체 설정 패널 (다운로드 경로, 테마 등) + **가사 출처 관리**(`_LyricsSourcesSection`: 활성 토글·▲▼ 순서·추가·삭제, `song_vm` 주입 시에만 표시)
 │   │   └── settings_dialog.py       # 간략 설정 다이얼로그 (레거시, 42줄)
 │   ├── dialogs/
 │   │   ├── youtube_auth_dialog.py   # YouTube OAuth 인증 플로우 다이얼로그
@@ -193,7 +210,8 @@ online_video_clipper/
 │       ├── feed_vm.py               # FeedViewModel — 전체 구독 피드(refresh) + 채널별 영상(load_channel) + 구독 채널 카드 정보(load_channel_infos) 로딩, shutdown() 워커 정리
 │       ├── monitoring_vm.py         # MonitoringViewModel — 채널 구독 목록
 │       ├── clip_vm.py               # ClipViewModel — 클립 목록 + 추출 작업
-│       └── playlist_vm.py           # PlaylistViewModel — 재생목록 관리
+│       ├── playlist_vm.py           # PlaylistViewModel — 재생목록 관리
+│       └── song_vm.py               # SongViewModel — 노래 탭 상태(load/refresh 백그라운드 조회, 필드·가사 편집, 노래 토글, 가사 출처 관리), shutdown()
 │
 ├── db/
 │   └── schema.sql                   # SQLite schema (FTS5 for search)
@@ -208,6 +226,7 @@ online_video_clipper/
 
 ## Key Design Decisions
 
+- **노래 정보(song 컨텍스트)** — Video와 1:1인 `SongInfo`(가수·앨범·제목·발매년도·가사·is_song). **노래 판별**은 yt-dlp `categories`에 "Music" 포함 또는 `track`/`artist`/`album` 존재로 자동 감지하며, 상세 탭의 "노래로 표시" 토글로 수동 지정도 가능하다. **가사 조회는 관리형 출처 레지스트리(`lyrics_sources` 테이블)를 priority 순으로 순회하는 체인**(`FetchSongInfoHandler._run_chain`) — 기본 LRCLIB(무키·안정)→Genius→멜론→벅스→지니 순으로 부족한 항목(가사·가수·앨범·제목)을 이어서 채운다. 새 출처를 추가하면 자동으로 체인에 편입돼 정보를 보강한다(설정 화면에서 관리). **비한국어 가사는 `deep-translator`로 한글을 병행 표기**(원문+번역 `LyricsLine`); 한국어 가사(한글 비율≥0.3 감지)나 번역기 미설치 시 원문만. **등록 시점**엔 감지+기본 메타데이터만 기록(가사 네트워크 조회 생략 — 대량 임포트를 막지 않음, `FetchSongInfoCommand.fetch_lyrics=False`)하고, **가사는 상세 최초 진입 시 백그라운드 자동 조회**(`SongViewModel.load` — 가사 없으면 fetch)하며 `⟳`로 재수집한다. **사용자가 더블클릭 편집한 필드는 `manual_fields`에 기록돼 갱신 시 덮어쓰지 않는다**(`SongInfoAggregate.apply_fetched`가 manual 필드를 건너뜀). 가사 제공자·번역기는 `domain/song/ports.py`의 Protocol(`ILyricsProvider`·`ITranslator`)에 의존하고 composition root가 구체 구현을 주입한다. Genius·국내 사이트 스크래퍼는 사이트 구조 변경에 취약하므로(그래서 켜고/끄기·순서 조정 가능) 실패는 격리돼 다음 출처로 이어지고 등록/재생에 영향을 주지 않는다.
 - **피드/채널 메타데이터 보강** — yt-dlp `extract_flat`은 구독 피드·채널 영상의 게시일·조회수를 주지 않으므로(영상 ID·길이만), `GetSubscriptionFeedHandler`·`GetChannelVideosHandler`가 YouTube Data API `videos.list`(`get_videos_channels`, part=snippet,statistics,contentDetails)로 `published_at`(ISO)·조회수·길이를 보강한다. 채널 카드의 "최근 영상" 시점은 채널 업로드 재생목록 첫 항목(`get_latest_upload_dates`, 채널당 1쿼터·스레드풀 병렬)으로 구한다. **`_yt_api`(OAuth) 미설정 시 graceful**: 시간 미표시 + 채널은 이름순 정렬.
 - **GUI on main thread** — all network/download work runs in background `QThread`; results communicated via Qt signals.
 - **yt-dlp progress hooks** → `DownloadProgress` value object → emitted as Qt signal to update progress bar.

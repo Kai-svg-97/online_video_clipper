@@ -207,3 +207,32 @@ CREATE TABLE IF NOT EXISTS channel_subscriptions (
     last_checked_at TEXT,
     created_at      TEXT NOT NULL
 );
+
+-- =========================================================
+-- Song context (노래 정보 — 가수·앨범·제목·가사, Video와 1:1)
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS song_info (
+    video_id        TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    is_song         INTEGER NOT NULL DEFAULT 0,
+    artist          TEXT NOT NULL DEFAULT '',
+    album           TEXT NOT NULL DEFAULT '',
+    song_title      TEXT NOT NULL DEFAULT '',
+    release_year    TEXT NOT NULL DEFAULT '',
+    lyrics_json     TEXT NOT NULL DEFAULT '[]',   -- [{"o": 원문, "t": 한글번역}, ...]
+    lyrics_language TEXT NOT NULL DEFAULT '',      -- ISO 639-1 ("" 미상)
+    source_name     TEXT NOT NULL DEFAULT '',      -- 가사 출처 표시 이름
+    source_url      TEXT NOT NULL DEFAULT '',
+    manual_fields   TEXT NOT NULL DEFAULT '[]',    -- 사용자가 직접 편집한 필드명(JSON array)
+    updated_at      TEXT NOT NULL
+);
+
+-- 가사·메타데이터 출처(사이트) 관리형 레지스트리 — 조회 체인 순서/사용여부 제어
+CREATE TABLE IF NOT EXISTS lyrics_sources (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    provider_key TEXT NOT NULL,          -- lrclib | genius | melon | bugs | genie | ...
+    base_url     TEXT NOT NULL DEFAULT '',
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    priority     INTEGER NOT NULL DEFAULT 100   -- 작을수록 먼저 시도
+);

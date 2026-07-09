@@ -401,6 +401,7 @@ class _LibraryPage(QWidget):
         playlist_vm: PlaylistViewModel | None = None,
         feed_vm: FeedViewModel | None = None,
         monitoring_vm: MonitoringViewModel | None = None,
+        song_vm=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -415,6 +416,7 @@ class _LibraryPage(QWidget):
             playlist_vm=playlist_vm,
             feed_vm=feed_vm,
             monitoring_vm=monitoring_vm,
+            song_vm=song_vm,
         )
         layout.addWidget(self._library_panel, 1)
 
@@ -441,6 +443,7 @@ class MainWindow(QMainWindow):
         feed_vm: FeedViewModel | None = None,
         auth_service: YouTubeAuthService | None = None,
         yt_oauth=None,   # YouTubeOAuthAdapter | None
+        song_vm=None,    # SongViewModel | None
     ) -> None:
         super().__init__()
         QPixmapCache.setCacheLimit(PIXMAP_CACHE_LIMIT_KB)
@@ -451,6 +454,7 @@ class MainWindow(QMainWindow):
         self._stats_handler = stats_handler
         self._playlist_vm = playlist_vm
         self._feed_vm = feed_vm
+        self._song_vm = song_vm
         self._yt_oauth = yt_oauth
         self._auth_service = auth_service or YouTubeAuthService()
         self._update_controller = None
@@ -486,6 +490,7 @@ class MainWindow(QMainWindow):
             playlist_vm=self._playlist_vm,
             feed_vm=self._feed_vm,
             monitoring_vm=self._monitoring_vm,
+            song_vm=self._song_vm,
         )
         self._stack.addWidget(self._library_page)                  # 0
 
@@ -521,6 +526,7 @@ class MainWindow(QMainWindow):
         self._settings_panel = SettingsPanel(
             get_tags_fn=lambda: self._library_vm.tags,
             yt_oauth=self._yt_oauth,
+            song_vm=self._song_vm,
         )
         self._stack.addWidget(self._settings_panel)                  # 4
 
@@ -666,7 +672,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.
         for vm in (self._download_vm, self._library_vm, self._feed_vm,
-                   self._update_controller):
+                   self._song_vm, self._update_controller):
             if vm is None:
                 continue
             shutdown = getattr(vm, "shutdown", None)

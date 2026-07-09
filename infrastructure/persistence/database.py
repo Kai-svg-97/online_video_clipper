@@ -35,6 +35,7 @@ class Database:
         self._run_once("migrate_sort_indexes", self._migrate_sort_indexes)
         self._run_once("migrate_gemini_summary", self._migrate_gemini_summary)
         self._run_once("migrate_videos_gemini_summary", self._migrate_videos_gemini_summary)
+        self._run_once("migrate_song_tables", self._migrate_song_tables)
 
     def _run_once(self, migration_id: str, func) -> None:
         """마이그레이션을 최초 1회만 실행한다 (schema_migrations 테이블로 추적)."""
@@ -121,6 +122,34 @@ class Database:
                 logger.info("videos.gemini_summary 컬럼 추가 완료")
             except Exception:
                 logger.debug("videos.gemini_summary 컬럼 이미 존재 — 건너뜀")
+
+    def _migrate_song_tables(self) -> None:
+        """노래 정보/가사 출처 테이블 시드 (idempotent).
+
+        테이블 자체는 schema.sql의 CREATE TABLE IF NOT EXISTS로 생성되므로, 여기서는
+        가사 출처 레지스트리가 비어 있을 때 기본 출처(LRCLIB→Genius→멜론→벅스→지니)를
+        priority 순으로 시드한다. 이미 항목이 있으면 건드리지 않는다.
+        """
+        from uuid import uuid4  # noqa: PLC0415
+
+        defaults = [
+            ("LRCLIB", "lrclib", "https://lrclib.net", 10),
+            ("Genius", "genius", "https://genius.com", 20),
+            ("멜론", "melon", "https://www.melon.com", 30),
+            ("벅스", "bugs", "https://music.bugs.co.kr", 40),
+            ("지니", "genie", "https://www.genie.co.kr", 50),
+        ]
+        with self.connection() as conn:
+            existing = conn.execute("SELECT COUNT(*) FROM lyrics_sources").fetchone()
+            if existing and existing[0]:
+                return
+            for name, key, url, prio in defaults:
+                conn.execute(
+                    "INSERT INTO lyrics_sources(id, name, provider_key, base_url, enabled, priority) "
+                    "VALUES (?,?,?,?,1,?)",
+                    (str(uuid4()), name, key, url, prio),
+                )
+            logger.info("가사 출처 기본값 시드 완료 (%d개)", len(defaults))
 
     def _migrate_gemini_summary(self) -> None:
         """download_history 테이블에 gemini_summary 컬럼을 추가한다 (idempotent)."""
