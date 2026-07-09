@@ -503,6 +503,11 @@ class _VideoView(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
         self.setInteractive(False)
+        # QGraphicsView는 기본적으로 포커스를 잡고 방향키(↑/↓/←/→)를 스크롤용으로
+        # 소비한다. 전체화면·PiP 창에서 이 뷰가 포커스를 쥐면 창의 keyPressEvent가
+        # 방향키를 못 받아 볼륨(↑/↓)·탐색(←/→) 단축키가 먹통이 된다. 포커스를 아예
+        # 잡지 않게 해 상위 창이 모든 키를 처리하도록 한다.
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         scene = QGraphicsScene(self)
         scene.setBackgroundBrush(QBrush(QColor("#000000")))

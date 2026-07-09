@@ -14,14 +14,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from PyQt6.QtCore import QEvent, QThread, QTime, QTimer, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QFont, QImage
+from PyQt6.QtCore import (
+    QEvent,
+    QPoint,
+    QRect,
+    QSize,
+    QThread,
+    QTime,
+    QTimer,
+    Qt,
+    QUrl,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QDesktopServices, QFont, QFontMetrics, QImage
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QPlainTextEdit,
     QProgressBar,
@@ -29,6 +41,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QTextBrowser,
     QTimeEdit,
@@ -124,26 +137,31 @@ class _RelatedRow(QFrame):
 
         text_col = QVBoxLayout()
         text_col.setContentsMargins(0, 0, 0, 0)
-        text_col.setSpacing(2)
+        text_col.setSpacing(1)
         self._title_lbl = QLabel(item.title)
         self._title_lbl.setWordWrap(True)
-        self._title_lbl.setMaximumHeight(40)
+        self._title_lbl.setAlignment(Qt.AlignmentFlag.AlignTop)
         tf = QFont()
         tf.setPointSize(9)
         tf.setWeight(QFont.Weight.Medium)
         self._title_lbl.setFont(tf)
+        # 제목은 최대 3줄까지 표시 — 채널명이 제목을 가리지 않도록 높이를 넉넉히 확보
+        self._title_lbl.setMaximumHeight(QFontMetrics(tf).lineSpacing() * 3 + 4)
         text_col.addWidget(self._title_lbl)
 
-        self._chan_lbl = QLabel(item.channel)
+        # 제목과 채널/메타 사이 여백 — 채널·조회수·등록시기를 행 아래쪽에 배치해
+        # 제목 표시를 덜 방해하도록 한다.
+        text_col.addStretch()
+
         cf = QFont()
-        cf.setPointSize(8)
+        cf.setPointSize(7)   # 채널/조회수/등록시기는 제목보다 1pt 작게
+        self._chan_lbl = QLabel(item.channel)
         self._chan_lbl.setFont(cf)
         text_col.addWidget(self._chan_lbl)
 
         self._meta_lbl = QLabel(item.meta_text)
         self._meta_lbl.setFont(cf)
         text_col.addWidget(self._meta_lbl)
-        text_col.addStretch()
         row.addLayout(text_col, 1)
 
     def _load_thumb(self, item: RelatedItem) -> None:
@@ -272,13 +290,17 @@ def _fmt_size(b: int | None) -> str:
 
 
 class _TagChip(QPushButton):
-    """Small pill-shaped button for a single tag."""
+    """Small pill-shaped button for a single tag.
+
+    폭은 태그 글자 길이에 맞춰 최소화한다(Fixed 사이즈 정책 + 좁은 padding).
+    """
 
     def __init__(self, tag_id: UUID, tag_name: str, parent=None) -> None:
         super().__init__(f"#{tag_name}", parent)
         self.tag_id = tag_id
         self.tag_name = tag_name
         self.setFlat(True)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         tok = _t()
         self.setStyleSheet(
             f"QPushButton{{"
@@ -291,6 +313,84 @@ class _TagChip(QPushButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
 
+class _FlowLayout(QLayout):
+    """가로로 채우다 폭이 부족하면 다음 줄로 넘기는 표준 flow 레이아웃.
+
+    각 아이템은 자신의 sizeHint 폭만 차지하므로 태그 칩이 글자 길이만큼만
+    넓어지고, 사용 가능한 폭에 맞춰 자동으로 줄바꿈된다.
+    """
+
+    def __init__(self, parent: QWidget | None = None, spacing: int = 4) -> None:
+        super().__init__(parent)
+        self._items: list = []
+        self.setSpacing(spacing)
+        if parent is not None:
+            self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item) -> None:  # noqa: N802
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):  # noqa: N802
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+
+    def takeAt(self, index: int):  # noqa: N802
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+
+    def expandingDirections(self):  # noqa: N802
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect: QRect) -> None:  # noqa: N802
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:  # noqa: N802
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        size += QSize(
+            margins.left() + margins.right(), margins.top() + margins.bottom()
+        )
+        return size
+
+    def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        margins = self.contentsMargins()
+        x = rect.x() + margins.left()
+        y = rect.y() + margins.top()
+        line_height = 0
+        spacing = self.spacing()
+        eff_right = rect.right() - margins.right()
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + spacing
+            if next_x - spacing > eff_right and line_height > 0:
+                x = rect.x() + margins.left()
+                y = y + line_height + spacing
+                next_x = x + hint.width() + spacing
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x
+            line_height = max(line_height, hint.height())
+        return y + line_height - rect.y() + margins.bottom()
+
+
 class _TagFlow(QWidget):
     """Wrapping flow layout of tag chips."""
 
@@ -298,9 +398,8 @@ class _TagFlow(QWidget):
 
     def __init__(self, tags: list[str], tag_ids: dict[str, UUID], parent=None) -> None:
         super().__init__(parent)
-        layout = _FlowLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout = _FlowLayout(self, spacing=4)
         for name in tags:
             tid = tag_ids.get(name)
             if tid is None:
@@ -310,32 +409,65 @@ class _TagFlow(QWidget):
             layout.addWidget(chip)
 
 
-class _FlowLayout:
-    """Minimal horizontal-wrapping flow layout (manual add only)."""
-    def __init__(self, parent: QWidget) -> None:
-        self._outer = QVBoxLayout(parent)
-        self._outer.setContentsMargins(0, 0, 0, 0)
-        self._outer.setSpacing(0)
-        self._row: QHBoxLayout | None = None
-        self._row_count = 0
-        self._spacing = 4
+class _AutoHeightBrowser(QTextBrowser):
+    """내용 높이에 맞춰 스스로 높이를 조절하는 QTextBrowser.
 
-    def setContentsMargins(self, *args) -> None:
-        self._outer.setContentsMargins(*args)
+    내용이 ``max_h`` 이하이면 스크롤바 없이 컨텐츠 전체가 보이도록 높이를 키우고,
+    넘어서면 ``max_h``에 고정되어 그때만 내부 스크롤을 쓴다(설명 섹션용).
+    """
 
-    def setSpacing(self, s: int) -> None:
-        self._spacing = s
+    def __init__(self, min_h: int, max_h: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._min_h = min_h
+        self._max_h = max_h
+        self.setOpenLinks(False)
+        self.setOpenExternalLinks(False)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.document().documentLayout().documentSizeChanged.connect(
+            lambda _=None: self._sync_height()
+        )
 
-    def addWidget(self, w: QWidget) -> None:  # type: ignore[override]
-        if self._row is None or self._row_count >= 5:
-            from PyQt6.QtWidgets import QHBoxLayout
-            self._row = QHBoxLayout()
-            self._row.setContentsMargins(0, 0, 0, 0)
-            self._row.setSpacing(self._spacing)
-            self._outer.addLayout(self._row)
-            self._row_count = 0
-        self._row.addWidget(w)
-        self._row_count += 1
+    def _sync_height(self) -> None:
+        doc = self.document()
+        h = int(doc.size().height() + 2 * doc.documentMargin()) + 2
+        self.setFixedHeight(max(self._min_h, min(h, self._max_h)))
+
+    def resizeEvent(self, event) -> None:
+        self.document().setTextWidth(self.viewport().width())
+        super().resizeEvent(event)
+        self._sync_height()
+
+
+class _AutoHeightPlainEdit(QPlainTextEdit):
+    """내용 줄 수에 맞춰 ``min_lines``~``max_lines`` 사이에서 높이를 조절(메모용)."""
+
+    def __init__(
+        self, min_lines: int = 1, max_lines: int = 5, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self._min_lines = min_lines
+        self._max_lines = max_lines
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.document().documentLayout().documentSizeChanged.connect(
+            lambda _=None: self._sync_height()
+        )
+        self._sync_height()
+
+    def _sync_height(self) -> None:
+        line_h = self.fontMetrics().lineSpacing()
+        doc_lines = self.document().size().height()  # QPlainTextEdit: 줄 수 단위
+        lines = max(self._min_lines, min(int(round(doc_lines)) or 1, self._max_lines))
+        doc_margin = self.document().documentMargin()
+        h = int(line_h * lines + 2 * doc_margin + 2 * self.frameWidth() + 4)
+        self.setFixedHeight(h)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._sync_height()
 
 
 class VideoDetailWidget(QWidget):
@@ -372,6 +504,7 @@ class VideoDetailWidget(QWidget):
         self._clip_source_file: str | None = None
         self._filter_on = False
         self._streaming = False          # 스트리밍(피드/채널) 모드 여부
+        self._summary_raw = ""           # 요약 원문(편집 대상) — 렌더 전 텍스트
         self._current_url = ""           # 브라우저 열기/재생 실패 폴백용
         self._active_dl_frame: QFrame | None = None
         self._active_dl_bar: QProgressBar | None = None
@@ -471,18 +604,25 @@ class VideoDetailWidget(QWidget):
         info_scroll.setWidgetResizable(True)
         info_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._info_widget = QWidget()
-        self._info_layout = QVBoxLayout(self._info_widget)
+        info_col = QVBoxLayout(self._info_widget)
+        info_col.setContentsMargins(0, 0, 0, 0)
+        info_col.setSpacing(6)
+        # 태그·설명(로드마다 재구성) — 순수 하위 레이아웃(위젯 없음)이라
+        # _clear_layout 시 아래 영속 메모 위젯은 건드리지 않는다.
+        self._info_layout = QVBoxLayout()
         self._info_layout.setContentsMargins(0, 0, 0, 0)
         self._info_layout.setSpacing(6)
+        info_col.addLayout(self._info_layout)
+        # 메모(영속) — 설명 섹션 바로 아래에서 시작, 내용에 따라 1~5줄 자동 높이
+        self._notes_header = QLabel("<b>메모</b>")
+        info_col.addWidget(self._notes_header)
+        self._notes_edit = _AutoHeightPlainEdit(min_lines=1, max_lines=5)
+        self._notes_edit.setPlaceholderText("메모를 입력하세요…")
+        self._notes_edit.textChanged.connect(self._on_notes_changed)
+        info_col.addWidget(self._notes_edit)
+        info_col.addStretch()
         info_scroll.setWidget(self._info_widget)
         info_tab_layout.addWidget(info_scroll, 1)
-        note_hdr = QLabel("<b>메모</b>")
-        info_tab_layout.addWidget(note_hdr)
-        self._notes_edit = QPlainTextEdit()
-        self._notes_edit.setPlaceholderText("메모를 입력하세요…")
-        self._notes_edit.setMaximumHeight(120)
-        self._notes_edit.textChanged.connect(self._on_notes_changed)
-        info_tab_layout.addWidget(self._notes_edit)
         self._tabs.addTab(info_tab, "설명")
 
         # 탭1: 요약 (헤더 라벨 + ⟳ 아이콘 갱신 버튼 + 상태 라벨)
@@ -492,6 +632,9 @@ class VideoDetailWidget(QWidget):
         summary_layout.setSpacing(6)
         refresh_row = QHBoxLayout()
         refresh_row.addWidget(QLabel("<b>요약</b>"))
+        edit_hint = QLabel("(더블클릭하여 편집)")
+        edit_hint.setStyleSheet("font-size: 8pt; color: #888;")
+        refresh_row.addWidget(edit_hint)
         refresh_row.addStretch()
         self._summary_status_lbl = QLabel("")
         self._summary_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
@@ -502,14 +645,22 @@ class VideoDetailWidget(QWidget):
         self._summary_refresh_btn.clicked.connect(self._on_refresh_summary)
         refresh_row.addWidget(self._summary_refresh_btn)
         summary_layout.addLayout(refresh_row)
+
+        # 표시(QTextBrowser) ↔ 편집(QPlainTextEdit) 스택.
+        # 표시 위젯 더블클릭 → 편집 모드, 편집 위젯 포커스 아웃 → 저장 후 표시 모드.
+        self._summary_stack = QStackedWidget()
         self._summary_edit = QTextBrowser()
         self._summary_edit.setOpenLinks(False)
         self._summary_edit.setOpenExternalLinks(False)
         self._summary_edit.setPlaceholderText(
-            "Gemini AI 요약이 없습니다.\n⟳ 버튼으로 갱신하세요. (YouTube 로그인 필요)"
+            "Gemini AI 요약이 없습니다.\n⟳ 버튼으로 갱신하거나 더블클릭하여 직접 입력하세요."
         )
         self._summary_edit.anchorClicked.connect(self._on_summary_anchor_clicked)
-        summary_layout.addWidget(self._summary_edit)
+        self._summary_stack.addWidget(self._summary_edit)      # index 0: 표시
+        self._summary_editor = QPlainTextEdit()
+        self._summary_editor.setPlaceholderText("요약 내용을 입력하세요…")
+        self._summary_stack.addWidget(self._summary_editor)    # index 1: 편집
+        summary_layout.addWidget(self._summary_stack)
         self._tabs.addTab(_wrap(summary_tab), "요약")
 
         # 탭2: 다운로드(상단) + 클립(하단) 병합 — 수직 스플리터
@@ -561,10 +712,24 @@ class VideoDetailWidget(QWidget):
         super().hideEvent(event)
 
     def eventFilter(self, obj, event) -> bool:
-        if event.type() == QEvent.Type.MouseButtonPress:
+        et = event.type()
+        if et == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.BackButton:
                 self.back_requested.emit()
                 return True
+        elif et == QEvent.Type.MouseButtonDblClick:
+            # 요약 표시 영역 더블클릭 → 편집 모드 진입(로컬 영상만)
+            if (
+                obj is self._summary_edit.viewport()
+                and not self._streaming
+                and self._detail is not None
+            ):
+                self._enter_summary_edit()
+                return True
+        elif et == QEvent.Type.FocusOut:
+            # 요약 편집기 포커스 아웃 → 저장 후 표시 모드 복귀
+            if obj is self._summary_editor:
+                self._commit_summary_edit()
         return False
 
     # ── Populate ───────────────────────────────────────────────────
@@ -609,7 +774,9 @@ class VideoDetailWidget(QWidget):
         self._notes_edit.blockSignals(True)
         self._notes_edit.setPlainText(detail.notes or "")
         self._notes_edit.blockSignals(False)
-        self._summary_edit.setHtml(self._render_timestamped_html(detail.gemini_summary or ""))
+        self._summary_raw = detail.gemini_summary or ""
+        self._summary_edit.setHtml(self._render_timestamped_html(self._summary_raw))
+        self._summary_stack.setCurrentWidget(self._summary_edit)
         self._summary_status_lbl.setText("")
         self._summary_refresh_btn.setEnabled(True)
 
@@ -724,13 +891,29 @@ class VideoDetailWidget(QWidget):
             st_lbl.setStyleSheet(f"color:{_t().text_muted};")
             self._meta_layout.addWidget(st_lbl)
 
-        # ── "설명" 탭 내용: 태그 · 챕터 · 설명 (메모는 영속 위젯) ──
-        # 태그 칩
+        # ── "설명" 탭 내용: 태그 · 설명 (메모는 영속 위젯) ──
+        # 태그 칩 — 글자 길이만큼의 칩이 폭에 맞춰 줄바꿈되며, 최대 3줄까지만
+        # 보이고 그 이상은 스크롤한다.
         if tags:
             self._info_layout.addWidget(QLabel("<b>태그:</b>"))
-            flow = _TagFlow(tags, tag_ids, self._info_widget)
+            flow = _TagFlow(tags, tag_ids)
             flow.tag_clicked.connect(self.tag_filter_requested.emit)
-            self._info_layout.addWidget(flow)
+            tags_scroll = QScrollArea()
+            tags_scroll.setWidgetResizable(True)
+            tags_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            tags_scroll.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+            tags_scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+            tags_scroll.setWidget(flow)
+            # 태그 한 줄 높이 ≈ 칩(8pt 글자 + padding·border) + flow 세로 간격(4).
+            f8 = QFont()
+            f8.setPointSize(8)
+            row_h = QFontMetrics(f8).height() + 10
+            tags_scroll.setMaximumHeight(row_h * 3 + 4 * 2 + 4)
+            self._info_layout.addWidget(tags_scroll)
 
         # 수동 태그 추가 (로컬 영상만)
         if allow_tag_edit:
@@ -751,17 +934,17 @@ class VideoDetailWidget(QWidget):
 
         # 설명 (타임라인/챕터 포함) — 타임스탬프를 클릭 가능한 seek 링크로 렌더링.
         # 별도 "챕터" 섹션은 설명 속 타임라인과 정보가 중복되므로 설명 하나로 병합한다.
+        # 높이는 내용에 맞춰 자동 조절(스크롤 최소화)하되, 아래 메모 공간을 위해
+        # 상한(260px)을 두고 그 이상일 때만 자체 스크롤한다.
         if description:
             self._info_layout.addWidget(QLabel("<b>설명:</b>"))
-            desc_view = QTextBrowser()
-            desc_view.setOpenLinks(False)
-            desc_view.setOpenExternalLinks(False)
-            desc_view.setMaximumHeight(260)
+            desc_view = _AutoHeightBrowser(min_h=40, max_h=260)
             desc_view.setHtml(self._render_timestamped_html(description))
             desc_view.anchorClicked.connect(self._on_summary_anchor_clicked)
             self._info_layout.addWidget(desc_view)
 
-        self._info_layout.addStretch()
+        # 여기서는 stretch를 넣지 않는다 — 메모가 설명 바로 아래에서 시작하도록
+        # (바깥 info_col의 마지막 stretch가 남는 공간을 흡수한다).
 
     def _render_timestamped_html(self, text: str) -> str:
         """요약/설명 텍스트를 HTML로 렌더링한다.
@@ -783,13 +966,22 @@ class VideoDetailWidget(QWidget):
             )
 
         def _render_line(line: str) -> str:
+            # 선행 공백(들여쓰기)은 &nbsp;로 보존해 원문 서식(번호 목록·계층 들여쓰기)을
+            # 유지한다(HTML은 기본적으로 선행 공백을 접어버리므로).
+            stripped = line.lstrip(" \t")
+            indent = len(line) - len(stripped)
+            lead = ""
+            if indent:
+                indent_cols = sum(4 if ch == "\t" else 1 for ch in line[:indent])
+                lead = "&nbsp;" * indent_cols
+
             # URL 구간과 비-URL 구간을 분리해 처리한다(타임스탬프 링크와 이중
             # 래핑되지 않도록). URL은 원본에서 뽑아 href에 넣고, 나머지 텍스트만
             # escape 후 타임스탬프 링크화한다.
-            out = []
+            out = [lead]
             pos = 0
-            for m in _URL_RE.finditer(line):
-                before = line[pos:m.start()]
+            for m in _URL_RE.finditer(stripped):
+                before = stripped[pos:m.start()]
                 out.append(_TS_RE.sub(_link, html.escape(before)))
                 url = m.group(0)
                 url_attr = html.escape(url, quote=True)
@@ -798,7 +990,7 @@ class VideoDetailWidget(QWidget):
                     f'{html.escape(url)}</a>'
                 )
                 pos = m.end()
-            out.append(_TS_RE.sub(_link, html.escape(line[pos:])))
+            out.append(_TS_RE.sub(_link, html.escape(stripped[pos:])))
             return "".join(out)
 
         return "<br>".join(_render_line(line) for line in text.splitlines())
@@ -1274,12 +1466,39 @@ class VideoDetailWidget(QWidget):
             return
         self._summary_refresh_btn.setEnabled(True)
         if summary:
+            self._summary_raw = summary
             self._summary_edit.setHtml(self._render_timestamped_html(summary))
+            self._summary_stack.setCurrentWidget(self._summary_edit)
             self._summary_status_lbl.setText("")
         else:
             self._summary_status_lbl.setText(
                 "요약 추출 실패 — 설정에서 브라우저/프로필을 선택하거나 쿠키 파일을 등록하세요"
             )
+
+    # ── 요약 편집 (더블클릭) ──────────────────────────────────────────
+
+    def _enter_summary_edit(self) -> None:
+        """요약 표시 영역 더블클릭 시 편집 모드로 전환한다(로컬 영상만)."""
+        if self._streaming or self._detail is None:
+            return
+        self._summary_editor.setPlainText(self._summary_raw)
+        self._summary_stack.setCurrentWidget(self._summary_editor)
+        self._summary_editor.setFocus()
+
+    def _commit_summary_edit(self) -> None:
+        """편집 내용을 저장하고 표시 모드로 복귀한다.
+
+        내용이 바뀌었으면 렌더링을 갱신하고 `gemini_summary_saved`로 영속화한다.
+        """
+        if self._summary_stack.currentWidget() is not self._summary_editor:
+            return
+        text = self._summary_editor.toPlainText()
+        self._summary_stack.setCurrentWidget(self._summary_edit)
+        if text != self._summary_raw:
+            self._summary_raw = text
+            self._summary_edit.setHtml(self._render_timestamped_html(text))
+            if self._detail is not None and not self._streaming:
+                self.gemini_summary_saved.emit(self._detail.id, text)
 
 
 # ------------------------------------------------------------------
