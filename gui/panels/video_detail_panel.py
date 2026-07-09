@@ -101,6 +101,14 @@ _TS_RE = re.compile(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})")
 # 설명·요약 속 URL을 클릭 가능한 링크로 변환할 때 쓰는 정규식.
 _URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
 
+# 마크다운 서식 렌더링용 정규식(설명·요약 공통).
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")          # **굵게**
+_BOLD2_RE = re.compile(r"__(.+?)__")             # __굵게__
+_ITALIC_RE = re.compile(r"\*(?!\s)(.+?)(?<!\s)\*")  # *기울임*
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")   # # 제목
+_BULLET_RE = re.compile(r"^([-*•·])\s+(.*)$")    # 불릿 목록
+_NUMBERED_RE = re.compile(r"^(\d+)[.)]\s+(.*)$")  # 번호 목록
+
 
 class _RelatedRow(QFrame):
     """연관 영상 1행 — 작은 썸네일 + 제목 2줄 + 채널/메타. 단일 클릭으로 선택."""
@@ -410,34 +418,44 @@ class _TagFlow(QWidget):
 
 
 class _AutoHeightBrowser(QTextBrowser):
-    """내용 높이에 맞춰 스스로 높이를 조절하는 QTextBrowser.
+    """내용 높이를 ``sizeHint``로 노출하는 QTextBrowser(설명 섹션용).
 
-    내용이 ``max_h`` 이하이면 스크롤바 없이 컨텐츠 전체가 보이도록 높이를 키우고,
-    넘어서면 ``max_h``에 고정되어 그때만 내부 스크롤을 쓴다(설명 섹션용).
+    세로 여유가 있으면 내용 높이(sizeHint)만큼만 차지해 스크롤 없이 전체가 보이고,
+    공간이 부족하면 ``minimumSizeHint``까지 줄며 그때만 내부 스크롤을 쓴다. 레이아웃이
+    남는 세로 공간을 이 위젯에 몰아줄 수 있어(설명이 길수록 더 넓게) 스크롤이 최소화되며,
+    아래 메모의 최소 높이는 메모 위젯 자체가 고정 확보한다.
     """
 
-    def __init__(self, min_h: int, max_h: int, parent: QWidget | None = None) -> None:
+    def __init__(self, min_h: int = 48, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._min_h = min_h
-        self._max_h = max_h
+        self._content_h = min_h
         self.setOpenLinks(False)
         self.setOpenExternalLinks(False)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.document().documentLayout().documentSizeChanged.connect(
-            lambda _=None: self._sync_height()
+            lambda _=None: self._recalc()
         )
 
-    def _sync_height(self) -> None:
+    def _recalc(self) -> None:
         doc = self.document()
-        h = int(doc.size().height() + 2 * doc.documentMargin()) + 2
-        self.setFixedHeight(max(self._min_h, min(h, self._max_h)))
+        self._content_h = max(
+            self._min_h, int(doc.size().height() + 2 * doc.documentMargin()) + 2
+        )
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:
+        return QSize(super().sizeHint().width(), self._content_h)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(super().minimumSizeHint().width(), self._min_h)
 
     def resizeEvent(self, event) -> None:
         self.document().setTextWidth(self.viewport().width())
         super().resizeEvent(event)
-        self._sync_height()
+        self._recalc()
 
 
 class _AutoHeightPlainEdit(QPlainTextEdit):
@@ -594,35 +612,57 @@ class VideoDetailWidget(QWidget):
         # ── 하단 탭 3개: 설명(태그~메모) · 요약 · 다운로드/클립 ──
         self._tabs = QTabWidget()
 
-        # 탭0: 설명 — 스크롤(태그·챕터·설명) + 메모(영속). _wrap 미사용
-        #       (자체 내부 스크롤 + 하단 고정 메모 구조라 이중 스크롤 방지).
+        # 탭0: 설명 — 영속 위젯 스택(태그·설명·메모). 탭 자체는 스크롤하지 않는다.
+        #   · 태그: flow + 최대 3줄만 보이는 스크롤(그 이상만 스크롤)
+        #   · 설명: `_AutoHeightBrowser` — 내용에 맞추되 남는 세로 공간을 최대로 써
+        #           스크롤을 최소화(공간 부족 시에만 자체 스크롤)
+        #   · 메모: `_AutoHeightPlainEdit` — 설명 바로 아래, 1~5줄 최소 높이 확보
         info_tab = QWidget()
-        info_tab_layout = QVBoxLayout(info_tab)
-        info_tab_layout.setContentsMargins(4, 4, 4, 4)
-        info_tab_layout.setSpacing(4)
-        info_scroll = QScrollArea()
-        info_scroll.setWidgetResizable(True)
-        info_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._info_widget = QWidget()
-        info_col = QVBoxLayout(self._info_widget)
-        info_col.setContentsMargins(0, 0, 0, 0)
-        info_col.setSpacing(6)
-        # 태그·설명(로드마다 재구성) — 순수 하위 레이아웃(위젯 없음)이라
-        # _clear_layout 시 아래 영속 메모 위젯은 건드리지 않는다.
-        self._info_layout = QVBoxLayout()
-        self._info_layout.setContentsMargins(0, 0, 0, 0)
-        self._info_layout.setSpacing(6)
-        info_col.addLayout(self._info_layout)
-        # 메모(영속) — 설명 섹션 바로 아래에서 시작, 내용에 따라 1~5줄 자동 높이
+        info_col = QVBoxLayout(info_tab)
+        info_col.setContentsMargins(6, 6, 6, 6)
+        info_col.setSpacing(4)
+
+        self._tags_header = QLabel("<b>태그</b>")
+        info_col.addWidget(self._tags_header)
+        self._tags_scroll = QScrollArea()
+        self._tags_scroll.setWidgetResizable(True)
+        self._tags_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._tags_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._tags_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._tags_holder = QWidget()
+        self._tags_holder_layout = QVBoxLayout(self._tags_holder)
+        self._tags_holder_layout.setContentsMargins(0, 0, 0, 0)
+        self._tags_holder_layout.setSpacing(0)
+        self._tags_scroll.setWidget(self._tags_holder)
+        info_col.addWidget(self._tags_scroll)
+
+        self._tag_add_container = QWidget()
+        self._tag_add_layout = QHBoxLayout(self._tag_add_container)
+        self._tag_add_layout.setContentsMargins(0, 2, 0, 0)
+        self._tag_add_layout.setSpacing(4)
+        info_col.addWidget(self._tag_add_container)
+
+        self._desc_header = QLabel("<b>설명</b>")
+        info_col.addWidget(self._desc_header)
+        self._desc_view = _AutoHeightBrowser(min_h=48)
+        self._desc_view.anchorClicked.connect(self._on_summary_anchor_clicked)
+        info_col.addWidget(self._desc_view)
+
         self._notes_header = QLabel("<b>메모</b>")
         info_col.addWidget(self._notes_header)
         self._notes_edit = _AutoHeightPlainEdit(min_lines=1, max_lines=5)
         self._notes_edit.setPlaceholderText("메모를 입력하세요…")
         self._notes_edit.textChanged.connect(self._on_notes_changed)
         info_col.addWidget(self._notes_edit)
-        info_col.addStretch()
-        info_scroll.setWidget(self._info_widget)
-        info_tab_layout.addWidget(info_scroll, 1)
+
+        # 맨 아래 stretch — 설명이 내용에 맞을 때(짧을 때) 남는 공간을 흡수해 메모가
+        # 설명 바로 아래에 오게 하고, 설명이 길면 stretch가 0이 되며 설명이 공간을
+        # 최대로 차지한다(그때만 설명 내부 스크롤).
+        info_col.addStretch(1)
         self._tabs.addTab(info_tab, "설명")
 
         # 탭1: 요약 (헤더 라벨 + ⟳ 아이콘 갱신 버튼 + 상태 라벨)
@@ -859,8 +899,6 @@ class VideoDetailWidget(QWidget):
         allow_tag_edit: bool,
     ) -> None:
         _clear_layout(self._meta_layout)
-        _clear_layout(self._info_layout)
-        self._tag_add_input = None
 
         # 제목은 플레이어 아래 고정 행(_title_lbl)에 표시
         self._title_lbl.setText(title)
@@ -891,67 +929,71 @@ class VideoDetailWidget(QWidget):
             st_lbl.setStyleSheet(f"color:{_t().text_muted};")
             self._meta_layout.addWidget(st_lbl)
 
-        # ── "설명" 탭 내용: 태그 · 설명 (메모는 영속 위젯) ──
-        # 태그 칩 — 글자 길이만큼의 칩이 폭에 맞춰 줄바꿈되며, 최대 3줄까지만
-        # 보이고 그 이상은 스크롤한다.
-        if tags:
-            self._info_layout.addWidget(QLabel("<b>태그:</b>"))
+        # ── "설명" 탭 내용: 태그 · 설명 (영속 위젯을 갱신) ──
+        # 태그 — 글자 길이만큼의 칩이 폭에 맞춰 줄바꿈. 최대 3줄까지만 보이고 그 이상은
+        # 스크롤(3줄 미만이면 내용 높이에 맞춤).
+        _clear_layout(self._tags_holder_layout)
+        has_tags = bool(tags)
+        self._tags_header.setVisible(has_tags)
+        self._tags_scroll.setVisible(has_tags)
+        if has_tags:
             flow = _TagFlow(tags, tag_ids)
             flow.tag_clicked.connect(self.tag_filter_requested.emit)
-            tags_scroll = QScrollArea()
-            tags_scroll.setWidgetResizable(True)
-            tags_scroll.setFrameShape(QFrame.Shape.NoFrame)
-            tags_scroll.setHorizontalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-            )
-            tags_scroll.setVerticalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            )
-            tags_scroll.setWidget(flow)
-            # 태그 한 줄 높이 ≈ 칩(8pt 글자 + padding·border) + flow 세로 간격(4).
+            self._tags_holder_layout.addWidget(flow)
             f8 = QFont()
             f8.setPointSize(8)
-            row_h = QFontMetrics(f8).height() + 10
-            tags_scroll.setMaximumHeight(row_h * 3 + 4 * 2 + 4)
-            self._info_layout.addWidget(tags_scroll)
+            row_h = QFontMetrics(f8).height() + 12   # 칩 한 줄 대략 높이
+            self._fit_tags_scroll(flow, row_h * 3 + 8)   # 최대 3줄
 
         # 수동 태그 추가 (로컬 영상만)
+        _clear_layout(self._tag_add_layout)
+        self._tag_add_input = None
+        self._tag_add_container.setVisible(allow_tag_edit)
         if allow_tag_edit:
-            tag_add_row = QHBoxLayout()
-            tag_add_row.setContentsMargins(0, 2, 0, 0)
-            tag_add_row.setSpacing(4)
             self._tag_add_input = QLineEdit()
             self._tag_add_input.setPlaceholderText("태그 추가... (쉼표로 구분)")
             self._tag_add_input.setStyleSheet("font-size:8pt;")
             self._tag_add_input.returnPressed.connect(self._on_add_tag)
-            tag_add_row.addWidget(self._tag_add_input, 1)
+            self._tag_add_layout.addWidget(self._tag_add_input, 1)
             add_btn = QPushButton("+")
             add_btn.setFixedSize(24, 24)
             add_btn.setStyleSheet("font-size:11pt; font-weight:bold;")
             add_btn.clicked.connect(self._on_add_tag)
-            tag_add_row.addWidget(add_btn)
-            self._info_layout.addLayout(tag_add_row)
+            self._tag_add_layout.addWidget(add_btn)
 
-        # 설명 (타임라인/챕터 포함) — 타임스탬프를 클릭 가능한 seek 링크로 렌더링.
-        # 별도 "챕터" 섹션은 설명 속 타임라인과 정보가 중복되므로 설명 하나로 병합한다.
-        # 높이는 내용에 맞춰 자동 조절(스크롤 최소화)하되, 아래 메모 공간을 위해
-        # 상한(260px)을 두고 그 이상일 때만 자체 스크롤한다.
-        if description:
-            self._info_layout.addWidget(QLabel("<b>설명:</b>"))
-            desc_view = _AutoHeightBrowser(min_h=40, max_h=260)
-            desc_view.setHtml(self._render_timestamped_html(description))
-            desc_view.anchorClicked.connect(self._on_summary_anchor_clicked)
-            self._info_layout.addWidget(desc_view)
+        # 설명 — 마크다운 서식 + 타임스탬프 seek 링크 렌더링. 높이는 위 _AutoHeightBrowser가
+        # 가용 공간을 최대로 활용해 자동 조절(스크롤 최소화). 별도 "챕터" 섹션은 설명 속
+        # 타임라인과 중복되므로 설명 하나로 병합한다.
+        has_desc = bool(description)
+        self._desc_header.setVisible(has_desc)
+        self._desc_view.setVisible(has_desc)
+        if has_desc:
+            self._desc_view.setHtml(self._render_timestamped_html(description))
 
-        # 여기서는 stretch를 넣지 않는다 — 메모가 설명 바로 아래에서 시작하도록
-        # (바깥 info_col의 마지막 stretch가 남는 공간을 흡수한다).
+    def _fit_tags_scroll(self, flow: QWidget, cap: int) -> None:
+        """태그 스크롤 높이를 내용(flow) 높이에 맞추되 최대 ``cap``(3줄)로 제한."""
+        def _apply() -> None:
+            try:
+                w = self._tags_scroll.viewport().width()
+                fh = (
+                    flow.layout().heightForWidth(w)
+                    if w > 4 else flow.sizeHint().height()
+                )
+            except RuntimeError:
+                return
+            self._tags_scroll.setFixedHeight(min(max(fh + 4, 26), cap))
+
+        _apply()
+        # 최초 표시 시 viewport 폭이 확정된 뒤 한 번 더 맞춘다.
+        QTimer.singleShot(0, _apply)
 
     def _render_timestamped_html(self, text: str) -> str:
-        """요약/설명 텍스트를 HTML로 렌더링한다.
+        """요약/설명 텍스트를 마크다운 서식 + 링크가 적용된 HTML로 렌더링한다.
 
-        `MM:SS`·`HH:MM:SS` 타임스탬프는 `<a href="seek:초">` 링크로, URL은
-        `<a href="http…">` 링크로 변환한다. 클릭 시 `_on_summary_anchor_clicked`가
-        seek 링크는 재생 위치 이동, URL은 기본 브라우저 열기로 라우팅한다.
+        - `# `~`###### ` → 제목, `**굵게**`/`__굵게__` → 굵게, `*기울임*` → 기울임
+        - `- `/`* `/`• `/`· ` → 불릿, `1.`/`1)` → 번호 목록, 선행 공백 → 들여쓰기
+        - `MM:SS`·`HH:MM:SS` → `seek:` 링크, URL → 링크
+          (`_on_summary_anchor_clicked`가 seek는 재생 위치 이동, URL은 브라우저로 라우팅)
         """
         if not text:
             return ""
@@ -965,35 +1007,60 @@ class VideoDetailWidget(QWidget):
                 f'text-decoration:none; font-weight:bold;">{m.group(0)}</a>'
             )
 
-        def _render_line(line: str) -> str:
-            # 선행 공백(들여쓰기)은 &nbsp;로 보존해 원문 서식(번호 목록·계층 들여쓰기)을
-            # 유지한다(HTML은 기본적으로 선행 공백을 접어버리므로).
-            stripped = line.lstrip(" \t")
-            indent = len(line) - len(stripped)
-            lead = ""
-            if indent:
-                indent_cols = sum(4 if ch == "\t" else 1 for ch in line[:indent])
-                lead = "&nbsp;" * indent_cols
+        def _emphasis(escaped: str) -> str:
+            # escape된 텍스트에 굵게/기울임/타임스탬프 서식을 적용(순서 중요:
+            # **/__ 먼저 소비 후 남은 * 를 기울임 처리, 마지막에 타임스탬프 링크).
+            escaped = _BOLD_RE.sub(r"<b>\1</b>", escaped)
+            escaped = _BOLD2_RE.sub(r"<b>\1</b>", escaped)
+            escaped = _ITALIC_RE.sub(r"<i>\1</i>", escaped)
+            return _TS_RE.sub(_link, escaped)
 
-            # URL 구간과 비-URL 구간을 분리해 처리한다(타임스탬프 링크와 이중
-            # 래핑되지 않도록). URL은 원본에서 뽑아 href에 넣고, 나머지 텍스트만
-            # escape 후 타임스탬프 링크화한다.
-            out = [lead]
+        def _inline(seg: str) -> str:
+            # URL은 escape/emphasis 전에 분리해 링크로 보존, 나머지 구간만 서식 적용.
+            out: list[str] = []
             pos = 0
-            for m in _URL_RE.finditer(stripped):
-                before = stripped[pos:m.start()]
-                out.append(_TS_RE.sub(_link, html.escape(before)))
+            for m in _URL_RE.finditer(seg):
+                out.append(_emphasis(html.escape(seg[pos:m.start()])))
                 url = m.group(0)
-                url_attr = html.escape(url, quote=True)
                 out.append(
-                    f'<a href="{url_attr}" style="color:{accent};">'
-                    f'{html.escape(url)}</a>'
+                    f'<a href="{html.escape(url, quote=True)}" '
+                    f'style="color:{accent};">{html.escape(url)}</a>'
                 )
                 pos = m.end()
-            out.append(_TS_RE.sub(_link, html.escape(stripped[pos:])))
+            out.append(_emphasis(html.escape(seg[pos:])))
             return "".join(out)
 
-        return "<br>".join(_render_line(line) for line in text.splitlines())
+        def _render_line(line: str) -> str:
+            stripped = line.lstrip(" \t")
+            if not stripped:
+                return '<div style="font-size:4pt;">&nbsp;</div>'   # 빈 줄 간격
+            indent = len(line) - len(stripped)
+            base = sum(4 if c == "\t" else 1 for c in line[:indent]) * 7  # 들여쓰기 px
+
+            hm = _HEADING_RE.match(stripped)
+            if hm:
+                size = {1: "13pt", 2: "12pt", 3: "11pt"}.get(len(hm.group(1)), "10pt")
+                return (
+                    f'<div style="margin:6px 0 2px {base}px; font-weight:bold; '
+                    f'font-size:{size};">{_inline(hm.group(2))}</div>'
+                )
+            bm = _BULLET_RE.match(stripped)
+            if bm:
+                return (
+                    f'<div style="margin-left:{base + 14}px;">'
+                    f'•&nbsp;{_inline(bm.group(2))}</div>'
+                )
+            nm = _NUMBERED_RE.match(stripped)
+            if nm:
+                return (
+                    f'<div style="margin-left:{base + 16}px;">'
+                    f'{nm.group(1)}.&nbsp;{_inline(nm.group(2))}</div>'
+                )
+            if base:
+                return f'<div style="margin-left:{base}px;">{_inline(stripped)}</div>'
+            return f"<div>{_inline(stripped)}</div>"
+
+        return "".join(_render_line(line) for line in text.splitlines())
 
     def _on_summary_anchor_clicked(self, url: QUrl) -> None:
         """설명/요약 내 링크 클릭을 라우팅한다.
