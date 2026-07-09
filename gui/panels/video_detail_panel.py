@@ -514,7 +514,7 @@ class VideoDetailWidget(QWidget):
     _TAB_FILES = 2      # 다운로드 + 클립 병합
 
     # 요약 렌더링 줄 간격(px) — Gemini 요약은 개행이 촘촘해 단락 여백을 벌려 읽기 편하게 한다.
-    _SUMMARY_LINE_GAP = 8
+    _SUMMARY_LINE_GAP = 1
 
     def __init__(self, clip_vm=None, download_vm=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
