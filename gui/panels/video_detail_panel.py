@@ -596,6 +596,8 @@ class _SongTab(QWidget):
         super().__init__(parent)
         self._editable = True
         self._lyrics_lines: list[LyricsLine] = []
+        self._current_dto: SongInfoDTO | None = None
+        self._side_by_side = False   # 번역 배치: False=원문 아래, True=원문 오른쪽
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -652,6 +654,15 @@ class _SongTab(QWidget):
         hint = QLabel("(더블클릭하여 편집)")
         hint.setStyleSheet("font-size:8pt; color:#888;")
         lyr_header.addWidget(hint)
+        # 번역 배치 전환 아이콘 (비한국어 병행 가사일 때만 노출)
+        self._layout_btn = QPushButton("⬌")
+        self._layout_btn.setFixedSize(24, 22)
+        self._layout_btn.setFlat(True)
+        self._layout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._layout_btn.setToolTip("번역을 오른쪽에 표시")
+        self._layout_btn.clicked.connect(self._toggle_lyrics_layout)
+        self._layout_btn.setVisible(False)
+        lyr_header.addWidget(self._layout_btn)
         root.addLayout(lyr_header)
 
         # 가사 표시/편집 스택
@@ -685,6 +696,7 @@ class _SongTab(QWidget):
         self._refresh_btn.setEnabled(self._editable and not busy)
 
     def set_info(self, dto: SongInfoDTO | None) -> None:
+        self._current_dto = dto
         is_song = bool(dto and dto.is_song)
         self._flag_chk.blockSignals(True)
         self._flag_chk.setChecked(is_song)
@@ -713,6 +725,9 @@ class _SongTab(QWidget):
 
     def _render_lyrics(self, dto: SongInfoDTO | None) -> None:
         _clear_layout(self._lyrics_layout)
+        bilingual = bool(dto and dto.is_bilingual)
+        # 번역 배치 전환 아이콘은 병행(번역 있는) 가사일 때만 노출
+        self._layout_btn.setVisible(bilingual)
         if not dto or not dto.lyrics_lines:
             msg = (
                 "가사 정보가 없습니다.\n⟳ 버튼으로 조회하거나 더블클릭하여 직접 입력하세요."
@@ -726,22 +741,51 @@ class _SongTab(QWidget):
             self._lyrics_layout.addStretch()
             return
         tok = _t()
+        side = self._side_by_side and bilingual
         for line in dto.lyrics_lines:
             if not line.original.strip() and not line.translation.strip():
                 spacer = QLabel(" ")
                 spacer.setFixedHeight(8)
                 self._lyrics_layout.addWidget(spacer)
                 continue
-            orig = QLabel(line.original or " ")
-            orig.setWordWrap(True)
-            orig.setStyleSheet(f"color:{tok.text_primary}; font-size:10pt;")
-            self._lyrics_layout.addWidget(orig)
-            if line.translation:
-                trans = QLabel(line.translation)
+            if side:
+                # 원문(좌) | 번역(우) 2열
+                row = QWidget()
+                rl = QHBoxLayout(row)
+                rl.setContentsMargins(0, 0, 0, 0)
+                rl.setSpacing(12)
+                orig = QLabel(line.original or " ")
+                orig.setWordWrap(True)
+                orig.setStyleSheet(f"color:{tok.text_primary}; font-size:10pt;")
+                orig.setAlignment(Qt.AlignmentFlag.AlignTop)
+                trans = QLabel(line.translation or "")
                 trans.setWordWrap(True)
                 trans.setStyleSheet(f"color:{tok.text_secondary}; font-size:9pt;")
-                self._lyrics_layout.addWidget(trans)
+                trans.setAlignment(Qt.AlignmentFlag.AlignTop)
+                rl.addWidget(orig, 1)
+                rl.addWidget(trans, 1)
+                self._lyrics_layout.addWidget(row)
+            else:
+                # 원문 위, 번역 아래
+                orig = QLabel(line.original or " ")
+                orig.setWordWrap(True)
+                orig.setStyleSheet(f"color:{tok.text_primary}; font-size:10pt;")
+                self._lyrics_layout.addWidget(orig)
+                if line.translation:
+                    trans = QLabel(line.translation)
+                    trans.setWordWrap(True)
+                    trans.setStyleSheet(f"color:{tok.text_secondary}; font-size:9pt;")
+                    self._lyrics_layout.addWidget(trans)
         self._lyrics_layout.addStretch()
+
+    def _toggle_lyrics_layout(self) -> None:
+        """번역 배치를 원문 아래 ↔ 오른쪽으로 전환한다(세션 내 유지)."""
+        self._side_by_side = not self._side_by_side
+        self._layout_btn.setText("⬍" if self._side_by_side else "⬌")
+        self._layout_btn.setToolTip(
+            "번역을 아래에 표시" if self._side_by_side else "번역을 오른쪽에 표시"
+        )
+        self._render_lyrics(self._current_dto)
 
     # ── 편집 상호작용 ─────────────────────────────────────────────
     def lyrics_viewport(self):
