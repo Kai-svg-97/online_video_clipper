@@ -26,8 +26,20 @@ _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 )
-_TIMEOUT = 12
+# (connect, read) 초 — 접근이 느린/막힌 출처에서 빨리 다음 출처로 넘어가도록 짧게 잡는다.
+_TIMEOUT = (5, 8)
 _LRC_TS_RE = re.compile(r"^\s*(?:\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*)+")
+
+
+def _log_provider_error(name: str, exc: Exception) -> None:
+    """제공자 조회 실패 로깅 — 네트워크 오류(타임아웃·연결 실패)는 예상 가능한
+    일시적 상황이므로 트레이스백 없이 WARNING으로 간단히 남기고, 그 외 예기치 못한
+    오류만 전체 트레이스백(exception)으로 남긴다.
+    """
+    if isinstance(exc, requests.exceptions.RequestException):
+        logger.warning("%s 가사 조회 실패(네트워크) — 건너뜀: %s", name, exc.__class__.__name__)
+    else:
+        logger.exception("%s 가사 조회 실패", name)
 
 
 def _session() -> requests.Session:
@@ -78,8 +90,8 @@ class LrclibProvider:
                         if cand.get("plainLyrics") or cand.get("syncedLyrics"):
                             data = cand
                             break
-        except Exception:
-            logger.exception("LRCLIB 조회 실패")
+        except Exception as exc:
+            _log_provider_error("LRCLIB", exc)
             return None
         if not data:
             return None
@@ -126,8 +138,8 @@ class GeniusProvider:
             if page.status_code != 200:
                 return None
             lines, r_artist, r_title = self._parse_page(page.text)
-        except Exception:
-            logger.exception("Genius 조회 실패")
+        except Exception as exc:
+            _log_provider_error("Genius", exc)
             return None
         if not lines:
             return None
@@ -189,8 +201,8 @@ class _KoreanScrapeProvider:
             return None
         try:
             lines, url = self._scrape(artist, title)
-        except Exception:
-            logger.exception("%s 조회 실패", self.display or self.key)
+        except Exception as exc:
+            _log_provider_error(self.display or self.key, exc)
             return None
         if not lines:
             return None

@@ -92,6 +92,7 @@ class SongViewModel(QObject):
         self._reorder_sources = reorder_sources
         self._current: UUID | None = None
         self._workers: list[_SongFetchWorker] = []
+        self._in_flight: set[UUID] = set()   # 조회 중인 video_id — 같은 영상 중복 실행 방지
 
     # ── 조회 ─────────────────────────────────────────────────────
     def get_song_info(self, video_id: UUID) -> SongInfoDTO | None:
@@ -118,6 +119,11 @@ class SongViewModel(QObject):
         )
 
     def _start_fetch(self, cmd: FetchSongInfoCommand) -> None:
+        # 같은 영상이 이미 백그라운드로 조회 중이면 중복 실행하지 않는다.
+        # ("노래로 표시" 자동 조회 + ⟳ 갱신이 겹쳐 두 워커가 같은 행을 쓰며 경합하는 것 방지)
+        if cmd.video_id in self._in_flight:
+            return
+        self._in_flight.add(cmd.video_id)
         self.busy_changed.emit(True)
         worker = _SongFetchWorker(self._fetch, cmd, self)
         worker.done.connect(self._on_fetch_done)
@@ -129,12 +135,14 @@ class SongViewModel(QObject):
         worker.start()
 
     def _on_fetch_done(self, video_id: object, ok: bool) -> None:
+        self._in_flight.discard(video_id)
         self.busy_changed.emit(False)
         # 조회 도중 다른 영상으로 이동했으면 화면 갱신은 생략(데이터는 이미 저장됨).
         if video_id == self._current:
             self.song_info_changed.emit(self.get_song_info(video_id))
 
     def _on_fetch_failed(self, video_id: object, err: str) -> None:
+        self._in_flight.discard(video_id)
         self.busy_changed.emit(False)
         self.error_occurred.emit(err)
 

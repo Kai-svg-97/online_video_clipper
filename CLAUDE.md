@@ -180,7 +180,7 @@ online_video_clipper/
 │   │   ├── oauth_adapter.py         # OAuth 2.0 토큰 발급/갱신
 │   │   └── youtube_api_adapter.py   # YouTube Data API v3 래퍼 (requests.Session)
 │   ├── song/
-│   │   ├── lyrics_providers.py      # LRCLIB(무키)·Genius·멜론·벅스·지니 가사 제공자 + build_default_providers (QThread에서만 호출)
+│   │   ├── lyrics_providers.py      # LRCLIB(무키)·Genius·멜론·벅스·지니 가사 제공자 + build_default_providers (QThread에서만 호출). 네트워크 오류(타임아웃·연결실패)는 트레이스백 없이 WARNING으로만 남기고 None 반환→다음 출처로(`_log_provider_error`); 타임아웃 (connect 5s, read 8s)로 짧게 잡아 느린 출처를 빨리 건너뜀
 │   │   └── translator.py            # deep-translator 래퍼(ITranslator) — 미설치/실패 시 원문 그대로(graceful)
 │   └── event_bus.py                 # In-process event dispatcher
 │
@@ -211,7 +211,7 @@ online_video_clipper/
 │       ├── monitoring_vm.py         # MonitoringViewModel — 채널 구독 목록
 │       ├── clip_vm.py               # ClipViewModel — 클립 목록 + 추출 작업
 │       ├── playlist_vm.py           # PlaylistViewModel — 재생목록 관리
-│       └── song_vm.py               # SongViewModel — 노래 탭 상태(load/refresh 백그라운드 조회, 필드·가사 편집, 노래 토글, 가사 출처 관리), shutdown()
+│       └── song_vm.py               # SongViewModel — 노래 탭 상태(load/refresh를 `_SongFetchWorker`(QThread) 백그라운드 조회, 필드·가사 편집, 노래 토글, 가사 출처 관리). **같은 영상 중복 조회 방지**(`_in_flight` — 노래 토글 자동조회+⟳ 갱신이 겹쳐도 워커 1개만 실행, DB 쓰기 경합 방지), shutdown()
 │
 ├── db/
 │   └── schema.sql                   # SQLite schema (FTS5 for search)
