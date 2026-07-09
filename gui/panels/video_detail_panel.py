@@ -521,6 +521,9 @@ class _EditableField(QStackedWidget):
 
         self._lbl = _DblClickLabel("—")
         self._lbl.setWordWrap(True)
+        # 평문으로 렌더 — 값에 &, ', < 등이 있어도 그대로 보이게(HTML 엔티티 오표기 방지)
+        self._lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self._lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self._lbl.setToolTip("더블클릭하여 편집")
         self._lbl.double_clicked.connect(self._enter_edit)
         self.addWidget(self._lbl)
@@ -542,8 +545,9 @@ class _EditableField(QStackedWidget):
 
     def _render(self) -> None:
         tok = _t()
+        # PlainText 라벨이므로 escape 없이 원문 그대로 설정 (' 등이 &#x27;로 보이던 문제 해결)
         if self._value:
-            self._lbl.setText(html.escape(self._value))
+            self._lbl.setText(self._value)
             self._lbl.setStyleSheet(f"color:{tok.text_primary};")
         else:
             self._lbl.setText(self._placeholder)
@@ -635,11 +639,12 @@ class _SongTab(QWidget):
             name_lbl = QLabel(label)
             name_lbl.setFixedWidth(64)
             name_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-weight:bold;")
-            name_lbl.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            # 값(_EditableField)이 세로 중앙 정렬이므로 레이블도 중앙으로 맞춰 이질감 제거
+            name_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             field = _EditableField()
             field.edited.connect(lambda v, k=key: self.field_edited.emit(k, v))
-            grid.addWidget(name_lbl, row, 0)
-            grid.addWidget(field, row, 1)
+            grid.addWidget(name_lbl, row, 0, Qt.AlignmentFlag.AlignVCenter)
+            grid.addWidget(field, row, 1, Qt.AlignmentFlag.AlignVCenter)
             self._fields[key] = field
         root.addWidget(grid_w)
 
@@ -742,6 +747,7 @@ class _SongTab(QWidget):
             return
         tok = _t()
         side = self._side_by_side and bilingual
+        content_idx = 0   # 오른쪽 배치 시 행 교대 음영용(빈 줄 제외)
         for line in dto.lyrics_lines:
             if not line.original.strip() and not line.translation.strip():
                 spacer = QLabel(" ")
@@ -749,34 +755,40 @@ class _SongTab(QWidget):
                 self._lyrics_layout.addWidget(spacer)
                 continue
             if side:
-                # 원문(좌) | 번역(우) 2열
+                # 원문(좌) | 번역(우) 2열 — 행마다 교대 음영으로 경계를 구분
                 row = QWidget()
+                shade = "rgba(127,127,127,0.09)" if content_idx % 2 == 0 else "transparent"
+                row.setStyleSheet(f"background:{shade}; border-radius:4px;")
                 rl = QHBoxLayout(row)
-                rl.setContentsMargins(0, 0, 0, 0)
+                rl.setContentsMargins(6, 3, 6, 3)
                 rl.setSpacing(12)
-                orig = QLabel(line.original or " ")
-                orig.setWordWrap(True)
-                orig.setStyleSheet(f"color:{tok.text_primary}; font-size:10pt;")
+                orig = self._lyric_label(line.original or " ", tok.text_primary, 10)
                 orig.setAlignment(Qt.AlignmentFlag.AlignTop)
-                trans = QLabel(line.translation or "")
-                trans.setWordWrap(True)
-                trans.setStyleSheet(f"color:{tok.text_secondary}; font-size:9pt;")
+                trans = self._lyric_label(line.translation or "", tok.text_secondary, 9)
                 trans.setAlignment(Qt.AlignmentFlag.AlignTop)
                 rl.addWidget(orig, 1)
                 rl.addWidget(trans, 1)
                 self._lyrics_layout.addWidget(row)
             else:
                 # 원문 위, 번역 아래
-                orig = QLabel(line.original or " ")
-                orig.setWordWrap(True)
-                orig.setStyleSheet(f"color:{tok.text_primary}; font-size:10pt;")
-                self._lyrics_layout.addWidget(orig)
+                self._lyrics_layout.addWidget(
+                    self._lyric_label(line.original or " ", tok.text_primary, 10)
+                )
                 if line.translation:
-                    trans = QLabel(line.translation)
-                    trans.setWordWrap(True)
-                    trans.setStyleSheet(f"color:{tok.text_secondary}; font-size:9pt;")
-                    self._lyrics_layout.addWidget(trans)
+                    self._lyrics_layout.addWidget(
+                        self._lyric_label(line.translation, tok.text_secondary, 9)
+                    )
+            content_idx += 1
         self._lyrics_layout.addStretch()
+
+    @staticmethod
+    def _lyric_label(text: str, color: str, pt: int) -> QLabel:
+        """가사 한 줄 라벨 — 평문 렌더(가사 속 &·< 등이 엔티티로 오표기되지 않도록)."""
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setTextFormat(Qt.TextFormat.PlainText)
+        lbl.setStyleSheet(f"color:{color}; font-size:{pt}pt; background:transparent;")
+        return lbl
 
     def _toggle_lyrics_layout(self) -> None:
         """번역 배치를 원문 아래 ↔ 오른쪽으로 전환한다(세션 내 유지)."""
