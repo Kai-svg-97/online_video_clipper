@@ -36,6 +36,7 @@ class Database:
         self._run_once("migrate_gemini_summary", self._migrate_gemini_summary)
         self._run_once("migrate_videos_gemini_summary", self._migrate_videos_gemini_summary)
         self._run_once("migrate_song_tables", self._migrate_song_tables)
+        self._run_once("migrate_song_sources_reorder", self._migrate_song_sources_reorder)
 
     def _run_once(self, migration_id: str, func) -> None:
         """마이그레이션을 최초 1회만 실행한다 (schema_migrations 테이블로 추적)."""
@@ -132,12 +133,14 @@ class Database:
         """
         from uuid import uuid4  # noqa: PLC0415
 
+        # 한국곡 조회에 유리하도록 지니·벅스를 Genius·멜론보다 앞에 둔다
+        # (실측상 지니·벅스가 국내곡 원가사를 안정적으로 반환).
         defaults = [
             ("LRCLIB", "lrclib", "https://lrclib.net", 10),
-            ("Genius", "genius", "https://genius.com", 20),
-            ("멜론", "melon", "https://www.melon.com", 30),
-            ("벅스", "bugs", "https://music.bugs.co.kr", 40),
-            ("지니", "genie", "https://www.genie.co.kr", 50),
+            ("지니", "genie", "https://www.genie.co.kr", 20),
+            ("벅스", "bugs", "https://music.bugs.co.kr", 30),
+            ("Genius", "genius", "https://genius.com", 40),
+            ("멜론", "melon", "https://www.melon.com", 50),
         ]
         with self.connection() as conn:
             existing = conn.execute("SELECT COUNT(*) FROM lyrics_sources").fetchone()
@@ -150,6 +153,22 @@ class Database:
                     (str(uuid4()), name, key, url, prio),
                 )
             logger.info("가사 출처 기본값 시드 완료 (%d개)", len(defaults))
+
+    def _migrate_song_sources_reorder(self) -> None:
+        """기존 설치본의 기본 가사 출처 우선순위를 한국곡 조회에 유리하게 재정렬한다.
+
+        지니·벅스를 Genius·멜론보다 앞으로 옮긴다(provider_key 기준 1회 갱신). Genius가
+        쓰레기 헤더로 '조회 성공' 처리돼 국내 사이트가 시도되지 않던 문제를 완화한다.
+        사용자가 추가한 커스텀 출처는 건드리지 않는다.
+        """
+        new_priority = {"lrclib": 10, "genie": 20, "bugs": 30, "genius": 40, "melon": 50}
+        with self.connection() as conn:
+            for key, prio in new_priority.items():
+                conn.execute(
+                    "UPDATE lyrics_sources SET priority=? WHERE provider_key=?",
+                    (prio, key),
+                )
+            logger.info("가사 출처 우선순위 재정렬 완료 (지니·벅스 우선)")
 
     def _migrate_gemini_summary(self) -> None:
         """download_history 테이블에 gemini_summary 컬럼을 추가한다 (idempotent)."""

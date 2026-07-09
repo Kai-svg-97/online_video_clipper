@@ -175,7 +175,15 @@ class GeniusProvider:
             for br in c.find_all("br"):
                 br.replace_with("\n")
             parts.append(c.get_text())
-        lines = _split_lines("\n".join(parts))
+        text = "\n".join(parts)
+        # Genius 페이지 머리말/꼬리말 제거:
+        #  - 앞: "N ContributorsTranslations…<곡명> Lyrics" 프리앰블
+        #  - 앞: "[아이유 "좋은 날" 가사]" 같은 곡 제목 주석 헤더 줄
+        #  - 뒤: "123Embed" 꼬리
+        text = re.sub(r"^\s*\d*\s*Contributors.*?Lyrics", "", text, count=1, flags=re.S)
+        text = re.sub(r"^\s*\[[^\]\n]*가사\]\s*", "", text)
+        text = re.sub(r"\d*Embed\s*$", "", text)
+        lines = _split_lines(text)
         artist = ""
         title = ""
         og = soup.find("meta", property="og:title")
