@@ -135,6 +135,7 @@ def main() -> int:
         MarkWatchedHandler,
         MoveCategoryHandler,
         RefreshCategoryMetadataHandler,
+        RefreshVideoMetadataHandler,
         RefreshVideoThumbnailHandler,
         RenameCategoryHandler,
         SetCategoryVideoOrderHandler,
@@ -243,6 +244,7 @@ def main() -> int:
     move_category       = MoveCategoryHandler(video_repo)
     delete_tag_h        = DeleteTagHandler(video_repo)
     refresh_metadata    = RefreshCategoryMetadataHandler(video_repo, event_bus, ytdlp)
+    refresh_video_meta  = RefreshVideoMetadataHandler(video_repo, event_bus, ytdlp)
     get_videos          = GetVideosHandler(video_repo)
     search_videos       = SearchVideosHandler(video_repo)
     get_cats            = GetCategoriesHandler(video_repo)
@@ -345,6 +347,7 @@ def main() -> int:
         import_yt_to_category=import_yt_to_cat_h,
         refresh_thumbnail=refresh_thumbnail_h,
         get_video_id_by_url=get_video_id_by_url,
+        refresh_video_metadata=refresh_video_meta,
     )
     get_yt_playlists_h = GetYouTubePlaylistsHandler(ytdlp, _yt_api)
     playlist_vm = PlaylistViewModel(

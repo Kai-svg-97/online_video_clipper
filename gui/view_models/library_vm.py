@@ -29,6 +29,8 @@ from application.library.commands import (
     MoveCategoryHandler,
     RefreshCategoryMetadataCommand,
     RefreshCategoryMetadataHandler,
+    RefreshVideoMetadataCommand,
+    RefreshVideoMetadataHandler,
     RefreshVideoThumbnailCommand,
     RefreshVideoThumbnailHandler,
     RenameCategoryCommand,
@@ -172,6 +174,30 @@ class _RefreshMetadataWorker(QThread):
             self.finished_err.emit(str(exc))
 
 
+class _RefreshVideoMetaWorker(QThread):
+    """단일 영상 메타데이터를 YouTube(yt-dlp)에서 재수집한다(상세화면 ⟳)."""
+    finished_ok  = pyqtSignal(object, bool)   # (video_id: UUID, updated: bool)
+    finished_err = pyqtSignal(object, str)    # (video_id: UUID, error)
+
+    def __init__(
+        self,
+        handler: RefreshVideoMetadataHandler,
+        cmd: RefreshVideoMetadataCommand,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._handler = handler
+        self._cmd = cmd
+
+    def run(self) -> None:
+        try:
+            updated = self._handler.handle(self._cmd)
+            self.finished_ok.emit(self._cmd.video_id, bool(updated))
+        except Exception as exc:
+            logger.exception("영상 메타데이터 갱신 실패: %s", self._cmd.video_id)
+            self.finished_err.emit(self._cmd.video_id, str(exc))
+
+
 class LibraryViewModel(QObject):
     videos_changed = pyqtSignal()
     categories_changed = pyqtSignal()
@@ -185,6 +211,8 @@ class LibraryViewModel(QObject):
     yt_import_progress  = pyqtSignal(int, int)         # current, total
     yt_import_finished  = pyqtSignal(int)              # 처리된 영상 수
     thumbnail_refreshed = pyqtSignal(object, str)      # (video_id: UUID, new_path)
+    # 단일 영상 상세 정보 갱신(⟳) 완료 — (video_id, ok). ok=True면 DB가 갱신됨.
+    video_metadata_refreshed = pyqtSignal(object, bool)
     loading_key_changed = pyqtSignal(str, bool)        # (node_key, loading) — 트리 노드별 스피너
 
     def __init__(
@@ -211,6 +239,7 @@ class LibraryViewModel(QObject):
         import_yt_to_category: ImportYouTubePlaylistToCategoryHandler | None = None,
         refresh_thumbnail: RefreshVideoThumbnailHandler | None = None,
         get_video_id_by_url: GetVideoIdByUrlHandler | None = None,
+        refresh_video_metadata: RefreshVideoMetadataHandler | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -236,7 +265,9 @@ class LibraryViewModel(QObject):
         self._set_category_order = set_category_order
         self._import_yt_to_category = import_yt_to_category
         self._refresh_thumbnail_handler = refresh_thumbnail
+        self._refresh_video_meta = refresh_video_metadata
         self._refresh_metadata_workers: list[_RefreshMetadataWorker] = []
+        self._video_meta_workers: list[_RefreshVideoMetaWorker] = []
         self._yt_import_workers: list[_ImportYTToCatWorker] = []
         self._thumb_workers: list[_RefreshThumbnailWorker] = []
         self._list_workers: list[_ListVideosWorker] = []
@@ -281,6 +312,7 @@ class LibraryViewModel(QObject):
         """
         for worker in [
             *self._refresh_metadata_workers,
+            *self._video_meta_workers,
             *self._yt_import_workers,
             *self._add_workers,
             *self._thumb_workers,
@@ -290,6 +322,7 @@ class LibraryViewModel(QObject):
                 worker.terminate()
                 worker.wait(3000)
         self._refresh_metadata_workers.clear()
+        self._video_meta_workers.clear()
         self._yt_import_workers.clear()
         self._add_workers.clear()
         self._thumb_workers.clear()
@@ -945,4 +978,35 @@ class LibraryViewModel(QObject):
         worker.finished_err.connect(lambda err: logger.debug("썸네일 갱신 실패(무시): %s", err))
         worker.finished.connect(lambda: self._thumb_workers.remove(worker) if worker in self._thumb_workers else None)
         self._thumb_workers.append(worker)
+        worker.start()
+
+    def refresh_video_metadata(self, video_id: UUID) -> None:
+        """상세화면 ⟳ — 단일 영상 메타데이터를 YouTube에서 재수집해 DB를 갱신한다.
+
+        네트워크 I/O이므로 백그라운드 워커에서 실행하고, 완료 시
+        `video_metadata_refreshed(video_id, ok)`를 방출한다(ok=True면 갱신됨).
+        handler 미설정이면 무시한다.
+        """
+        if self._refresh_video_meta is None:
+            self.video_metadata_refreshed.emit(video_id, False)
+            return
+        cmd = RefreshVideoMetadataCommand(video_id=video_id)
+        worker = _RefreshVideoMetaWorker(self._refresh_video_meta, cmd, self)
+
+        def _on_ok(vid_id: object, updated: bool) -> None:
+            if updated:
+                self._refresh_videos(bust_cache=True)  # 그리드/목록도 갱신
+            self.video_metadata_refreshed.emit(vid_id, updated)
+
+        def _on_err(vid_id: object, err: str) -> None:
+            self.error_occurred.emit(err)
+            self.video_metadata_refreshed.emit(vid_id, False)
+
+        worker.finished_ok.connect(_on_ok)
+        worker.finished_err.connect(_on_err)
+        worker.finished.connect(
+            lambda: self._video_meta_workers.remove(worker)
+            if worker in self._video_meta_workers else None
+        )
+        self._video_meta_workers.append(worker)
         worker.start()

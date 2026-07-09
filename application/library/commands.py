@@ -435,6 +435,74 @@ class SetCategoryVideoOrderHandler:
         self._repo.set_category_video_order(cmd.category_id, cmd.video_ids)
 
 
+def _refetch_video_metadata(
+    repo: IVideoRepository,
+    bus: IEventBus,
+    ytdlp: IMediaSource,
+    agg_id: UUID,
+    url: str,
+) -> bool:
+    """영상 1개의 메타데이터를 yt-dlp로 YouTube(웹) 기준 재수집해 저장한다.
+
+    제목·설명·채널·길이·게시일·조회수·태그·썸네일을 갱신하며, 사용자가 직접 추가한
+    태그는 병합해 보존한다. 실제로 갱신·저장되면 True. `RefreshCategoryMetadataHandler`
+    (카테고리 일괄)와 `RefreshVideoMetadataHandler`(단건)가 공유한다.
+    """
+    info = ytdlp.fetch_metadata(url)
+    if not info:
+        return False
+    full_agg = repo.get_by_id(agg_id)
+    if full_agg is None:
+        return False
+
+    title = info.get("title") or full_agg.video.title
+    desc = info.get("description") or ""
+    channel = None
+    if info.get("uploader"):
+        channel = ChannelInfo(
+            name=info.get("uploader", ""),
+            url=info.get("uploader_url") or "",
+            channel_id=info.get("channel_id") or info.get("uploader_id") or "",
+        )
+    duration = Duration(int(info["duration"])) if info.get("duration") else None
+    published_at = None
+    if info.get("upload_date"):
+        raw = info["upload_date"]
+        published_at = datetime(int(raw[:4]), int(raw[4:6]), int(raw[6:]))
+    view_count = info.get("view_count")
+    thumbnail_url = info.get("thumbnail") or ""
+
+    raw_tags: list[str] = list(info.get("tags") or [])
+    raw_tags += list(info.get("categories") or [])
+    desc_tags = re.findall(r"#([\w가-힣]{2,})", desc)
+    raw_tags += desc_tags[:10]
+    tag_names = list(dict.fromkeys(
+        t.strip() for t in raw_tags if isinstance(t, str) and t.strip()
+    ))
+    tag_ids = [repo.get_or_create_tag(t).id for t in tag_names]
+    # 사용자가 직접 추가한 태그를 보존하기 위해 기존 태그와 병합
+    merged_tag_ids = list(dict.fromkeys([*full_agg.tag_ids, *tag_ids]))
+
+    full_agg.update_metadata(
+        title=title,
+        description=desc or None,
+        channel=channel,
+        duration=duration,
+        published_at=published_at,
+        view_count=view_count,
+    )
+    full_agg.set_tags(merged_tag_ids)
+
+    if thumbnail_url:
+        thumb_path = ytdlp.download_thumbnail(full_agg.id, thumbnail_url, force=True)
+        if thumb_path:
+            full_agg.update_metadata(thumbnail_path=thumb_path)
+
+    repo.save(full_agg)
+    bus.publish_all(full_agg.pull_events())
+    return True
+
+
 class RefreshCategoryMetadataHandler:
     """Re-fetches full metadata (title, description, tags, view count, thumbnail)
     for every video in the specified categories. Pass empty category_ids to
@@ -473,57 +541,11 @@ class RefreshCategoryMetadataHandler:
 
             for agg in batch:
                 try:
-                    info = self._ytdlp.fetch_metadata(str(agg.video.url))
-                    title = info.get("title") or agg.video.title
-                    desc = info.get("description") or ""
-                    channel = None
-                    if info.get("uploader"):
-                        channel = ChannelInfo(
-                            name=info.get("uploader", ""),
-                            url=info.get("uploader_url") or "",
-                            channel_id=info.get("channel_id") or info.get("uploader_id") or "",
-                        )
-                    duration = Duration(int(info["duration"])) if info.get("duration") else None
-                    published_at = None
-                    if info.get("upload_date"):
-                        raw = info["upload_date"]
-                        published_at = datetime(int(raw[:4]), int(raw[4:6]), int(raw[6:]))
-                    view_count = info.get("view_count")
-                    thumbnail_url = info.get("thumbnail") or ""
-
-                    raw_tags: list[str] = list(info.get("tags") or [])
-                    raw_tags += list(info.get("categories") or [])
-                    desc_tags = re.findall(r"#([\w가-힣]{2,})", desc)
-                    raw_tags += desc_tags[:10]
-                    tag_names = list(dict.fromkeys(
-                        t.strip() for t in raw_tags if isinstance(t, str) and t.strip()
-                    ))
-
-                    full_agg = self._repo.get_by_id(agg.id)
-                    if full_agg is None:
-                        continue
-
-                    tag_ids = [self._repo.get_or_create_tag(t).id for t in tag_names]
-                    # Merge with existing tags to preserve user-added ones
-                    merged_tag_ids = list(dict.fromkeys([*full_agg.tag_ids, *tag_ids]))
-                    full_agg.update_metadata(
-                        title=title,
-                        description=desc or None,
-                        channel=channel,
-                        duration=duration,
-                        published_at=published_at,
-                        view_count=view_count,
-                    )
-                    full_agg.set_tags(merged_tag_ids)
-
-                    if thumbnail_url:
-                        thumb_path = self._ytdlp.download_thumbnail(full_agg.id, thumbnail_url, force=True)
-                        if thumb_path:
-                            full_agg.update_metadata(thumbnail_path=thumb_path)
-
-                    self._repo.save(full_agg)
-                    self._bus.publish_all(full_agg.pull_events())
-                    refreshed += 1
+                    if _refetch_video_metadata(
+                        self._repo, self._bus, self._ytdlp,
+                        agg.id, str(agg.video.url),
+                    ):
+                        refreshed += 1
                 except Exception:
                     logger.exception("영상 메타데이터 갱신 실패")
 
@@ -538,6 +560,39 @@ class RefreshCategoryMetadataHandler:
 
         self._repo.delete_zero_count_tags()
         return refreshed
+
+
+@dataclass
+class RefreshVideoMetadataCommand:
+    """영상 1개의 메타데이터를 YouTube(yt-dlp)에서 재수집해 갱신한다(상세화면 ⟳)."""
+    video_id: UUID
+
+
+class RefreshVideoMetadataHandler:
+    """단일 영상 메타데이터 갱신 — 상세화면의 '상세 정보 갱신'(⟳) 버튼용.
+
+    `RefreshCategoryMetadataHandler`와 동일한 재수집 로직(`_refetch_video_metadata`)을
+    한 영상에만 적용해, DB에 저장된 오래된/부실한 메타데이터를 YouTube 웹 기준으로
+    맞춘다. 갱신되면 True.
+    """
+
+    def __init__(
+        self,
+        repo: IVideoRepository,
+        event_bus: IEventBus,
+        ytdlp: IMediaSource,
+    ) -> None:
+        self._repo = repo
+        self._bus = event_bus
+        self._ytdlp = ytdlp
+
+    def handle(self, cmd: RefreshVideoMetadataCommand) -> bool:
+        agg = self._repo.get_by_id(cmd.video_id)
+        if agg is None:
+            return False
+        return _refetch_video_metadata(
+            self._repo, self._bus, self._ytdlp, agg.id, str(agg.video.url)
+        )
 
 
 # ── YouTube 재생목록 → 카테고리 가져오기 ──────────────────────────────────────

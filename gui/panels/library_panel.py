@@ -3867,6 +3867,7 @@ class LibraryPanel(QWidget):
         self._breadcrumb_bar.tag_removed.connect(self._on_active_tag_removed)
         self._vm.metadata_refresh_progress.connect(self._on_refresh_progress)
         self._vm.metadata_refresh_finished.connect(self._on_refresh_finished)
+        self._vm.video_metadata_refreshed.connect(self._on_video_metadata_refreshed)
         self._tag_list.itemClicked.connect(self._on_tag_clicked)
         self._tag_list.delete_requested.connect(self._on_tag_delete_requested)
         self._tag_list.favorite_toggled.connect(self._toggle_favorite)
@@ -4709,9 +4710,29 @@ class LibraryPanel(QWidget):
                 self._detail_widget.load(detail, tag_ids, related=related)
 
     def _on_detail_refresh_requested(self, video_id: object) -> None:
-        """제목행 ⟳ — 상세 정보를 제자리에서 재조회해 다시 로드한다(nav 히스토리 미변경)."""
+        """제목행 ⟳ — YouTube(yt-dlp)에서 메타데이터를 재수집(백그라운드)한다.
+
+        기존에는 DB만 재조회해 저장된 오래된/부실한 정보가 그대로여서 유튜브 웹과
+        달랐다. 이제 실제로 재수집해 DB를 갱신하고, 완료 시
+        `video_metadata_refreshed` 신호로 상세를 제자리 재로드한다.
+        """
         if not isinstance(video_id, UUID):
             return
+        self._detail_widget.set_refresh_busy(True)
+        self._vm.refresh_video_metadata(video_id)
+
+    def _on_video_metadata_refreshed(self, video_id: object, ok: bool) -> None:
+        """메타데이터 재수집 완료 — 현재 그 영상 상세가 열려 있으면 제자리 재로드."""
+        self._detail_widget.set_refresh_busy(False)
+        if not isinstance(video_id, UUID):
+            return
+        # 갱신 도중 다른 화면/영상으로 이동했으면 재로드하지 않는다.
+        if self._detail_widget.current_detail_id() != video_id:
+            return
+        self._reload_detail_in_place(video_id)
+
+    def _reload_detail_in_place(self, video_id: UUID) -> None:
+        """DB의 최신 상세를 다시 읽어 상세 위젯에 재로드한다(nav 히스토리 미변경)."""
         try:
             detail = self._vm.get_video_detail(video_id)
             if detail is None:
@@ -4728,9 +4749,8 @@ class LibraryPanel(QWidget):
             self._detail_widget.load(
                 detail, tag_ids, related=related, category_path=cat_path or None
             )
-            self._vm.request_thumbnail_refresh(video_id, detail.url)
         except Exception:
-            logger.exception("상세 정보 갱신 실패: %s", video_id)
+            logger.exception("상세 정보 재로드 실패: %s", video_id)
 
     def _on_sort_changed(self, index: int) -> None:
         sort_by, sort_asc = self._sort_combo.itemData(index)

@@ -1491,6 +1491,15 @@ class VideoDetailWidget(QWidget):
         if self._detail is not None and not self._streaming:
             self.detail_refresh_requested.emit(self._detail.id)
 
+    def current_detail_id(self):
+        """현재 표시 중인 로컬 영상 id(스트리밍/미표시면 None)."""
+        return self._detail.id if self._detail is not None else None
+
+    def set_refresh_busy(self, busy: bool) -> None:
+        """상세 정보 갱신(⟳) 진행 표시 — 버튼 비활성 + 툴팁 변경."""
+        self._btn_refresh.setEnabled(not busy)
+        self._btn_refresh.setToolTip("갱신 중… (YouTube에서 정보 가져오는 중)" if busy else "상세 정보 갱신")
+
     def _on_play_failed(self, err: str) -> None:
         if self._current_url:
             QDesktopServices.openUrl(QUrl(self._current_url))
