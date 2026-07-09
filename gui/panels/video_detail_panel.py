@@ -513,6 +513,9 @@ class VideoDetailWidget(QWidget):
     _TAB_SUMMARY = 1
     _TAB_FILES = 2      # 다운로드 + 클립 병합
 
+    # 요약 렌더링 줄 간격(px) — Gemini 요약은 개행이 촘촘해 단락 여백을 벌려 읽기 편하게 한다.
+    _SUMMARY_LINE_GAP = 8
+
     def __init__(self, clip_vm=None, download_vm=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._detail: VideoDetailDTO | None = None
@@ -815,7 +818,9 @@ class VideoDetailWidget(QWidget):
         self._notes_edit.setPlainText(detail.notes or "")
         self._notes_edit.blockSignals(False)
         self._summary_raw = detail.gemini_summary or ""
-        self._summary_edit.setHtml(self._render_timestamped_html(self._summary_raw))
+        self._summary_edit.setHtml(
+            self._render_timestamped_html(self._summary_raw, line_gap=self._SUMMARY_LINE_GAP)
+        )
         self._summary_stack.setCurrentWidget(self._summary_edit)
         self._summary_status_lbl.setText("")
         self._summary_refresh_btn.setEnabled(True)
@@ -987,17 +992,23 @@ class VideoDetailWidget(QWidget):
         # 최초 표시 시 viewport 폭이 확정된 뒤 한 번 더 맞춘다.
         QTimer.singleShot(0, _apply)
 
-    def _render_timestamped_html(self, text: str) -> str:
+    def _render_timestamped_html(self, text: str, line_gap: int = 0) -> str:
         """요약/설명 텍스트를 마크다운 서식 + 링크가 적용된 HTML로 렌더링한다.
 
         - `# `~`###### ` → 제목, `**굵게**`/`__굵게__` → 굵게, `*기울임*` → 기울임
         - `- `/`* `/`• `/`· ` → 불릿, `1.`/`1)` → 번호 목록, 선행 공백 → 들여쓰기
         - `MM:SS`·`HH:MM:SS` → `seek:` 링크, URL → 링크
           (`_on_summary_anchor_clicked`가 seek는 재생 위치 이동, URL은 브라우저로 라우팅)
+
+        `line_gap`(px): 줄마다 하단 여백을 줘 단락·개행 간격을 넓힌다. 설명은 원문에
+        빈 줄 단락 구분이 있어 0(조밀)로 충분하지만, Gemini 요약은 개행이 촘촘한
+        연속 항목이라 값을 줘 읽기 편하게 벌린다.
         """
         if not text:
             return ""
         accent = _t().accent
+        gap = max(0, line_gap)
+        mb = f" margin-bottom:{gap}px;" if gap else ""
 
         def _link(m: re.Match) -> str:
             h = int(m.group(1)) if m.group(1) else 0
@@ -1033,7 +1044,7 @@ class VideoDetailWidget(QWidget):
         def _render_line(line: str) -> str:
             stripped = line.lstrip(" \t")
             if not stripped:
-                return '<div style="font-size:4pt;">&nbsp;</div>'   # 빈 줄 간격
+                return f'<div style="font-size:{4 + gap}pt;">&nbsp;</div>'   # 빈 줄 간격
             indent = len(line) - len(stripped)
             base = sum(4 if c == "\t" else 1 for c in line[:indent]) * 7  # 들여쓰기 px
 
@@ -1041,24 +1052,24 @@ class VideoDetailWidget(QWidget):
             if hm:
                 size = {1: "13pt", 2: "12pt", 3: "11pt"}.get(len(hm.group(1)), "10pt")
                 return (
-                    f'<div style="margin:6px 0 2px {base}px; font-weight:bold; '
-                    f'font-size:{size};">{_inline(hm.group(2))}</div>'
+                    f'<div style="margin:{6 + gap}px 0 {max(2, gap)}px {base}px; '
+                    f'font-weight:bold; font-size:{size};">{_inline(hm.group(2))}</div>'
                 )
             bm = _BULLET_RE.match(stripped)
             if bm:
                 return (
-                    f'<div style="margin-left:{base + 14}px;">'
+                    f'<div style="margin-left:{base + 14}px;{mb}">'
                     f'•&nbsp;{_inline(bm.group(2))}</div>'
                 )
             nm = _NUMBERED_RE.match(stripped)
             if nm:
                 return (
-                    f'<div style="margin-left:{base + 16}px;">'
+                    f'<div style="margin-left:{base + 16}px;{mb}">'
                     f'{nm.group(1)}.&nbsp;{_inline(nm.group(2))}</div>'
                 )
             if base:
-                return f'<div style="margin-left:{base}px;">{_inline(stripped)}</div>'
-            return f"<div>{_inline(stripped)}</div>"
+                return f'<div style="margin-left:{base}px;{mb}">{_inline(stripped)}</div>'
+            return f'<div style="{mb}">{_inline(stripped)}</div>' if mb else f"<div>{_inline(stripped)}</div>"
 
         return "".join(_render_line(line) for line in text.splitlines())
 
@@ -1543,7 +1554,9 @@ class VideoDetailWidget(QWidget):
         self._summary_refresh_btn.setEnabled(True)
         if summary:
             self._summary_raw = summary
-            self._summary_edit.setHtml(self._render_timestamped_html(summary))
+            self._summary_edit.setHtml(
+                self._render_timestamped_html(summary, line_gap=self._SUMMARY_LINE_GAP)
+            )
             self._summary_stack.setCurrentWidget(self._summary_edit)
             self._summary_status_lbl.setText("")
         else:
@@ -1572,7 +1585,9 @@ class VideoDetailWidget(QWidget):
         self._summary_stack.setCurrentWidget(self._summary_edit)
         if text != self._summary_raw:
             self._summary_raw = text
-            self._summary_edit.setHtml(self._render_timestamped_html(text))
+            self._summary_edit.setHtml(
+                self._render_timestamped_html(text, line_gap=self._SUMMARY_LINE_GAP)
+            )
             if self._detail is not None and not self._streaming:
                 self.gemini_summary_saved.emit(self._detail.id, text)
 
