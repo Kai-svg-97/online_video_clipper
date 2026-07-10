@@ -3553,6 +3553,9 @@ class LibraryPanel(QWidget):
         self._is_restoring: bool = False
         self._current_channel_url: str = ""      # 단일 채널 피드 복원용
         self._current_detail_payload: object = None  # 상세 화면 재진입용(UUID|FeedVideoDTO)
+        # 가수/앨범 필터 재생목록 컨텍스트 — 마우스 뒤로가기 재생 이력 되짚기용.
+        # {items, header, prev_related, history}. None이면 재생목록 모드 아님.
+        self._playlist_ctx: dict | None = None
         self._current_feed_key: str = ""         # 현재 화면에 표시 중인 피드 key
         self._thumb_load_gen: int = 0  # 썸네일 bg 로더 세대 (구 로더 UI 반영 방지용)
         self._active_thumb_loaders: list = []  # GC 방지용 강한 참조 보관
@@ -4590,17 +4593,25 @@ class LibraryPanel(QWidget):
 
     # ── In-place navigation ────────────────────────────────────────
 
-    def _open_detail(self, video_id: UUID, autoplay: bool = False) -> None:
-        """로컬 영상 상세화면을 연다. 연관 목록 = 현재 보고 있는 영상 목록(같은
-        카테고리/재생목록)이며 **현재 영상도 포함**(재생목록처럼). autoplay면 로드 직후 재생."""
+    def _open_detail(
+        self, video_id: UUID, autoplay: bool = False,
+        related: list | None = None, header: str | None = None, push_nav: bool = True,
+    ) -> None:
+        """로컬 영상 상세화면을 연다.
+
+        related가 None이면 일반 진입 — 현재 목록으로 연관 목록을 구성하고 재생목록 모드를
+        해제한다. related가 주어지면(재생목록 내 이동) 그 목록/헤더를 유지한다.
+        push_nav=False면 화면 히스토리를 남기지 않는다(재생목록 내 이동)."""
         detail = self._vm.get_video_detail(video_id)
         if detail is None:
             return
-        if not self._is_restoring:
+        if push_nav and not self._is_restoring:
             self._push_nav_state()
+        if related is None:
+            # 일반 진입 — 재생목록 컨텍스트 해제 + 현재 목록(현재 영상 포함) 구성
+            self._playlist_ctx = None
+            related = [self._related_from_video(v) for v in self._vm.videos][:30]
         tag_ids = {t.name: t.id for t in self._vm.tags}
-        # 현재 영상 포함 — 우측 목록이 재생목록으로 동작(자동 다음곡)
-        related = [self._related_from_video(v) for v in self._vm.videos][:30]
         cat_path = self._vm.get_category_path_with_ids(detail.category_id) if detail.category_id else []
         # 재생 전 포스터 = 목록에서 보던 썸네일(동일 캐시)
         poster = (
@@ -4609,28 +4620,53 @@ class LibraryPanel(QWidget):
         )
         self._detail_widget.load(detail, tag_ids, resume_ms=0, related=related,
                                  category_path=cat_path or None, poster=poster,
-                                 autoplay=autoplay)
+                                 autoplay=autoplay, related_header=header)
         self._current_detail_payload = video_id
         self._nav_stack.setCurrentIndex(1)
         self._vm.request_thumbnail_refresh(video_id, detail.url)
         if self._song_vm is not None:
             self._song_vm.load(video_id)
 
-    def _open_stream_detail(self, feed_dto, autoplay: bool = False) -> None:
-        """구독 피드/채널의 스트리밍 영상 상세화면을 연다. 연관 목록 = 같은 채널의
-        최근 영상(현재 로드된 피드 기준, **현재 영상 포함**)."""
+    def _open_stream_detail(
+        self, feed_dto, autoplay: bool = False,
+        related: list | None = None, header: str | None = None, push_nav: bool = True,
+    ) -> None:
+        """구독 피드/채널의 스트리밍 영상 상세화면을 연다.
+
+        related가 None이면 일반 진입(같은 채널 최근 영상, 현재 영상 포함)이며 재생목록
+        모드를 해제한다. related가 주어지면 그 목록/헤더를 유지(재생목록 내 이동)."""
         if self._feed_vm is None:
             return
-        if not self._is_restoring:
+        if push_nav and not self._is_restoring:
             self._push_nav_state()
-        related = self._feed_related_items(feed_dto)
-        self._detail_widget.load_stream(feed_dto, related=related)
+        if related is None:
+            self._playlist_ctx = None
+            related = self._feed_related_items(feed_dto)
+        self._detail_widget.load_stream(feed_dto, related=related, related_header=header,
+                                        poster=None)
         self._current_detail_payload = feed_dto
         self._nav_stack.setCurrentIndex(1)
 
-    def _on_related_item_selected(self, payload) -> None:
-        """연관 영상 클릭 — payload 타입에 따라 로컬/스트리밍 상세로 재진입."""
+    def _open_playlist_payload(self, payload, autoplay: bool) -> None:
+        """재생목록 컨텍스트를 유지한 채 payload(로컬/스트리밍) 상세를 연다."""
         from application.library.dtos import FeedVideoDTO  # noqa: PLC0415
+        ctx = self._playlist_ctx
+        if ctx is None:
+            return
+        if isinstance(payload, UUID):
+            self._open_detail(payload, autoplay=autoplay, related=ctx["items"],
+                              header=ctx["header"], push_nav=False)
+        elif isinstance(payload, FeedVideoDTO):
+            self._open_stream_detail(payload, autoplay=autoplay, related=ctx["items"],
+                                     header=ctx["header"], push_nav=False)
+
+    def _on_related_item_selected(self, payload) -> None:
+        """연관 영상/재생목록 클릭 — 재생목록 모드면 이력에 쌓고 재생, 아니면 일반 진입."""
+        from application.library.dtos import FeedVideoDTO  # noqa: PLC0415
+        if self._playlist_ctx is not None:
+            self._playlist_ctx["history"].append(payload)
+            self._open_playlist_payload(payload, autoplay=True)
+            return
         if isinstance(payload, UUID):
             self._open_detail(payload)
         elif isinstance(payload, FeedVideoDTO):
@@ -4639,19 +4675,56 @@ class LibraryPanel(QWidget):
     def _on_play_next(self, payload) -> None:
         """재생목록 자동재생 — 다음 항목을 로드하고 바로 재생한다."""
         from application.library.dtos import FeedVideoDTO  # noqa: PLC0415
+        if self._playlist_ctx is not None:
+            self._playlist_ctx["history"].append(payload)
+            self._open_playlist_payload(payload, autoplay=True)
+            return
         if isinstance(payload, UUID):
             self._open_detail(payload, autoplay=True)
         elif isinstance(payload, FeedVideoDTO):
             self._open_stream_detail(payload, autoplay=True)
 
+    def _playlist_back(self) -> None:
+        """재생목록 모드에서 마우스 뒤로가기 — 이전에 재생한 항목으로 되짚는다.
+
+        이력이 더 없으면 재생목록 진입 직전의 '연관 영상' 목록으로 복귀한다."""
+        ctx = self._playlist_ctx
+        if ctx is None:
+            return
+        hist = ctx["history"]
+        if len(hist) > 1:
+            hist.pop()
+            prev = hist[-1]
+            self._open_playlist_payload(prev, autoplay=self._detail_widget.is_playing())
+        else:
+            # 이력 소진 → 연관 영상 목록 복귀(상세는 진입 영상 그대로 유지)
+            self._detail_widget.set_related(ctx["prev_related"], header="연관 영상")
+            self._playlist_ctx = None
+
     def _on_song_filter_requested(self, field: str, value: str) -> None:
-        """노래 탭의 가수/앨범 » 클릭 — 같은 가수/앨범 영상을 연관 목록 대신 나열한다."""
+        """노래 탭의 가수/앨범 » 클릭 — 같은 가수/앨범 영상을 재생목록으로 나열한다."""
         if not value:
             return
         videos = self._vm.get_videos_by_song(field, value)
-        related = [self._related_from_video(v) for v in videos][:100]
+        items = [self._related_from_video(v) for v in videos][:100]
+        if not items:
+            return
         header = (f"가수: {value}" if field == "artist" else f"앨범: {value}")
-        self._detail_widget.set_related(related, header=header)
+        if self._playlist_ctx is None:
+            # 진입 — 현재 '연관 영상' 목록과 진입 영상을 보존
+            prev_related = [self._related_from_video(v) for v in self._vm.videos][:30]
+            self._playlist_ctx = {
+                "items": items,
+                "header": header,
+                "prev_related": prev_related,
+                "history": [self._current_detail_payload],
+            }
+        else:
+            # 이미 재생목록 모드 — 새 필터로 교체(prev_related 보존)
+            self._playlist_ctx["items"] = items
+            self._playlist_ctx["header"] = header
+            self._playlist_ctx["history"] = [self._current_detail_payload]
+        self._detail_widget.set_related(items, header=header)
 
     def _related_from_video(self, v: VideoDTO) -> RelatedItem:
         meta = []
@@ -4712,13 +4785,18 @@ class LibraryPanel(QWidget):
         return items
 
     def _on_detail_back_requested(self) -> None:
-        """상세 화면 뒤로가기 버튼 — 히스토리 기반으로 직전 화면 복원."""
+        """상세 화면 뒤로가기(마우스 뒤로가기·‹ 버튼) — 재생목록 모드면 재생 이력을
+        되짚고, 아니면 화면 히스토리 기반으로 직전 화면을 복원한다."""
+        if self._playlist_ctx is not None:
+            self._playlist_back()
+            return
         if self._nav_history:
             self._go_back()
         else:
             self._on_back_from_detail()
 
     def _on_back_from_detail(self) -> None:
+        self._playlist_ctx = None   # 상세를 완전히 벗어남 — 재생목록 모드 해제
         self._detail_widget.stop_player()
         self._nav_stack.setCurrentIndex(0)
 

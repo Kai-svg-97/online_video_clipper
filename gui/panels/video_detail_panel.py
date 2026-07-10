@@ -26,7 +26,7 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QDesktopServices, QFont, QFontMetrics, QImage
+from PyQt6.QtGui import QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QTransform
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -44,6 +44,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyle,
     QTabWidget,
     QTextBrowser,
     QTimeEdit,
@@ -631,6 +632,45 @@ class _EditableField(QStackedWidget):
         self._render()
 
 
+class _SpinRefreshButton(QPushButton):
+    """새로고침(reload) 아이콘 버튼 — 갱신 중에는 아이콘이 빙글빙글 회전한다.
+
+    QStyle 표준 새로고침 아이콘(SP_BrowserReload)을 쓰고, `start_spin()` 동안
+    QTimer로 아이콘을 회전시켜 진행 중임을 직관적으로 보여준다.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._angle = 0
+        self._spinning = False
+        self._base_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
+        self._base_pixmap = self._base_icon.pixmap(QSize(18, 18))
+        self.setIconSize(QSize(18, 18))
+        self.setIcon(self._base_icon)
+        self._timer = QTimer(self)
+        self._timer.setInterval(55)
+        self._timer.timeout.connect(self._tick)
+
+    def _tick(self) -> None:
+        self._angle = (self._angle + 30) % 360
+        rotated = self._base_pixmap.transformed(
+            QTransform().rotate(self._angle), Qt.TransformationMode.SmoothTransformation
+        )
+        self.setIcon(QIcon(rotated))
+
+    def start_spin(self) -> None:
+        if not self._spinning:
+            self._spinning = True
+            self._timer.start()
+
+    def stop_spin(self) -> None:
+        if self._spinning:
+            self._spinning = False
+            self._timer.stop()
+        self._angle = 0
+        self.setIcon(self._base_icon)
+
+
 class _SongTab(QWidget):
     """상세화면 '노래' 탭 — 가수/앨범/제목/발매년도 + 가사(원문·한글 병행).
 
@@ -710,8 +750,8 @@ class _SongTab(QWidget):
         # 가사 헤더 ('가사' 레이블 + 가사 갱신 ⟳ + 출처 + 편집 힌트)
         lyr_header = QHBoxLayout()
         lyr_header.addWidget(QLabel("<b>가사</b>"))
-        self._lyrics_refresh_btn = QPushButton("⟳")
-        self._lyrics_refresh_btn.setFixedSize(24, 22)
+        self._lyrics_refresh_btn = _SpinRefreshButton()
+        self._lyrics_refresh_btn.setFixedSize(26, 24)
         self._lyrics_refresh_btn.setToolTip("가사 갱신 (현재 노래 정보로 출처에서 다시 조회)")
         self._lyrics_refresh_btn.clicked.connect(self.refresh_requested.emit)
         lyr_header.addWidget(self._lyrics_refresh_btn)
@@ -762,7 +802,13 @@ class _SongTab(QWidget):
 
     def set_busy(self, busy: bool) -> None:
         self._status_lbl.setText("불러오는 중…" if busy else "")
-        self._lyrics_refresh_btn.setEnabled(self._editable and not busy)
+        # 갱신 중에는 버튼을 비활성화하지 않고 아이콘을 회전시켜 진행을 표시한다
+        # (중복 클릭은 SongViewModel의 _in_flight 가드가 흡수).
+        self._lyrics_refresh_btn.setEnabled(self._editable)
+        if busy:
+            self._lyrics_refresh_btn.start_spin()
+        else:
+            self._lyrics_refresh_btn.stop_spin()
 
     def set_info(self, dto: SongInfoDTO | None) -> None:
         self._current_dto = dto
@@ -1221,6 +1267,7 @@ class VideoDetailWidget(QWidget):
         category_path: list[tuple] | None = None,
         poster=None,
         autoplay: bool = False,
+        related_header: str | None = None,
     ) -> None:
         """라이브러리(로컬) 영상 상세를 채운다.
 
@@ -1287,9 +1334,15 @@ class VideoDetailWidget(QWidget):
         self._song_tab.set_info(None)
 
         self._btn_refresh.setEnabled(True)
-        self.set_related(related or [])
+        self.set_related(related or [], header=related_header)
 
-    def load_stream(self, feed, related: list[RelatedItem] | None = None, poster=None) -> None:
+    def load_stream(
+        self,
+        feed,
+        related: list[RelatedItem] | None = None,
+        poster=None,
+        related_header: str | None = None,
+    ) -> None:
         """스트리밍(구독 피드/채널) 영상 상세 — URL 직접 재생.
 
         feed: FeedVideoDTO. 로컬 항목이 아니므로 클립/메모/태그 편집은 비활성.
@@ -1340,7 +1393,7 @@ class VideoDetailWidget(QWidget):
         self._song_tab.set_info(None)
 
         self._btn_refresh.setEnabled(False)  # 스트리밍은 안정적 id 없음
-        self.set_related(related or [])
+        self.set_related(related or [], header=related_header)
 
     # ── 정보 영역 (제목·메타·태그·챕터·설명) ─────────────────────────
 
@@ -2016,6 +2069,13 @@ class VideoDetailWidget(QWidget):
 
     def stop_player(self) -> None:
         self._player.stop()
+
+    def is_playing(self) -> bool:
+        """현재 영상이 재생 중인지 — 재생목록 뒤로가기 시 이어재생 판단용."""
+        try:
+            return self._player.is_playing()
+        except RuntimeError:
+            return False
 
     # ── 다운로드 히스토리 갱신 (오류2) ────────────────────────────────
 
