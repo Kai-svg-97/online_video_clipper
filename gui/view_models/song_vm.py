@@ -103,16 +103,17 @@ class SongViewModel(QObject):
             return None
 
     def load(self, video_id: UUID) -> None:
-        """DB 상태를 즉시 방출하고, 가사가 없으면 백그라운드 조회를 시작한다."""
+        """DB 상태를 즉시 방출한다. 노래 정보가 아직 없으면(미조회) 영상 제목 기준으로
+        메타데이터(가수·앨범·제목·발매년도)만 백그라운드로 채운다 — 가사는 조회하지 않는다
+        (가사는 '가사' 레이블 옆 ⟳ 버튼으로만 조회)."""
         self._current = video_id
         dto = self.get_song_info(video_id)
         self.song_info_changed.emit(dto)
-        should_fetch = dto is None or (dto.is_song and not dto.has_lyrics)
-        if should_fetch:
-            self._start_fetch(FetchSongInfoCommand(video_id=video_id, fetch_lyrics=True))
+        if dto is None:
+            self._start_fetch(FetchSongInfoCommand(video_id=video_id, fetch_lyrics=False))
 
     def refresh(self, video_id: UUID) -> None:
-        """정보 갱신(⟳) — yt-dlp 메타 + 출처 체인 가사를 강제 재수집."""
+        """가사 갱신(⟳) — 현재 노래 정보를 기준으로 출처 체인에서 가사를 강제 재조회."""
         self._current = video_id
         self._start_fetch(
             FetchSongInfoCommand(video_id=video_id, force=True, fetch_lyrics=True)
@@ -175,9 +176,9 @@ class SongViewModel(QObject):
         dto = self.get_song_info(video_id)
         if video_id == self._current:
             self.song_info_changed.emit(dto)
-        # 노래로 켰는데 가사가 없으면 바로 조회
-        if is_song and (dto is None or not dto.has_lyrics):
-            self._start_fetch(FetchSongInfoCommand(video_id=video_id, fetch_lyrics=True))
+        # 노래로 표시하면 영상 제목 기준으로 가수/앨범/제목/발매년도만 채운다(가사는 조회 X).
+        if is_song:
+            self._start_fetch(FetchSongInfoCommand(video_id=video_id, fetch_lyrics=False))
 
     # ── 가사 출처 레지스트리 ──────────────────────────────────────
     def list_lyrics_sources(self) -> list[LyricsSourceDTO]:

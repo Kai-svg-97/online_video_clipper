@@ -609,22 +609,17 @@ class _SongTab(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        # 헤더: 제목 + 노래 토글 + 상태 + 갱신
+        # 헤더: 제목 + 노래 토글 + 상태 (가사 갱신 버튼은 아래 '가사' 레이블 옆으로 이동)
         header = QHBoxLayout()
         header.addWidget(QLabel("<b>노래 정보</b>"))
         header.addStretch()
         self._flag_chk = QCheckBox("노래로 표시")
-        self._flag_chk.setToolTip("이 영상을 노래로 표시/해제")
+        self._flag_chk.setToolTip("이 영상을 노래로 표시/해제 (영상 제목으로 가수·앨범·제목·발매년도를 채움)")
         self._flag_chk.toggled.connect(self._on_flag_toggled)
         header.addWidget(self._flag_chk)
         self._status_lbl = QLabel("")
         self._status_lbl.setStyleSheet("font-size:9pt; color:#888;")
         header.addWidget(self._status_lbl)
-        self._refresh_btn = QPushButton("⟳")
-        self._refresh_btn.setFixedSize(28, 28)
-        self._refresh_btn.setToolTip("노래 정보 갱신 (가사 출처 재조회)")
-        self._refresh_btn.clicked.connect(self.refresh_requested.emit)
-        header.addWidget(self._refresh_btn)
         root.addLayout(header)
 
         # 필드 그리드
@@ -648,9 +643,14 @@ class _SongTab(QWidget):
             self._fields[key] = field
         root.addWidget(grid_w)
 
-        # 가사 헤더 (출처 + 편집 힌트)
+        # 가사 헤더 ('가사' 레이블 + 가사 갱신 ⟳ + 출처 + 편집 힌트)
         lyr_header = QHBoxLayout()
         lyr_header.addWidget(QLabel("<b>가사</b>"))
+        self._lyrics_refresh_btn = QPushButton("⟳")
+        self._lyrics_refresh_btn.setFixedSize(24, 22)
+        self._lyrics_refresh_btn.setToolTip("가사 갱신 (현재 노래 정보로 출처에서 다시 조회)")
+        self._lyrics_refresh_btn.clicked.connect(self.refresh_requested.emit)
+        lyr_header.addWidget(self._lyrics_refresh_btn)
         self._src_lbl = QLabel("")
         self._src_lbl.setStyleSheet("font-size:8pt; color:#888;")
         self._src_lbl.setOpenExternalLinks(True)
@@ -692,13 +692,13 @@ class _SongTab(QWidget):
         """스트리밍 영상 등에서 편집을 막는다."""
         self._editable = editable
         self._flag_chk.setEnabled(editable)
-        self._refresh_btn.setEnabled(editable)
+        self._lyrics_refresh_btn.setEnabled(editable)
         for f in self._fields.values():
             f.set_editable(editable)
 
     def set_busy(self, busy: bool) -> None:
-        self._status_lbl.setText("가사 불러오는 중…" if busy else "")
-        self._refresh_btn.setEnabled(self._editable and not busy)
+        self._status_lbl.setText("불러오는 중…" if busy else "")
+        self._lyrics_refresh_btn.setEnabled(self._editable and not busy)
 
     def set_info(self, dto: SongInfoDTO | None) -> None:
         self._current_dto = dto
@@ -735,9 +735,9 @@ class _SongTab(QWidget):
         self._layout_btn.setVisible(bilingual)
         if not dto or not dto.lyrics_lines:
             msg = (
-                "가사 정보가 없습니다.\n⟳ 버튼으로 조회하거나 더블클릭하여 직접 입력하세요."
+                "가사 정보가 없습니다.\n'가사' 옆 ⟳ 버튼으로 조회하거나 더블클릭하여 직접 입력하세요."
                 if (dto and dto.is_song)
-                else "노래로 표시하면 가사를 조회합니다."
+                else "'노래로 표시'하면 영상 제목으로 정보를 채웁니다."
             )
             empty = QLabel(msg)
             empty.setStyleSheet("color:#888; padding:12px;")
