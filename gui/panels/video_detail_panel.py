@@ -100,6 +100,16 @@ def _fmt_pub(value: str | None) -> str:
     return value
 
 
+def _payload_key(payload: object) -> str:
+    """재생목록 payload를 RelatedItem.key와 같은 키로 변환(현재 항목 매칭용).
+
+    로컬 영상 payload=UUID → str(UUID); 스트리밍 payload=FeedVideoDTO → yt_video_id/url.
+    """
+    if isinstance(payload, UUID):
+        return str(payload)
+    return getattr(payload, "yt_video_id", "") or getattr(payload, "url", "") or ""
+
+
 # 설명·요약의 타임스탬프(MM:SS / HH:MM:SS)를 seek 링크로 변환할 때 쓰는 정규식.
 _TS_RE = re.compile(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})")
 
@@ -121,9 +131,12 @@ class _RelatedRow(QFrame):
     clicked = pyqtSignal(object)   # payload
     _TW, _TH = 168, 94
 
-    def __init__(self, item: RelatedItem, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, item: RelatedItem, is_current: bool = False, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self._item = item
+        self._is_current = is_current
         self._loader = None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -151,12 +164,12 @@ class _RelatedRow(QFrame):
         text_col = QVBoxLayout()
         text_col.setContentsMargins(0, 0, 0, 0)
         text_col.setSpacing(1)
-        self._title_lbl = QLabel(item.title)
+        self._title_lbl = QLabel(("▶ " + item.title) if self._is_current else item.title)
         self._title_lbl.setWordWrap(True)
         self._title_lbl.setAlignment(Qt.AlignmentFlag.AlignTop)
         tf = QFont()
         tf.setPointSize(9)
-        tf.setWeight(QFont.Weight.Medium)
+        tf.setWeight(QFont.Weight.Bold if self._is_current else QFont.Weight.Medium)
         self._title_lbl.setFont(tf)
         # 제목은 최대 3줄까지 표시 — 채널명이 제목을 가리지 않도록 높이를 넉넉히 확보
         self._title_lbl.setMaximumHeight(QFontMetrics(tf).lineSpacing() * 3 + 4)
@@ -239,10 +252,17 @@ class _RelatedRow(QFrame):
             self.clicked.emit(self._item.payload)
 
     def _apply_theme(self, tok) -> None:
-        self.setStyleSheet(
-            f"QFrame{{background:transparent;border-radius:6px;}}"
-            f"QFrame:hover{{background:{tok.bg_overlay};}}"
-        )
+        if self._is_current:
+            # 현재 재생 중 행 — 배경 강조로 재생목록 내 위치를 표시
+            self.setStyleSheet(
+                f"QFrame{{background:{tok.bg_overlay};border-radius:6px;"
+                f"border-left:3px solid {tok.accent};}}"
+            )
+        else:
+            self.setStyleSheet(
+                f"QFrame{{background:transparent;border-radius:6px;}}"
+                f"QFrame:hover{{background:{tok.bg_overlay};}}"
+            )
         self._title_lbl.setStyleSheet(f"color:{tok.text_primary};")
         self._chan_lbl.setStyleSheet(f"color:{tok.text_secondary};")
         self._meta_lbl.setStyleSheet(f"color:{tok.text_muted};")
@@ -271,19 +291,22 @@ class _RelatedList(QScrollArea):
         self._layout.addStretch()
         self.setWidget(self._inner)
 
-    def set_items(self, items: list[RelatedItem]) -> None:
+    def set_header(self, text: str) -> None:
+        self._header.setText(text or "연관 영상")
+
+    def set_items(self, items: list[RelatedItem], current_key: str | None = None) -> None:
         # 헤더(0)·스트레치(끝)는 유지하고 사이 행들만 제거
         while self._layout.count() > 2:
             item = self._layout.takeAt(1)
             if item.widget():
                 item.widget().deleteLater()
         if not items:
-            empty = QLabel("표시할 연관 영상이 없습니다.")
+            empty = QLabel("표시할 영상이 없습니다.")
             empty.setStyleSheet("color:#888;padding:8px;")
             self._layout.insertWidget(1, empty)
             return
         for i, it in enumerate(items):
-            row = _RelatedRow(it)
+            row = _RelatedRow(it, is_current=(current_key is not None and it.key == current_key))
             row.clicked.connect(self.item_selected.emit)
             self._layout.insertWidget(1 + i, row)
 
@@ -511,28 +534,57 @@ class _EditableField(QStackedWidget):
     """
 
     edited = pyqtSignal(str)
+    action_clicked = pyqtSignal()   # 값 오른쪽 » 아이콘(같은 가수/앨범 필터) — with_action=True일 때만
 
-    def __init__(self, placeholder: str = "정보 없음", parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        placeholder: str = "정보 없음",
+        with_action: bool = False,
+        action_tip: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._value = ""
         self._editable = True
         self._placeholder = placeholder
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
+        # index 0: 표시 페이지 = [값 라벨(내용 폭)] [4칸 여백 + »(with_action)] [stretch]
+        self._display = QWidget()
+        dl = QHBoxLayout(self._display)
+        dl.setContentsMargins(0, 0, 0, 0)
+        dl.setSpacing(0)
         self._lbl = _DblClickLabel("—")
-        self._lbl.setWordWrap(True)
         # 평문으로 렌더 — 값에 &, ', < 등이 있어도 그대로 보이게(HTML 엔티티 오표기 방지)
         self._lbl.setTextFormat(Qt.TextFormat.PlainText)
         self._lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self._lbl.setToolTip("더블클릭하여 편집")
+        self._lbl.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._lbl.double_clicked.connect(self._enter_edit)
-        self.addWidget(self._lbl)
+        dl.addWidget(self._lbl)
+        self._action_btn: QPushButton | None = None
+        if with_action:
+            dl.addSpacing(28)   # 값 오른쪽 ~4칸 여백
+            self._action_btn = QPushButton("»")
+            self._action_btn.setFlat(True)
+            self._action_btn.setFixedSize(22, 20)
+            self._action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._action_btn.setToolTip(action_tip or "같은 정보의 영상 보기")
+            self._action_btn.clicked.connect(self.action_clicked.emit)
+            self._action_btn.setVisible(False)
+            dl.addWidget(self._action_btn)
+        dl.addStretch()
+        self.addWidget(self._display)
 
         self._edit = QLineEdit()
         self._edit.editingFinished.connect(self._commit)
         self.addWidget(self._edit)
-        self.setCurrentWidget(self._lbl)
+        self.setCurrentWidget(self._display)
         self._apply_theme()
+
+    @property
+    def value(self) -> str:
+        return self._value
 
     def set_editable(self, editable: bool) -> None:
         self._editable = editable
@@ -541,7 +593,9 @@ class _EditableField(QStackedWidget):
     def set_value(self, value: str) -> None:
         self._value = value or ""
         self._render()
-        self.setCurrentWidget(self._lbl)
+        if self._action_btn is not None:
+            self._action_btn.setVisible(bool(self._value))
+        self.setCurrentWidget(self._display)
 
     def _render(self) -> None:
         tok = _t()
@@ -565,10 +619,12 @@ class _EditableField(QStackedWidget):
         if self.currentWidget() is not self._edit:
             return
         new_val = self._edit.text().strip()
-        self.setCurrentWidget(self._lbl)
+        self.setCurrentWidget(self._display)
         if new_val != self._value:
             self._value = new_val
             self._render()
+            if self._action_btn is not None:
+                self._action_btn.setVisible(bool(self._value))
             self.edited.emit(new_val)
 
     def _apply_theme(self) -> None:
@@ -588,6 +644,7 @@ class _SongTab(QWidget):
     lyrics_edited = pyqtSignal(object)       # list[LyricsLine]
     refresh_requested = pyqtSignal()
     flag_toggled = pyqtSignal(bool)
+    filter_requested = pyqtSignal(str, str)  # (field_key, value) — 같은 가수/앨범 필터
 
     _FIELDS = (
         ("artist", "가수"),
@@ -595,6 +652,8 @@ class _SongTab(QWidget):
         ("song_title", "노래 제목"),
         ("release_year", "발매년도"),
     )
+    # 값 오른쪽 » 필터 아이콘을 붙일 필드
+    _FILTER_FIELDS = {"artist": "같은 가수의 영상 보기", "album": "같은 앨범의 영상 보기"}
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -636,8 +695,13 @@ class _SongTab(QWidget):
             name_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-weight:bold;")
             # 값(_EditableField)이 세로 중앙 정렬이므로 레이블도 중앙으로 맞춰 이질감 제거
             name_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-            field = _EditableField()
+            action_tip = self._FILTER_FIELDS.get(key, "")
+            field = _EditableField(with_action=bool(action_tip), action_tip=action_tip)
             field.edited.connect(lambda v, k=key: self.field_edited.emit(k, v))
+            if action_tip:
+                field.action_clicked.connect(
+                    lambda k=key, f=field: self.filter_requested.emit(k, f.value)
+                )
             grid.addWidget(name_lbl, row, 0, Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(field, row, 1, Qt.AlignmentFlag.AlignVCenter)
             self._fields[key] = field
@@ -853,6 +917,8 @@ class VideoDetailWidget(QWidget):
     song_lyrics_saved           = pyqtSignal(object, object)    # (video_id, list[LyricsLine])
     song_refresh_requested      = pyqtSignal(object)    # video_id — 노래 탭 ⟳
     song_flag_toggled           = pyqtSignal(object, bool)      # (video_id, is_song)
+    song_filter_requested       = pyqtSignal(str, str)   # (field, value) — 같은 가수/앨범 필터
+    play_next_requested         = pyqtSignal(object)     # 재생목록 다음 항목 payload(자동재생)
 
     # 하단 탭 인덱스
     _TAB_INFO = 0       # 설명(태그~메모)
@@ -872,6 +938,8 @@ class VideoDetailWidget(QWidget):
         self._clip_source_file: str | None = None
         self._filter_on = False
         self._streaming = False          # 스트리밍(피드/채널) 모드 여부
+        self._playlist: list = []        # 우측 목록 payload 순서 — 자동재생 다음곡 계산용
+        self._current_key = ""           # 현재 재생 항목 키(RelatedItem.key) — 목록 강조용
         self._summary_raw = ""           # 요약 원문(편집 대상) — 렌더 전 텍스트
         self._current_url = ""           # 브라우저 열기/재생 실패 폴백용
         self._active_dl_frame: QFrame | None = None
@@ -927,6 +995,7 @@ class VideoDetailWidget(QWidget):
         self._player = InlinePlayer(left_w)
         self._player.playback_failed.connect(self._on_play_failed)
         self._player.download_requested.connect(self.download_requested.emit)
+        self._player.playback_finished.connect(self._on_playback_finished)
         left_layout.addWidget(self._player)
 
         # ── 제목 행 (플레이어 바로 아래): 제목 + ⟳상세갱신 + 🌐브라우저 ──
@@ -1071,6 +1140,7 @@ class VideoDetailWidget(QWidget):
         self._song_tab.lyrics_edited.connect(self._on_song_lyrics_edited)
         self._song_tab.refresh_requested.connect(self._on_song_refresh)
         self._song_tab.flag_toggled.connect(self._on_song_flag_toggled)
+        self._song_tab.filter_requested.connect(self.song_filter_requested.emit)
         self._tabs.addTab(_wrap(self._song_tab), "노래")
 
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -1149,16 +1219,25 @@ class VideoDetailWidget(QWidget):
         resume_ms: int = 0,
         related: list[RelatedItem] | None = None,
         category_path: list[tuple] | None = None,
+        poster=None,
+        autoplay: bool = False,
     ) -> None:
-        """라이브러리(로컬) 영상 상세를 채운다. resume_ms>0이면 이어서 재생."""
+        """라이브러리(로컬) 영상 상세를 채운다.
+
+        poster: 재생 전 표시할 포스터(목록 썸네일 QPixmap). autoplay: 재생목록 자동
+        전환처럼 로드 직후 재생을 시작할지. resume_ms>0이면 이어서 재생.
+        """
         self._detail = detail
         self._tag_ids = tag_ids
         self._streaming = False
         self._current_url = detail.url
+        self._current_key = str(detail.id)
         self._set_crumb_path(category_path)
 
-        self._player.load(detail.url, detail.downloads, resume_ms=resume_ms)
-        if resume_ms > 0:
+        self._player.load(
+            detail.url, detail.downloads, thumbnail_pixmap=poster, resume_ms=resume_ms
+        )
+        if resume_ms > 0 or autoplay:
             QTimer.singleShot(150, self._player.play)
 
         self._build_info(
@@ -1210,7 +1289,7 @@ class VideoDetailWidget(QWidget):
         self._btn_refresh.setEnabled(True)
         self.set_related(related or [])
 
-    def load_stream(self, feed, related: list[RelatedItem] | None = None) -> None:
+    def load_stream(self, feed, related: list[RelatedItem] | None = None, poster=None) -> None:
         """스트리밍(구독 피드/채널) 영상 상세 — URL 직접 재생.
 
         feed: FeedVideoDTO. 로컬 항목이 아니므로 클립/메모/태그 편집은 비활성.
@@ -1219,9 +1298,10 @@ class VideoDetailWidget(QWidget):
         self._tag_ids = {}
         self._streaming = True
         self._current_url = feed.url
+        self._current_key = getattr(feed, "yt_video_id", "") or feed.url
         self._set_crumb_path(None)
 
-        self._player.load(feed.url, [])
+        self._player.load(feed.url, [], thumbnail_pixmap=poster)
         QTimer.singleShot(150, self._player.play)
 
         self._build_info(
@@ -1636,8 +1716,26 @@ class VideoDetailWidget(QWidget):
 
     # ── 연관 영상 ──────────────────────────────────────────────────
 
-    def set_related(self, items: list[RelatedItem]) -> None:
-        self._related.set_items(items)
+    def set_related(self, items: list[RelatedItem], header: str | None = None) -> None:
+        """우측 목록을 채운다. header가 있으면 "연관 영상" 대신 표시(가수/앨범 필터).
+
+        목록은 재생목록으로 쓰이므로 payload 순서를 보관하고, 현재 재생 항목을 강조한다.
+        """
+        self._playlist = [it.payload for it in items]
+        self._related.set_header(header or "연관 영상")
+        self._related.set_items(items, current_key=self._current_key or None)
+
+    def _on_playback_finished(self) -> None:
+        """현재 곡 재생이 끝나면 재생목록의 다음 항목을 자동재생 요청한다(끝이면 정지)."""
+        if not self._playlist or not self._current_key:
+            return
+        idx = next(
+            (i for i, p in enumerate(self._playlist) if _payload_key(p) == self._current_key),
+            -1,
+        )
+        if idx < 0 or idx + 1 >= len(self._playlist):
+            return   # 목록에 없거나 마지막 — 정지
+        self.play_next_requested.emit(self._playlist[idx + 1])
 
     # ── Clip tab ───────────────────────────────────────────────────
 

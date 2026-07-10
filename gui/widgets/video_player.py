@@ -719,6 +719,7 @@ class InlinePlayer(QWidget):
 
     playback_failed    = pyqtSignal(str)
     download_requested = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
+    playback_finished  = pyqtSignal()   # 미디어 끝까지 재생됨(EndOfMedia) — 재생목록 자동 다음곡용
 
     _HIDE_MS = 2_000   # 2초 비활성 후 숨김
     _SHOW_MS = 1_000   # 마우스 감지 1초 후 표시
@@ -1299,6 +1300,10 @@ class InlinePlayer(QWidget):
     def _on_media_status(self, status) -> None:
         """미디어가 로드/버퍼되어 탐색 가능해지면 이어보기 위치로 이동한다.
         고정 지연(seek-after-80ms)은 네트워크 스트림에서 불안정하므로 사용하지 않는다."""
+        # 끝까지 재생되면(수동 stop과 구분되는 유일한 지표) 재생목록 다음곡 신호를 낸다.
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self.playback_finished.emit()
+            return
         if self._resume_ms <= 0:
             return
         if status in (

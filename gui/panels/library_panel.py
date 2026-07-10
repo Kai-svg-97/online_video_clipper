@@ -3919,6 +3919,9 @@ class LibraryPanel(QWidget):
             self._on_detail_refresh_requested
         )
         self._detail_widget.category_path_clicked.connect(self._on_cat_filter_changed)
+        # 노래 탭 가수/앨범 » 필터 + 재생목록 다음곡 자동재생
+        self._detail_widget.song_filter_requested.connect(self._on_song_filter_requested)
+        self._detail_widget.play_next_requested.connect(self._on_play_next)
 
         # 노래 탭 ↔ SongViewModel 배선
         if self._song_vm is not None:
@@ -4587,31 +4590,35 @@ class LibraryPanel(QWidget):
 
     # ── In-place navigation ────────────────────────────────────────
 
-    def _open_detail(self, video_id: UUID) -> None:
+    def _open_detail(self, video_id: UUID, autoplay: bool = False) -> None:
         """로컬 영상 상세화면을 연다. 연관 목록 = 현재 보고 있는 영상 목록(같은
-        카테고리/재생목록), 자기 자신 제외."""
+        카테고리/재생목록)이며 **현재 영상도 포함**(재생목록처럼). autoplay면 로드 직후 재생."""
         detail = self._vm.get_video_detail(video_id)
         if detail is None:
             return
         if not self._is_restoring:
             self._push_nav_state()
         tag_ids = {t.name: t.id for t in self._vm.tags}
-        related = [
-            self._related_from_video(v)
-            for v in self._vm.videos if v.id != video_id
-        ][:30]
+        # 현재 영상 포함 — 우측 목록이 재생목록으로 동작(자동 다음곡)
+        related = [self._related_from_video(v) for v in self._vm.videos][:30]
         cat_path = self._vm.get_category_path_with_ids(detail.category_id) if detail.category_id else []
+        # 재생 전 포스터 = 목록에서 보던 썸네일(동일 캐시)
+        poster = (
+            _load_thumb(detail.thumbnail_path, _TW_ICON, _TH_ICON)
+            if detail.thumbnail_path else None
+        )
         self._detail_widget.load(detail, tag_ids, resume_ms=0, related=related,
-                                 category_path=cat_path or None)
+                                 category_path=cat_path or None, poster=poster,
+                                 autoplay=autoplay)
         self._current_detail_payload = video_id
         self._nav_stack.setCurrentIndex(1)
         self._vm.request_thumbnail_refresh(video_id, detail.url)
         if self._song_vm is not None:
             self._song_vm.load(video_id)
 
-    def _open_stream_detail(self, feed_dto) -> None:
+    def _open_stream_detail(self, feed_dto, autoplay: bool = False) -> None:
         """구독 피드/채널의 스트리밍 영상 상세화면을 연다. 연관 목록 = 같은 채널의
-        최근 영상(현재 로드된 피드 기준), 없으면 현재 피드 목록."""
+        최근 영상(현재 로드된 피드 기준, **현재 영상 포함**)."""
         if self._feed_vm is None:
             return
         if not self._is_restoring:
@@ -4628,6 +4635,23 @@ class LibraryPanel(QWidget):
             self._open_detail(payload)
         elif isinstance(payload, FeedVideoDTO):
             self._open_stream_detail(payload)
+
+    def _on_play_next(self, payload) -> None:
+        """재생목록 자동재생 — 다음 항목을 로드하고 바로 재생한다."""
+        from application.library.dtos import FeedVideoDTO  # noqa: PLC0415
+        if isinstance(payload, UUID):
+            self._open_detail(payload, autoplay=True)
+        elif isinstance(payload, FeedVideoDTO):
+            self._open_stream_detail(payload, autoplay=True)
+
+    def _on_song_filter_requested(self, field: str, value: str) -> None:
+        """노래 탭의 가수/앨범 » 클릭 — 같은 가수/앨범 영상을 연관 목록 대신 나열한다."""
+        if not value:
+            return
+        videos = self._vm.get_videos_by_song(field, value)
+        related = [self._related_from_video(v) for v in videos][:100]
+        header = (f"가수: {value}" if field == "artist" else f"앨범: {value}")
+        self._detail_widget.set_related(related, header=header)
 
     def _related_from_video(self, v: VideoDTO) -> RelatedItem:
         meta = []
@@ -4660,11 +4684,9 @@ class LibraryPanel(QWidget):
 
     def _feed_related_items(self, clicked) -> list[RelatedItem]:
         feed = self._feed_vm.feed if self._feed_vm else []
-        same = [
-            f for f in feed
-            if f.channel_id and f.channel_id == clicked.channel_id and f.url != clicked.url
-        ]
-        pool = same if same else [f for f in feed if f.url != clicked.url]
+        # 현재 영상도 포함(재생목록처럼) — 같은 채널 우선, 없으면 전체 피드
+        same = [f for f in feed if f.channel_id and f.channel_id == clicked.channel_id]
+        pool = same if same else list(feed)
         # 게시일 내림차순(최신 먼저)으로 정렬 — 피드 원본 순서가 채널별로 뭉쳐
         # 있어 무작위로 보이던 문제 교정. 게시일 없는 항목은 안정 정렬로 뒤에 둔다.
         pool = sorted(pool, key=lambda f: _pub_sort_key(f.published_at), reverse=True)
@@ -4719,11 +4741,12 @@ class LibraryPanel(QWidget):
             detail = self._vm.get_video_detail(video_id)
             if detail:
                 tag_ids = {t.name: t.id for t in self._vm.tags}
-                related = [
-                    self._related_from_video(v)
-                    for v in self._vm.videos if v.id != video_id
-                ][:30]
-                self._detail_widget.load(detail, tag_ids, related=related)
+                related = [self._related_from_video(v) for v in self._vm.videos][:30]
+                poster = (
+                    _load_thumb(detail.thumbnail_path, _TW_ICON, _TH_ICON)
+                    if detail.thumbnail_path else None
+                )
+                self._detail_widget.load(detail, tag_ids, related=related, poster=poster)
 
     def _on_detail_refresh_requested(self, video_id: object) -> None:
         """제목행 ⟳ — YouTube(yt-dlp)에서 메타데이터를 재수집(백그라운드)한다.
@@ -4754,16 +4777,18 @@ class LibraryPanel(QWidget):
             if detail is None:
                 return
             tag_ids = {t.name: t.id for t in self._vm.tags}
-            related = [
-                self._related_from_video(v)
-                for v in self._vm.videos if v.id != video_id
-            ][:30]
+            related = [self._related_from_video(v) for v in self._vm.videos][:30]
             cat_path = (
                 self._vm.get_category_path_with_ids(detail.category_id)
                 if detail.category_id else []
             )
+            poster = (
+                _load_thumb(detail.thumbnail_path, _TW_ICON, _TH_ICON)
+                if detail.thumbnail_path else None
+            )
             self._detail_widget.load(
-                detail, tag_ids, related=related, category_path=cat_path or None
+                detail, tag_ids, related=related, category_path=cat_path or None,
+                poster=poster,
             )
             if self._song_vm is not None:
                 self._song_vm.load(video_id)

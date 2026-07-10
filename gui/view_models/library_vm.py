@@ -240,6 +240,7 @@ class LibraryViewModel(QObject):
         refresh_thumbnail: RefreshVideoThumbnailHandler | None = None,
         get_video_id_by_url: GetVideoIdByUrlHandler | None = None,
         refresh_video_metadata: RefreshVideoMetadataHandler | None = None,
+        find_song_videos=None,   # FindSongVideoIdsHandler | None — 같은 가수/앨범 필터
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -266,6 +267,7 @@ class LibraryViewModel(QObject):
         self._import_yt_to_category = import_yt_to_category
         self._refresh_thumbnail_handler = refresh_thumbnail
         self._refresh_video_meta = refresh_video_metadata
+        self._find_song_videos = find_song_videos
         self._refresh_metadata_workers: list[_RefreshMetadataWorker] = []
         self._video_meta_workers: list[_RefreshVideoMetaWorker] = []
         self._yt_import_workers: list[_ImportYTToCatWorker] = []
@@ -595,6 +597,22 @@ class LibraryViewModel(QObject):
             )
         except Exception:
             logger.exception("카테고리 영상 조회 실패: %s", category_id)
+            return []
+
+    def get_videos_by_song(self, field: str, value: str, limit: int = 100) -> list:
+        """같은 가수/앨범(field='artist'|'album')의 영상 목록 반환 (상세화면 필터용).
+
+        song_info에서 매칭 video_id를 구해 기존 라이브러리 쿼리로 VideoDTO를 조회한다.
+        """
+        if self._find_song_videos is None:
+            return []
+        try:
+            ids = self._find_song_videos.handle(field, value)
+            if not ids:
+                return []
+            return self._get_videos.handle(GetVideosQuery(video_ids=ids, limit=limit))
+        except Exception:
+            logger.exception("같은 %s 영상 조회 실패: %s", field, value)
             return []
 
     def get_category_path(self, category_id: UUID) -> list[str]:

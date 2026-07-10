@@ -164,7 +164,11 @@ def main() -> int:
         UpdateSongFieldHandler,
         UpdateSongLyricsHandler,
     )
-    from application.song.queries import GetSongInfoHandler, ListLyricsSourcesHandler
+    from application.song.queries import (
+        FindSongVideoIdsHandler,
+        GetSongInfoHandler,
+        ListLyricsSourcesHandler,
+    )
     from application.download.commands import CancelDownloadHandler, StartDownloadHandler
     from application.download.event_bridge import DownloadEventBridge
     from application.download.queries import GetDownloadHistoryHandler, GetDownloadQueueHandler
@@ -373,6 +377,7 @@ def main() -> int:
         refresh_thumbnail=refresh_thumbnail_h,
         get_video_id_by_url=get_video_id_by_url,
         refresh_video_metadata=refresh_video_meta,
+        find_song_videos=FindSongVideoIdsHandler(song_repo),
     )
     get_yt_playlists_h = GetYouTubePlaylistsHandler(ytdlp, _yt_api)
     playlist_vm = PlaylistViewModel(

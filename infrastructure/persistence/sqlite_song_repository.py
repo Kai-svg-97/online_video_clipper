@@ -119,6 +119,24 @@ class SqliteSongRepository(ISongRepository):
         with self._db.connection() as conn:
             conn.execute("DELETE FROM song_info WHERE video_id=?", (str(video_id),))
 
+    def find_video_ids_by(
+        self, *, artist: str | None = None, album: str | None = None
+    ) -> list[UUID]:
+        conds = ["is_song=1"]
+        params: list = []
+        if artist:
+            conds.append("artist=?")
+            params.append(artist)
+        if album:
+            conds.append("album=?")
+            params.append(album)
+        if len(conds) == 1:   # artist·album 모두 미지정 — 매칭 없음
+            return []
+        sql = f"SELECT video_id FROM song_info WHERE {' AND '.join(conds)}"
+        with self._db.connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [UUID(r["video_id"]) for r in rows]
+
     # ── 가사 출처 레지스트리 ────────────────────────────────────────
     def list_lyrics_sources(self) -> list[LyricsSource]:
         with self._db.connection() as conn:
