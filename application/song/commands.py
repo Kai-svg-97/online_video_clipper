@@ -202,16 +202,20 @@ class FetchSongInfoHandler:
             return agg
 
         # 2) 검색·표시 기준값 — **현재 노래 정보에 입력된 값(수동 편집 포함)을 최우선**으로
-        #    쓰고, 비어 있으면 yt-dlp 메타데이터, 마지막으로 영상 제목 파싱으로 채운다.
-        #    사용자가 노래 제목/가수를 고쳤다면 그 값을 기반으로 가사를 검색한다.
+        #    쓰고, 비어 있으면 yt-dlp 메타데이터를 쓴다.
         existing = agg.info
+        # 사용자가 항목을 한 번이라도 수정했는지 여부. 수정한 적이 있으면 그 입력값만으로
+        # 검색하고, 빈 항목은 채우지 않는다(영상 제목 파싱으로 오염시키지 않음 — 영상 제목이
+        # 기본값이라 검색 실패가 잦던 문제 해결). 수정한 적이 없을 때만(자동 첫 조회) 영상
+        # 제목을 파싱해 부족분을 보완한다.
+        edited = bool(existing.manual_fields & {"artist", "album", "song_title", "release_year"})
         vid_title = meta.get("title") or video.title
         channel = meta.get("channel") or (video.channel.name if video.channel else "")
         artist = existing.artist.strip() or (meta.get("artist") or "").strip()
         title = existing.song_title.strip() or (meta.get("track") or "").strip()
         album = existing.album.strip() or (meta.get("album") or "").strip()
         year = existing.release_year.strip() or (meta.get("release_year") or "").strip()
-        if not artist or not title:
+        if not edited and (not artist or not title):
             pa, pt = parse_artist_title(vid_title, channel)
             artist = artist or pa
             title = title or pt
