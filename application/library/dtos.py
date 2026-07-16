@@ -66,6 +66,7 @@ class ChannelStatDTO:
     channel_name: str
     total: int
     categories: list[ChannelCategoryStatDTO]
+    channel_url: str = ""     # 채널 페이지 URL(브라우저 열기·복사용, 없으면 빈 문자열)
 
 
 @dataclass(frozen=True)

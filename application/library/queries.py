@@ -398,7 +398,8 @@ class LibraryStatsHandler:
 
         from collections import defaultdict  # noqa: PLC0415
         grouped: dict[str, list[ChannelCategoryStatDTO]] = defaultdict(list)
-        for channel, cat_id_str, cnt in raw:
+        channel_urls: dict[str, str] = {}
+        for channel, ch_url, ch_id, cat_id_str, cnt in raw:
             try:
                 cid = UUID(str(cat_id_str))
             except (ValueError, TypeError, AttributeError):
@@ -410,6 +411,14 @@ class LibraryStatsHandler:
                     count=cnt,
                 )
             )
+            # 채널 URL: channel_url 우선, 없으면 channel_id로 표준 URL 구성. 채널당 1회.
+            if channel not in channel_urls:
+                if ch_url:
+                    channel_urls[channel] = ch_url
+                elif ch_id:
+                    channel_urls[channel] = f"https://www.youtube.com/channel/{ch_id}"
+                else:
+                    channel_urls[channel] = ""
 
         result: list[ChannelStatDTO] = []
         for channel, cat_list in grouped.items():
@@ -419,6 +428,7 @@ class LibraryStatsHandler:
                     channel_name=channel,
                     total=sum(x.count for x in cat_list),
                     categories=cat_list,
+                    channel_url=channel_urls.get(channel, ""),
                 )
             )
         result.sort(key=lambda x: (-x.total, x.channel_name.lower()))

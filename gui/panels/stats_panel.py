@@ -1,9 +1,10 @@
 """통계 대시보드 패널 — 라이브러리 및 다운로드 현황 시각화."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices, QPainter
 from PyQt6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -11,6 +12,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -282,9 +284,41 @@ class StatsPanel(QWidget):
         v.setContentsMargins(12, 8, 12, 8)
         v.setSpacing(6)
 
-        name_lbl = QLabel(f"{ch.channel_name}  ·  {ch.total:,}개")
-        name_lbl.setStyleSheet("font-weight: 600; background: transparent;")
-        v.addWidget(name_lbl)
+        # 채널명 줄: URL이 있으면 클릭 시 브라우저로 열고, URL 복사 버튼을 둔다.
+        name_row = QHBoxLayout()
+        name_row.setSpacing(6)
+        url = ch.channel_url or ""
+        if url:
+            name_btn = QPushButton(ch.channel_name)
+            name_btn.setFlat(True)
+            name_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            name_btn.setToolTip(f"브라우저에서 채널 열기\n{url}")
+            name_btn.setStyleSheet(
+                "QPushButton { font-weight:600; color:#8ab4ff; background:transparent;"
+                " border:none; text-align:left; padding:0; }"
+                "QPushButton:hover { color:#a9c6ff; text-decoration:underline; }"
+            )
+            name_btn.clicked.connect(lambda _=False, u=url: self._open_url(u))
+            name_row.addWidget(name_btn)
+
+            copy_btn = QToolButton()
+            copy_btn.setText("📋")
+            copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            copy_btn.setToolTip("채널 URL 복사")
+            copy_btn.setAutoRaise(True)
+            copy_btn.setStyleSheet("QToolButton { background:transparent; border:none; padding:0 2px; }")
+            copy_btn.clicked.connect(lambda _=False, u=url, b=copy_btn: self._copy_url(u, b))
+            name_row.addWidget(copy_btn)
+        else:
+            plain = QLabel(ch.channel_name)
+            plain.setStyleSheet("font-weight:600; background:transparent;")
+            name_row.addWidget(plain)
+
+        total_lbl = QLabel(f"·  {ch.total:,}개")
+        total_lbl.setStyleSheet("color:#888; background:transparent;")
+        name_row.addWidget(total_lbl)
+        name_row.addStretch()
+        v.addLayout(name_row)
 
         links_host = QWidget()
         links_host.setStyleSheet("background: transparent;")
@@ -306,6 +340,20 @@ class StatsPanel(QWidget):
             flow.addWidget(link)
         v.addWidget(links_host)
         return card
+
+    def _open_url(self, url: str) -> None:
+        """채널 URL을 기본 브라우저로 연다."""
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def _copy_url(self, url: str, btn: QToolButton | None = None) -> None:
+        """채널 URL을 클립보드에 복사하고, 버튼에 잠깐 확인 표시(✓)를 준다."""
+        if not url:
+            return
+        QApplication.clipboard().setText(url)
+        if btn is not None:
+            btn.setText("✓")
+            QTimer.singleShot(1200, lambda: btn.setText("📋"))
 
     def _show_error(self, msg: str) -> None:
         while self._content_layout.count():
