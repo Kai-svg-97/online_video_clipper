@@ -1580,16 +1580,9 @@ class _PlaylistTree(QTreeWidget):
         else:
             self._load_both_sections(playlists, folders, categories)
 
-        if self._section == "youtube":
-            self.expandAll()
-            # 구독 채널 그룹은 항목이 많을 수 있으므로 기본 접힘 상태로 둔다.
-            if self._sub_group_item is not None:
-                self._sub_group_item.setExpanded(False)
-        elif self._section == "local":
-            # 카테고리는 기본 2단계까지만 펼친다 (최상위 + 직속 자식만 보이고 그 아래는 접음)
-            self.expandToDepth(0)
-        else:
-            self.expandToDepth(1)   # 폴더/카테고리는 펼치되 하위 재귀 항목은 접음
+        # 모든 트리는 기본적으로 최상위(1레벨) 항목만 보이도록 하위를 접는다.
+        # 하위는 사용자가 펼침 화살표를 눌러야 나타난다.
+        self.collapseAll()
         self.blockSignals(False)
 
         if prev_pl:
@@ -2814,8 +2807,9 @@ class _PlaylistPanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        # ── 로컬 섹션 + YouTube 섹션 분리 (수직 스플리터) ──
-        self._splitter = QSplitter(Qt.Orientation.Vertical)
+        # ── 로컬 섹션(상단 고정) + 접을 수 있는 YouTube 섹션 ──
+        # (이전에는 수직 QSplitter로 묶었으나, YouTube 섹션을 기본 접힘으로 두고
+        #  삼각형 토글 바로 펼치도록 스플리터를 제거했다.)
 
         # 로컬 섹션
         local_container = QWidget()
@@ -2840,45 +2834,52 @@ class _PlaylistPanel(QWidget):
         local_layout.addLayout(local_hdr_row)
         self._local_tree = _PlaylistTree(section="local")
         local_layout.addWidget(self._local_tree, stretch=1)
-        self._splitter.addWidget(local_container)
+        layout.addWidget(local_container, stretch=3)
 
-        # YouTube 섹션
-        yt_container = QWidget()
-        yt_layout = QVBoxLayout(yt_container)
-        yt_layout.setContentsMargins(0, 0, 0, 0)
-        yt_layout.setSpacing(2)
-        yt_hdr_row = QHBoxLayout()
-        yt_hdr_row.setContentsMargins(2, 0, 2, 0)
-        yt_hdr_row.setSpacing(4)
+        # ── YouTube 섹션 토글 바 (기존 스플리터 핸들을 대체) ──
+        # 삼각형 아이콘 + 빨간 "YouTube" 헤더 + 동기화/폴더 버튼을 한 줄에 둔다.
+        # 바 아래(구독 트리)는 기본적으로 접혀(숨겨져) 있고, 삼각형으로 펼친다.
+        self._yt_bar = QWidget()
+        self._yt_bar.setObjectName("yt_toggle_bar")
+        yt_bar_row = QHBoxLayout(self._yt_bar)
+        yt_bar_row.setContentsMargins(2, 2, 2, 2)
+        yt_bar_row.setSpacing(4)
+        self._yt_toggle_btn = QToolButton()
+        self._yt_toggle_btn.setObjectName("yt_toggle_arrow")
+        self._yt_toggle_btn.setText("▸")   # 접힘 상태 표시(펼치면 ▾)
+        self._yt_toggle_btn.setToolTip("YouTube 구독 섹션 펼치기/접기")
+        self._yt_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._yt_toggle_btn.setAutoRaise(True)
+        self._yt_toggle_btn.setFixedWidth(18)
+        self._yt_toggle_btn.clicked.connect(self._toggle_yt_section)
+        yt_bar_row.addWidget(self._yt_toggle_btn)
         # YouTube 헤더 — 클릭 시 재생목록 가져오기 다이얼로그 열기
-        self._yt_title_btn = QPushButton("▶  YouTube")
+        self._yt_title_btn = QPushButton("YouTube")
         self._yt_title_btn.setObjectName("playlist_section_header_yt_btn")
         self._yt_title_btn.setFlat(True)
         self._yt_title_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._yt_title_btn.setToolTip("클릭 — YouTube 재생목록 가져오기")
         self._yt_title_btn.clicked.connect(self.import_yt_req)
-        yt_hdr_row.addWidget(self._yt_title_btn, stretch=1)
+        yt_bar_row.addWidget(self._yt_title_btn, stretch=1)
         # 동기화 버튼 (순환 화살표 ⟳)
         yt_sync_btn = QToolButton()
         yt_sync_btn.setText("⟳")
         yt_sync_btn.setToolTip("YouTube 재생목록 전체 동기화")
         yt_sync_btn.setFixedHeight(18)
         yt_sync_btn.clicked.connect(self.sync_all_yt_req)
-        yt_hdr_row.addWidget(yt_sync_btn)
+        yt_bar_row.addWidget(yt_sync_btn)
         yt_folder_btn = QToolButton()
         yt_folder_btn.setText("📂+")
         yt_folder_btn.setToolTip("새 YouTube 폴더 만들기")
         yt_folder_btn.setFixedHeight(18)
         yt_folder_btn.clicked.connect(lambda: self.folder_create_req.emit("youtube"))
-        yt_hdr_row.addWidget(yt_folder_btn)
-        yt_layout.addLayout(yt_hdr_row)
-        self._yt_tree = _PlaylistTree(section="youtube")
-        yt_layout.addWidget(self._yt_tree, stretch=1)
-        self._splitter.addWidget(yt_container)
+        yt_bar_row.addWidget(yt_folder_btn)
+        layout.addWidget(self._yt_bar)
 
-        self._splitter.setStretchFactor(0, 3)
-        self._splitter.setStretchFactor(1, 2)
-        layout.addWidget(self._splitter, stretch=1)
+        # YouTube 트리 (바 아래) — 기본 접힘(숨김)
+        self._yt_tree = _PlaylistTree(section="youtube")
+        self._yt_tree.setVisible(False)
+        layout.addWidget(self._yt_tree, stretch=2)
 
         self._connect_tree(self._local_tree)
         self._connect_tree(self._yt_tree)
@@ -2910,6 +2911,12 @@ class _PlaylistPanel(QWidget):
         tree.favorite_toggle_req.connect(self.favorite_toggle_req)
         tree.video_assign_category_req.connect(self.video_assign_category_req)
         tree.local_playlist_to_category_req.connect(self.local_playlist_to_category_req)
+
+    def _toggle_yt_section(self) -> None:
+        """YouTube 구독 트리를 펼치거나 접는다(삼각형 아이콘 상태도 갱신)."""
+        show = not self._yt_tree.isVisible()
+        self._yt_tree.setVisible(show)
+        self._yt_toggle_btn.setText("▾" if show else "▸")
 
     @property
     def trees(self) -> list:
@@ -3518,6 +3525,7 @@ class LibraryPanel(QWidget):
     video_selected     = pyqtSignal(object)
     download_requested = pyqtSignal(str, str, object)
     path_changed       = pyqtSignal(str)   # 현재 위치 경로 문자열 (breadcrumb)
+    back_exhausted     = pyqtSignal()      # 뒤로가기 기록 소진(외부에서 원본 페이지 복귀용)
 
     def __init__(
         self,
@@ -4120,6 +4128,19 @@ class LibraryPanel(QWidget):
                 color: #ff9090;
                 text-decoration: underline;
             }}
+            QWidget#yt_toggle_bar {{
+                border-top: 1px solid {tok.border};
+                background: {tok.bg_overlay};
+            }}
+            QToolButton#yt_toggle_arrow {{
+                color: #ff7070;
+                font-size: 10pt;
+                border: none;
+                background: transparent;
+            }}
+            QToolButton#yt_toggle_arrow:hover {{
+                color: #ff9090;
+            }}
         """
         local_tree, yt_tree = self._playlist_panel.trees
         local_tree.setStyleSheet(branch_style)   # 로컬: branch indicator 있음
@@ -4135,19 +4156,9 @@ class LibraryPanel(QWidget):
         피드·채널 뷰에서는 숨겨 재생목록 트리가 그 공간을 차지하도록 한다."""
         if self._tag_section.isVisible() == visible:
             return
-        # 태그 패널 토글 시 _playlist_panel 높이가 변하면서 내부 QSplitter가
-        # 3:2 비율로 재분배 → local_container(카테고리 트리)가 커져 yt_container
-        # (재생목록 트리) 시작점이 달라지는 현상 방지: 토글 전 local 높이를 저장해 복원.
-        local_sz = self._playlist_panel._splitter.sizes()[0]
+        # (스플리터 제거 후로는 태그 섹션 가시성만 토글하면 된다 — 로컬/YouTube
+        #  트리는 일반 레이아웃이라 재분배로 인한 위치 변동이 없다.)
         self._tag_section.setVisible(visible)
-        if local_sz > 0:
-            QTimer.singleShot(0, lambda sz=local_sz: self._restore_playlist_local_size(sz))
-
-    def _restore_playlist_local_size(self, local_sz: int) -> None:
-        splitter = self._playlist_panel._splitter
-        total = sum(splitter.sizes())
-        if total > 0:
-            splitter.setSizes([local_sz, max(0, total - local_sz)])
 
     def _refresh_popular_tags(self) -> None:
         from config.settings import load_hidden_tag_names  # noqa: PLC0415
@@ -5137,6 +5148,8 @@ class LibraryPanel(QWidget):
     def _go_back(self) -> None:
         """히스토리에서 직전 화면을 꺼내 복원한다. 현재 화면은 앞으로가기 스택에 보존."""
         if not self._nav_history:
+            # 라이브러리 내부 기록이 비었으면 외부(예: 통계에서 진입) 복귀를 위임한다.
+            self.back_exhausted.emit()
             return
         self._nav_future.append(self._capture_screen())
         snap = self._nav_history.pop()

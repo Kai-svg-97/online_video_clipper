@@ -26,6 +26,8 @@ def _actual_quality(file_path: str | None, fallback: str) -> str:
 from application.library.dtos import (
     CategoryDTO,
     CategoryStatDTO,
+    ChannelCategoryStatDTO,
+    ChannelStatDTO,
     DownloadInfoDTO,
     FailedDownloadInfoDTO,
     LibraryStatsDTO,
@@ -368,4 +370,56 @@ class LibraryStatsHandler:
             category_stats=cat_stats,
             total_downloads=total_dl,
             total_download_bytes=total_bytes,
+            channel_stats=self._build_channel_stats(),
         )
+
+    def _build_channel_stats(self) -> list[ChannelStatDTO]:
+        """채널별 카테고리 통계를 조립한다. 카테고리 경로는 부모 체인을 거슬러 만든다."""
+        get_fn = getattr(self._video_repo, "get_channel_category_stats", None)
+        if not callable(get_fn):
+            return []
+        try:
+            raw = get_fn()
+            cats = {c.id: c for c in self._video_repo.list_categories()}
+        except Exception:
+            logger.exception("채널별 통계 집계 실패")
+            return []
+
+        def path_of(cat_id: UUID) -> str:
+            parts: list[str] = []
+            seen: set[UUID] = set()
+            cur: UUID | None = cat_id
+            while cur is not None and cur in cats and cur not in seen:
+                seen.add(cur)
+                node = cats[cur]
+                parts.append(node.name)
+                cur = node.parent_id
+            return " > ".join(reversed(parts))
+
+        from collections import defaultdict  # noqa: PLC0415
+        grouped: dict[str, list[ChannelCategoryStatDTO]] = defaultdict(list)
+        for channel, cat_id_str, cnt in raw:
+            try:
+                cid = UUID(str(cat_id_str))
+            except (ValueError, TypeError, AttributeError):
+                continue
+            grouped[channel].append(
+                ChannelCategoryStatDTO(
+                    category_id=cid,
+                    category_path=path_of(cid) or "미분류",
+                    count=cnt,
+                )
+            )
+
+        result: list[ChannelStatDTO] = []
+        for channel, cat_list in grouped.items():
+            cat_list.sort(key=lambda x: (-x.count, x.category_path))
+            result.append(
+                ChannelStatDTO(
+                    channel_name=channel,
+                    total=sum(x.count for x in cat_list),
+                    categories=cat_list,
+                )
+            )
+        result.sort(key=lambda x: (-x.total, x.channel_name.lower()))
+        return result

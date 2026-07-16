@@ -1,12 +1,13 @@
 """통계 대시보드 패널 — 라이브러리 및 다운로드 현황 시각화."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -14,8 +15,73 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from application.library.dtos import CategoryStatDTO, LibraryStatsDTO
+from application.library.dtos import CategoryStatDTO, ChannelStatDTO, LibraryStatsDTO
 from application.library.queries import LibraryStatsHandler
+
+
+class _FlowLayout(QLayout):
+    """폭에 맞춰 아이템을 줄바꿈하는 흐름 레이아웃(표준 Qt 레시피)."""
+
+    def __init__(self, parent=None, hspacing: int = 6, vspacing: int = 4) -> None:
+        super().__init__(parent)
+        self._items: list = []
+        self._hspace = hspacing
+        self._vspace = vspacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item) -> None:  # type: ignore[override]
+        self._items.append(item)
+
+    def count(self) -> int:  # type: ignore[override]
+        return len(self._items)
+
+    def itemAt(self, index: int):  # type: ignore[override]
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int):  # type: ignore[override]
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):  # type: ignore[override]
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:  # type: ignore[override]
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # type: ignore[override]
+        return self._do_layout(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect: QRect) -> None:  # type: ignore[override]
+        super().setGeometry(rect)
+        self._do_layout(rect, False)
+
+    def sizeHint(self) -> QSize:  # type: ignore[override]
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:  # type: ignore[override]
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        size += QSize(m.left() + m.right(), m.top() + m.bottom())
+        return size
+
+    def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        x = rect.x()
+        y = rect.y()
+        line_height = 0
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + self._hspace
+            if next_x - self._hspace > rect.right() and line_height > 0:
+                x = rect.x()
+                y = y + line_height + self._vspace
+                next_x = x + hint.width() + self._hspace
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x = next_x
+            line_height = max(line_height, hint.height())
+        return y + line_height - rect.y()
 
 
 def _fmt_dur(sec: int) -> str:
@@ -101,6 +167,9 @@ class _BarChart(QWidget):
 
 
 class StatsPanel(QWidget):
+    # 채널 섹션에서 카테고리를 클릭하면 해당 category_id로 방출 → 라이브러리로 이동
+    category_selected = pyqtSignal(object)   # category UUID
+
     def __init__(self, stats_handler: LibraryStatsHandler, parent=None) -> None:
         super().__init__(parent)
         self._handler = stats_handler
@@ -177,6 +246,14 @@ class StatsPanel(QWidget):
             chart = _BarChart(stats.category_stats)
             self._content_layout.addWidget(chart)
 
+        # 채널별 카테고리 섹션
+        if stats.channel_stats:
+            ch_lbl = QLabel("채널별 카테고리")
+            ch_lbl.setStyleSheet("font-size: 10pt; font-weight: 600;")
+            self._content_layout.addWidget(ch_lbl)
+            for ch in stats.channel_stats:
+                self._content_layout.addWidget(self._make_channel_row(ch))
+
         # 다운로드 요약
         dl_lbl = QLabel("다운로드 통계")
         dl_lbl.setStyleSheet("font-size: 10pt; font-weight: 600;")
@@ -196,6 +273,39 @@ class StatsPanel(QWidget):
         self._content_layout.addLayout(dl_row)
 
         self._content_layout.addStretch()
+
+    def _make_channel_row(self, ch: ChannelStatDTO) -> QWidget:
+        """채널 하나 — 이름 + 카테고리 경로 링크(클릭 시 해당 카테고리로 이동)."""
+        card = QWidget()
+        card.setStyleSheet("background: #1e1e2e; border-radius: 8px;")
+        v = QVBoxLayout(card)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(6)
+
+        name_lbl = QLabel(f"{ch.channel_name}  ·  {ch.total:,}개")
+        name_lbl.setStyleSheet("font-weight: 600; background: transparent;")
+        v.addWidget(name_lbl)
+
+        links_host = QWidget()
+        links_host.setStyleSheet("background: transparent;")
+        flow = _FlowLayout(links_host, hspacing=6, vspacing=6)
+        link_qss = (
+            "QPushButton {"
+            " color:#8ab4ff; background:#2a2a3a; border:1px solid #3a3a4a;"
+            " border-radius:6px; padding:2px 8px; font-size:9pt; text-align:left; }"
+            "QPushButton:hover { background:#34344a; color:#a9c6ff; }"
+        )
+        for cat in ch.categories:
+            link = QPushButton(f"{cat.category_path} ({cat.count})")
+            link.setFlat(True)
+            link.setCursor(Qt.CursorShape.PointingHandCursor)
+            link.setStyleSheet(link_qss)
+            link.clicked.connect(
+                lambda _checked=False, cid=cat.category_id: self.category_selected.emit(cid)
+            )
+            flow.addWidget(link)
+        v.addWidget(links_host)
+        return card
 
     def _show_error(self, msg: str) -> None:
         while self._content_layout.count():

@@ -396,6 +396,22 @@ class SqliteVideoRepository(IVideoRepository):
             "category_stats": [(r["name"], r["cnt"]) for r in cat_rows],
         }
 
+    def get_channel_category_stats(self) -> list[tuple[str, str, int]]:
+        """채널별·카테고리별 영상 수 집계.
+
+        (channel_name, category_id, count) 튜플 목록을 반환한다.
+        카테고리가 지정된 영상만 대상으로 하며(경로 표시를 위해),
+        category_id는 저장된 UUID 문자열 그대로 넘긴다(상위에서 변환)."""
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                """SELECT COALESCE(NULLIF(channel_name, ''), '(채널 없음)') AS channel,
+                          category_id, COUNT(*) AS cnt
+                   FROM videos
+                   WHERE category_id IS NOT NULL
+                   GROUP BY channel, category_id"""
+            ).fetchall()
+        return [(r["channel"], r["category_id"], r["cnt"]) for r in rows]
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

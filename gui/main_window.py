@@ -458,6 +458,8 @@ class MainWindow(QMainWindow):
         self._yt_oauth = yt_oauth
         self._auth_service = auth_service or YouTubeAuthService()
         self._update_controller = None
+        # 통계 채널 섹션 → 카테고리 드릴다운 시 복귀할 페이지(라이브러리 뒤로가기 소진 후)
+        self._return_to_page: int | None = None
 
         self.setWindowTitle("YouTube Content Manager")
         self.setMinimumSize(1024, 680)
@@ -512,12 +514,14 @@ class MainWindow(QMainWindow):
 
         # 페이지 3: 통계 대시보드
         if self._stats_handler is not None:
-            self._stack.addWidget(StatsPanel(self._stats_handler))   # 3
+            self._stats_panel = StatsPanel(self._stats_handler)
+            self._stack.addWidget(self._stats_panel)                 # 3
         else:
             from PyQt6.QtWidgets import QLabel  # noqa: PLC0415
             stub = QWidget()
             QVBoxLayout(stub).addWidget(QLabel("통계 기능 준비 중"))
             self._stack.addWidget(stub)                              # 3
+            self._stats_panel = None
 
         # (구독 피드는 별도 페이지를 두지 않고 라이브러리 좌측 트리의
         #  "구독" 노드로 통합됨 — _LibraryPage에 feed_vm을 주입한다.)
@@ -552,6 +556,15 @@ class MainWindow(QMainWindow):
         lp = self._library_page.library_panel()
 
         self._pending_url: str = ""
+
+        # 통계 채널 섹션 → 카테고리 드릴다운, 라이브러리 뒤로가기 소진 시 통계 복귀
+        if self._stats_panel is not None:
+            self._stats_panel.category_selected.connect(
+                self._on_stats_category_selected
+            )
+        lp.back_exhausted.connect(self._on_library_back_exhausted)
+        # 사용자가 다른 페이지로 이동하면 통계 복귀 예약을 무효화한다.
+        self._stack.currentChanged.connect(self._on_page_changed)
 
         # 라이브러리 VM 이벤트
         self._library_vm.error_occurred.connect(self._show_library_error)
@@ -667,7 +680,29 @@ class MainWindow(QMainWindow):
     def _on_navigate_to_category(self, cat_id: object) -> None:
         """다운로드 상세의 브레드크럼 클릭 → 라이브러리 패널의 해당 카테고리로 이동."""
         self._sidebar._navigate(_PAGE_LIBRARY)
-        self._library_panel.navigate_to_category(cat_id)
+        self._library_page.library_panel().navigate_to_category(cat_id)
+
+    def _on_stats_category_selected(self, cat_id: object) -> None:
+        """통계 채널 섹션에서 카테고리 클릭 → 라이브러리 해당 카테고리로 이동.
+
+        이후 라이브러리 뒤로가기를 소진하면 통계 화면으로 복귀하도록 예약한다."""
+        self._sidebar._navigate(_PAGE_LIBRARY)
+        self._library_page.library_panel().navigate_to_category(cat_id)
+        # navigate가 페이지 전환(currentChanged)을 유발하므로 예약은 그 뒤에 설정한다.
+        self._return_to_page = _PAGE_STATS
+
+    def _on_library_back_exhausted(self) -> None:
+        """라이브러리 뒤로가기 기록이 비었을 때 — 예약된 원본 페이지로 복귀."""
+        if self._return_to_page is None:
+            return
+        page = self._return_to_page
+        self._return_to_page = None
+        self._sidebar._navigate(page)
+
+    def _on_page_changed(self, idx: int) -> None:
+        """사용자가 라이브러리/통계 외 페이지로 이동하면 통계 복귀 예약을 무효화한다."""
+        if idx not in (_PAGE_LIBRARY, _PAGE_STATS):
+            self._return_to_page = None
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.

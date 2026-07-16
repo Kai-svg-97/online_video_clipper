@@ -53,6 +53,22 @@ class CategoryStatDTO:
 
 
 @dataclass(frozen=True)
+class ChannelCategoryStatDTO:
+    """채널 통계 안에서 한 카테고리 항목 — 클릭 시 해당 카테고리로 이동."""
+    category_id: UUID
+    category_path: str      # 전체 경로, 예) "IT > News"
+    count: int
+
+
+@dataclass(frozen=True)
+class ChannelStatDTO:
+    """채널 하나에 대한 카테고리별 영상 수 집계."""
+    channel_name: str
+    total: int
+    categories: list[ChannelCategoryStatDTO]
+
+
+@dataclass(frozen=True)
 class LibraryStatsDTO:
     total_videos: int
     total_duration_sec: int
@@ -61,6 +77,7 @@ class LibraryStatsDTO:
     category_stats: list[CategoryStatDTO]
     total_downloads: int
     total_download_bytes: int
+    channel_stats: list[ChannelStatDTO] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
