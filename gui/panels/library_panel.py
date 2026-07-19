@@ -1415,6 +1415,7 @@ class _PlaylistTree(QTreeWidget):
     channel_selected              = pyqtSignal(str)            # 구독 채널 URL
     feed_all_selected             = pyqtSignal()               # 전체 구독 피드
     channels_root_selected        = pyqtSignal()               # "구독 채널" 노드 — 채널 목록 그리드
+    sync_subs_req                 = pyqtSignal()               # "구독 채널" 노드 — YouTube 구독 재동기화
     playlist_delete_req           = pyqtSignal(object)         # playlist UUID
     playlist_rename_req           = pyqtSignal(object)         # playlist UUID
     playlist_move_req             = pyqtSignal(object, object) # (playlist_id, folder_id|None)
@@ -2284,6 +2285,12 @@ class _PlaylistTree(QTreeWidget):
         section = item.data(0, _SECTION_ROLE) or self._section_of(item)
 
         if itype == _ITYPE_ROOT:
+            if section == "youtube":
+                # "구독 채널" 노드 — YouTube 구독 목록을 다시 가져와 재동기화
+                act_sync = QAction("⟳ 새로고침 (YouTube 구독 재동기화)", self)
+                act_sync.triggered.connect(self.sync_subs_req)
+                menu.addAction(act_sync)
+                menu.addSeparator()
             if section == "local":
                 act_cat = QAction("새 카테고리 추가", self)
                 act_cat.triggered.connect(lambda: self.add_category_req.emit(None))
@@ -2779,6 +2786,7 @@ class _PlaylistPanel(QWidget):
     channel_selected              = pyqtSignal(str)            # 구독 채널 URL
     feed_all_selected             = pyqtSignal()               # 전체 구독 피드
     channels_root_selected        = pyqtSignal()               # "구독 채널" 노드 — 채널 목록 그리드
+    sync_subs_req                 = pyqtSignal()               # "구독 채널" 노드 — YouTube 구독 재동기화
     delete_playlist_req           = pyqtSignal(object)         # playlist UUID
     rename_playlist_req           = pyqtSignal(object)         # playlist UUID
     playlist_move_req             = pyqtSignal(object, object) # (playlist_id, folder_id|None)
@@ -2892,6 +2900,7 @@ class _PlaylistPanel(QWidget):
         tree.channel_selected.connect(self.channel_selected)
         tree.feed_all_selected.connect(self.feed_all_selected)
         tree.channels_root_selected.connect(self.channels_root_selected)
+        tree.sync_subs_req.connect(self.sync_subs_req)
         tree.playlist_delete_req.connect(self.delete_playlist_req)
         tree.playlist_rename_req.connect(self.rename_playlist_req)
         tree.playlist_move_req.connect(self.playlist_move_req)
@@ -3837,6 +3846,7 @@ class LibraryPanel(QWidget):
         self._playlist_panel.channel_selected.connect(self._on_channel_selected)
         self._playlist_panel.feed_all_selected.connect(self._on_feed_all_selected)
         self._playlist_panel.channels_root_selected.connect(self._on_channels_root_selected)
+        self._playlist_panel.sync_subs_req.connect(self._on_sync_subscriptions)
         self._folder_view.playlist_selected.connect(self._on_folder_playlist_selected)
         self._folder_view.folder_selected.connect(self._on_folder_selected)
         if self._playlist_vm is not None:
@@ -3858,6 +3868,8 @@ class LibraryPanel(QWidget):
         # 채널 모니터링 VM — 구독 목록을 YouTube 트리에 반영
         if self._monitoring_vm is not None:
             self._monitoring_vm.subscriptions_changed.connect(self._refresh_unified_tree)
+            self._monitoring_vm.import_yt_finished.connect(self._on_subs_synced)
+            self._monitoring_vm.error_occurred.connect(self._on_subs_sync_error)
             QTimer.singleShot(0, self._monitoring_vm.load)
         self._vm.yt_import_finished.connect(self._on_yt_import_finished)
 
@@ -5868,18 +5880,29 @@ class LibraryPanel(QWidget):
             return
         self._push_nav_state()
         self._leave_detail_if_open()
-        subs = self._monitoring_vm.subscriptions if self._monitoring_vm is not None else []
-        channels = [(s.channel_id, s.channel_name, s.channel_url) for s in subs]
         self._current_playlist_id = None
         self._current_folder_id = None
         self._current_cat_id = None
         self._set_popular_tags_visible(False)
         self._view_stack.setCurrentIndex(_VIEW_CHANNELS)
+        self._populate_channels_grid()
+        self._refresh_breadcrumb()
+
+    def _populate_channels_grid(self) -> None:
+        """현재 구독 목록으로 채널 카드 그리드를 채운다(예비 카드 → 캐시/API 보강).
+
+        _on_channels_root_selected(노드 클릭)와 _on_subs_synced(재동기화 완료) 양쪽에서
+        재사용한다 — 뷰 전환·nav 히스토리는 건드리지 않는다.
+        """
+        if self._feed_vm is None:
+            return
+        subs = self._monitoring_vm.subscriptions if self._monitoring_vm is not None else []
+        channels = [(s.channel_id, s.channel_name, s.channel_url) for s in subs]
 
         if not channels:
+            self._channel_grid.set_channels([])
             self._channels_status.setText("구독 중인 채널이 없습니다.")
             self._channels_status.setVisible(True)
-            self._refresh_breadcrumb()
             return
 
         # Phase 1: DB 정보만으로 예비 카드 즉시 표시 (API 없이)
@@ -5910,7 +5933,31 @@ class LibraryPanel(QWidget):
             self._feed_vm.load_channel_infos(channels, silent=True)
         else:
             self._feed_vm.load_channel_infos(channels)
-        self._refresh_breadcrumb()
+
+    def _on_sync_subscriptions(self) -> None:
+        """구독 채널 컨텍스트 메뉴 '새로고침' — YouTube 구독 목록을 재동기화한다.
+
+        import_from_youtube가 YouTube에서 구독 전체를 다시 조회해 로컬 DB에 반영하면,
+        MonitoringViewModel이 subscriptions_changed(→트리 갱신)와 import_yt_finished
+        (→그리드 갱신)를 방출한다.
+        """
+        if self._monitoring_vm is None:
+            return
+        if self._view_stack.currentIndex() == _VIEW_CHANNELS:
+            self._channels_status.setText("YouTube 구독 채널을 동기화하는 중…")
+            self._channels_status.setVisible(True)
+        self._monitoring_vm.import_from_youtube()
+
+    def _on_subs_synced(self, count: int) -> None:
+        """구독 재동기화 완료 — 채널 그리드가 열려 있으면 새 목록으로 다시 채운다."""
+        if self._view_stack.currentIndex() == _VIEW_CHANNELS:
+            self._populate_channels_grid()
+
+    def _on_subs_sync_error(self, message: str) -> None:
+        """구독 재동기화 실패 — 채널 그리드가 열려 있으면 사유를 표시한다."""
+        if self._view_stack.currentIndex() == _VIEW_CHANNELS:
+            self._channels_status.setText(f"구독 동기화 실패: {message}")
+            self._channels_status.setVisible(True)
 
     def _on_channel_infos_changed(self) -> None:
         if self._feed_vm is None:
