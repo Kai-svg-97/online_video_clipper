@@ -57,6 +57,26 @@ def parse_artist_title(video_title: str, channel_name: str = "") -> tuple[str, s
     return artist, title
 
 
+# 다중 아티스트 구분자 — yt-dlp `artist`는 협업/피처링을 콤마 등으로 이어 붙인다
+# (예: "NIKI, Phil Collins"). 콤마/세미콜론/슬래시는 공백 없이, &·feat·ft·with·x는
+# 이름 중간 글자를 오검출하지 않도록 앞뒤 공백을 요구한다.
+_ARTIST_SEP_RE = re.compile(
+    r"\s*,\s*|\s*;\s*|\s*/\s*|\s+&\s+|\s+feat\.?\s+|\s+ft\.?\s+|\s+with\s+|\s+x\s+",
+    re.IGNORECASE,
+)
+
+
+def _primary_artist(artist: str) -> str:
+    """다중 아티스트 문자열에서 주(첫) 아티스트만 뽑는다.
+
+    가사 제공자는 정확한 아티스트명으로 매칭하므로 "NIKI, Phil Collins" 같은
+    협업 표기로는 조회가 실패한다. 첫 아티스트("NIKI")로 재시도하기 위한 값이다.
+    분리 대상이 없으면 원본을 그대로 반환한다.
+    """
+    parts = _ARTIST_SEP_RE.split((artist or "").strip(), maxsplit=1)
+    return parts[0].strip() if parts and parts[0].strip() else (artist or "").strip()
+
+
 def detect_is_song(meta: dict) -> bool:
     """yt-dlp info/prefetch dict로 노래 영상 여부를 추정한다.
 
@@ -269,15 +289,27 @@ class FetchSongInfoHandler:
             logger.exception("가사 출처 목록 조회 실패")
             sources = []
 
+        # 검색용 아티스트 후보: 전체 문자열 → 주(첫) 아티스트 순으로 시도한다.
+        # 다중 아티스트 표기("NIKI, Phil Collins")로는 제공자 매칭이 실패하므로
+        # 주 아티스트("NIKI")로 재시도해 유명곡 가사를 놓치지 않는다.
+        artist_candidates = [artist]
+        primary = _primary_artist(artist)
+        if primary and primary != artist:
+            artist_candidates.append(primary)
+
         for src in sources:
             provider = self._providers.get(src.provider_key)
             if provider is None:
                 continue
-            try:
-                result: LyricsResult | None = provider.fetch(artist, title, duration)
-            except Exception:
-                logger.exception("가사 조회 실패: provider=%s", src.provider_key)
-                continue
+            result: LyricsResult | None = None
+            for cand_artist in artist_candidates:
+                try:
+                    result = provider.fetch(cand_artist, title, duration)
+                except Exception:
+                    logger.exception("가사 조회 실패: provider=%s", src.provider_key)
+                    result = None
+                if result is not None:
+                    break
             if result is None:
                 continue
             # 부족한 메타데이터 보강(빈 값만 채움)
