@@ -57,6 +57,19 @@ class LocalOplogStore:
         segs = self._segments(install_id)
         return segs[-1][0] if segs else 0
 
+    def read_segment(self, install_id: str, seq: int) -> list[Op]:
+        """단일 세그먼트의 op 목록을 반환한다(없으면 빈 리스트)."""
+        path = self._dir(install_id) / f"{seq:06d}.ndjson"
+        if not path.is_file():
+            return []
+        ops: list[Op] = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    ops.append(Op.from_dict(json.loads(line)))
+        return ops
+
     def read_since(self, install_id: str, after_seq: int) -> list[Op]:
         ops: list[Op] = []
         for seq, path in self._segments(install_id):

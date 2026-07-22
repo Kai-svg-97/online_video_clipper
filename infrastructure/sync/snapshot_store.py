@@ -17,13 +17,12 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from domain.sync.services import SyncSchemaError
 from domain.sync.value_objects import SnapshotManifest
 
 logger = logging.getLogger(__name__)
 
-
-class SyncSchemaError(RuntimeError):
-    """스냅샷이 로컬 코드가 모르는 스키마(더 최신)라 적용 불가 — 앱 업데이트 필요."""
+__all__ = ["SnapshotStore", "SyncSchemaError"]
 
 
 class SnapshotStore:

@@ -21,11 +21,12 @@ _REF_PREFIX = "__ref__"
 
 
 class OplogRecorder:
-    def __init__(self, db, oplog_store, clock, install_id: str) -> None:
+    def __init__(self, db, oplog_store, clock, install_id: str, schema_ids=frozenset()) -> None:
         self._db = db                # infrastructure.persistence.database.Database
         self._oplog = oplog_store    # IOplogStore (로컬)
         self._clock = clock          # LamportClock
         self._install = install_id
+        self._schema_ids = frozenset(schema_ids)  # op 기록 시점의 스키마 능력(게이트용)
 
     @staticmethod
     def _now() -> str:
@@ -64,6 +65,7 @@ class OplogRecorder:
             kind=OpKind.UPSERT,
             fields=fields,
             refs=refs,
+            schema_ids=self._schema_ids,
         )
         self._persist_upsert(entity, nkey, local_uuid, lam, changed.keys(), op.op_id)
         self._oplog.append([op])
@@ -82,6 +84,7 @@ class OplogRecorder:
             entity=entity,
             nkey=nkey,
             kind=OpKind.DELETE,
+            schema_ids=self._schema_ids,
         )
         with self._db.connection() as conn:
             conn.execute(

@@ -163,7 +163,9 @@ online_video_clipper/
 │       ├── commands.py              # FetchSongInfo(출처 체인+번역), UpdateSongField/Lyrics, SetSongFlag, 가사출처 CRUD
 │       └── queries.py               # GetSongInfo, ListLyricsSources
 │   └── sync/                        # 클라우드 동기화 유스케이스 — 구현 중
-│       └── ports.py                 # ICloudSyncProvider·IOplogStore·ISnapshotStore·ISecretStore (Protocol) + RemoteFile
+│       ├── ports.py                 # ICloudSyncProvider·IOplogStore·ISnapshotStore·ISecretStore (Protocol) + RemoteFile
+│       ├── commands.py              # Push·Pull·SyncNow·ConnectProvider·DisconnectProvider 핸들러(스키마 게이트 포함)
+│       └── queries.py               # GetSyncStatus → SyncStatusDTO
 │
 ├── infrastructure/                  # Concrete implementations (invert dependencies)
 │   ├── persistence/
@@ -193,6 +195,8 @@ online_video_clipper/
 │       ├── keyring_secret_store.py  # ISecretStore (Windows Credential Manager, 백엔드 부재 시 파일 폴백)
 │       ├── device.py                # install_id 영속 + LamportClock(tick/observe)
 │       ├── local_oplog_store.py     # IOplogStore 로컬 구현 — <base>/<install>/NNNNNN.ndjson 세그먼트 append/read
+│       ├── cloud_oplog_store.py     # IOplogStore 원격 — provider 위 oplog/<install>/*.ndjson + installs.json 레지스트리
+│       ├── sync_state.py            # SyncState(consumed·pushed_head·provider_key)·SyncStateStore(DATA_DIR/sync/sync_state.json)
 │       ├── snapshot_store.py        # ISnapshotStore — VACUUM INTO export / 검증·백업·교체 import + 스키마 게이트(SyncSchemaError)
 │       ├── recorder.py              # OplogRecorder — 변경 필드 diff→op append + sync_* 레지스터 갱신
 │       ├── recording_repository.py  # RecordingVideoRepository(SqliteVideoRepository 상속, save/delete 캡처) — 나머지 repo는 Phase 2b
