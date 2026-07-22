@@ -25,7 +25,7 @@
 
 ## 테스트 상태
 
-- 비-GUI 테스트 **199개 통과**. 실행:
+- 비-GUI 테스트 **202개 통과**. 실행:
   ```bash
   pytest tests/unit tests/integration -q
   ```
@@ -100,8 +100,14 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 - **태그는 별도 op 없이** video_tag LINK op의 tag 이름 ref로 apply 측이 lazy 생성(bare 태그 op의 dangling identity 방지).
 - 테스트 6건(`tests/integration/test_sync_entities.py`): 링크/언링크/재링크 수렴, song 수렴·필드 LWW 동시편집·삭제.
 
-#### D-2 (남음)
-- category origin-identity 전환(위 결정 반영) + playlist·playlist_folder·playlist_item·download_history·clip·category_video_order 캡처/적용.
+#### ✅ D-2a 완료 (category origin-identity 전환)
+- `recorder.origin_nkey(entity, local_uuid)` — origin-identity nkey를 로컬 UUID로 조회(없으면 origin_key 생성).
+- `recording_repository`: RecordingVideoRepository에 save_category/delete_category 캡처 추가. video의 category 참조를 이름경로 → 카테고리 origin nkey로 변경(`_category_ref`).
+- `merge_applier`: `resolve_category` 재작성(origin nkey→로컬 UUID, 없으면 stub 생성 — placeholder 이름=nkey, 실제 op이 UPDATE로 채움 → 배치 내 부모/자식 순서 무관). `CategoryApplyHandler`(name 필드+parent ref, rename=필드변경, UNIQUE(name,parent) 충돌 시 동명 카테고리로 병합). handler registry 등록.
+- 기존 테스트 2건(name-path 기반) 재작성 + 카테고리 수렴/rename 테스트 4건(merge_applier 2 + entities 2). sync 68건 통과.
+
+#### D-2b (남음)
+- playlist·playlist_folder·playlist_item·download_history·clip·category_video_order 캡처/적용(playlist·folder·clip·download는 origin-identity, playlist_item·category_video_order는 링크).
 
 ### E. Phase 5 — GUI 배선 (기능이 앱에 켜지는 단계)
 - `gui/view_models/sync_vm.py` — `gui/view_models/song_vm.py` 패턴 복제(`SyncViewModel(QObject)`, 시그널, `_SyncWorker(QThread)`, `shutdown()`).

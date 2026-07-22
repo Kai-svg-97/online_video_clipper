@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from domain.sync.services import origin_key
 from domain.sync.value_objects import Op, OpKind
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,20 @@ class OplogRecorder:
             )
         self._oplog.append([op])
         return op
+
+    def origin_nkey(self, entity: str, local_uuid: str) -> str:
+        """origin-identity 엔티티(카테고리·재생목록 등)의 자연키를 구한다.
+
+        이미 이 로컬 UUID로 등록된 nkey가 있으면(다른 기기가 만든 걸 우리가 받은 경우 포함)
+        그것을 재사용하고, 없으면(여기서 처음 생성) origin_key(this_install, local_uuid)를
+        만든다. 등록(sync_identity 반영)은 record_change의 _persist_upsert가 담당한다.
+        """
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT nkey FROM sync_identity WHERE entity=? AND local_uuid=?",
+                (entity, local_uuid),
+            ).fetchone()
+        return row["nkey"] if row else origin_key(self._install, local_uuid)
 
     # -- 내부 ------------------------------------------------------------
     def _presence(self, entity: str, nkey: str) -> int | None:

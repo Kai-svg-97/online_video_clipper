@@ -13,14 +13,13 @@ Phase 3에서는 video upsert/delete + category 참조 해석을 구현한다. �
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from domain.sync.services import (
     OpLogMerger,
-    category_key,
-    split_category_key,
     split_link_key,
     topo_order,
 )
@@ -45,6 +44,7 @@ class MergeApplier:
         self._db = db
         self._clock = clock
         self._handlers = handlers or {
+            "category": CategoryApplyHandler(),
             "video": VideoApplyHandler(),
             "song_info": SongApplyHandler(),
             "video_tag": VideoTagApplyHandler(),
@@ -224,8 +224,15 @@ class MergeApplier:
         )
         return tid
 
-    def resolve_category(self, conn, cat_nkey: str | None) -> str | None:
-        """카테고리 자연키(이름 경로) → 로컬 UUID. 없으면 경로를 따라 생성."""
+    @staticmethod
+    def resolve_category(conn, cat_nkey: str | None) -> str | None:
+        """카테고리 origin 자연키 → 로컬 UUID.
+
+        origin-identity라 nkey는 (생성기기, uuid) 조합이다. 아직 없으면 **스텁 행**을 만든다
+        (이름 placeholder=nkey — 실제 category op이 적용될 때 UPDATE로 채워짐). 스텁은
+        자식이 부모보다 먼저 적용되거나(배치 내 순서 무관), video가 category op보다 먼저
+        참조될 때 FK 대상을 보장한다. placeholder 이름은 nkey라 서로 충돌하지 않는다.
+        """
         if not cat_nkey:
             return None
         row = conn.execute(
@@ -234,30 +241,17 @@ class MergeApplier:
         ).fetchone()
         if row:
             return row["local_uuid"]
-        # 경로를 따라 카테고리를 생성하며 내려간다.
-        names = split_category_key(cat_nkey)
-        parent_id: str | None = None
-        for depth in range(len(names)):
-            sub_nkey = category_key(names[: depth + 1])
-            existing = conn.execute(
-                "SELECT local_uuid FROM sync_identity WHERE entity='category' AND nkey=?",
-                (sub_nkey,),
-            ).fetchone()
-            if existing:
-                parent_id = existing["local_uuid"]
-                continue
-            new_uuid = str(uuid4())
-            conn.execute(
-                "INSERT INTO categories(id, name, parent_id) VALUES (?,?,?)",
-                (new_uuid, names[depth], parent_id),
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO sync_identity(entity, nkey, local_uuid, present, pres_lamport, pres_install) "
-                "VALUES ('category', ?, ?, 1, 0, '')",
-                (sub_nkey, new_uuid),
-            )
-            parent_id = new_uuid
-        return parent_id
+        cid = str(uuid4())
+        conn.execute(
+            "INSERT INTO categories(id, name, parent_id) VALUES (?,?,NULL)", (cid, cat_nkey)
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO sync_identity"
+            "(entity, nkey, local_uuid, present, pres_lamport, pres_install) "
+            "VALUES ('category', ?, ?, 1, 0, '')",
+            (cat_nkey, cid),
+        )
+        return cid
 
 
 class VideoApplyHandler:
@@ -323,6 +317,53 @@ class VideoApplyHandler:
 
     def delete(self, conn, local_uuid, nkey) -> None:
         conn.execute("DELETE FROM videos WHERE id=?", (local_uuid,))
+
+
+class CategoryApplyHandler:
+    """category(origin-identity) 반영. nkey=origin_key(생성기기,uuid), name은 필드,
+    parent는 부모 카테고리 origin nkey ref. rename은 필드 변경으로 자연히 반영된다."""
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        cid = applier.resolve_category(conn, nkey)  # 이 카테고리의 로컬 id(스텁/기존)
+        parent_id = None
+        if "parent" in refs:
+            parent_id = applier.resolve_category(conn, refs["parent"]) if refs["parent"] else None
+            if parent_id == cid:  # 자기참조 방지(비정상 데이터)
+                parent_id = None
+        sets, vals = [], []
+        if "name" in fields:
+            sets.append("name=?")
+            vals.append(fields["name"])
+        if "parent" in refs:
+            sets.append("parent_id=?")
+            vals.append(parent_id)
+        if not sets:
+            return
+        try:
+            conn.execute(
+                f"UPDATE categories SET {', '.join(sets)} WHERE id=?", (*vals, cid)
+            )
+        except sqlite3.IntegrityError:
+            # UNIQUE(name,parent_id) 충돌 — 두 기기가 같은 이름을 독립 생성(드문 경우).
+            # 기존 동명 카테고리로 병합: 이 nkey를 그 id로 재지정하고 스텁 제거.
+            name = fields.get("name")
+            existing = conn.execute(
+                "SELECT id FROM categories WHERE name=? AND parent_id IS ? AND id<>?",
+                (name, parent_id, cid),
+            ).fetchone()
+            if existing:
+                conn.execute("DELETE FROM categories WHERE id=?", (cid,))
+                conn.execute(
+                    "UPDATE sync_identity SET local_uuid=? "
+                    "WHERE entity='category' AND nkey=?",
+                    (existing["id"], nkey),
+                )
+                logger.info("동명 카테고리 병합: nkey=%s → %s", nkey, existing["id"])
+            else:
+                logger.exception("카테고리 UPDATE 실패(원인 미상): %s", nkey)
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        conn.execute("DELETE FROM categories WHERE id=?", (local_uuid,))
 
 
 class SongApplyHandler:

@@ -13,7 +13,8 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 from domain.library.aggregates import VideoAggregate
-from domain.sync.services import category_key, link_key, video_key
+from domain.library.entities import Category
+from domain.sync.services import link_key, video_key
 from infrastructure.persistence.database import Database
 from infrastructure.persistence.sqlite_song_repository import SqliteSongRepository
 from infrastructure.persistence.sqlite_video_repository import SqliteVideoRepository
@@ -91,7 +92,7 @@ class RecordingVideoRepository(SqliteVideoRepository):
             if row is None:
                 return None
             d = {c: row[c] for c in _VIDEO_COLS}
-            d[_REF + "category"] = self._category_path(conn, row["category_id"])
+            d[_REF + "category"] = self._category_ref(row["category_id"])
             return d
 
     def _extract(self, agg: VideoAggregate) -> dict:
@@ -110,9 +111,9 @@ class RecordingVideoRepository(SqliteVideoRepository):
             "duration_sec": v.duration.seconds if v.duration else None,
             "published_at": v.published_at.isoformat() if v.published_at else None,
         }
-        with self._db.connection() as conn:
-            cat = str(agg.category_id) if agg.category_id else None
-            d[_REF + "category"] = self._category_path(conn, cat)
+        d[_REF + "category"] = self._category_ref(
+            str(agg.category_id) if agg.category_id else None
+        )
         return d
 
     def _read_url_key(self, video_id: UUID) -> str | None:
@@ -122,25 +123,40 @@ class RecordingVideoRepository(SqliteVideoRepository):
             ).fetchone()
         return video_key(row["url"]) if row else None
 
-    @staticmethod
-    def _category_path(conn, category_id) -> str:
-        """category_id → 루트→리프 이름 경로 자연키. 없으면 빈 문자열."""
+    # -- 카테고리(origin-identity) ---------------------------------------
+    def save_category(self, category: Category) -> None:
+        old = self._read_category(category.id)
+        super().save_category(category)
+        nkey = self._recorder.origin_nkey("category", str(category.id))
+        new = {"name": category.name}
+        new[_REF + "parent"] = self._category_ref(
+            str(category.parent_id) if category.parent_id else None
+        )
+        self._recorder.record_change("category", nkey, str(category.id), old or {}, new)
+
+    def delete_category(self, category_id: UUID) -> None:
+        nkey = self._category_ref(str(category_id))
+        super().delete_category(category_id)
+        if nkey:
+            self._recorder.record_delete("category", nkey)
+
+    def _read_category(self, category_id: UUID) -> dict | None:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT name, parent_id FROM categories WHERE id=?", (str(category_id),)
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "name": row["name"],
+            _REF + "parent": self._category_ref(row["parent_id"]),
+        }
+
+    def _category_ref(self, category_id) -> str:
+        """category_id(로컬 UUID) → 카테고리 origin 자연키. 없으면 빈 문자열."""
         if not category_id:
             return ""
-        names: list[str] = []
-        cur = category_id
-        seen: set[str] = set()
-        while cur and cur not in seen:
-            seen.add(cur)
-            row = conn.execute(
-                "SELECT name, parent_id FROM categories WHERE id=?", (cur,)
-            ).fetchone()
-            if row is None:
-                break
-            names.append(row["name"])
-            cur = row["parent_id"]
-        names.reverse()
-        return category_key(names)
+        return self._recorder.origin_nkey("category", str(category_id))
 
     # -- 태그 연관(video_tag) --------------------------------------------
     def _tag_nkeys_of_video(self, video_id: UUID) -> set[str]:

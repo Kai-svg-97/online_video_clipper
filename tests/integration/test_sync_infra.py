@@ -7,7 +7,7 @@ import pytest
 from domain.library.aggregates import VideoAggregate
 from domain.library.entities import Category
 from domain.library.value_objects import ChannelInfo, VideoUrl
-from domain.sync.services import category_key, video_key
+from domain.sync.services import origin_key, video_key
 from domain.sync.value_objects import Op, OpKind
 from infrastructure.persistence.database import MIGRATION_IDS, Database
 from infrastructure.sync.device import Device, LamportClock
@@ -204,5 +204,12 @@ class TestRecordingVideoRepository:
         url = VideoUrl("https://www.youtube.com/watch?v=xyz98765432")
         agg = VideoAggregate.create(url, "t", category_id=child.id)
         repo.save(agg)
-        op = oplog.read_since("A", 0)[0]
-        assert op.refs.get("category") == category_key(["IT", "News"])
+        ops = oplog.read_since("A", 0)
+        # video op의 category 참조 = 자식 카테고리 origin nkey(이름 경로 아님).
+        video_op = next(o for o in ops if o.entity == "video")
+        assert video_op.refs.get("category") == origin_key("A", str(child.id))
+        # 카테고리도 별도 엔티티로 캡처됨(부모 참조 포함).
+        cat_ops = [o for o in ops if o.entity == "category"]
+        assert len(cat_ops) == 2
+        child_op = next(o for o in cat_ops if o.fields.get("name") == "News")
+        assert child_op.refs.get("parent") == origin_key("A", str(parent.id))

@@ -7,7 +7,7 @@ from uuid import UUID
 import pytest
 
 from domain.library.aggregates import VideoAggregate
-from domain.library.entities import Tag
+from domain.library.entities import Category, Tag
 from domain.library.value_objects import VideoUrl
 from domain.song.aggregates import SongInfoAggregate
 from infrastructure.sync.recording_repository import RecordingSongRepository
@@ -47,6 +47,21 @@ def _song_row(inst: Install, nkey: str = _NK) -> dict | None:
             (nkey,),
         ).fetchone()
     return dict(row) if row else None
+
+
+def _video_category_name(inst: Install, nkey: str = _NK) -> str | None:
+    with inst.db.connection() as conn:
+        row = conn.execute(
+            "SELECT c.name FROM videos v JOIN categories c ON c.id=v.category_id "
+            "WHERE v.url=?",
+            (nkey,),
+        ).fetchone()
+    return row["name"] if row else None
+
+
+def _category_count(inst: Install) -> int:
+    with inst.db.connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
 
 
 def _seed_video(a: Install, b: Install) -> None:
@@ -107,6 +122,44 @@ class TestVideoTagLink:
         a.push()
         b.pull()
         assert _tags_of(b) == {"pop"}
+
+
+class TestCategory:
+    def test_category_and_assignment_converge(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        parent = Category.create("음악")
+        child = Category.create("가요", parent_id=parent.id)
+        a.repo.save_category(parent)
+        a.repo.save_category(child)
+        agg = VideoAggregate.create(VideoUrl(_URL), "제목", category_id=child.id)
+        a.repo.save(agg)
+        a.push()
+        b.pull()
+
+        assert _video_category_name(b) == "가요"
+        # 부모·자식 카테고리가 B에 생성됨(이름 placeholder 잔존 없이 채워짐).
+        with b.db.connection() as conn:
+            names = {r["name"] for r in conn.execute("SELECT name FROM categories").fetchall()}
+        assert names == {"음악", "가요"}
+
+    def test_category_rename_converges(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        cat = Category.create("음악")
+        a.repo.save_category(cat)
+        agg = VideoAggregate.create(VideoUrl(_URL), "제목", category_id=cat.id)
+        a.repo.save(agg)
+        a.push()
+        b.pull()
+        assert _video_category_name(b) == "음악"
+
+        # A에서 같은 카테고리 rename(같은 id) → 필드 변경으로 전파.
+        a.repo.save_category(Category(id=cat.id, name="가요", parent_id=None))
+        a.push()
+        b.pull()
+        assert _video_category_name(b) == "가요"
+        assert _category_count(b) == 1  # 중복 카테고리 안 생김
 
 
 class TestSongInfo:

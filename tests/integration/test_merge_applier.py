@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import itertools
 
-from domain.sync.services import category_key, video_key
+from domain.sync.services import origin_key, video_key
 from domain.sync.value_objects import Op, OpKind
 from infrastructure.persistence.database import Database
 from infrastructure.sync.device import LamportClock
@@ -182,15 +182,27 @@ class TestFtsConsistency:
             ).fetchone()[0] == 0
 
 
+def _cat_op(op_id, install, lamport, nkey, name, parent="", kind=OpKind.UPSERT):
+    return Op(
+        op_id=op_id, install_id=install, lamport=lamport, wall_utc="2026-01-01T00:00:00",
+        entity="category", nkey=nkey, kind=kind,
+        fields={"name": name}, refs={"parent": parent},
+    )
+
+
 class TestCategoryRef:
-    def test_category_path_created_and_linked(self, tmp_path):
+    def test_category_created_and_linked(self, tmp_path):
         db = _fresh_db(tmp_path, "a.db")
         applier = _applier(tmp_path, db)
+        parent_nk = origin_key("A", "cat-parent")
+        child_nk = origin_key("A", "cat-child")
+        # 부모·자식 카테고리 op + 자식을 참조하는 video op (한 배치, 순서 무관).
         applier.apply([
-            _op("o1", "A", 1, fields={"title": "t"}, refs={"category": category_key(["IT", "News"])})
+            _cat_op("c1", "A", 1, parent_nk, "IT"),
+            _cat_op("c2", "A", 2, child_nk, "News", parent=parent_nk),
+            _op("o1", "A", 3, fields={"title": "t"}, refs={"category": child_nk}),
         ])
         with db.connection() as conn:
-            # 카테고리 경로 IT > News 가 생성되고 video.category_id가 News를 가리킨다
             vid = conn.execute("SELECT category_id FROM videos WHERE url=?", (_NK,)).fetchone()
             assert vid["category_id"]
             news = conn.execute(
@@ -201,3 +213,14 @@ class TestCategoryRef:
                 "SELECT name, parent_id FROM categories WHERE id=?", (news["parent_id"],)
             ).fetchone()
             assert parent["name"] == "IT" and parent["parent_id"] is None
+
+    def test_category_rename_propagates(self, tmp_path):
+        db = _fresh_db(tmp_path, "a.db")
+        applier = _applier(tmp_path, db)
+        nk = origin_key("A", "cat-1")
+        applier.apply([_cat_op("c1", "A", 1, nk, "예전이름")])
+        applier.apply([_cat_op("c2", "A", 2, nk, "새이름")])  # 같은 nkey, 이름만 변경
+        with db.connection() as conn:
+            rows = conn.execute("SELECT name FROM categories").fetchall()
+        # rename이 새 카테고리가 아니라 필드 변경으로 반영(중복 없음).
+        assert [r["name"] for r in rows] == ["새이름"]
