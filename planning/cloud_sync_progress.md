@@ -25,12 +25,12 @@
 
 ## 테스트 상태
 
-- 비-GUI 테스트 **187개 통과**. 실행:
+- 비-GUI 테스트 **193개 통과**. 실행:
   ```bash
   pytest tests/unit tests/integration -q
   ```
 - 원격 샌드박스엔 PyQt6가 없어 GUI 스모크(`tests/gui/`)는 미실행. 로컬에선 `pytest`로 전체 실행 가능.
-- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12), `tests/integration/test_sync_providers.py`(provider 어댑터 14).
+- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12), `tests/integration/test_sync_providers.py`(provider 어댑터 14), `tests/integration/test_sync_compaction.py`(컴팩션·부트스트랩 6).
 
 ---
 
@@ -82,9 +82,11 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 - ✅ `requirements.txt`에 `msal>=1.28`·`keyring>=25.0` 추가.
 - ⚠️ **남은 것 = 실계정 검증(로컬 전용)**: OAuth client_id/secret 발급 + 브라우저 로그인 후 텍스트/작은 파일 upload/download/list/delete 왕복 + resumable 중단→재개. msal 미설치 환경이라 OneDrive 코드는 로컬 import 검증도 필요. provider **연결 UX**(설정 OAuth 버튼)는 Phase 5(E).
 
-### C. 컴팩션 + 스냅샷 부트스트랩
-- `CompactHandler`: 현재 DB를 `snapshot_store.export_snapshot`으로 스냅샷 → provider `snapshot/library.db` 업로드 + `snapshot/snapshot.json`(covered={install:seq}·schema_ids·db_sha256) 발행 → 스냅샷이 덮은 세그먼트 GC. (완전 안전 GC엔 install별 consumed 워터마크 공유 필요 — 스냅샷을 덮은 seq는 뒤처진 install이 스냅샷 부트스트랩으로 회수 가능.)
-- 부트스트랩: 빈/뒤처진 install은 pull 시 스냅샷을 받아 `snapshot_store.import_snapshot`(integrity+게이트+백업+교체) 후 `consumed=snapshot.covered`로 세팅, 이후 증분 pull. **main.py에서 DB 열기 전** 실행(pre-DB) — `infrastructure/sync/bootstrap.py` 신규.
+### C. ✅ 컴팩션 + 스냅샷 부트스트랩 (구현 완료 — 배선만 Phase 5)
+- ✅ `application/sync/commands.py` `CompactHandler`: 현재 DB를 `snapshot_store.export_snapshot`으로 스냅샷 → provider `snapshot/library.db` 업로드 + `snapshot/snapshot.json`(covered=consumed ∪ {our:pushed_head}·schema_ids·db_sha256) 발행 → (선택) 덮인 세그먼트 GC. **GC 기본 비활성(`gc=False`)** — 완전 안전 GC엔 install별 consumed 워터마크 공유 필요(열린 결정)라 명시적으로 켤 때만.
+- ✅ `infrastructure/sync/bootstrap.py` `bootstrap_if_fresh`(pre-DB): **로컬 DB 미존재 시에만** 스냅샷 다운로드→sha256 검증→`import_snapshot`(integrity+게이트+교체)→`consumed=covered`. 기존 DB는 증분 pull에 맡김(스냅샷 교체가 로컬 미병합 상태를 덮으므로 신규만 안전).
+- ✅ 테스트 6건(`tests/integration/test_sync_compaction.py`): 신규 부트스트랩·부트스트랩 후 증분 pull·기존DB면 skip·스냅샷 없으면 skip·sha 불일치 차단·GC 후 신규기기 부트스트랩+증분 회수.
+- **남은 것(Phase 5)**: main.py에서 `db=Database()` 직전 `bootstrap_if_fresh` 호출, 컴팩션 트리거 시점(주기/로그크기)·GC 활성화 정책 결정.
 
 ### D. Phase 2b — 나머지 엔티티 캡처/적용
 현재 Video만. 확장 대상: **Category·Tag·video_tag 링크·song_info·playlist·playlist_item·playlist_folder·download_history·clip·category_video_order**.
