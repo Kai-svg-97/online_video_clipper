@@ -6,11 +6,18 @@ from uuid import UUID
 
 import pytest
 
+from domain.clip.aggregates import ClipAggregate
+from domain.clip.value_objects import TimeRange
+from domain.download.entities import DownloadJob, JobStatus
 from domain.library.aggregates import VideoAggregate
 from domain.library.entities import Category, Tag
 from domain.library.value_objects import VideoUrl
 from domain.song.aggregates import SongInfoAggregate
-from infrastructure.sync.recording_repository import RecordingSongRepository
+from infrastructure.sync.recording_repository import (
+    RecordingClipRepository,
+    RecordingDownloadRepository,
+    RecordingSongRepository,
+)
 from tests.integration.test_sync_flow import _NK, _URL, FakeCloudProvider, Install
 
 
@@ -225,3 +232,87 @@ class TestSongInfo:
         a.push()
         b.pull()
         assert _song_row(b) is None
+
+
+class TestClip:
+    def test_clip_converges(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        _seed_video(a, b)  # 소스 영상이 양쪽에 존재해야 clip FK 해석 가능
+
+        clip_repo = RecordingClipRepository(a.db, a.recorder)
+        agg = ClipAggregate.create(_video_id(a), "내 클립", TimeRange(10.0, 20.0))
+        clip_repo.save(agg)
+        a.push()
+        b.pull()
+
+        with b.db.connection() as conn:
+            row = conn.execute(
+                "SELECT c.title, c.start_sec, c.end_sec, v.url "
+                "FROM clips c JOIN videos v ON v.id=c.source_video_id WHERE c.title=?",
+                ("내 클립",),
+            ).fetchone()
+        assert row is not None
+        assert row["url"] == _NK  # B의 로컬 영상에 올바르게 연결
+        assert row["start_sec"] == 10.0 and row["end_sec"] == 20.0
+
+    def test_clip_delete_converges(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        _seed_video(a, b)
+        clip_repo = RecordingClipRepository(a.db, a.recorder)
+        agg = ClipAggregate.create(_video_id(a), "삭제될 클립", TimeRange(1.0, 2.0))
+        clip_repo.save(agg)
+        a.push()
+        b.pull()
+        with b.db.connection() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0] == 1
+
+        clip_repo.delete(agg.id)
+        a.push()
+        b.pull()
+        with b.db.connection() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0] == 0
+
+
+class TestDownloadHistory:
+    def test_download_converges(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        dl_repo = RecordingDownloadRepository(a.db, a.recorder)
+        job = DownloadJob.create("https://youtu.be/xyz98765432", "다운로드 제목")
+        job.status = JobStatus.COMPLETED
+        job.file_path = "downloads/xyz.mp4"  # DATA_DIR 상대경로(이식성)
+        dl_repo.save(job)
+        a.push()
+        b.pull()
+
+        with b.db.connection() as conn:
+            row = conn.execute(
+                "SELECT title, status, file_path FROM download_history WHERE title=?",
+                ("다운로드 제목",),
+            ).fetchone()
+        assert row is not None
+        assert row["status"] == JobStatus.COMPLETED.value
+        assert row["file_path"] == "downloads/xyz.mp4"
+
+    def test_download_status_update_converges(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        dl_repo = RecordingDownloadRepository(a.db, a.recorder)
+        job = DownloadJob.create("https://youtu.be/xyz98765432", "제목")
+        dl_repo.save(job)
+        a.push()
+        b.pull()
+
+        job.status = JobStatus.COMPLETED
+        job.file_path = "downloads/done.mp4"
+        dl_repo.save(job)
+        a.push()
+        b.pull()
+        with b.db.connection() as conn:
+            row = conn.execute(
+                "SELECT status, file_path FROM download_history WHERE title=?", ("제목",)
+            ).fetchone()
+        assert row["status"] == JobStatus.COMPLETED.value
+        assert row["file_path"] == "downloads/done.mp4"

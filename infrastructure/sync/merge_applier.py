@@ -48,6 +48,8 @@ class MergeApplier:
             "video": VideoApplyHandler(),
             "song_info": SongApplyHandler(),
             "video_tag": VideoTagApplyHandler(),
+            "clip": ClipApplyHandler(),
+            "download_history": DownloadApplyHandler(),
         }
         self._merger = OpLogMerger()
 
@@ -460,3 +462,100 @@ class VideoTagApplyHandler:
                 "DELETE FROM video_tags WHERE video_id=? AND tag_id=?",
                 (vid, trow["id"]),
             )
+
+
+class ClipApplyHandler:
+    """clip 반영. nkey=origin-identity, source_video는 ref(영상 URL 키). 파일 경로는 상대경로."""
+
+    _COLS = ("title", "file_path", "thumbnail_path", "start_sec", "end_sec")
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        vid = applier.resolve_video(conn, refs.get("video"))
+        exists = conn.execute("SELECT 1 FROM clips WHERE id=?", (local_uuid,)).fetchone()
+        if exists:
+            sets, vals = [], []
+            for col in self._COLS:
+                if col in fields:
+                    sets.append(f"{col}=?")
+                    vals.append(fields[col])
+            if refs.get("video") and vid is not None:
+                sets.append("source_video_id=?")
+                vals.append(vid)
+            if sets:
+                conn.execute(
+                    f"UPDATE clips SET {', '.join(sets)} WHERE id=?", (*vals, local_uuid)
+                )
+        else:
+            if vid is None:
+                logger.warning("clip 적용 skip — 소스 영상 미해결: %s", nkey)
+                return
+            conn.execute(
+                """
+                INSERT INTO clips
+                    (id, source_video_id, title, file_path, thumbnail_path,
+                     start_sec, end_sec, created_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (
+                    local_uuid, vid, fields.get("title", ""),
+                    fields.get("file_path", ""), fields.get("thumbnail_path", ""),
+                    fields.get("start_sec", 0.0), fields.get("end_sec", 0.0),
+                    _now_iso(),
+                ),
+            )
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        conn.execute("DELETE FROM clips WHERE id=?", (local_uuid,))
+
+
+class DownloadApplyHandler:
+    """download_history 반영. nkey=origin-identity(video FK 없음). 파일 경로는 상대경로."""
+
+    _COLS = (
+        "url", "title", "quality", "format", "subtitle_langs",
+        "include_thumbnail", "include_metadata", "status", "file_path",
+        "error_msg", "retry_count",
+    )
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        exists = conn.execute(
+            "SELECT 1 FROM download_history WHERE id=?", (local_uuid,)
+        ).fetchone()
+        if exists:
+            sets, vals = [], []
+            for col in self._COLS:
+                if col in fields:
+                    sets.append(f"{col}=?")
+                    vals.append(fields[col])
+            if sets:
+                sets.append("updated_at=?")
+                vals.append(_now_iso())
+                conn.execute(
+                    f"UPDATE download_history SET {', '.join(sets)} WHERE id=?",
+                    (*vals, local_uuid),
+                )
+        else:
+            now = _now_iso()
+            conn.execute(
+                """
+                INSERT INTO download_history
+                    (id, url, title, quality, format, subtitle_langs,
+                     include_thumbnail, include_metadata, status, file_path,
+                     error_msg, retry_count, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    local_uuid,
+                    fields.get("url", ""), fields.get("title", ""),
+                    fields.get("quality", ""), fields.get("format", ""),
+                    fields.get("subtitle_langs", "[]"),
+                    int(fields.get("include_thumbnail", 1)),
+                    int(fields.get("include_metadata", 1)),
+                    fields.get("status", ""), fields.get("file_path", ""),
+                    fields.get("error_msg", ""), int(fields.get("retry_count", 0)),
+                    now, now,
+                ),
+            )
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        conn.execute("DELETE FROM download_history WHERE id=?", (local_uuid,))

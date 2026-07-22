@@ -16,11 +16,31 @@ from domain.library.aggregates import VideoAggregate
 from domain.library.entities import Category
 from domain.sync.services import link_key, video_key
 from infrastructure.persistence.database import Database
+from infrastructure.persistence.sqlite_clip_repository import SqliteClipRepository
+from infrastructure.persistence.sqlite_download_repository import SqliteDownloadRepository
 from infrastructure.persistence.sqlite_song_repository import SqliteSongRepository
 from infrastructure.persistence.sqlite_video_repository import SqliteVideoRepository
 from infrastructure.sync.recorder import OplogRecorder
 
 _REF = "__ref__"
+
+# clip 캡처 컬럼(created_at 메타 제외). file_path/thumbnail_path는 DB 저장값=DATA_DIR 상대경로(이식성).
+_CLIP_COLS = ("title", "file_path", "thumbnail_path", "start_sec", "end_sec")
+
+# download_history 캡처 컬럼(save가 실제 기록하는 것만; file_size_bytes/gemini_summary는 미기록).
+_DOWNLOAD_COLS = (
+    "url",
+    "title",
+    "quality",
+    "format",
+    "subtitle_langs",
+    "include_thumbnail",
+    "include_metadata",
+    "status",
+    "file_path",
+    "error_msg",
+    "retry_count",
+)
 
 # song_info 캡처 컬럼(updated_at은 메타라 제외 — churn).
 _SONG_COLS = (
@@ -221,3 +241,85 @@ class RecordingSongRepository(SqliteSongRepository):
                 "SELECT url FROM videos WHERE id=?", (str(video_id),)
             ).fetchone()
         return video_key(row["url"]) if row else None
+
+
+def _video_nkey_of(db: Database, video_id) -> str | None:
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT url FROM videos WHERE id=?", (str(video_id),)
+        ).fetchone()
+    return video_key(row["url"]) if row else None
+
+
+class RecordingClipRepository(SqliteClipRepository):
+    """SqliteClipRepository + clip save/delete op 캡처. nkey=origin-identity, source_video는 ref.
+
+    file_path/thumbnail_path는 DB 저장값(DATA_DIR 상대경로)을 그대로 캡처해 머신 독립.
+    실제 바이트는 file_syncer(Phase A)가 별도로 동기화한다.
+    """
+
+    def __init__(self, db: Database, recorder: OplogRecorder) -> None:
+        super().__init__(db)
+        self._db = db
+        self._recorder = recorder
+
+    def save(self, aggregate) -> None:
+        clip = aggregate.clip
+        old = self._read_clip_cols(clip.id)
+        super().save(aggregate)
+        new = self._read_clip_cols(clip.id)
+        if new is None:
+            return
+        vnk = _video_nkey_of(self._db, clip.source_video_id) or ""
+        new = {**new, _REF + "video": vnk}
+        if old is not None:
+            old = {**old, _REF + "video": vnk}  # 소스 영상은 불변
+        nkey = self._recorder.origin_nkey("clip", str(clip.id))
+        self._recorder.record_change("clip", nkey, str(clip.id), old or {}, new)
+
+    def delete(self, clip_id: UUID) -> None:
+        nkey = self._recorder.origin_nkey("clip", str(clip_id))
+        super().delete(clip_id)
+        self._recorder.record_delete("clip", nkey)
+
+    def _read_clip_cols(self, clip_id) -> dict | None:
+        with self._db.connection() as conn:
+            cols = ", ".join(_CLIP_COLS)
+            row = conn.execute(
+                f"SELECT {cols} FROM clips WHERE id=?", (str(clip_id),)
+            ).fetchone()
+        return {c: row[c] for c in _CLIP_COLS} if row else None
+
+
+class RecordingDownloadRepository(SqliteDownloadRepository):
+    """SqliteDownloadRepository + download_history save/delete op 캡처. nkey=origin-identity.
+
+    file_path는 DB 저장값(DATA_DIR 상대경로)을 캡처. video FK가 없어 순수 origin 엔티티.
+    """
+
+    def __init__(self, db: Database, recorder: OplogRecorder) -> None:
+        super().__init__(db)
+        self._db = db
+        self._recorder = recorder
+
+    def save(self, job) -> None:
+        old = self._read_dl_cols(job.id)
+        super().save(job)
+        new = self._read_dl_cols(job.id)
+        if new is None:
+            return
+        nkey = self._recorder.origin_nkey("download_history", str(job.id))
+        self._recorder.record_change("download_history", nkey, str(job.id), old or {}, new)
+
+    def delete(self, job_id: UUID) -> None:
+        nkey = self._recorder.origin_nkey("download_history", str(job_id))
+        super().delete(job_id)
+        self._recorder.record_delete("download_history", nkey)
+
+    def _read_dl_cols(self, job_id) -> dict | None:
+        with self._db.connection() as conn:
+            cols = ", ".join(_DOWNLOAD_COLS)
+            row = conn.execute(
+                f"SELECT {cols} FROM download_history WHERE id=?", (str(job_id),)
+            ).fetchone()
+        return {c: row[c] for c in _DOWNLOAD_COLS} if row else None

@@ -25,7 +25,7 @@
 
 ## 테스트 상태
 
-- 비-GUI 테스트 **202개 통과**. 실행:
+- 비-GUI 테스트 **206개 통과**. 실행:
   ```bash
   pytest tests/unit tests/integration -q
   ```
@@ -106,8 +106,13 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 - `merge_applier`: `resolve_category` 재작성(origin nkey→로컬 UUID, 없으면 stub 생성 — placeholder 이름=nkey, 실제 op이 UPDATE로 채움 → 배치 내 부모/자식 순서 무관). `CategoryApplyHandler`(name 필드+parent ref, rename=필드변경, UNIQUE(name,parent) 충돌 시 동명 카테고리로 병합). handler registry 등록.
 - 기존 테스트 2건(name-path 기반) 재작성 + 카테고리 수렴/rename 테스트 4건(merge_applier 2 + entities 2). sync 68건 통과.
 
-#### D-2b (남음)
-- playlist·playlist_folder·playlist_item·download_history·clip·category_video_order 캡처/적용(playlist·folder·clip·download는 origin-identity, playlist_item·category_video_order는 링크).
+#### ✅ D-2b-1 완료 (clip + download_history)
+- `RecordingClipRepository`(origin-identity, source_video ref, file_path/thumbnail_path는 DB 상대경로 캡처)·`RecordingDownloadRepository`(origin-identity, video FK 없음).
+- `ClipApplyHandler`(resolve_video로 source_video_id 해석)·`DownloadApplyHandler`. handler registry 등록.
+- 테스트 4건: clip 수렴/삭제, download 수렴/상태갱신. 비-GUI 206개 통과.
+
+#### D-2b-2 (남음)
+- playlist·playlist_folder(origin-identity) + playlist_item·category_video_order(링크) 캡처/적용. playlist는 folder 참조·item_count·position 처리 주의.
 
 ### E. Phase 5 — GUI 배선 (기능이 앱에 켜지는 단계)
 - `gui/view_models/sync_vm.py` — `gui/view_models/song_vm.py` 패턴 복제(`SyncViewModel(QObject)`, 시그널, `_SyncWorker(QThread)`, `shutdown()`).
