@@ -9,10 +9,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Iterable
 
 from domain.library.value_objects import normalize_video_url
-from domain.sync.value_objects import ClockEntry, EntityKey, Op
+from domain.sync.value_objects import ClockEntry, EntityKey, FileEntry, Op
 
 
 # ---------------------------------------------------------------------------
@@ -224,3 +225,59 @@ class OpLogMerger:
                 bucket[name] = FieldEntry(clk, val)
                 wkey = f"__ref__{name}" if ref else name
                 writes.setdefault(ek, {})[wkey] = val
+
+
+# ---------------------------------------------------------------------------
+# 미디어 파일 동기화 계획 (순수 — I/O 없음)
+# ---------------------------------------------------------------------------
+
+
+class FileSyncAction(str, Enum):
+    UPLOAD = "upload"      # 로컬 → 원격
+    DOWNLOAD = "download"  # 원격 → 로컬
+
+
+@dataclass(frozen=True, slots=True)
+class FileSyncItem:
+    """계획된 파일 전송 한 건. size 는 진행률 총량 계산용(전송할 바이트)."""
+
+    rel_path: str
+    action: FileSyncAction
+    size: int
+
+
+def plan_file_sync(
+    local: dict[str, FileEntry],
+    remote: dict[str, FileEntry],
+    prefer: str = "newer",
+) -> list[FileSyncItem]:
+    """로컬/원격 매니페스트를 비교해 전송 계획을 만든다(결정적, 순수).
+
+    - 로컬에만 있음 → UPLOAD, 원격에만 있음 → DOWNLOAD.
+    - 양쪽에 있고 sha256 동일 → 전송 없음(내용 주소화 — mtime 무관).
+    - 양쪽에 있고 sha256 다름(내용 충돌) → `prefer` 정책으로 방향 결정:
+      "newer"(기본, mtime 큰 쪽 승) / "local"(항상 업로드) / "remote"(항상 다운로드).
+    - **삭제는 전파하지 않는다** — 어느 쪽에만 없는 건 삭제가 아니라 아직 미동기화로 본다.
+
+    반환은 rel_path 사전순으로 정렬돼 결정적이다.
+    """
+    items: list[FileSyncItem] = []
+    for rel in sorted(local):
+        le = local[rel]
+        re = remote.get(rel)
+        if re is None:
+            items.append(FileSyncItem(rel, FileSyncAction.UPLOAD, le.size))
+        elif le.sha256 != re.sha256:
+            if prefer == "local":
+                items.append(FileSyncItem(rel, FileSyncAction.UPLOAD, le.size))
+            elif prefer == "remote":
+                items.append(FileSyncItem(rel, FileSyncAction.DOWNLOAD, re.size))
+            elif le.mtime >= re.mtime:  # "newer" — 동률이면 로컬 우선
+                items.append(FileSyncItem(rel, FileSyncAction.UPLOAD, le.size))
+            else:
+                items.append(FileSyncItem(rel, FileSyncAction.DOWNLOAD, re.size))
+        # else: sha256 동일 → skip
+    for rel in sorted(remote):
+        if rel not in local:
+            items.append(FileSyncItem(rel, FileSyncAction.DOWNLOAD, remote[rel].size))
+    return items

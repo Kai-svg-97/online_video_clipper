@@ -25,12 +25,12 @@
 
 ## 테스트 상태
 
-- 비-GUI 테스트 **153개 통과**. 실행:
+- 비-GUI 테스트 **173개 통과**. 실행:
   ```bash
   pytest tests/unit tests/integration -q
   ```
 - 원격 샌드박스엔 PyQt6가 없어 GUI 스모크(`tests/gui/`)는 미실행. 로컬에선 `pytest`로 전체 실행 가능.
-- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6).
+- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12).
 
 ---
 
@@ -62,13 +62,16 @@
 
 우선순위·의존순으로 정리. 각 항목은 착수 지점을 명시했다.
 
-### A. ⚠️ 미디어/썸네일 파일 동기화 (아직 미구현 — 핵심 요구사항)
-oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는 별도 서브시스템이 필요하며 아직 없다.
-- 신규 `infrastructure/sync/file_syncer.py`: `DOWNLOAD_DIR`·`THUMBNAIL_DIR` walk → `FileEntry(rel_path, size, mtime, sha256)`. 1차 판정 size+mtime, 동일 시 sha256.
-- `manifest.json`(우리가 쓰는 것)의 sha256을 **파일 identity의 진실원천**으로. provider 네이티브 체크섬(Drive md5/OneDrive quickXorHash)은 교차 비교 불가라 보조로만.
-- `SyncPlanner.plan_file_sync`(순수) — 로컬만→upload/원격만→download/다름→방향 우선. 삭제 전파 안 함.
-- resumable 전송 + `*.part`→`os.replace` 원자적 확정. QThread + 진행률.
+### A. ✅ 미디어/썸네일 파일 동기화 (구현 완료 — 엔진 레벨)
+oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는 별도 서브시스템으로 구현했다.
+- ✅ `domain/sync/value_objects.py` `FileEntry(rel_path, size, mtime, sha256)` — 순수 값 객체(직렬화 포함).
+- ✅ `domain/sync/services.py` `plan_file_sync`(순수) + `FileSyncAction`/`FileSyncItem` — 로컬만→upload/원격만→download/sha다름→`prefer` 정책("newer"|"local"|"remote"), **삭제 전파 안 함**, 결정적 정렬. 단위 테스트 8건.
+- ✅ `infrastructure/sync/file_syncer.py`:
+  - `scan_media_dirs` — `DOWNLOAD_DIR`·`THUMBNAIL_DIR` walk → rel_path(DATA_DIR 기준)·size+mtime 캐시로 sha256 재해시 회피. `.part`/DATA_DIR 밖 파일 제외.
+  - `FileSyncer.sync(on_progress, should_cancel)` — 계획 실행. `media/manifest.json`(sha256 진실원천)+`media/files/<rel>` 레이아웃. 다운로드 `.part`→`os.replace` 원자 확정. 원격 매니페스트 read-merge-write(동시 추가 보존). `MediaSyncProgress`/`MediaSyncReport`.
+  - 통합 테스트 12건(`tests/integration/test_file_syncer.py`) — 왕복·멱등·양방향 union·충돌 newer 승·진행률·취소·.part 잔여물 없음.
 - 경로는 Phase 0 덕에 이미 `DATA_DIR` 기준 상대경로로 저장돼 있어 머신 독립.
+- **남은 것(Phase 5로)**: QThread 래퍼(`_SyncWorker`)와 main.py 기동 후 백그라운드 트리거 배선. 엔진은 협조적 취소·진행률 콜백만 노출해 QThread가 그대로 감싸면 된다.
 
 ### B. provider 어댑터 (실제 클라우드 백엔드)
 - `infrastructure/sync/gdrive_provider.py`: 인증은 `infrastructure/youtube/oauth_adapter.py:68-83` 패턴 재사용(`InstalledAppFlow.from_client_config` + `run_local_server(port=0, prompt="consent", access_type="offline")`), **스코프 `["https://www.googleapis.com/auth/drive.file"]`**, 토큰은 **keyring**(`gdrive.token`). 파일은 `MediaFileUpload(resumable=True)`.

@@ -6,17 +6,20 @@ import itertools
 
 from domain.sync.services import (
     ENTITY_ORDER,
+    FileSyncAction,
     MergeState,
     OpLogMerger,
     category_key,
     link_key,
     origin_key,
+    plan_file_sync,
     topo_order,
     video_key,
 )
 from domain.sync.value_objects import (
     ClockEntry,
     EntityKey,
+    FileEntry,
     Op,
     OpKind,
     SnapshotManifest,
@@ -214,3 +217,70 @@ class TestIdempotency:
         merger.merge([make_op("o1", "A", 1, "tag", "rock")], base)
         assert base.presence == {}
         assert base.applied_op_ids == set()
+
+
+def _fe(rel, sha, size=10, mtime=100):
+    return FileEntry(rel_path=rel, size=size, mtime=mtime, sha256=sha)
+
+
+class TestPlanFileSync:
+    def test_local_only_uploads(self):
+        local = {"downloads/a.mp4": _fe("downloads/a.mp4", "sha_a")}
+        plan = plan_file_sync(local, {})
+        assert len(plan) == 1
+        assert plan[0].action == FileSyncAction.UPLOAD
+        assert plan[0].rel_path == "downloads/a.mp4"
+        assert plan[0].size == 10
+
+    def test_remote_only_downloads(self):
+        remote = {"thumbnails/t.jpg": _fe("thumbnails/t.jpg", "sha_t", size=5)}
+        plan = plan_file_sync({}, remote)
+        assert len(plan) == 1
+        assert plan[0].action == FileSyncAction.DOWNLOAD
+        assert plan[0].size == 5
+
+    def test_identical_sha_skips_even_if_mtime_differs(self):
+        local = {"x": _fe("x", "same", mtime=200)}
+        remote = {"x": _fe("x", "same", mtime=100)}
+        assert plan_file_sync(local, remote) == []
+
+    def test_conflict_newer_mtime_wins(self):
+        local = {"x": _fe("x", "l", mtime=200)}
+        remote = {"x": _fe("x", "r", mtime=100)}
+        plan = plan_file_sync(local, remote, prefer="newer")
+        assert plan[0].action == FileSyncAction.UPLOAD
+
+        local2 = {"x": _fe("x", "l", mtime=100)}
+        remote2 = {"x": _fe("x", "r", mtime=200)}
+        plan2 = plan_file_sync(local2, remote2, prefer="newer")
+        assert plan2[0].action == FileSyncAction.DOWNLOAD
+
+    def test_conflict_tie_prefers_local(self):
+        local = {"x": _fe("x", "l", mtime=100)}
+        remote = {"x": _fe("x", "r", mtime=100)}
+        plan = plan_file_sync(local, remote, prefer="newer")
+        assert plan[0].action == FileSyncAction.UPLOAD
+
+    def test_prefer_local_and_remote_overrides(self):
+        local = {"x": _fe("x", "l", mtime=100)}
+        remote = {"x": _fe("x", "r", mtime=999)}
+        assert plan_file_sync(local, remote, prefer="local")[0].action == FileSyncAction.UPLOAD
+        assert plan_file_sync(local, remote, prefer="remote")[0].action == FileSyncAction.DOWNLOAD
+
+    def test_no_deletion_propagation(self):
+        # 로컬에만·원격에만 있는 항목은 삭제로 보지 않고 각각 전송으로만 계획.
+        local = {"a": _fe("a", "sa")}
+        remote = {"b": _fe("b", "sb")}
+        plan = plan_file_sync(local, remote)
+        actions = {(i.rel_path, i.action) for i in plan}
+        assert actions == {
+            ("a", FileSyncAction.UPLOAD),
+            ("b", FileSyncAction.DOWNLOAD),
+        }
+
+    def test_deterministic_ordering(self):
+        local = {"z": _fe("z", "1"), "a": _fe("a", "2")}
+        remote = {"m": _fe("m", "3")}
+        plan = plan_file_sync(local, remote)
+        # 업로드(로컬)는 사전순, 이어서 다운로드(원격만) 사전순.
+        assert [i.rel_path for i in plan] == ["a", "z", "m"]

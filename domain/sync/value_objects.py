@@ -149,3 +149,30 @@ class SnapshotManifest:
             db_sha256=d.get("db_sha256", ""),
             utc=d.get("utc", ""),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class FileEntry:
+    """미디어/썸네일 파일 한 건의 동기화 메타.
+
+    rel_path 는 DATA_DIR 기준 상대경로(POSIX 구분자) — DB의 file_path 규약과 동일해
+    다른 기기에서도 그대로 유효하다. sha256 이 **파일 identity의 진실원천**이며,
+    size+mtime 은 재해시를 피하기 위한 1차 비교 지표(캐시 무효화)다.
+    """
+
+    rel_path: str
+    size: int
+    mtime: int  # int(st_mtime) 초 단위 — 파일시스템 간 정밀도 차이에 견고
+    sha256: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"size": self.size, "mtime": self.mtime, "sha256": self.sha256}
+
+    @classmethod
+    def from_dict(cls, rel_path: str, d: dict[str, Any]) -> FileEntry:
+        return cls(
+            rel_path=rel_path,
+            size=int(d.get("size", 0)),
+            mtime=int(d.get("mtime", 0)),
+            sha256=d.get("sha256", ""),
+        )
