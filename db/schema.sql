@@ -236,3 +236,37 @@ CREATE TABLE IF NOT EXISTS lyrics_sources (
     enabled      INTEGER NOT NULL DEFAULT 1,
     priority     INTEGER NOT NULL DEFAULT 100   -- 작을수록 먼저 시도
 );
+
+-- =========================================================
+-- Sync context (클라우드 동기화 — 레코드 단위 oplog CRDT)
+-- 아래 테이블은 로컬 전용(동기화 대상 아님) — 병합 레지스터 상태를 materialize한다.
+-- 컴팩션 시 op 로그로부터 재생성 가능하다.
+-- =========================================================
+
+-- 자연키 ↔ 로컬 UUID 매핑 + 존재(presence) 레지스터.
+-- present=0 이면 tombstone. pres_lamport/pres_install 로 존재 LWW를 판정한다.
+CREATE TABLE IF NOT EXISTS sync_identity (
+    entity       TEXT NOT NULL,
+    nkey         TEXT NOT NULL,
+    local_uuid   TEXT NOT NULL,
+    present      INTEGER NOT NULL DEFAULT 1,
+    pres_lamport INTEGER NOT NULL DEFAULT 0,
+    pres_install TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (entity, nkey)
+);
+
+-- 필드/참조 값 레지스터 — 필드별 승자 clock(lamport, install)을 기록해 필드 단위 LWW를 판정한다.
+CREATE TABLE IF NOT EXISTS sync_field_clock (
+    entity  TEXT NOT NULL,
+    nkey    TEXT NOT NULL,
+    field   TEXT NOT NULL,
+    lamport INTEGER NOT NULL,
+    install TEXT NOT NULL,
+    PRIMARY KEY (entity, nkey, field)
+);
+
+-- 이미 적용한 op_id — 멱등 재적용 방지.
+CREATE TABLE IF NOT EXISTS sync_applied_ops (
+    op_id      TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);

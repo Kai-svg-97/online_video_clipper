@@ -12,6 +12,22 @@ from utils.resources import get_resource_path
 logger = logging.getLogger(__name__)
 
 
+# 이 코드가 아는 마이그레이션 id 집합(적용 순서). 각 id에 대응하는 메서드는 "_" + id 이다.
+# sync 스키마 게이트가 이 집합을 "로컬이 지원하는 스키마 능력"으로 사용한다 —
+# 원격 op의 schema_ids가 이 집합에 없는 항목을 포함하면 원격이 더 최신이므로 차단한다.
+MIGRATION_IDS: tuple[str, ...] = (
+    "migrate_normalize_urls",
+    "migrate_playlist_schema",
+    "migrate_channel_ids",
+    "migrate_sort_indexes",
+    "migrate_gemini_summary",
+    "migrate_videos_gemini_summary",
+    "migrate_song_tables",
+    "migrate_song_sources_reorder",
+    "migrate_media_paths_relative",
+)
+
+
 class Database:
     """Manages the SQLite connection lifecycle."""
 
@@ -29,15 +45,8 @@ class Database:
                 "CREATE TABLE IF NOT EXISTS schema_migrations "
                 "(id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
             )
-        self._run_once("migrate_normalize_urls", self._migrate_normalize_urls)
-        self._run_once("migrate_playlist_schema", self._migrate_playlist_schema)
-        self._run_once("migrate_channel_ids", self._migrate_channel_ids)
-        self._run_once("migrate_sort_indexes", self._migrate_sort_indexes)
-        self._run_once("migrate_gemini_summary", self._migrate_gemini_summary)
-        self._run_once("migrate_videos_gemini_summary", self._migrate_videos_gemini_summary)
-        self._run_once("migrate_song_tables", self._migrate_song_tables)
-        self._run_once("migrate_song_sources_reorder", self._migrate_song_sources_reorder)
-        self._run_once("migrate_media_paths_relative", self._migrate_media_paths_relative)
+        for migration_id in MIGRATION_IDS:
+            self._run_once(migration_id, getattr(self, "_" + migration_id))
 
     def _run_once(self, migration_id: str, func) -> None:
         """마이그레이션을 최초 1회만 실행한다 (schema_migrations 테이블로 추적)."""
