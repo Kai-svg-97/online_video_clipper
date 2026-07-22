@@ -10,15 +10,30 @@ Phase 2에서는 핵심 경로인 Video의 save/delete를 캡처한다. tag/카�
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from domain.library.aggregates import VideoAggregate
-from domain.sync.services import category_key, video_key
+from domain.sync.services import category_key, link_key, video_key
 from infrastructure.persistence.database import Database
+from infrastructure.persistence.sqlite_song_repository import SqliteSongRepository
 from infrastructure.persistence.sqlite_video_repository import SqliteVideoRepository
 from infrastructure.sync.recorder import OplogRecorder
 
 _REF = "__ref__"
+
+# song_info 캡처 컬럼(updated_at은 메타라 제외 — churn).
+_SONG_COLS = (
+    "is_song",
+    "artist",
+    "album",
+    "song_title",
+    "release_year",
+    "lyrics_json",
+    "lyrics_language",
+    "source_name",
+    "source_url",
+    "manual_fields",
+)
 
 # 캡처할 video 컬럼(로그 대상). view_count는 churn이라 제외(스냅샷이 담당),
 # description은 지연 로드라 Phase 2b로 미룸, created_at/updated_at은 메타라 제외.
@@ -46,11 +61,19 @@ class RecordingVideoRepository(SqliteVideoRepository):
 
     def save(self, aggregate: VideoAggregate) -> None:
         old = self._read_old(aggregate.id)
+        old_tags = self._tag_nkeys_of_video(aggregate.id)  # super().save 전(연관 재작성 전)
         super().save(aggregate)
         new = self._extract(aggregate)
-        self._recorder.record_change(
-            "video", video_key(str(aggregate.video.url)), str(aggregate.id), old or {}, new
-        )
+        vnk = video_key(str(aggregate.video.url))
+        self._recorder.record_change("video", vnk, str(aggregate.id), old or {}, new)
+        # video_tag 링크 diff — 추가/제거된 태그를 link/unlink op로 캡처.
+        new_tags = self._tag_nkeys_of_ids(aggregate.tag_ids)
+        for tnk in sorted(new_tags - old_tags):
+            self._recorder.record_link(
+                "video_tag", link_key(vnk, tnk), str(uuid4()), {"video": vnk, "tag": tnk}
+            )
+        for tnk in sorted(old_tags - new_tags):
+            self._recorder.record_unlink("video_tag", link_key(vnk, tnk))
 
     def delete(self, video_id: UUID) -> None:
         nkey = self._read_url_key(video_id)
@@ -118,3 +141,67 @@ class RecordingVideoRepository(SqliteVideoRepository):
             cur = row["parent_id"]
         names.reverse()
         return category_key(names)
+
+    # -- 태그 연관(video_tag) --------------------------------------------
+    def _tag_nkeys_of_video(self, video_id: UUID) -> set[str]:
+        """이 영상에 현재 연관된 태그 이름 집합(자연키=이름)."""
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT t.name FROM video_tags vt JOIN tags t ON t.id=vt.tag_id "
+                "WHERE vt.video_id=?",
+                (str(video_id),),
+            ).fetchall()
+        return {r["name"] for r in rows}
+
+    def _tag_nkeys_of_ids(self, tag_ids) -> set[str]:
+        ids = [str(t) for t in tag_ids]
+        if not ids:
+            return set()
+        placeholders = ",".join("?" * len(ids))
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                f"SELECT name FROM tags WHERE id IN ({placeholders})", ids
+            ).fetchall()
+        return {r["name"] for r in rows}
+
+
+class RecordingSongRepository(SqliteSongRepository):
+    """SqliteSongRepository + song_info save/delete op 캡처.
+
+    song_info는 Video와 1:1이라 자연키 = 영상의 URL 키(video_key). 적용 측은 이 nkey로
+    영상 로컬 UUID를 해석해 song_info(video_id=…)에 반영한다.
+    """
+
+    def __init__(self, db: Database, recorder: OplogRecorder) -> None:
+        super().__init__(db)
+        self._recorder = recorder
+
+    def save(self, aggregate) -> None:
+        vid = aggregate.info.video_id
+        old = self._read_song_cols(vid)
+        super().save(aggregate)
+        new = self._read_song_cols(vid)
+        vnk = self._video_nkey(vid)
+        if vnk and new is not None:
+            self._recorder.record_change("song_info", vnk, str(vid), old or {}, new)
+
+    def delete(self, video_id: UUID) -> None:
+        vnk = self._video_nkey(video_id)
+        super().delete(video_id)
+        if vnk:
+            self._recorder.record_delete("song_info", vnk)
+
+    def _read_song_cols(self, video_id: UUID) -> dict | None:
+        with self._db.connection() as conn:
+            cols = ", ".join(_SONG_COLS)
+            row = conn.execute(
+                f"SELECT {cols} FROM song_info WHERE video_id=?", (str(video_id),)
+            ).fetchone()
+        return {c: row[c] for c in _SONG_COLS} if row else None
+
+    def _video_nkey(self, video_id: UUID) -> str | None:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT url FROM videos WHERE id=?", (str(video_id),)
+            ).fetchone()
+        return video_key(row["url"]) if row else None

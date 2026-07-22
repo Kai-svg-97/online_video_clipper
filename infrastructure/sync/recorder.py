@@ -99,7 +99,70 @@ class OplogRecorder:
         self._oplog.append([op])
         return op
 
+    def record_link(
+        self, entity: str, nkey: str, local_uuid: str, refs: dict
+    ) -> Op | None:
+        """링크(조인 행) 생성을 기록한다. 이미 present면 no-op.
+
+        링크는 자체 필드가 없고 **양 끝점을 refs로** 실어 보낸다(applier가 nkey/ref로 해석).
+        refs가 있어야 merge의 writes에 남아 upserts()에 포함된다(presence-only는 미반영).
+        """
+        if self._presence(entity, nkey) == 1:
+            return None
+        lam = self._clock.tick()
+        op = Op(
+            op_id=str(uuid4()),
+            install_id=self._install,
+            lamport=lam,
+            wall_utc=self._now(),
+            entity=entity,
+            nkey=nkey,
+            kind=OpKind.LINK,
+            fields={},
+            refs=dict(refs),
+            schema_ids=self._schema_ids,
+        )
+        changed_keys = [f"{_REF_PREFIX}{k}" for k in refs]
+        self._persist_upsert(entity, nkey, local_uuid, lam, changed_keys, op.op_id)
+        self._oplog.append([op])
+        return op
+
+    def record_unlink(self, entity: str, nkey: str) -> Op | None:
+        """링크 제거(tombstone)를 기록한다. 이미 부재면 no-op."""
+        if self._presence(entity, nkey) != 1:
+            return None
+        lam = self._clock.tick()
+        op = Op(
+            op_id=str(uuid4()),
+            install_id=self._install,
+            lamport=lam,
+            wall_utc=self._now(),
+            entity=entity,
+            nkey=nkey,
+            kind=OpKind.UNLINK,
+            schema_ids=self._schema_ids,
+        )
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE sync_identity SET present=0, pres_lamport=?, pres_install=? "
+                "WHERE entity=? AND nkey=?",
+                (lam, self._install, entity, nkey),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO sync_applied_ops(op_id, applied_at) VALUES (?, ?)",
+                (op.op_id, self._now()),
+            )
+        self._oplog.append([op])
+        return op
+
     # -- 내부 ------------------------------------------------------------
+    def _presence(self, entity: str, nkey: str) -> int | None:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT present FROM sync_identity WHERE entity=? AND nkey=?", (entity, nkey)
+            ).fetchone()
+        return row["present"] if row else None
+
     def _identity_exists(self, entity: str, nkey: str) -> bool:
         with self._db.connection() as conn:
             return (

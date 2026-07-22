@@ -25,12 +25,12 @@
 
 ## 테스트 상태
 
-- 비-GUI 테스트 **193개 통과**. 실행:
+- 비-GUI 테스트 **199개 통과**. 실행:
   ```bash
   pytest tests/unit tests/integration -q
   ```
 - 원격 샌드박스엔 PyQt6가 없어 GUI 스모크(`tests/gui/`)는 미실행. 로컬에선 `pytest`로 전체 실행 가능.
-- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12), `tests/integration/test_sync_providers.py`(provider 어댑터 14), `tests/integration/test_sync_compaction.py`(컴팩션·부트스트랩 6).
+- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12), `tests/integration/test_sync_providers.py`(provider 어댑터 14), `tests/integration/test_sync_compaction.py`(컴팩션·부트스트랩 6), `tests/integration/test_sync_entities.py`(엔티티 확장 D-1 6).
 
 ---
 
@@ -91,11 +91,17 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 ### D. Phase 2b — 나머지 엔티티 캡처/적용
 현재 Video만. 확장 대상: **Category·Tag·video_tag 링크·song_info·playlist·playlist_item·playlist_folder·download_history·clip·category_video_order**.
 - 각 엔티티에 대해 (1) 캡처: 해당 Sqlite*Repository를 상속한 RecordingXxxRepository(mutating 메서드 오버라이드), (2) 적용: `merge_applier`의 핸들러 registry에 `XxxApplyHandler` 추가.
-- ⚠️ **열린 설계 결정 — 카테고리(및 재생목록) 정체성**: 현재 category nkey=이름경로인데 **rename하면 nkey가 바뀌어 새 엔티티로 보인다**. 선택지:
-  - (a) **origin-identity**(install+uuid)로 전환 → rename이 필드 변경으로 올바르게 동작. 단 두 기기가 같은 이름을 독립 생성하면 중복(순차 사용 전제면 드묾).
-  - (b) 이름경로 유지 + rename을 특별 처리(별도 rename op로 이전 nkey→새 nkey 이전).
-  - **권장: (a)** — rename이 흔하고 중복은 드문 순차 사용 전제에 부합. 단 이 경우 video의 `category` 참조도 이름경로가 아니라 카테고리의 origin nkey를 써야 하므로 `recording_repository`의 category 참조 계산과 `merge_applier.resolve_category`를 함께 바꿔야 함.
-  - 이 결정은 **video 캡처의 category 참조 방식에 영향**을 주니, Phase 2b 착수 전에 확정할 것.
+- ✅ **결정됨 — 카테고리(및 재생목록) 정체성 = origin-identity(install+uuid)**: rename을 필드 변경으로 올바르게 다루기 위해. video의 category 참조도 이름경로가 아니라 카테고리 origin nkey를 쓰도록 `recording_repository`의 category 참조 계산과 `merge_applier.resolve_category`를 함께 바꿔야 함 → **Phase D-2**에서 반영.
+
+#### ✅ D-1 완료 (video_tag 링크 + song_info)
+- `recorder.py` `record_link`/`record_unlink`(presence-aware) 추가 — 링크는 refs로 양 끝점 전달(presence-only op은 merge writes가 비어 미반영되므로 refs 필수).
+- `recording_repository.py`: RecordingVideoRepository.save에 video_tag 링크 diff 캡처, `RecordingSongRepository` 신규(song_info, nkey=영상 URL).
+- `merge_applier.py`: `SongApplyHandler`·`VideoTagApplyHandler` + `resolve_video`/`resolve_tag`(태그 lazy 생성). handler registry에 등록.
+- **태그는 별도 op 없이** video_tag LINK op의 tag 이름 ref로 apply 측이 lazy 생성(bare 태그 op의 dangling identity 방지).
+- 테스트 6건(`tests/integration/test_sync_entities.py`): 링크/언링크/재링크 수렴, song 수렴·필드 LWW 동시편집·삭제.
+
+#### D-2 (남음)
+- category origin-identity 전환(위 결정 반영) + playlist·playlist_folder·playlist_item·download_history·clip·category_video_order 캡처/적용.
 
 ### E. Phase 5 — GUI 배선 (기능이 앱에 켜지는 단계)
 - `gui/view_models/sync_vm.py` — `gui/view_models/song_vm.py` 패턴 복제(`SyncViewModel(QObject)`, 시그널, `_SyncWorker(QThread)`, `shutdown()`).
@@ -119,7 +125,7 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 4. 커밋 규칙(CLAUDE.md): 한국어 커밋, git 작업은 Haiku, 문서(CLAUDE.md/planning) 동반 갱신.
 
 ## 열린 결정 사항 요약
-- [ ] 카테고리/재생목록 **정체성 방식**(origin-identity vs 이름경로) — D 착수 전 확정(권장 origin-identity).
+- [x] 카테고리/재생목록 **정체성 방식** → **origin-identity 확정**(D-2에서 반영).
 - [ ] 미디어 파일 **삭제 전파** 정책(현재 계획은 전파 안 함/수동).
 - [ ] 컴팩션 **트리거 시점**(주기 vs 로그 크기 임계) 및 dormant install GC 보수성.
 - [ ] provider **연결 UX**(설정에서 OAuth 버튼 흐름) 세부.

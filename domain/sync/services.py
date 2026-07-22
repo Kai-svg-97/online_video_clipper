@@ -52,6 +52,12 @@ def link_key(parent_nkey: str, child_nkey: str) -> str:
     return f"{parent_nkey}{_SEP}{child_nkey}"
 
 
+def split_link_key(nkey: str) -> tuple[str, str]:
+    """link_key의 역 — (부모nkey, 자식nkey). UNLINK op는 refs가 없어 nkey에서 복원한다."""
+    parts = nkey.split(_SEP, 1)
+    return (parts[0], parts[1]) if len(parts) == 2 else (nkey, "")
+
+
 def origin_key(install_id: str, local_uuid: str) -> str:
     """자연키가 없는 엔티티(로컬 재생목록·폴더·클립·다운로드 이력)의 origin-identity.
 

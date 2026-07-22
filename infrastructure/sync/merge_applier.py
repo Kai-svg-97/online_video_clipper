@@ -21,6 +21,7 @@ from domain.sync.services import (
     OpLogMerger,
     category_key,
     split_category_key,
+    split_link_key,
     topo_order,
 )
 from domain.sync.value_objects import (
@@ -43,7 +44,11 @@ class MergeApplier:
     def __init__(self, db, clock, handlers: dict | None = None) -> None:
         self._db = db
         self._clock = clock
-        self._handlers = handlers or {"video": VideoApplyHandler()}
+        self._handlers = handlers or {
+            "video": VideoApplyHandler(),
+            "song_info": SongApplyHandler(),
+            "video_tag": VideoTagApplyHandler(),
+        }
         self._merger = OpLogMerger()
 
     def apply(self, ops: list[Op]) -> MergeResult:
@@ -182,6 +187,43 @@ class MergeApplier:
         )
 
     # -- 참조 해석 (핸들러가 호출) ---------------------------------------
+    @staticmethod
+    def resolve_video(conn, video_nkey: str | None) -> str | None:
+        """영상 자연키(URL) → 로컬 UUID. sync_identity 우선, 없으면 videos.url."""
+        if not video_nkey:
+            return None
+        row = conn.execute(
+            "SELECT local_uuid FROM sync_identity WHERE entity='video' AND nkey=?",
+            (video_nkey,),
+        ).fetchone()
+        if row:
+            return row["local_uuid"]
+        row = conn.execute("SELECT id FROM videos WHERE url=?", (video_nkey,)).fetchone()
+        return row["id"] if row else None
+
+    @staticmethod
+    def resolve_tag(conn, tag_nkey: str) -> str:
+        """태그 자연키(이름) → 로컬 UUID. 없으면 태그 행을 생성하고 sync_identity에 등록."""
+        row = conn.execute(
+            "SELECT local_uuid FROM sync_identity WHERE entity='tag' AND nkey=?",
+            (tag_nkey,),
+        ).fetchone()
+        if row:
+            return row["local_uuid"]
+        row = conn.execute("SELECT id FROM tags WHERE name=?", (tag_nkey,)).fetchone()
+        if row:
+            tid = row["id"]
+        else:
+            tid = str(uuid4())
+            conn.execute("INSERT INTO tags(id, name) VALUES (?,?)", (tid, tag_nkey))
+        conn.execute(
+            "INSERT OR IGNORE INTO sync_identity"
+            "(entity, nkey, local_uuid, present, pres_lamport, pres_install) "
+            "VALUES ('tag', ?, ?, 1, 0, '')",
+            (tag_nkey, tid),
+        )
+        return tid
+
     def resolve_category(self, conn, cat_nkey: str | None) -> str | None:
         """카테고리 자연키(이름 경로) → 로컬 UUID. 없으면 경로를 따라 생성."""
         if not cat_nkey:
@@ -281,3 +323,99 @@ class VideoApplyHandler:
 
     def delete(self, conn, local_uuid, nkey) -> None:
         conn.execute("DELETE FROM videos WHERE id=?", (local_uuid,))
+
+
+class SongApplyHandler:
+    """song_info 반영. nkey=영상 URL 키라 그 영상의 로컬 UUID로 video_id를 해석한다."""
+
+    _COLS = (
+        "is_song",
+        "artist",
+        "album",
+        "song_title",
+        "release_year",
+        "lyrics_json",
+        "lyrics_language",
+        "source_name",
+        "source_url",
+        "manual_fields",
+    )
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        vid = applier.resolve_video(conn, nkey)
+        if vid is None:
+            logger.warning("song_info 적용 skip — 영상 미해결: %s", nkey)
+            return
+        exists = conn.execute(
+            "SELECT 1 FROM song_info WHERE video_id=?", (vid,)
+        ).fetchone()
+        if exists:
+            sets, vals = [], []
+            for col in self._COLS:
+                if col in fields:
+                    sets.append(f"{col}=?")
+                    vals.append(fields[col])
+            if sets:
+                sets.append("updated_at=?")
+                vals.append(_now_iso())
+                conn.execute(
+                    f"UPDATE song_info SET {', '.join(sets)} WHERE video_id=?",
+                    (*vals, vid),
+                )
+        else:
+            conn.execute(
+                """
+                INSERT INTO song_info
+                    (video_id, is_song, artist, album, song_title, release_year,
+                     lyrics_json, lyrics_language, source_name, source_url,
+                     manual_fields, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    vid,
+                    int(fields.get("is_song", 0)),
+                    fields.get("artist", ""),
+                    fields.get("album", ""),
+                    fields.get("song_title", ""),
+                    fields.get("release_year", ""),
+                    fields.get("lyrics_json", "[]"),
+                    fields.get("lyrics_language", ""),
+                    fields.get("source_name", ""),
+                    fields.get("source_url", ""),
+                    fields.get("manual_fields", "[]"),
+                    _now_iso(),
+                ),
+            )
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        vid = MergeApplier.resolve_video(conn, nkey)
+        if vid is not None:
+            conn.execute("DELETE FROM song_info WHERE video_id=?", (vid,))
+
+
+class VideoTagApplyHandler:
+    """video_tag 링크(조인 행) 반영. nkey=link_key(video_nkey, tag_nkey)."""
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        vnk = refs.get("video")
+        tnk = refs.get("tag")
+        if not vnk or not tnk:  # 방어 — 정상 LINK op엔 refs가 있음
+            vnk, tnk = split_link_key(nkey)
+        vid = applier.resolve_video(conn, vnk)
+        if vid is None:
+            logger.warning("video_tag 적용 skip — 영상 미해결: %s", vnk)
+            return
+        tid = applier.resolve_tag(conn, tnk)
+        conn.execute(
+            "INSERT OR IGNORE INTO video_tags(video_id, tag_id) VALUES (?,?)", (vid, tid)
+        )
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        vnk, tnk = split_link_key(nkey)
+        vid = MergeApplier.resolve_video(conn, vnk)
+        trow = conn.execute("SELECT id FROM tags WHERE name=?", (tnk,)).fetchone()
+        if vid is not None and trow is not None:
+            conn.execute(
+                "DELETE FROM video_tags WHERE video_id=? AND tag_id=?",
+                (vid, trow["id"]),
+            )
