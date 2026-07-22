@@ -54,6 +54,43 @@ THUMBNAIL_DIR: Path = _resolve("thumbnails", DATA_DIR / "thumbnails")
 LOG_DIR:       Path = _resolve("logs",       DATA_DIR / "logs")
 BACKUP_DIR:    Path = _resolve("backups",    DATA_DIR / "backups")
 
+
+# ---------------------------------------------------------------------------
+# 미디어 경로 이식성 (머신 간 동기화 대비)
+#
+# DB에는 미디어/썸네일 경로를 DATA_DIR 기준 **상대경로**로 저장해 다른 PC에서도
+# 유효하도록 한다. 런타임에는 절대경로로 복원해서 쓴다. DATA_DIR 밖의 경로(사용자가
+# 별도 위치를 지정한 경우)는 이식할 수 없으므로 절대경로 그대로 보존한다.
+# ---------------------------------------------------------------------------
+
+def to_portable_path(p: str) -> str:
+    """절대경로가 DATA_DIR 하위면 상대경로(POSIX 구분자)로 변환한다.
+
+    이미 상대경로거나 빈 값, DATA_DIR 밖의 절대경로는 그대로 반환한다(idempotent).
+    """
+    if not p:
+        return p
+    path = Path(p)
+    if not path.is_absolute():
+        return p
+    try:
+        return path.relative_to(DATA_DIR).as_posix()
+    except ValueError:
+        return p  # DATA_DIR 밖 — 이식 불가, 절대경로 보존
+
+
+def resolve_media_path(p: str) -> str:
+    """저장된 경로를 런타임 절대경로로 복원한다.
+
+    상대경로는 DATA_DIR 기준으로 결합하고, 이미 절대경로거나 빈 값은 그대로 둔다.
+    """
+    if not p:
+        return p
+    path = Path(p)
+    if path.is_absolute():
+        return p
+    return str(DATA_DIR / path)
+
 # ---------------------------------------------------------------------------
 # Application-level defaults (not path-related)
 # ---------------------------------------------------------------------------

@@ -37,6 +37,7 @@ class Database:
         self._run_once("migrate_videos_gemini_summary", self._migrate_videos_gemini_summary)
         self._run_once("migrate_song_tables", self._migrate_song_tables)
         self._run_once("migrate_song_sources_reorder", self._migrate_song_sources_reorder)
+        self._run_once("migrate_media_paths_relative", self._migrate_media_paths_relative)
 
     def _run_once(self, migration_id: str, func) -> None:
         """마이그레이션을 최초 1회만 실행한다 (schema_migrations 테이블로 추적)."""
@@ -215,6 +216,38 @@ class Database:
                     conn.execute(
                         "UPDATE videos SET url=? WHERE id=?", (canonical, row["id"])
                     )
+
+    def _migrate_media_paths_relative(self) -> None:
+        """미디어/썸네일 경로를 DATA_DIR 기준 상대경로로 정규화한다 (머신 간 이식성).
+
+        대상: download_history.file_path, clips.file_path, clips.thumbnail_path.
+        (videos.thumbnail_path는 이미 THUMBNAIL_DIR 기준 상대경로라 제외.)
+        DATA_DIR 밖이거나 빈 값·이미 상대경로면 그대로 둔다 → idempotent.
+        """
+        from config.settings import to_portable_path  # noqa: PLC0415
+
+        targets = [
+            ("download_history", ("file_path",)),
+            ("clips", ("file_path", "thumbnail_path")),
+        ]
+        with self.connection() as conn:
+            for table, cols in targets:
+                col_list = ", ".join(cols)
+                rows = conn.execute(f"SELECT id, {col_list} FROM {table}").fetchall()
+                for row in rows:
+                    updates = {}
+                    for col in cols:
+                        old = row[col] or ""
+                        new = to_portable_path(old)
+                        if new != old:
+                            updates[col] = new
+                    if updates:
+                        set_clause = ", ".join(f"{c}=?" for c in updates)
+                        conn.execute(
+                            f"UPDATE {table} SET {set_clause} WHERE id=?",
+                            (*updates.values(), row["id"]),
+                        )
+            logger.info("미디어 경로 상대경로화 마이그레이션 완료")
 
     @contextmanager
     def connection(self) -> Generator[sqlite3.Connection, None, None]:

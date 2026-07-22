@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from config.settings import resolve_media_path, to_portable_path
 from domain.clip.aggregates import ClipAggregate
 from domain.clip.entities import Clip
 from domain.clip.repositories import IClipRepository
@@ -30,7 +31,7 @@ class SqliteClipRepository(IClipRepository):
                 """,
                 (
                     str(c.id), str(c.source_video_id), c.title,
-                    c.file_path, c.thumbnail_path,
+                    to_portable_path(c.file_path), to_portable_path(c.thumbnail_path),
                     c.time_range.start_sec, c.time_range.end_sec,
                     c.created_at.isoformat(),
                 ),
@@ -66,8 +67,8 @@ class SqliteClipRepository(IClipRepository):
             id=UUID(row["id"]),
             source_video_id=UUID(row["source_video_id"]),
             title=row["title"],
-            file_path=row["file_path"] or "",
-            thumbnail_path=row["thumbnail_path"] or "",
+            file_path=resolve_media_path(row["file_path"] or ""),
+            thumbnail_path=resolve_media_path(row["thumbnail_path"] or ""),
             time_range=TimeRange(row["start_sec"], row["end_sec"]),
             created_at=datetime.fromisoformat(row["created_at"]),
         )

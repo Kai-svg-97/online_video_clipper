@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
+from config.settings import resolve_media_path, to_portable_path
 from domain.download.entities import DownloadJob, JobStatus
 from domain.download.repositories import IDownloadRepository
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
@@ -38,7 +39,7 @@ class SqliteDownloadRepository(IDownloadRepository):
                     s.quality.value, s.format.value,
                     json.dumps(list(s.subtitle_langs)),
                     int(s.include_thumbnail), int(s.include_metadata),
-                    job.status.value, job.file_path, job.error_msg,
+                    job.status.value, to_portable_path(job.file_path), job.error_msg,
                     job.retry_count,
                     job.created_at.isoformat(), job.updated_at.isoformat(),
                 ),
@@ -109,7 +110,7 @@ class SqliteDownloadRepository(IDownloadRepository):
                 (url, quality, fmt, str(keep_job_id)),
             ).fetchall()
             for row in rows:
-                fp = row["file_path"]
+                fp = resolve_media_path(row["file_path"])
                 if fp:
                     try:
                         Path(fp).unlink(missing_ok=True)
@@ -135,7 +136,7 @@ class SqliteDownloadRepository(IDownloadRepository):
             progress=__import__(
                 "domain.download.value_objects", fromlist=["DownloadProgress"]
             ).DownloadProgress(),
-            file_path=row["file_path"] or "",
+            file_path=resolve_media_path(row["file_path"] or ""),
             error_msg=row["error_msg"] or "",
             retry_count=row["retry_count"],
             created_at=datetime.fromisoformat(row["created_at"]),
