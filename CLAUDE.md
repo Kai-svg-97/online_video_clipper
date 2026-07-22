@@ -140,6 +140,10 @@ online_video_clipper/
 │       ├── repositories.py          # ISongRepository (+ 가사 출처 CRUD)
 │       ├── ports.py                 # ILyricsProvider·ITranslator(Protocol) + LyricsResult
 │       └── events.py                # SongInfoUpdated
+│   │
+│   └── sync/                        # [Bounded Context] 클라우드 동기화 (레코드 단위 oplog CRDT) — 구현 중
+│       ├── value_objects.py         # Op·OpKind·EntityKey·ClockEntry(lamport,install)·SnapshotManifest (NDJSON 직렬화)
+│       └── services.py              # OpLogMerger(결정적 필드 LWW+tombstone)·NaturalKey 함수군·topo_order
 │
 ├── application/                     # Application layer — use cases (commands & queries)
 │   ├── library/
@@ -158,6 +162,8 @@ online_video_clipper/
 │       ├── dtos.py                  # SongInfoDTO, LyricsLineDTO, LyricsSourceDTO
 │       ├── commands.py              # FetchSongInfo(출처 체인+번역), UpdateSongField/Lyrics, SetSongFlag, 가사출처 CRUD
 │       └── queries.py               # GetSongInfo, ListLyricsSources
+│   └── sync/                        # 클라우드 동기화 유스케이스 — 구현 중
+│       └── ports.py                 # ICloudSyncProvider·IOplogStore·ISnapshotStore·ISecretStore (Protocol) + RemoteFile
 │
 ├── infrastructure/                  # Concrete implementations (invert dependencies)
 │   ├── persistence/

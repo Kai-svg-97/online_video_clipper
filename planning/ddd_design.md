@@ -150,6 +150,38 @@ ffmpeg 기반 구간 추출.
 
 ---
 
+### 6. Sync Context (클라우드 동기화 — 구현 중)
+
+여러 PC 간 라이브러리·미디어를 OneDrive/Google Drive로 동기화한다. **레코드 단위 병합(oplog CRDT)** 방식: 각 변경을 op 로그로 남겨 어느 기기의 추가·수정도 무손실 병합하고, 적용 순서와 무관하게 결정적으로 수렴한다.
+
+**진실원천 불변식:** 클라우드의 마스터 DB는 로그로부터 재생성되는 **파생 스냅샷**일 뿐이며, 각 기기는 **자기 install-id 폴더의 로그에만 append**한다(파일 쓰기 경합 원천 제거).
+
+**Value Objects (domain/sync/value_objects.py):**
+- `Op` — 한 건의 변경 연산(op_id·install_id·lamport·entity·nkey·kind·fields·field_lamport·refs·schema_ids). NDJSON 한 줄로 직렬화.
+- `OpKind` — UPSERT/DELETE/LINK/UNLINK (present 여부 파생).
+- `EntityKey` — (엔티티, 자연키). 로컬 UUID가 아닌 머신 독립 자연키로 식별.
+- `ClockEntry` — (lamport, install_id) Lamport 논리시계. 전순서·필드 LWW 판정 기준.
+- `SnapshotManifest` — 컴팩션 스냅샷 메타(covered={install:seq}·schema_ids·db_sha256).
+
+**Domain Services (domain/sync/services.py):**
+- `OpLogMerger` — op 배치를 현재 레지스터 상태에 병합하는 결정적 reducer(존재 레지스터 + 필드/참조 레지스터, 필드 단위 LWW, tombstone).
+- `NaturalKey` 함수군 — `video_key`(정규화 URL)·`category_key`(이름 경로)·`tag_key`·`channel_key`·`link_key`·`origin_key`(자연키 없는 엔티티용 install+uuid).
+- `topo_order` — FK 안전 적용 순서(부모→자식).
+
+**Ports (application/sync/ports.py):**
+- `ICloudSyncProvider` — 클라우드 blob store(OneDrive/GDrive) 파일 CRUD.
+- `IOplogStore` — op 로그 세그먼트 append/read(로컬·원격).
+- `ISnapshotStore` — DB 스냅샷 export(VACUUM INTO)/import + 컴팩션.
+- `ISecretStore` — OS keyring(DB 밖 — pre-DB pull에서 접근).
+
+**핵심 규칙:**
+- **필드 단위 LWW**: 필드별 `(lamport, install_id)` 큰 쪽이 승자 → 서로 다른 필드 동시 편집은 모두 보존.
+- **tombstone**: DELETE는 존재 레지스터에 부재 기록. 더 높은 lamport의 재-add만 부활.
+- **자연키 식별 + FK 재작성**: 적용 시 자연키→로컬 UUID 매핑(applier, 인프라 단계)으로 중복 제거·참조 해석.
+- **스키마 게이트**: op의 `schema_ids`가 로컬 코드가 아는 마이그레이션 집합에 없으면 "앱 업데이트 필요"로 차단.
+
+---
+
 ## Context Map
 
 ```
