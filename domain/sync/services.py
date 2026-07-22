@@ -37,6 +37,11 @@ def category_key(path: Iterable[str]) -> str:
     return _SEP.join(path)
 
 
+def split_category_key(nkey: str) -> list[str]:
+    """category_key의 역 — 자연키를 루트→리프 이름 리스트로 분해."""
+    return nkey.split(_SEP) if nkey else []
+
+
 def channel_key(channel_id: str) -> str:
     return channel_id
 
@@ -119,50 +124,37 @@ class MergeState:
 
 @dataclass(slots=True)
 class MergeResult:
-    """병합 결과 — 갱신된 레지스터 상태 + 이번 배치에서 변경된 엔티티."""
+    """병합 결과.
+
+    - state: 갱신된 레지스터 상태(persist 대상 — 필드/참조 clock, presence).
+    - changed: 이번 배치의 op가 건드린 엔티티(상태 persist 범위).
+    - newly_applied: 이번에 처음 적용된 op_id.
+    - writes: 이번 배치에서 **실제로 값이 갱신된** 필드/참조만(엔티티→{키:값}).
+      로컬이 이긴 필드(값 미상)는 여기 없으므로 applier가 라이브 DB를 덮지 않는다.
+      참조는 "__ref__" 접두 키로 담긴다.
+    """
 
     state: MergeState
     changed: set[EntityKey]
     newly_applied: set[str]
+    writes: dict[EntityKey, dict[str, Any]]
 
     def upserts(self) -> dict[EntityKey, dict[str, Any]]:
-        """존재하는(변경된) 엔티티의 필드+참조 최종값. applier가 repo로 반영한다."""
+        """존재(present)하며 이번 배치에서 값이 갱신된 엔티티의 갱신 필드/참조."""
         out: dict[EntityKey, dict[str, Any]] = {}
-        for ek in self.changed:
+        for ek, w in self.writes.items():
             pe = self.state.presence.get(ek)
-            if pe is None or not pe.present:
-                continue
-            merged: dict[str, Any] = {
-                f: fe.value for f, fe in self.state.fields.get(ek, {}).items()
-            }
-            # 참조는 __ref__ 접두로 구분해 applier가 자연키→local uuid 해석하게 한다.
-            for r, fe in self.state.refs.get(ek, {}).items():
-                merged[f"__ref__{r}"] = fe.value
-            out[ek] = merged
+            if pe is not None and pe.present and w:
+                out[ek] = dict(w)
         return out
 
     def deletions(self) -> set[EntityKey]:
-        """이번 배치에서 tombstone으로 확정된 엔티티."""
+        """이번 배치에서 tombstone(부재)으로 확정된 엔티티."""
         return {
             ek
             for ek in self.changed
             if (pe := self.state.presence.get(ek)) is not None and not pe.present
         }
-
-
-def _fold_value_map(
-    register: dict[EntityKey, dict[str, FieldEntry]],
-    ek: EntityKey,
-    values: dict[str, Any],
-    clock_for: Any,
-) -> None:
-    """values의 각 항목을 더 큰 clock일 때만 레지스터에 반영한다(필드 LWW)."""
-    bucket = register.setdefault(ek, {})
-    for name, val in values.items():
-        clk = clock_for(name)
-        cur = bucket.get(name)
-        if cur is None or clk > cur.clock:
-            bucket[name] = FieldEntry(clk, val)
 
 
 class OpLogMerger:
@@ -181,6 +173,7 @@ class OpLogMerger:
 
         newly_applied: set[str] = set()
         changed: set[EntityKey] = set()
+        writes: dict[EntityKey, dict[str, Any]] = {}
 
         # 전순서 정렬 — LWW 특성상 결과값은 순서 무관하나, 안정성을 위해 정렬 적용.
         for op in sorted(ops, key=lambda o: o.order_key):
@@ -197,10 +190,24 @@ class OpLogMerger:
                 presence[ek] = PresenceEntry(clk, op.kind.is_present)
 
             if op.kind.is_present:
-                _fold_value_map(fields, ek, op.fields, op.clock_for)
-                _fold_value_map(refs, ek, op.refs, op.clock_for)
+                self._fold(fields, writes, ek, op.fields, op.clock_for, ref=False)
+                self._fold(refs, writes, ek, op.refs, op.clock_for, ref=True)
 
         new_state = MergeState(
             presence=presence, fields=fields, refs=refs, applied_op_ids=applied
         )
-        return MergeResult(state=new_state, changed=changed, newly_applied=newly_applied)
+        return MergeResult(
+            state=new_state, changed=changed, newly_applied=newly_applied, writes=writes
+        )
+
+    @staticmethod
+    def _fold(register, writes, ek, values, clock_for, ref: bool) -> None:
+        """values의 각 항목을 더 큰 clock일 때만 레지스터에 반영하고, 그때만 writes에 기록."""
+        bucket = register.setdefault(ek, {})
+        for name, val in values.items():
+            clk = clock_for(name)
+            cur = bucket.get(name)
+            if cur is None or clk > cur.clock:
+                bucket[name] = FieldEntry(clk, val)
+                wkey = f"__ref__{name}" if ref else name
+                writes.setdefault(ek, {})[wkey] = val

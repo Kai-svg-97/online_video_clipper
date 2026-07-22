@@ -195,7 +195,8 @@ online_video_clipper/
 │       ├── local_oplog_store.py     # IOplogStore 로컬 구현 — <base>/<install>/NNNNNN.ndjson 세그먼트 append/read
 │       ├── snapshot_store.py        # ISnapshotStore — VACUUM INTO export / 검증·백업·교체 import + 스키마 게이트(SyncSchemaError)
 │       ├── recorder.py              # OplogRecorder — 변경 필드 diff→op append + sync_* 레지스터 갱신
-│       └── recording_repository.py  # RecordingVideoRepository(SqliteVideoRepository 상속, save/delete 캡처) — 나머지 repo는 Phase 2b
+│       ├── recording_repository.py  # RecordingVideoRepository(SqliteVideoRepository 상속, save/delete 캡처) — 나머지 repo는 Phase 2b
+│       └── merge_applier.py         # MergeApplier — OpLogMerger로 승자 계산 후 자연키→UUID 해석·FK 재작성·위상 순서로 라이브 DB 직접 반영(FTS 트리거 정상 발화). VideoApplyHandler + 핸들러 registry(다른 엔티티는 후속 Phase)
 │
 ├── gui/                             # Presentation layer (PyQt6, MVVM)
 │   ├── main_window.py               # 루트 윈도우, 사이드바 네비게이션(라이브러리·다운로드·채널 모니터링·통계), 패널 스택 — 구독 피드는 라이브러리 좌측 트리로 통합됨. **통계 채널 섹션 → 카테고리 드릴다운**: `StatsPanel.category_selected` → `_on_stats_category_selected`가 라이브러리로 전환·`navigate_to_category` 후 `_return_to_page=_PAGE_STATS` 예약. 라이브러리 뒤로가기를 소진하면(`LibraryPanel.back_exhausted`) `_on_library_back_exhausted`가 통계로 복귀(라이브러리 자체 히스토리를 먼저 되짚고 소진 시 통계). 다른 페이지로 이동하면 `_on_page_changed`가 예약을 무효화
