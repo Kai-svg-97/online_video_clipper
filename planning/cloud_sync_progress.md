@@ -25,12 +25,12 @@
 
 ## 테스트 상태
 
-- 비-GUI 테스트 **173개 통과**. 실행:
+- 비-GUI 테스트 **187개 통과**. 실행:
   ```bash
   pytest tests/unit tests/integration -q
   ```
 - 원격 샌드박스엔 PyQt6가 없어 GUI 스모크(`tests/gui/`)는 미실행. 로컬에선 `pytest`로 전체 실행 가능.
-- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12).
+- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12), `tests/integration/test_sync_providers.py`(provider 어댑터 14).
 
 ---
 
@@ -73,11 +73,14 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 - 경로는 Phase 0 덕에 이미 `DATA_DIR` 기준 상대경로로 저장돼 있어 머신 독립.
 - **남은 것(Phase 5로)**: QThread 래퍼(`_SyncWorker`)와 main.py 기동 후 백그라운드 트리거 배선. 엔진은 협조적 취소·진행률 콜백만 노출해 QThread가 그대로 감싸면 된다.
 
-### B. provider 어댑터 (실제 클라우드 백엔드)
-- `infrastructure/sync/gdrive_provider.py`: 인증은 `infrastructure/youtube/oauth_adapter.py:68-83` 패턴 재사용(`InstalledAppFlow.from_client_config` + `run_local_server(port=0, prompt="consent", access_type="offline")`), **스코프 `["https://www.googleapis.com/auth/drive.file"]`**, 토큰은 **keyring**(`gdrive.token`). 파일은 `MediaFileUpload(resumable=True)`.
-- `infrastructure/sync/onedrive_provider.py`: `msal.PublicClientApplication` + `SerializableTokenCache`(keyring 직렬화), 스코프 `["Files.ReadWrite","offline_access"]`. 파일 CRUD는 **`infrastructure/youtube/youtube_api_adapter.py:61-133` 패턴 재사용**(`requests.Session(verify=False)` + Bearer + 401 강제refresh 후 1회 재시도 + 페이지네이션), base=`https://graph.microsoft.com/v1.0`, 대용량 upload session.
-- 둘 다 `application/sync/ports.py`의 `ICloudSyncProvider` Protocol을 구조적으로 만족.
-- **로컬 검증**: 실계정으로 텍스트/작은 파일 upload/download/list/delete 왕복 + resumable 중단→재개.
+### B. ✅ provider 어댑터 (코드 완료 — 실계정 검증만 남음)
+- ✅ `infrastructure/sync/rest_client.py`: 공용 `RestClient`(Bearer+verify=False+401 강제refresh 후 1회 재시도, `youtube_api_adapter` 패턴 추출). token_provider/force_refresh 콜백 주입, 세션 주입(테스트).
+- ✅ `infrastructure/sync/gdrive_provider.py`: `GoogleDriveProvider`. `InstalledAppFlow`(scope `drive.file`), 토큰 keyring(`gdrive.token`). Drive ID모델을 앱루트 폴더트리(경로→id 캐시)로 에뮬레이션, resumable 업로드 세션(청크 PUT, 308 `allow_redirects=False`).
+- ✅ `infrastructure/sync/onedrive_provider.py`: `OneDriveProvider`. msal `PublicClientApplication`+`SerializableTokenCache`(keyring), scope `Files.ReadWrite`+`offline_access`. Graph 경로주소지정(`/me/drive/root:/<path>`), 소형 PUT/대형 createUploadSession. msal 지연 import.
+- ✅ 둘 다 `ICloudSyncProvider` Protocol을 구조적으로 만족. `connect_*`(대화형 인증)·`disconnect` 제공.
+- ✅ 테스트 14건(`tests/integration/test_sync_providers.py`): 401 재시도·경로/쿼리/URL 빌드·폴더트리 에뮬레이션·페이지네이션·텍스트/목록/stat/삭제 왕복(in-memory fake HTTP). **OneDrive `_item_url` 이중 콜론 버그를 테스트가 잡음.**
+- ✅ `requirements.txt`에 `msal>=1.28`·`keyring>=25.0` 추가.
+- ⚠️ **남은 것 = 실계정 검증(로컬 전용)**: OAuth client_id/secret 발급 + 브라우저 로그인 후 텍스트/작은 파일 upload/download/list/delete 왕복 + resumable 중단→재개. msal 미설치 환경이라 OneDrive 코드는 로컬 import 검증도 필요. provider **연결 UX**(설정 OAuth 버튼)는 Phase 5(E).
 
 ### C. 컴팩션 + 스냅샷 부트스트랩
 - `CompactHandler`: 현재 DB를 `snapshot_store.export_snapshot`으로 스냅샷 → provider `snapshot/library.db` 업로드 + `snapshot/snapshot.json`(covered={install:seq}·schema_ids·db_sha256) 발행 → 스냅샷이 덮은 세그먼트 GC. (완전 안전 GC엔 install별 consumed 워터마크 공유 필요 — 스냅샷을 덮은 seq는 뒤처진 install이 스냅샷 부트스트랩으로 회수 가능.)
@@ -100,7 +103,7 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 - **CLAUDE.md 규칙**: GUI 변경 후 `/verify` 필수(로컬 PyQt6 필요).
 
 ### F. 패키징
-- `requirements.txt`: `msal>=1.28`, `keyring>=25.0` 추가.
+- ✅ `requirements.txt`: `msal>=1.28`, `keyring>=25.0` 추가(Phase B에서 완료).
 - `packaging/online_video_clipper.spec` `hiddenimports`(20-25줄): `"keyring"`, `*collect_submodules("keyring.backends")`, `*collect_submodules("msal")`, `"googleapiclient"`.
 - 문서: `planning/packaging_plan.md`, `planning/youtube_content_manager_prd.md` 갱신.
 
