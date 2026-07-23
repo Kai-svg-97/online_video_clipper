@@ -96,6 +96,12 @@ a = Analysis(
         *collect_submodules("yt_dlp"),
         "PyQt6.sip",
         "sqlite3",
+        # 클라우드 동기화 — 지연/동적 import라 명시 수집
+        "keyring",
+        *collect_submodules("keyring.backends"),
+        *collect_submodules("msal"),
+        "googleapiclient",
+        "google_auth_oauthlib",
     ],
     noarchive=False,
 )
@@ -199,7 +205,12 @@ beautifulsoup4>=4.12
 playwright>=1.40
 ffmpeg-python>=0.2
 platformdirs>=4.1
+msal>=1.28
+keyring>=25.0
 ```
+
+> 클라우드 동기화(OneDrive)는 `msal`, 자격증명 저장은 `keyring`(부재 시 파일 폴백)을 쓴다.
+> Google Drive는 기존 `google-auth-oauthlib`/`google-api-python-client`를 재사용한다.
 
 **`requirements-dev.txt`** (빌드/테스트 전용 — 번들 제외):
 

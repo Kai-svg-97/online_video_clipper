@@ -21,6 +21,12 @@ a = Analysis(
         *collect_submodules("yt_dlp"),
         "PyQt6.sip",
         "sqlite3",
+        # 클라우드 동기화: keyring 백엔드·msal·google API는 지연/동적 import라 명시 수집
+        "keyring",
+        *collect_submodules("keyring.backends"),
+        *collect_submodules("msal"),
+        "googleapiclient",
+        "google_auth_oauthlib",
     ],
     noarchive=False,
 )

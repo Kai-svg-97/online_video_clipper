@@ -125,10 +125,10 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 - `main.py` — ① `db=Database()`(233줄) **직전 `bootstrap_sync_pull()`**, ② repo 생성부(237-243)에서 **각 repo를 RecordingXxxRepository로 래핑**해 핸들러에 주입, ③ 431줄 인근 `sync_vm` 조립, 445줄 `MainWindow(...)`에 전달, ④ 기동 후 백그라운드 미디어 diff.
 - **CLAUDE.md 규칙**: GUI 변경 후 `/verify` 필수(로컬 PyQt6 필요).
 
-### F. 패키징
-- ✅ `requirements.txt`: `msal>=1.28`, `keyring>=25.0` 추가(Phase B에서 완료).
-- `packaging/online_video_clipper.spec` `hiddenimports`(20-25줄): `"keyring"`, `*collect_submodules("keyring.backends")`, `*collect_submodules("msal")`, `"googleapiclient"`.
-- 문서: `planning/packaging_plan.md`, `planning/youtube_content_manager_prd.md` 갱신.
+### F. ✅ 패키징 (완료)
+- ✅ `requirements.txt`: `msal>=1.28`, `keyring>=25.0` 추가(Phase B).
+- ✅ `packaging/online_video_clipper.spec` `hiddenimports`: `keyring`·`keyring.backends`·`msal`·`googleapiclient`·`google_auth_oauthlib` 추가.
+- ✅ `planning/packaging_plan.md` 갱신(requirements + hiddenimports).
 
 ---
 
