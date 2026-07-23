@@ -36,9 +36,8 @@ class TestCloudSyncGuiFlow:
         sec = panel._cloud_sync_section
         assert "연결 안" in sec._status_lbl.text()
 
-        # 1) UI로 '로컬 폴더' 선택 + 경로 입력 + 연결 버튼 클릭.
-        idx = sec._provider_combo.findData("folder")
-        sec._provider_combo.setCurrentIndex(idx)
+        # 1) 폴더 방식이 기본(고급 미체크) — 경로 입력 + 연결 버튼 클릭.
+        assert not sec._advanced_check.isChecked()  # 기본은 폴더 모드
         assert not sec._folder_row_widget.isHidden()  # 폴더 경로 행 노출됨
         sec._folder_path.setText(str(cloud))
         with qtbot.waitSignal(vm_a.connection_changed, timeout=20000) as sig:
