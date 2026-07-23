@@ -501,13 +501,29 @@ class _CloudSyncSection(QWidget):
         prov_row = QHBoxLayout()
         prov_row.addWidget(QLabel("제공자"))
         self._provider_combo = QComboBox()
-        self._provider_combo.addItem("Google Drive", "gdrive")
-        self._provider_combo.addItem("OneDrive", "onedrive")
+        self._provider_combo.addItem("로컬 폴더 (OneDrive/Drive 동기화 폴더)", "folder")
+        self._provider_combo.addItem("Google Drive (API)", "gdrive")
+        self._provider_combo.addItem("OneDrive (API)", "onedrive")
         self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         prov_row.addWidget(self._provider_combo)
         prov_row.addStretch()
         root.addLayout(prov_row)
 
+        # 로컬 폴더 경로 행(폴더 provider 전용)
+        folder_row = QHBoxLayout()
+        self._folder_path = QLineEdit()
+        self._folder_path.setPlaceholderText(
+            "예: C:/Users/나/OneDrive/ovc-sync — 여러 PC가 같은 폴더를 가리키게 한다"
+        )
+        self._browse_btn = QPushButton("찾아보기…")
+        self._browse_btn.clicked.connect(self._on_browse)
+        folder_row.addWidget(self._folder_path, 1)
+        folder_row.addWidget(self._browse_btn)
+        self._folder_row_widget = QWidget()
+        self._folder_row_widget.setLayout(folder_row)
+        root.addWidget(self._folder_row_widget)
+
+        # OAuth 자격증명 행(gdrive/onedrive 전용)
         self._client_id = QLineEdit()
         self._client_id.setPlaceholderText("OAuth Client ID")
         root.addWidget(self._client_id)
@@ -515,6 +531,7 @@ class _CloudSyncSection(QWidget):
         self._client_secret.setPlaceholderText("OAuth Client Secret (Google Drive)")
         self._client_secret.setEchoMode(QLineEdit.EchoMode.Password)
         root.addWidget(self._client_secret)
+        self._on_provider_changed()  # 초기 표시 상태 반영(기본=폴더)
 
         btn_row = QHBoxLayout()
         self._connect_btn = QPushButton("연결")
@@ -535,12 +552,28 @@ class _CloudSyncSection(QWidget):
         root.addWidget(self._status_lbl)
 
     def _on_provider_changed(self) -> None:
-        # OneDrive는 client secret 불필요.
-        is_gdrive = self._provider_combo.currentData() == "gdrive"
-        self._client_secret.setVisible(is_gdrive)
+        key = self._provider_combo.currentData()
+        is_folder = key == "folder"
+        # 폴더 provider는 경로만, API provider는 client id/secret만 노출.
+        self._folder_row_widget.setVisible(is_folder)
+        self._client_id.setVisible(not is_folder)
+        self._client_secret.setVisible(key == "gdrive")
+
+    def _on_browse(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "동기화 폴더 선택")
+        if path:
+            self._folder_path.setText(path)
 
     def _on_connect(self) -> None:
         key = self._provider_combo.currentData()
+        if key == "folder":
+            path = self._folder_path.text().strip()
+            if not path:
+                self._status_lbl.setText("동기화 폴더를 선택하세요.")
+                return
+            self._vm.connect(key, folder_path=path)
+            self._status_lbl.setText("폴더 연결 중…")
+            return
         cid = self._client_id.text().strip()
         if not cid:
             self._status_lbl.setText("Client ID를 입력하세요.")

@@ -22,6 +22,7 @@ class SyncState:
     pushed_head: int = 0
     last_pull_utc: str = ""
     last_push_utc: str = ""
+    folder_path: str = ""   # provider_key=="folder"일 때 로컬 동기화 폴더 경로
 
     def to_dict(self) -> dict:
         return {
@@ -30,6 +31,7 @@ class SyncState:
             "pushed_head": self.pushed_head,
             "last_pull_utc": self.last_pull_utc,
             "last_push_utc": self.last_push_utc,
+            "folder_path": self.folder_path,
         }
 
     @classmethod
@@ -40,6 +42,7 @@ class SyncState:
             pushed_head=int(d.get("pushed_head", 0)),
             last_pull_utc=d.get("last_pull_utc", ""),
             last_push_utc=d.get("last_push_utc", ""),
+            folder_path=d.get("folder_path", ""),
         )
 
 

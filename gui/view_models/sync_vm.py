@@ -53,7 +53,9 @@ class _ConnectWorker(QThread):
 
     def run(self) -> None:
         try:
-            if self._provider_key == "gdrive":
+            if self._provider_key == "folder":
+                ok = self._service.connect_folder(self._creds["folder_path"])
+            elif self._provider_key == "gdrive":
                 ok = self._service.connect_gdrive(
                     self._creds["client_id"], self._creds["client_secret"]
                 )

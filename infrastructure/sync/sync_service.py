@@ -51,8 +51,14 @@ def build_secret_store() -> KeyringSecretStore:
 
 
 def build_provider(provider_key: str, secret_store, *, client_id: str | None = None,
-                   client_secret: str | None = None):
+                   client_secret: str | None = None, folder_path: str | None = None):
     """provider_key로 구체 provider를 만든다. 알 수 없으면 None."""
+    if provider_key == "folder":
+        if not folder_path:
+            return None
+        from infrastructure.sync.folder_provider import FolderProvider
+
+        return FolderProvider(folder_path)
     if provider_key == "gdrive":
         from infrastructure.sync.gdrive_provider import GoogleDriveProvider
 
@@ -74,11 +80,12 @@ def pre_db_bootstrap(db_path: Path | None = None) -> bool:
         # 상태는 파일 기반이라 keyring을 건드리지 않는다 — 미설정이면 여기서 조기 반환해
         # 동기화 안 쓰는 사용자가 keyring 프로브(경고)조차 겪지 않도록 한다.
         state_store = SyncStateStore(_sync_dir() / "sync_state.json")
-        key = state_store.load().provider_key
+        state = state_store.load()
+        key = state.provider_key
         if not key:
             return False
         secret = build_secret_store()
-        provider = build_provider(key, secret)
+        provider = build_provider(key, secret, folder_path=state.folder_path)
         if provider is None:
             return False
         from infrastructure.sync.bootstrap import bootstrap_if_fresh
@@ -115,8 +122,9 @@ class SyncService:
             db, self._local, self._clock, self._install, schema_ids=frozenset(MIGRATION_IDS)
         )
         # provider 주입(테스트) 또는 저장된 provider_key로 복원.
+        _st = self._state_store.load()
         self._provider = provider or build_provider(
-            self._state_store.load().provider_key, self._secret
+            _st.provider_key, self._secret, folder_path=_st.folder_path
         )
 
     # -- 상태 -----------------------------------------------------------
@@ -197,6 +205,18 @@ class SyncService:
         ).handle()
 
     # -- 연결/해제 -------------------------------------------------------
+    def connect_folder(self, folder_path: str) -> bool:
+        """로컬 폴더(OneDrive/Google Drive 동기화 폴더 등)를 백엔드로 연결한다. OAuth 불필요."""
+        from infrastructure.sync.folder_provider import FolderProvider
+
+        provider = FolderProvider(folder_path)
+        if not provider.is_authenticated():
+            return False
+        state = self._state_store.load()
+        state.folder_path = str(folder_path)
+        self._state_store.save(state)
+        return self._finish_connect(provider, "folder")
+
     def connect_gdrive(self, client_id: str, client_secret: str) -> bool:
         from infrastructure.sync.gdrive_provider import GoogleDriveProvider
 

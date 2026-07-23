@@ -3,7 +3,13 @@
 > 이 문서는 원격(웹) 세션에서 진행한 클라우드 동기화 기능의 상태와 **로컬에서 이어서 작업하기 위한** 핸드오프다.
 > 설계 세부는 `planning/ddd_design.md`의 **Sync Context**, 파일 맵은 `CLAUDE.md`의 아키텍처 트리 및 "클라우드 동기화 캡처" Key Design Decision을 함께 볼 것.
 
-> **현황(2026-07-23): Phase 0~F 전부 구현·검증 완료.** 미디어 파일 동기화(A)·provider 어댑터(B)·컴팩션/부트스트랩(C)·전 엔티티 캡처/적용(D)·GUI 배선(E)·패키징(F). 비-GUI 214 + GUI 스모크 통과, offscreen 전체 기동 확인. **남은 것은 코드가 아니라 검증뿐**: 실계정 OAuth 왕복(Google/Azure client 발급 + 브라우저 로그인 + 실제 파일 왕복), 두 실기기 간 수렴 실사용 테스트.
+> **현황(2026-07-23): Phase 0~F 전부 구현 완료 + 실 스택 end-to-end 검증 완료.**
+> 미디어 파일 동기화(A)·provider 어댑터(B)·컴팩션/부트스트랩(C)·전 엔티티 캡처/적용(D)·GUI 배선(E)·패키징(F).
+> **`FolderProvider`(로컬 폴더=클라우드, OAuth 불필요) 추가**로 실계정 없이도 전 경로를 진짜로 검증했다:
+> 두 "기기"(별도 DATA_DIR)가 공유 폴더로 실 DB·캡처 repo·oplog·스냅샷 부트스트랩·**실제 미디어 바이트**를 왕복,
+> 그리고 실제 설정 UI 클릭 흐름(제공자 선택→폴더 연결→지금 동기화)까지 GUI 구동 테스트로 확인.
+> 비-GUI 221 + GUI(설정 섹션·구동 흐름) 통과, offscreen 전체 기동(main() return 0).
+> **남은 것**(선택): Google Drive/OneDrive **API** provider의 실계정 OAuth 왕복(폴더 provider면 불필요), keyring/msal 로컬 설치.
 
 ## 이 기능이 하는 일 (확정된 방향)
 
@@ -27,12 +33,12 @@
 
 ## 테스트 상태
 
-- 비-GUI 테스트 **214개 통과**(+ GUI 스모크: 클라우드 동기화 섹션 2건). 실행:
+- 비-GUI 테스트 **221개 통과**(+ GUI: 설정 섹션 2건·구동 흐름 1건). 실행:
   ```bash
   pytest tests/unit tests/integration -q
   ```
 - 원격 샌드박스엔 PyQt6가 없어 GUI 스모크(`tests/gui/`)는 미실행. 로컬에선 `pytest`로 전체 실행 가능.
-- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12), `tests/integration/test_sync_providers.py`(provider 어댑터 14), `tests/integration/test_sync_compaction.py`(컴팩션·부트스트랩 6), `tests/integration/test_sync_entities.py`(엔티티 확장 16), `tests/integration/test_sync_providers.py`(provider 14), `tests/integration/test_file_syncer.py`(미디어 12), `tests/integration/test_sync_service.py`(SyncService 4), `tests/gui/test_smoke.py`(설정 섹션 2).
+- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12), `tests/integration/test_sync_providers.py`(provider 어댑터 14), `tests/integration/test_sync_compaction.py`(컴팩션·부트스트랩 6), `tests/integration/test_sync_entities.py`(엔티티 확장 16), `tests/integration/test_sync_providers.py`(provider 14), `tests/integration/test_file_syncer.py`(미디어 12), `tests/integration/test_sync_service.py`(SyncService 4), `tests/integration/test_folder_provider_e2e.py`(FolderProvider 계약+실스택 e2e 9), `tests/gui/test_smoke.py`(설정 섹션 2), `tests/gui/test_sync_gui.py`(UI 구동 폴더 연결·동기화 1).
 
 ---
 
@@ -75,7 +81,8 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 - 경로는 Phase 0 덕에 이미 `DATA_DIR` 기준 상대경로로 저장돼 있어 머신 독립.
 - **남은 것(Phase 5로)**: QThread 래퍼(`_SyncWorker`)와 main.py 기동 후 백그라운드 트리거 배선. 엔진은 협조적 취소·진행률 콜백만 노출해 QThread가 그대로 감싸면 된다.
 
-### B. ✅ provider 어댑터 (코드 완료 — 실계정 검증만 남음)
+### B. ✅ provider 어댑터 (로컬 폴더 실검증 완료 · API는 실계정 검증만 남음)
+- ✅ `infrastructure/sync/folder_provider.py` `FolderProvider` — **로컬 폴더=클라우드 백엔드**(OneDrive/Drive 동기화 폴더). OAuth 불필요·기본 권장. 쓰기 tmp→os.replace 원자 확정. `SyncState.folder_path`·`connect_folder`·`build_provider("folder", folder_path=)`. **이 provider로 실 스택 end-to-end 검증 완료**(아래 참조).
 - ✅ `infrastructure/sync/rest_client.py`: 공용 `RestClient`(Bearer+verify=False+401 강제refresh 후 1회 재시도, `youtube_api_adapter` 패턴 추출). token_provider/force_refresh 콜백 주입, 세션 주입(테스트).
 - ✅ `infrastructure/sync/gdrive_provider.py`: `GoogleDriveProvider`. `InstalledAppFlow`(scope `drive.file`), 토큰 keyring(`gdrive.token`). Drive ID모델을 앱루트 폴더트리(경로→id 캐시)로 에뮬레이션, resumable 업로드 세션(청크 PUT, 308 `allow_redirects=False`).
 - ✅ `infrastructure/sync/onedrive_provider.py`: `OneDriveProvider`. msal `PublicClientApplication`+`SerializableTokenCache`(keyring), scope `Files.ReadWrite`+`offline_access`. Graph 경로주소지정(`/me/drive/root:/<path>`), 소형 PUT/대형 createUploadSession. msal 지연 import.
