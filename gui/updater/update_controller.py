@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 import time
+from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from application.updater.commands import DownloadUpdateHandler
 from application.updater.dtos import UpdateDTO
 from application.updater.queries import CheckForUpdateHandler
 from domain.shared.ports import UpdateInfo
-from gui.updater.update_checker_worker import UpdateCheckWorker
+from gui.updater.pending import pending_marker_path, write_pending_update
+from gui.updater.update_checker_worker import UpdateCheckWorker, UpdateDownloadWorker
 from gui.updater.update_dialog import UpdateDialog
 
 logger = logging.getLogger(__name__)
@@ -20,9 +23,10 @@ _CHECK_INTERVAL_SEC = 3_600  # 1시간
 
 
 class UpdateController(QObject):
-    """업데이트 확인·다이얼로그 표시를 담당. MainWindow가 소유하며 shutdown()으로 정리."""
+    """업데이트 확인·자동 다운로드·설치 트리거를 담당. MainWindow가 소유하며 shutdown()으로 정리."""
 
-    update_notification = pyqtSignal(object)   # UpdateDTO — 자동 체크에서 새 버전 발견 시
+    update_notification = pyqtSignal(object)   # UpdateDTO — 발견(폴백: 배지만)
+    update_ready = pyqtSignal(object)          # UpdateDTO — 자동 다운로드 완료(종료 시 설치 준비됨)
 
     def __init__(
         self,
@@ -35,6 +39,8 @@ class UpdateController(QObject):
         self._download_handler = download_handler
         self._parent_window = parent_window
         self._worker: UpdateCheckWorker | None = None
+        self._dl_worker: UpdateDownloadWorker | None = None
+        self._downloaded_version: str | None = None   # 세션 중 중복 다운로드 방지
         self._last_dto: UpdateDTO | None = None
         self._last_info: UpdateInfo | None = None
         # "나중에"는 현재 세션만 억제 — 시작 시 스누즈를 초기화한다
@@ -57,9 +63,10 @@ class UpdateController(QObject):
         self._run_check(interactive=True)
 
     def shutdown(self) -> None:
-        if self._worker and self._worker.isRunning():
-            self._worker.terminate()
-            self._worker.wait(3000)
+        for w in (self._worker, self._dl_worker):
+            if w and w.isRunning():
+                w.terminate()
+                w.wait(3000)
 
     # ------------------------------------------------------------------
     def _should_check(self) -> bool:
@@ -120,7 +127,46 @@ class UpdateController(QObject):
         if interactive:
             self._show_update_dialog(dto)
         else:
+            # 자동: 백그라운드 다운로드 → 완료 시 종료 설치 준비(배지/헤더).
+            self._start_download(dto)
+
+    # ------------------------------------------------------------------
+    def _start_download(self, dto: UpdateDTO) -> None:
+        if self._downloaded_version == dto.version:
+            self.update_ready.emit(dto)   # 이미 이 버전 준비됨
+            return
+        if self._dl_worker and self._dl_worker.isRunning():
+            return
+        if self._last_info is None:
+            return
+        dest_dir = Path(tempfile.mkdtemp(prefix="ovc_update_"))
+        self._dl_worker = UpdateDownloadWorker(
+            self._download_handler, self._last_info, dest_dir, self
+        )
+        self._dl_worker.done.connect(lambda p, d=dto: self._on_download_done(p, d))
+        self._dl_worker.failed.connect(lambda msg, d=dto: self._on_download_failed(msg, d))
+        self._dl_worker.start()
+
+    def _on_download_done(self, installer_path: str, dto: UpdateDTO) -> None:
+        self._downloaded_version = dto.version
+        if write_pending_update(installer_path):
+            # 앱 종료 시 main.py tail이 설치. 지금은 준비 완료만 알림.
+            self.update_ready.emit(dto)
+        else:
+            # 비win32 등 마커 미기록 — 수동 알림으로 폴백.
             self.update_notification.emit(dto)
+
+    def _on_download_failed(self, msg: str, dto: UpdateDTO) -> None:
+        logger.warning("업데이트 자동 다운로드 실패: %s", msg)
+        self.update_notification.emit(dto)   # 폴백: 배지만(다음 확인에서 재시도)
+
+    def install_now(self, *_args) -> None:
+        """헤더 '지금 설치' — pending 마커가 있으면 앱을 종료해 tail이 설치하도록 한다."""
+        if pending_marker_path().exists():
+            QApplication.instance().quit()
+        elif self._last_dto is not None:
+            # 마커 없음(다운로드 실패 등) — 수동 다운로드 다이얼로그로 폴백.
+            self._show_update_dialog(self._last_dto)
 
     def _show_update_dialog(self, dto: UpdateDTO) -> None:
         dlg = UpdateDialog(

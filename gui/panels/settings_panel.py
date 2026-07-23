@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -684,10 +684,14 @@ class SettingsPanel(QWidget):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(0)
 
-        # 헤더
+        # 헤더 + 우측 컴팩트 업데이트 상태
+        header_row = QHBoxLayout()
         header = QLabel("설정")
-        header.setStyleSheet("font-size: 16px; font-weight: 600; margin-bottom: 24px;")
-        layout.addWidget(header)
+        header.setStyleSheet("font-size: 16px; font-weight: 600;")
+        header_row.addWidget(header)
+        header_row.addStretch()
+        header_row.addWidget(self._build_update_header())
+        layout.addLayout(header_row)
         layout.addSpacing(20)
 
         # ── 테마 섹션 ──
@@ -928,32 +932,6 @@ class SettingsPanel(QWidget):
         layout.addLayout(format_row)
         layout.addSpacing(28)
 
-        # ── 구분선 ──
-        sep4 = QFrame()
-        sep4.setFrameShape(QFrame.Shape.HLine)
-        sep4.setStyleSheet("color: #1a1a1a;")
-        layout.addWidget(sep4)
-        layout.addSpacing(24)
-
-        # ── 숨김 태그 관리 섹션 ──
-        hidden_label = QLabel("숨김 태그 관리")
-        hidden_label.setStyleSheet(
-            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
-            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
-        )
-        layout.addWidget(hidden_label)
-        layout.addSpacing(10)
-
-        if self._get_tags_fn is not None:
-            self._hidden_tags_section = _HiddenTagsSection(self._get_tags_fn)
-            self._hidden_tags_section.changed.connect(self.hidden_tags_changed.emit)
-            layout.addWidget(self._hidden_tags_section)
-        else:
-            no_tags_lbl = QLabel("태그 목록을 불러올 수 없습니다.")
-            no_tags_lbl.setStyleSheet("font-size: 10px; color: #555;")
-            layout.addWidget(no_tags_lbl)
-            self._hidden_tags_section = None
-
         # ── 가사 출처 관리 섹션 (노래 탭 가사 조회 순서/사용여부) ──
         if self._song_vm is not None:
             layout.addSpacing(24)
@@ -1112,114 +1090,77 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._feed_status_lbl)
         self._refresh_feed_auth_ui()
 
-        # ── 업데이트 섹션 ──
+        # ── 숨김 태그 관리 섹션 (맨 아래 — 긴 목록이 다른 설정 접근을 방해하지 않도록) ──
         layout.addSpacing(28)
-        sep_upd = QFrame()
-        sep_upd.setFrameShape(QFrame.Shape.HLine)
-        sep_upd.setStyleSheet("color: #1a1a1a;")
-        layout.addWidget(sep_upd)
+        sep_hidden = QFrame()
+        sep_hidden.setFrameShape(QFrame.Shape.HLine)
+        sep_hidden.setStyleSheet("color: #1a1a1a;")
+        layout.addWidget(sep_hidden)
         layout.addSpacing(24)
 
-        upd_label = QLabel("업데이트")
-        upd_label.setStyleSheet(
+        hidden_label = QLabel("숨김 태그 관리")
+        hidden_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             "text-transform: uppercase; color: #555; margin-bottom: 12px;"
         )
-        layout.addWidget(upd_label)
+        layout.addWidget(hidden_label)
         layout.addSpacing(10)
 
-        # 업데이트 컨테이너 (깜빡임 효과 대상)
-        self._update_section_frame = QFrame()
-        self._update_section_frame.setObjectName("updateSectionFrame")
-        upd_inner = QVBoxLayout(self._update_section_frame)
-        upd_inner.setContentsMargins(8, 8, 8, 8)
-        upd_inner.setSpacing(8)
-
-        # 새 버전 알림 행 (평소엔 숨김 — set_pending_update 시 표시)
-        self._upd_avail_row = QFrame()
-        self._upd_avail_row.setObjectName("updAvailRow")
-        self._upd_avail_row.setStyleSheet(
-            "#updAvailRow { background: rgba(91,155,213,18); border-radius: 6px; }"
-        )
-        avail_layout = QHBoxLayout(self._upd_avail_row)
-        avail_layout.setContentsMargins(10, 8, 10, 8)
-        avail_layout.setSpacing(8)
-        self._upd_avail_lbl = QLabel()
-        self._upd_avail_lbl.setStyleSheet("font-size: 11px; font-weight: 600;")
-        avail_layout.addWidget(self._upd_avail_lbl)
-        avail_layout.addStretch()
-        self._upd_install_btn = QPushButton("지금 설치")
-        self._upd_install_btn.setFixedWidth(80)
-        self._upd_install_btn.clicked.connect(self._on_install_update)
-        avail_layout.addWidget(self._upd_install_btn)
-        self._upd_avail_row.hide()
-        upd_inner.addWidget(self._upd_avail_row)
-
-        try:
-            from config import settings as s  # noqa: PLC0415
-            cur_auto_update = s.AUTO_UPDATE_CHECK
-        except Exception:
-            logger.exception("업데이트 설정 로드 실패")
-            cur_auto_update = True
-
-        self._auto_update_check = QCheckBox("시작 시 자동 업데이트 확인")
-        self._auto_update_check.setChecked(cur_auto_update)
-        self._auto_update_check.checkStateChanged.connect(self._on_auto_update_changed)
-        upd_inner.addWidget(self._auto_update_check)
-
-        upd_btn_row = QHBoxLayout()
-        self._upd_check_btn = QPushButton("업데이트 확인")
-        self._upd_check_btn.clicked.connect(self.check_update_requested.emit)
-        upd_btn_row.addWidget(self._upd_check_btn)
-        ver_lbl = QLabel(f"현재 버전: v{__version__}")
-        ver_lbl.setStyleSheet("font-size: 11px; color: #888;")
-        upd_btn_row.addWidget(ver_lbl)
-        upd_btn_row.addStretch()
-        upd_inner.addLayout(upd_btn_row)
-
-        layout.addWidget(self._update_section_frame)
-        layout.addSpacing(4)
+        if self._get_tags_fn is not None:
+            self._hidden_tags_section = _HiddenTagsSection(self._get_tags_fn)
+            self._hidden_tags_section.changed.connect(self.hidden_tags_changed.emit)
+            layout.addWidget(self._hidden_tags_section)
+        else:
+            no_tags_lbl = QLabel("태그 목록을 불러올 수 없습니다.")
+            no_tags_lbl.setStyleSheet("font-size: 10px; color: #555;")
+            layout.addWidget(no_tags_lbl)
+            self._hidden_tags_section = None
 
         layout.addStretch()
 
-    # ------------------------------------------------------------------
-    def set_pending_update(self, dto) -> None:
-        """자동 체크에서 새 버전 발견 시 호출 — 버튼 텍스트를 업데이트 버전으로 교체한다."""
-        self._pending_dto = dto
-        self._upd_check_btn.setText(f"v{dto.version}으로 업데이트하기")
-        self._upd_check_btn.clicked.disconnect()
-        self._upd_check_btn.clicked.connect(self._on_install_update)
-        size_mb = dto.size_bytes / (1024 * 1024)
-        self._upd_avail_lbl.setText(f"다운로드 크기: {size_mb:.1f} MB")
+    def _build_update_header(self) -> QWidget:
+        """헤더 우측 컴팩트 업데이트 위젯 — 자동확인 토글 + 상태 + (준비 시)설치 버튼."""
+        try:
+            from config import settings as s  # noqa: PLC0415
+            cur_auto = s.AUTO_UPDATE_CHECK
+        except Exception:
+            logger.exception("업데이트 설정 로드 실패")
+            cur_auto = True
+        w = QWidget()
+        row = QHBoxLayout(w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        self._auto_update_check = QCheckBox("자동 업데이트")
+        self._auto_update_check.setToolTip("시작 시 자동으로 업데이트를 확인·다운로드합니다")
+        self._auto_update_check.setChecked(cur_auto)
+        self._auto_update_check.checkStateChanged.connect(self._on_auto_update_changed)
+        row.addWidget(self._auto_update_check)
+        self._upd_status_lbl = QLabel(f"v{__version__}")
+        self._upd_status_lbl.setStyleSheet("font-size: 11px; color: #888;")
+        row.addWidget(self._upd_status_lbl)
+        self._upd_install_btn = QPushButton("지금 설치")
+        self._upd_install_btn.setToolTip("앱을 재시작하여 업데이트를 설치합니다")
+        self._upd_install_btn.clicked.connect(self._on_install_update)
         self._upd_install_btn.hide()
-        self._upd_avail_row.show()
+        row.addWidget(self._upd_install_btn)
+        return w
+
+    # ------------------------------------------------------------------
+    def set_update_ready(self, dto) -> None:
+        """자동 다운로드 완료 — 헤더 상태를 '준비됨'으로 바꾸고 설치 버튼을 노출한다."""
+        self._pending_dto = dto
+        self._upd_status_lbl.setText(f"업데이트 준비됨 · v{dto.version}")
+        self._upd_status_lbl.setStyleSheet(
+            "font-size: 11px; color: #d23737; font-weight: 600;"
+        )
+        self._upd_install_btn.show()
 
     def scroll_and_flash_update_section(self) -> None:
-        """설정 버튼 배지 클릭 후 업데이트 섹션으로 스크롤하고 깜빡임 효과를 준다."""
-        self._scroll_area.ensureWidgetVisible(self._update_section_frame)
-        self._flash_count = 0
-        if self._flash_timer is not None:
-            self._flash_timer.stop()
-        self._flash_timer = QTimer(self)
-        self._flash_timer.timeout.connect(self._do_flash)
-        self._flash_timer.start(280)
-
-    def _do_flash(self) -> None:
-        if self._flash_count >= 6:
-            self._flash_timer.stop()
-            self._update_section_frame.setStyleSheet("")
-            return
-        if self._flash_count % 2 == 0:
-            self._update_section_frame.setStyleSheet(
-                "#updateSectionFrame { background: rgba(91,155,213,30);"
-                " border-radius: 8px; }"
-            )
-        else:
-            self._update_section_frame.setStyleSheet("")
-        self._flash_count += 1
+        # 업데이트 상태가 헤더에 상시 노출되므로 스크롤/플래시는 불필요(no-op).
+        pass
 
     def _on_install_update(self) -> None:
-        """'지금 설치' 버튼 — 저장된 DTO로 UpdateDialog를 열어 설치를 진행한다."""
+        """'지금 설치' — 저장된 DTO로 설치를 요청한다(앱 재시작 후 pending 설치)."""
         if self._pending_dto is not None:
             self.install_update_requested.emit(self._pending_dto)
 

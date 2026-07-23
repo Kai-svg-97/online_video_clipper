@@ -183,3 +183,36 @@ class TestSettingsPanelCloudSync:
         qtbot.addWidget(panel)
         panel.show()
         assert getattr(panel, "_cloud_sync_section", None) is None
+
+
+class TestSettingsLayout:
+    def test_hidden_tags_moved_to_bottom(self, qtbot):
+        """숨김 태그 관리 섹션이 다른 섹션(YouTube API 등)보다 아래에 있어야 한다."""
+        from PyQt6.QtWidgets import QLabel
+
+        from gui.panels.settings_panel import SettingsPanel
+
+        panel = SettingsPanel(get_tags_fn=lambda: [])
+        qtbot.addWidget(panel)
+        panel.show()
+        texts = [lbl.text() for lbl in panel.findChildren(QLabel)]
+
+        def idx(t):
+            return next(i for i, x in enumerate(texts) if x == t)
+
+        assert idx("숨김 태그 관리") > idx("YouTube API 연동")
+        assert panel._hidden_tags_section is not None
+
+    def test_update_header_ready_state(self, qtbot):
+        """헤더 업데이트 위젯 — 평소 설치 버튼 숨김, 준비 시 노출."""
+        from types import SimpleNamespace
+
+        from gui.panels.settings_panel import SettingsPanel
+
+        panel = SettingsPanel(get_tags_fn=lambda: [])
+        qtbot.addWidget(panel)
+        panel.show()
+        assert panel._upd_install_btn.isHidden()
+        panel.set_update_ready(SimpleNamespace(version="9.9.9"))
+        assert not panel._upd_install_btn.isHidden()
+        assert "준비됨" in panel._upd_status_lbl.text()

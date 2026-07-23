@@ -3956,6 +3956,12 @@ class LibraryPanel(QWidget):
             self._detail_widget.song_field_saved.connect(self._song_vm.save_field)
             self._detail_widget.song_lyrics_saved.connect(self._song_vm.save_lyrics)
             self._detail_widget.song_refresh_requested.connect(self._song_vm.refresh)
+            self._detail_widget.song_search_next_requested.connect(
+                self._song_vm.search_next_source
+            )
+            self._detail_widget.song_translate_requested.connect(
+                self._song_vm.translate_lyrics
+            )
             self._detail_widget.song_flag_toggled.connect(self._song_vm.toggle_song)
 
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세

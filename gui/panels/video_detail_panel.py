@@ -682,7 +682,9 @@ class _SongTab(QWidget):
 
     field_edited = pyqtSignal(str, str)      # (field_key, value)
     lyrics_edited = pyqtSignal(object)       # list[LyricsLine]
-    refresh_requested = pyqtSignal()
+    refresh_requested = pyqtSignal()         # 가사 검색(처음부터) — 가사 없을 때
+    search_next_requested = pyqtSignal()     # 가사 검색(다음 출처, 순환) — 가사 있을 때
+    translate_requested = pyqtSignal()       # 현재 가사를 한글로 재번역
     flag_toggled = pyqtSignal(bool)
     filter_requested = pyqtSignal(str, str)  # (field_key, value) — 같은 가수/앨범 필터
 
@@ -752,9 +754,17 @@ class _SongTab(QWidget):
         lyr_header.addWidget(QLabel("<b>가사</b>"))
         self._lyrics_refresh_btn = _SpinRefreshButton()
         self._lyrics_refresh_btn.setFixedSize(26, 24)
-        self._lyrics_refresh_btn.setToolTip("가사 갱신 (현재 노래 정보로 출처에서 다시 조회)")
-        self._lyrics_refresh_btn.clicked.connect(self.refresh_requested.emit)
+        self._lyrics_refresh_btn.setToolTip("가사 검색")
+        self._lyrics_refresh_btn.clicked.connect(self._on_lyrics_search_clicked)
         lyr_header.addWidget(self._lyrics_refresh_btn)
+        # 번역 버튼 — 가사가 이미 있을 때만 노출(현재 가사를 한글로 재번역).
+        self._translate_btn = QPushButton("번역")
+        self._translate_btn.setFixedHeight(24)
+        self._translate_btn.setToolTip("현재 가사를 한글로 다시 번역")
+        self._translate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._translate_btn.clicked.connect(self.translate_requested.emit)
+        self._translate_btn.setVisible(False)
+        lyr_header.addWidget(self._translate_btn)
         self._src_lbl = QLabel("")
         self._src_lbl.setStyleSheet("font-size:8pt; color:#888;")
         self._src_lbl.setOpenExternalLinks(True)
@@ -797,8 +807,16 @@ class _SongTab(QWidget):
         self._editable = editable
         self._flag_chk.setEnabled(editable)
         self._lyrics_refresh_btn.setEnabled(editable)
+        self._translate_btn.setEnabled(editable)
         for f in self._fields.values():
             f.set_editable(editable)
+
+    def _on_lyrics_search_clicked(self) -> None:
+        """가사 검색 — 이미 가사가 있으면 '다음 출처'에서 순환 검색, 없으면 처음부터."""
+        if self._current_dto is not None and self._current_dto.has_lyrics:
+            self.search_next_requested.emit()
+        else:
+            self.refresh_requested.emit()
 
     def set_busy(self, busy: bool) -> None:
         self._status_lbl.setText("불러오는 중…" if busy else "")
@@ -812,6 +830,12 @@ class _SongTab(QWidget):
 
     def set_info(self, dto: SongInfoDTO | None) -> None:
         self._current_dto = dto
+        # 가사 검색/번역 버튼 상태 — 가사가 있으면 '다음 출처'+'번역' 노출.
+        has_lyrics = bool(dto and dto.has_lyrics)
+        self._translate_btn.setVisible(has_lyrics and self._editable)
+        self._lyrics_refresh_btn.setToolTip(
+            "다음 출처에서 가사 검색" if has_lyrics else "가사 검색"
+        )
         is_song = bool(dto and dto.is_song)
         self._flag_chk.blockSignals(True)
         self._flag_chk.setChecked(is_song)
@@ -961,7 +985,9 @@ class VideoDetailWidget(QWidget):
     detail_refresh_requested    = pyqtSignal(object)    # video_id — 제목행 ⟳ 버튼
     song_field_saved            = pyqtSignal(object, str, str)  # (video_id, field, value)
     song_lyrics_saved           = pyqtSignal(object, object)    # (video_id, list[LyricsLine])
-    song_refresh_requested      = pyqtSignal(object)    # video_id — 노래 탭 ⟳
+    song_refresh_requested      = pyqtSignal(object)    # video_id — 가사 검색(처음부터)
+    song_search_next_requested  = pyqtSignal(object)    # video_id — 가사 검색(다음 출처)
+    song_translate_requested    = pyqtSignal(object)    # video_id — 현재 가사 재번역
     song_flag_toggled           = pyqtSignal(object, bool)      # (video_id, is_song)
     song_filter_requested       = pyqtSignal(str, str)   # (field, value) — 같은 가수/앨범 필터
     play_next_requested         = pyqtSignal(object)     # 재생목록 다음 항목 payload(자동재생)
@@ -1185,6 +1211,8 @@ class VideoDetailWidget(QWidget):
         self._song_tab.field_edited.connect(self._on_song_field_edited)
         self._song_tab.lyrics_edited.connect(self._on_song_lyrics_edited)
         self._song_tab.refresh_requested.connect(self._on_song_refresh)
+        self._song_tab.search_next_requested.connect(self._on_song_search_next)
+        self._song_tab.translate_requested.connect(self._on_song_translate)
         self._song_tab.flag_toggled.connect(self._on_song_flag_toggled)
         self._song_tab.filter_requested.connect(self.song_filter_requested.emit)
         self._tabs.addTab(_wrap(self._song_tab), "노래")
@@ -2058,6 +2086,14 @@ class VideoDetailWidget(QWidget):
     def _on_song_refresh(self) -> None:
         if self._detail is not None and not self._streaming:
             self.song_refresh_requested.emit(self._detail.id)
+
+    def _on_song_search_next(self) -> None:
+        if self._detail is not None and not self._streaming:
+            self.song_search_next_requested.emit(self._detail.id)
+
+    def _on_song_translate(self) -> None:
+        if self._detail is not None and not self._streaming:
+            self.song_translate_requested.emit(self._detail.id)
 
     def _on_song_flag_toggled(self, is_song: bool) -> None:
         if self._detail is not None and not self._streaming:

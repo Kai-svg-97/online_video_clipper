@@ -120,6 +120,13 @@ class FetchSongInfoCommand:
     prefetch: dict | None = None
     force: bool = False
     fetch_lyrics: bool = True   # False면 감지+메타데이터만(가사 네트워크 조회 생략)
+    from_source_name: str | None = None  # 설정 시 이 출처 '다음'부터 검색(순환) — '다음 출처'
+
+
+@dataclass
+class TranslateSongLyricsCommand:
+    """현재 등록된 가사를 한글로 (재)번역해 저장한다('번역' 버튼)."""
+    video_id: UUID
 
 
 @dataclass
@@ -250,7 +257,8 @@ class FetchSongInfoHandler:
         need_lyrics = cmd.fetch_lyrics and (cmd.force or not agg.info.lyrics_lines)
         if need_lyrics:
             lyrics_lines, lyrics_lang, source, artist, album, title, year = self._run_chain(
-                artist, title, album, year, duration
+                artist, title, album, year, duration,
+                start_after_name=cmd.from_source_name,
             )
 
         # 4) 번역 (비한국어 가사에 한글 병행)
@@ -266,6 +274,7 @@ class FetchSongInfoHandler:
             lyrics_language=lyrics_lang or None,
             source=source,
             mark_song=True,
+            force_lyrics=bool(cmd.from_source_name),
         )
         self._songs.save(agg)
         self._bus.publish_all(agg.pull_events())
@@ -278,8 +287,13 @@ class FetchSongInfoHandler:
         album: str,
         year: str,
         duration: int | None,
+        start_after_name: str | None = None,
     ) -> tuple[list[str], str, SongSourceRef | None, str, str, str, str]:
-        """활성 출처를 순서대로 시도해 가사와 부족한 메타데이터를 채운다."""
+        """활성 출처를 순서대로 시도해 가사와 부족한 메타데이터를 채운다.
+
+        start_after_name이 주어지면(‘다음 출처’ 검색) 그 출처 **다음**부터 순회하도록 목록을
+        회전한다. 끝에 도달하면 처음으로 순환한다(현재 출처는 맨 뒤로 밀려 마지막에만 재시도).
+        """
         lyrics: list[str] = []
         lang = ""
         source: SongSourceRef | None = None
@@ -288,6 +302,11 @@ class FetchSongInfoHandler:
         except Exception:
             logger.exception("가사 출처 목록 조회 실패")
             sources = []
+
+        if start_after_name:
+            idx = next((i for i, s in enumerate(sources) if s.name == start_after_name), -1)
+            if idx >= 0:
+                sources = sources[idx + 1:] + sources[: idx + 1]
 
         # 검색용 아티스트 후보: 전체 문자열 → 주(첫) 아티스트 순으로 시도한다.
         # 다중 아티스트 표기("NIKI, Phil Collins")로는 제공자 매칭이 실패하므로
@@ -321,8 +340,9 @@ class FetchSongInfoHandler:
             if not lyrics and result.lines:
                 lyrics = [ln for ln in result.lines]
                 lang = result.language or lang
+                # 출처명은 DB 출처 이름(src.name)을 저장 — '다음 출처' 검색 시 정확히 매칭·순환.
                 source = SongSourceRef(
-                    name=result.source_name or src.name,
+                    name=src.name,
                     url=result.source_url,
                 )
             # 가사 + 핵심 메타가 모두 채워졌으면 조기 종료
@@ -355,6 +375,50 @@ class FetchSongInfoHandler:
             LyricsLine(original=o, translation=(t if t != o else ""))
             for o, t in zip(lines, translations)
         ]
+
+
+class TranslateSongLyricsHandler:
+    """이미 등록된 가사를 한글로 (재)번역해 저장한다(조회와 분리된 '번역' 동작)."""
+
+    def __init__(
+        self,
+        song_repo: ISongRepository,
+        translator: ITranslator | None,
+        event_bus: IEventBus,
+    ) -> None:
+        self._songs = song_repo
+        self._translator = translator
+        self._bus = event_bus
+
+    def handle(self, cmd: TranslateSongLyricsCommand) -> SongInfoAggregate | None:
+        agg = self._songs.get(cmd.video_id)
+        if agg is None or not agg.info.lyrics_lines or self._translator is None:
+            return agg
+        originals = [ln.original for ln in agg.info.lyrics_lines]
+        lang = (agg.info.lyrics_language or "").lower()
+        if not lang:
+            try:
+                sample = next((o for o in originals if o.strip()), "")
+                lang = (self._translator.detect_language(sample) or "").lower()
+            except Exception:
+                logger.exception("가사 언어 감지 실패")
+        if lang == "ko":
+            return agg   # 한국어 가사는 번역 대상 아님
+        try:
+            translations = self._translator.translate(originals, target="ko")
+        except Exception:
+            logger.exception("가사 번역 실패")
+            return agg
+        if len(translations) != len(originals):
+            return agg
+        new_lines = [
+            LyricsLine(original=o, translation=(t if t != o else ""))
+            for o, t in zip(originals, translations)
+        ]
+        agg.set_lyrics_translations(new_lines)
+        self._songs.save(agg)
+        self._bus.publish_all(agg.pull_events())
+        return agg
 
 
 class SetSongFlagHandler:

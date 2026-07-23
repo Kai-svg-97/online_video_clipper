@@ -7,9 +7,17 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+from uuid import uuid4
 
-from application.song.commands import FetchSongInfoHandler, _primary_artist
+from application.song.commands import (
+    FetchSongInfoHandler,
+    TranslateSongLyricsCommand,
+    TranslateSongLyricsHandler,
+    _primary_artist,
+)
+from domain.song.aggregates import SongInfoAggregate
 from domain.song.ports import LyricsResult
+from domain.song.value_objects import LyricsLine
 
 
 class _ArtistPickyProvider:
@@ -96,3 +104,112 @@ class TestRunChainArtistFallback:
 
         assert lyrics == ["line 1", "line 2"]
         assert provider.calls == ["NIKI, Phil Collins"]
+
+
+class _TaggedProvider:
+    """항상 자기 key를 태그한 가사를 반환하는 가짜 제공자."""
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+
+    def fetch(self, artist, title, duration_sec=None):
+        return LyricsResult(
+            lines=[f"{self.key}-lyric"], language="en",
+            source_name="ignored", source_url=f"http://{self.key}",
+        )
+
+
+def _multi_handler():
+    """출처 A(p1)·B(p2)·C(p3) 순서, 각자 가사를 반환하는 핸들러."""
+    song_repo = MagicMock()
+    song_repo.list_lyrics_sources.return_value = [
+        SimpleNamespace(provider_key="p1", enabled=True, name="A"),
+        SimpleNamespace(provider_key="p2", enabled=True, name="B"),
+        SimpleNamespace(provider_key="p3", enabled=True, name="C"),
+    ]
+    return FetchSongInfoHandler(
+        song_repo=song_repo, video_repo=MagicMock(), event_bus=MagicMock(),
+        lyrics_providers={"p1": _TaggedProvider("p1"), "p2": _TaggedProvider("p2"),
+                          "p3": _TaggedProvider("p3")},
+        translator=None, media_source=None,
+    )
+
+
+class TestRunChainNextSource:
+    def test_default_starts_from_first(self):
+        lyrics, _l, source, *_ = _multi_handler()._run_chain("art", "t", "", "", None)
+        assert lyrics == ["p1-lyric"] and source.name == "A"
+
+    def test_start_after_picks_next(self):
+        lyrics, _l, source, *_ = _multi_handler()._run_chain(
+            "art", "t", "", "", None, start_after_name="A"
+        )
+        assert lyrics == ["p2-lyric"] and source.name == "B"
+
+    def test_start_after_middle(self):
+        lyrics, _l, source, *_ = _multi_handler()._run_chain(
+            "art", "t", "", "", None, start_after_name="B"
+        )
+        assert lyrics == ["p3-lyric"] and source.name == "C"
+
+    def test_wraps_around_at_end(self):
+        # 마지막 출처(C) 다음 → 처음(A)으로 순환.
+        lyrics, _l, source, *_ = _multi_handler()._run_chain(
+            "art", "t", "", "", None, start_after_name="C"
+        )
+        assert lyrics == ["p1-lyric"] and source.name == "A"
+
+    def test_unknown_source_starts_from_first(self):
+        lyrics, _l, source, *_ = _multi_handler()._run_chain(
+            "art", "t", "", "", None, start_after_name="없는출처"
+        )
+        assert lyrics == ["p1-lyric"] and source.name == "A"
+
+
+class _FakeTranslator:
+    def __init__(self, lang: str = "en") -> None:
+        self._lang = lang
+
+    def detect_language(self, text):
+        return self._lang
+
+    def translate(self, texts, target="ko", source="auto"):
+        return [f"{t}(번역)" for t in texts]
+
+
+class TestTranslateSongLyricsHandler:
+    def _agg(self, lang="en"):
+        agg = SongInfoAggregate.create(uuid4(), is_song=True)
+        agg.apply_fetched(
+            lyrics_lines=[LyricsLine("a", ""), LyricsLine("b", "")],
+            lyrics_language=lang,
+        )
+        return agg
+
+    def test_translates_non_korean(self):
+        agg = self._agg("en")
+        repo = MagicMock()
+        repo.get.return_value = agg
+        TranslateSongLyricsHandler(repo, _FakeTranslator("en"), MagicMock()).handle(
+            TranslateSongLyricsCommand(agg.info.video_id)
+        )
+        assert [ln.translation for ln in agg.info.lyrics_lines] == ["a(번역)", "b(번역)"]
+        repo.save.assert_called_once()
+
+    def test_korean_is_noop(self):
+        agg = self._agg("ko")
+        repo = MagicMock()
+        repo.get.return_value = agg
+        TranslateSongLyricsHandler(repo, _FakeTranslator("ko"), MagicMock()).handle(
+            TranslateSongLyricsCommand(agg.info.video_id)
+        )
+        assert all(ln.translation == "" for ln in agg.info.lyrics_lines)
+
+    def test_no_translator_is_noop(self):
+        agg = self._agg("en")
+        repo = MagicMock()
+        repo.get.return_value = agg
+        TranslateSongLyricsHandler(repo, None, MagicMock()).handle(
+            TranslateSongLyricsCommand(agg.info.video_id)
+        )
+        assert all(ln.translation == "" for ln in agg.info.lyrics_lines)

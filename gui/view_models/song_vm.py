@@ -16,6 +16,8 @@ from application.song.commands import (
     ReorderLyricsSourcesHandler,
     SetSongFlagCommand,
     SetSongFlagHandler,
+    TranslateSongLyricsCommand,
+    TranslateSongLyricsHandler,
     UpdateLyricsSourceCommand,
     UpdateLyricsSourceHandler,
     UpdateSongFieldCommand,
@@ -50,6 +52,27 @@ class _SongFetchWorker(QThread):
             self.failed.emit(self._cmd.video_id, str(exc))
 
 
+class _TranslateWorker(QThread):
+    """현재 가사를 한글로 (재)번역한다(네트워크 — deep-translator)."""
+
+    done = pyqtSignal(object, bool)   # (video_id, ok)
+    failed = pyqtSignal(object, str)  # (video_id, error)
+
+    def __init__(self, handler: TranslateSongLyricsHandler, cmd: TranslateSongLyricsCommand,
+                 parent=None) -> None:
+        super().__init__(parent)
+        self._handler = handler
+        self._cmd = cmd
+
+    def run(self) -> None:
+        try:
+            self._handler.handle(self._cmd)
+            self.done.emit(self._cmd.video_id, True)
+        except Exception as exc:
+            logger.exception("가사 번역 실패: %s", self._cmd.video_id)
+            self.failed.emit(self._cmd.video_id, str(exc))
+
+
 class SongViewModel(QObject):
     """상세화면 '노래' 탭의 상태를 관리한다.
 
@@ -72,6 +95,7 @@ class SongViewModel(QObject):
         set_flag: SetSongFlagHandler,
         update_field: UpdateSongFieldHandler,
         update_lyrics: UpdateSongLyricsHandler,
+        translate_lyrics: TranslateSongLyricsHandler,
         list_sources: ListLyricsSourcesHandler,
         add_source: AddLyricsSourceHandler,
         update_source: UpdateLyricsSourceHandler,
@@ -85,6 +109,7 @@ class SongViewModel(QObject):
         self._set_flag = set_flag
         self._update_field = update_field
         self._update_lyrics = update_lyrics
+        self._translate = translate_lyrics
         self._list_sources = list_sources
         self._add_source = add_source
         self._update_source = update_source
@@ -118,6 +143,34 @@ class SongViewModel(QObject):
         self._start_fetch(
             FetchSongInfoCommand(video_id=video_id, force=True, fetch_lyrics=True)
         )
+
+    def search_next_source(self, video_id: UUID) -> None:
+        """'다음 출처' — 현재 가사 출처 다음부터 순환 검색해 가사를 교체한다."""
+        self._current = video_id
+        dto = self.get_song_info(video_id)
+        current_src = dto.source_name if dto else ""
+        self._start_fetch(
+            FetchSongInfoCommand(
+                video_id=video_id, force=True, fetch_lyrics=True,
+                from_source_name=current_src or None,
+            )
+        )
+
+    def translate_lyrics(self, video_id: UUID) -> None:
+        """'번역' — 현재 등록된 가사를 한글로 (재)번역해 저장한다(조회와 분리)."""
+        if video_id in self._in_flight:
+            return
+        self._current = video_id
+        self._in_flight.add(video_id)
+        self.busy_changed.emit(True)
+        worker = _TranslateWorker(self._translate, TranslateSongLyricsCommand(video_id), self)
+        worker.done.connect(self._on_fetch_done)
+        worker.failed.connect(self._on_fetch_failed)
+        worker.finished.connect(
+            lambda: self._workers.remove(worker) if worker in self._workers else None
+        )
+        self._workers.append(worker)
+        worker.start()
 
     def _start_fetch(self, cmd: FetchSongInfoCommand) -> None:
         # 같은 영상이 이미 백그라운드로 조회 중이면 중복 실행하지 않는다.

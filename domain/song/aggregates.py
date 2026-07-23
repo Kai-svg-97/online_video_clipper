@@ -56,8 +56,12 @@ class SongInfoAggregate:
         lyrics_language: str | None = None,
         source: SongSourceRef | None = None,
         mark_song: bool | None = None,
+        force_lyrics: bool = False,
     ) -> None:
         """조회 결과를 반영한다. 수동 편집 필드는 건너뛴다.
+
+        force_lyrics=True면 사용자가 명시적으로 '다음 출처 검색'을 요청한 경우로, 가사가
+        수동 편집으로 표시돼 있어도 새 가사로 교체한다.
 
         빈 값(빈 문자열/빈 리스트)은 기존 값을 지우지 않도록 무시한다 — 여러 출처를
         단계적으로 시도하며 부족분만 채우는 체인 방식과 맞물려, 뒤 출처가 앞 출처의
@@ -82,7 +86,8 @@ class SongInfoAggregate:
         if release_year and "release_year" not in manual and release_year != self._info.release_year:
             self._info.release_year = release_year
             changed.append("release_year")
-        if lyrics_lines and "lyrics" not in manual and lyrics_lines != self._info.lyrics_lines:
+        if lyrics_lines and (force_lyrics or "lyrics" not in manual) \
+                and lyrics_lines != self._info.lyrics_lines:
             self._info.lyrics_lines = list(lyrics_lines)
             if lyrics_language:
                 self._info.lyrics_language = lyrics_language
@@ -103,6 +108,16 @@ class SongInfoAggregate:
         setattr(self._info, field, value)
         self._info.manual_fields = self._info.manual_fields | {field}
         self._touch((field,))
+
+    def set_lyrics_translations(self, lines: list[LyricsLine]) -> None:
+        """현재 가사를 번역 포함 버전으로 교체한다(출처 유지·수동 표시 안 함).
+
+        표준 '번역' 동작 — 조회와 분리해, 이미 등록된 가사에 한글 번역만 다시 입힌다.
+        """
+        if not lines or lines == self._info.lyrics_lines:
+            return
+        self._info.lyrics_lines = list(lines)
+        self._touch(("lyrics",))
 
     def edit_lyrics(self, lines: list[LyricsLine], *, source_name: str = "직접 입력") -> None:
         """사용자의 가사 편집 — 수동 필드로 표시하고 출처를 사용자 입력으로 바꾼다."""

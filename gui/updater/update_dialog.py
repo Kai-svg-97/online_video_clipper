@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 import tempfile
 from pathlib import Path
 
@@ -164,18 +163,9 @@ class UpdateDialog(QDialog):
         )
 
     def _apply_update(self, installer_path: str) -> None:
-        if sys.platform == "win32":
-            pending = Path(tempfile.gettempdir()) / "ovc_pending_update.txt"
-            try:
-                exe = sys.executable if getattr(sys, "frozen", False) else ""
-                pending.write_text(installer_path + "\n" + exe, encoding="utf-8")
-            except OSError:
-                logger.exception("pending update 파일 작성 실패")
-                QMessageBox.warning(
-                    self, "설치 실패",
-                    f"업데이트를 준비하지 못했습니다.\n위치: {installer_path}",
-                )
-                return
+        from gui.updater.pending import write_pending_update  # noqa: PLC0415
+
+        if write_pending_update(installer_path):
             self._status_lbl.setText("앱 종료 후 설치가 자동으로 시작됩니다…")
             QApplication.instance().quit()
         else:

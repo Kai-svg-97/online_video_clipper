@@ -252,6 +252,9 @@ class _SideBar(QWidget):
     def show_update_badge(self, visible: bool) -> None:
         self._settings_btn.set_badge(visible)
 
+    def set_settings_tooltip(self, text: str) -> None:
+        self._settings_btn.setToolTip(text)
+
     def _navigate(self, page: int) -> None:
         if page == _PAGE_SETTINGS \
                 and getattr(self, "_settings_btn", None) \
@@ -654,16 +657,24 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._settings_panel, "install_update_requested"):
             self._settings_panel.install_update_requested.connect(
-                controller._show_update_dialog
+                controller.install_now
             )
         controller.update_notification.connect(self._on_update_notification)
+        controller.update_ready.connect(self._on_update_ready)
         self._sidebar.settings_navigated_with_badge.connect(
             self._settings_panel.scroll_and_flash_update_section
         )
 
-    def _on_update_notification(self, dto) -> None:
+    def _on_update_ready(self, dto) -> None:
+        """자동 다운로드 완료 — 기어에 빨간 점+툴팁, 설정 헤더에 '지금 설치' 노출."""
         self._sidebar.show_update_badge(True)
-        self._settings_panel.set_pending_update(dto)
+        self._sidebar.set_settings_tooltip("업데이트 준비 완료 — 앱을 닫으면 자동 설치됩니다")
+        self._settings_panel.set_update_ready(dto)
+
+    def _on_update_notification(self, dto) -> None:
+        # 폴백(다운로드 실패 등) — 배지+툴팁만.
+        self._sidebar.show_update_badge(True)
+        self._sidebar.set_settings_tooltip(f"업데이트 발견: v{dto.version} — 설정에서 확인")
 
     def _on_download_video_open(self, url: str) -> None:
         """다운로드 카드 클릭 → 라이브러리 영상 상세화면 오픈."""
