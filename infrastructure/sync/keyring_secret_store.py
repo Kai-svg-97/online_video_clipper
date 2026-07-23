@@ -34,12 +34,14 @@ class KeyringSecretStore:
             if isinstance(keyring.get_keyring(), _Fail):
                 raise RuntimeError("사용 가능한 keyring 백엔드 없음")
             return keyring
-        except Exception:
+        except Exception as exc:
+            # keyring 미설치·백엔드 부재는 **예상된 폴백**이라 트레이스백 없이 한 줄 경고만 남긴다
+            # (파일 폴백으로 정상 동작). 상세는 debug에만.
             logger.warning(
-                "keyring 사용 불가 — 파일 폴백 사용(%s). 프로덕션(Windows)에서는 keyring 권장.",
-                self._fallback_path,
-                exc_info=True,
+                "keyring 사용 불가(%s) — 파일 폴백 사용(%s). 프로덕션(Windows)에서는 keyring 권장.",
+                exc, self._fallback_path,
             )
+            logger.debug("keyring 프로브 상세", exc_info=True)
             return None
 
     # -- ISecretStore -----------------------------------------------------

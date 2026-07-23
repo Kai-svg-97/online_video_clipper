@@ -71,11 +71,13 @@ def pre_db_bootstrap(db_path: Path | None = None) -> bool:
     """
     db_path = Path(db_path) if db_path else Path(settings.DATABASE_PATH)
     try:
-        secret = build_secret_store()
+        # 상태는 파일 기반이라 keyring을 건드리지 않는다 — 미설정이면 여기서 조기 반환해
+        # 동기화 안 쓰는 사용자가 keyring 프로브(경고)조차 겪지 않도록 한다.
         state_store = SyncStateStore(_sync_dir() / "sync_state.json")
         key = state_store.load().provider_key
         if not key:
             return False
+        secret = build_secret_store()
         provider = build_provider(key, secret)
         if provider is None:
             return False
