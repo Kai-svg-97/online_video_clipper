@@ -444,6 +444,7 @@ class MainWindow(QMainWindow):
         auth_service: YouTubeAuthService | None = None,
         yt_oauth=None,   # YouTubeOAuthAdapter | None
         song_vm=None,    # SongViewModel | None
+        sync_vm=None,    # SyncViewModel | None
     ) -> None:
         super().__init__()
         QPixmapCache.setCacheLimit(PIXMAP_CACHE_LIMIT_KB)
@@ -455,6 +456,7 @@ class MainWindow(QMainWindow):
         self._playlist_vm = playlist_vm
         self._feed_vm = feed_vm
         self._song_vm = song_vm
+        self._sync_vm = sync_vm
         self._yt_oauth = yt_oauth
         self._auth_service = auth_service or YouTubeAuthService()
         self._update_controller = None
@@ -531,6 +533,7 @@ class MainWindow(QMainWindow):
             get_tags_fn=lambda: self._library_vm.tags,
             yt_oauth=self._yt_oauth,
             song_vm=self._song_vm,
+            sync_vm=self._sync_vm,
         )
         self._stack.addWidget(self._settings_panel)                  # 4
 
@@ -707,7 +710,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.
         for vm in (self._download_vm, self._library_vm, self._feed_vm,
-                   self._song_vm, self._update_controller):
+                   self._song_vm, self._sync_vm, self._update_controller):
             if vm is None:
                 continue
             shutdown = getattr(vm, "shutdown", None)

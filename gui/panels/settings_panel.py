@@ -475,6 +475,114 @@ class _LyricsSourcesSection(QWidget):
         self._key_edit.clear()
 
 
+class _CloudSyncSection(QWidget):
+    """클라우드 동기화 연결/해제·상태·지금 동기화 UI (SyncViewModel 주입 시에만 표시).
+
+    provider(Google Drive/OneDrive) 선택 + OAuth 자격증명 입력 → 연결. 연결되면 상태·계정을
+    표시하고 '지금 동기화' 버튼을 노출한다. 실제 OAuth·동기화는 sync_vm이 QThread로 수행.
+    """
+
+    def __init__(self, sync_vm, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._vm = sync_vm
+        self._build()
+        sync_vm.status_changed.connect(self._on_status)
+        sync_vm.busy_changed.connect(self._on_busy)
+        sync_vm.sync_finished.connect(self._on_sync_finished)
+        sync_vm.error_occurred.connect(self._on_error)
+        self._vm.refresh_status()
+
+    def _build(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(8)
+
+        # provider + 자격증명 입력 행
+        prov_row = QHBoxLayout()
+        prov_row.addWidget(QLabel("제공자"))
+        self._provider_combo = QComboBox()
+        self._provider_combo.addItem("Google Drive", "gdrive")
+        self._provider_combo.addItem("OneDrive", "onedrive")
+        self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        prov_row.addWidget(self._provider_combo)
+        prov_row.addStretch()
+        root.addLayout(prov_row)
+
+        self._client_id = QLineEdit()
+        self._client_id.setPlaceholderText("OAuth Client ID")
+        root.addWidget(self._client_id)
+        self._client_secret = QLineEdit()
+        self._client_secret.setPlaceholderText("OAuth Client Secret (Google Drive)")
+        self._client_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        root.addWidget(self._client_secret)
+
+        btn_row = QHBoxLayout()
+        self._connect_btn = QPushButton("연결")
+        self._connect_btn.clicked.connect(self._on_connect)
+        self._disconnect_btn = QPushButton("연결 해제")
+        self._disconnect_btn.clicked.connect(self._vm.disconnect)
+        self._sync_btn = QPushButton("지금 동기화")
+        self._sync_btn.clicked.connect(self._vm.sync_now)
+        btn_row.addWidget(self._connect_btn)
+        btn_row.addWidget(self._disconnect_btn)
+        btn_row.addWidget(self._sync_btn)
+        btn_row.addStretch()
+        root.addLayout(btn_row)
+
+        self._status_lbl = QLabel("상태 확인 중…")
+        self._status_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        self._status_lbl.setWordWrap(True)
+        root.addWidget(self._status_lbl)
+
+    def _on_provider_changed(self) -> None:
+        # OneDrive는 client secret 불필요.
+        is_gdrive = self._provider_combo.currentData() == "gdrive"
+        self._client_secret.setVisible(is_gdrive)
+
+    def _on_connect(self) -> None:
+        key = self._provider_combo.currentData()
+        cid = self._client_id.text().strip()
+        if not cid:
+            self._status_lbl.setText("Client ID를 입력하세요.")
+            return
+        if key == "gdrive":
+            secret = self._client_secret.text().strip()
+            if not secret:
+                self._status_lbl.setText("Google Drive는 Client Secret이 필요합니다.")
+                return
+            self._vm.connect(key, client_id=cid, client_secret=secret)
+        else:
+            self._vm.connect(key, client_id=cid)
+        self._status_lbl.setText("브라우저에서 인증을 진행하세요…")
+
+    def _on_status(self, dto) -> None:
+        if dto is None:
+            return
+        if dto.connected:
+            acct = dto.account_name or "(계정 미상)"
+            last = dto.last_pull_utc[:19].replace("T", " ") if dto.last_pull_utc else "없음"
+            self._status_lbl.setText(f"연결됨: {acct} · 마지막 동기화: {last}")
+            self._connect_btn.setEnabled(False)
+            self._disconnect_btn.setEnabled(True)
+            self._sync_btn.setEnabled(True)
+        else:
+            self._status_lbl.setText("연결 안 됨")
+            self._connect_btn.setEnabled(True)
+            self._disconnect_btn.setEnabled(False)
+            self._sync_btn.setEnabled(False)
+
+    def _on_busy(self, busy: bool) -> None:
+        # 작업 중엔 버튼 잠금(상태 라벨로 진행 표시).
+        self._connect_btn.setEnabled(not busy)
+        self._sync_btn.setEnabled(not busy and self._vm.is_connected())
+
+    def _on_sync_finished(self, pushed: int, pulled: int) -> None:
+        self._status_lbl.setText(f"동기화 완료 (올림 {pushed} · 내려받음 {pulled})")
+
+    def _on_error(self, msg: str) -> None:
+        self._status_lbl.setText(f"오류: {msg}")
+
+
 class SettingsPanel(QWidget):
     """설정 패널 (인라인, QDialog 아님)."""
 
@@ -488,12 +596,14 @@ class SettingsPanel(QWidget):
         get_tags_fn: Callable | None = None,
         yt_oauth=None,   # YouTubeOAuthAdapter | None
         song_vm=None,    # SongViewModel | None
+        sync_vm=None,    # SyncViewModel | None
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._get_tags_fn = get_tags_fn
         self._yt_oauth = yt_oauth
         self._song_vm = song_vm
+        self._sync_vm = sync_vm
         self._theme_cards: dict[str, _ThemeCard] = {}
         self._yt_auth_worker = None
         self._pending_dto = None
@@ -807,6 +917,24 @@ class SettingsPanel(QWidget):
             layout.addSpacing(10)
             self._lyrics_sources_section = _LyricsSourcesSection(self._song_vm)
             layout.addWidget(self._lyrics_sources_section)
+
+        # ── 클라우드 동기화 섹션 (여러 PC 간 라이브러리 동기화) ──
+        if self._sync_vm is not None:
+            layout.addSpacing(24)
+            sep_sync = QFrame()
+            sep_sync.setFrameShape(QFrame.Shape.HLine)
+            sep_sync.setStyleSheet("color: #1a1a1a;")
+            layout.addWidget(sep_sync)
+            layout.addSpacing(24)
+            sync_label = QLabel("클라우드 동기화")
+            sync_label.setStyleSheet(
+                "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+                "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+            )
+            layout.addWidget(sync_label)
+            layout.addSpacing(10)
+            self._cloud_sync_section = _CloudSyncSection(self._sync_vm)
+            layout.addWidget(self._cloud_sync_section)
 
         # ── YouTube API 연동 섹션 ──
         layout.addSpacing(20)

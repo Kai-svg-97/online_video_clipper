@@ -147,3 +147,39 @@ class TestMonitoringPanel:
         panel = MonitoringPanel(vm=monitoring_vm)
         qtbot.addWidget(panel)
         panel.show()
+
+
+class TestSettingsPanelCloudSync:
+    """클라우드 동기화 섹션이 미연결 상태로 오류 없이 렌더되는지 + 미주입 시 무변경."""
+
+    def _sync_vm(self, tmp_path):
+        from gui.view_models.sync_vm import SyncViewModel
+        from infrastructure.persistence.database import Database
+        from infrastructure.sync.sync_service import SyncService
+
+        db = Database(tmp_path / "lib.db")
+        db.initialize()
+        svc = SyncService(db, data_dir=tmp_path / "data", provider=None)
+        return SyncViewModel(svc)
+
+    def test_sync_section_renders_disconnected(self, qtbot, tmp_path):
+        from gui.panels.settings_panel import SettingsPanel
+
+        vm = self._sync_vm(tmp_path)
+        panel = SettingsPanel(get_tags_fn=lambda: [], sync_vm=vm)
+        qtbot.addWidget(panel)
+        panel.show()
+        assert panel._cloud_sync_section is not None
+        # 미연결 → 상태 라벨에 "연결 안" 문구, 연결 버튼 활성/동기화 버튼 비활성
+        assert "연결 안" in panel._cloud_sync_section._status_lbl.text()
+        assert panel._cloud_sync_section._connect_btn.isEnabled()
+        assert not panel._cloud_sync_section._sync_btn.isEnabled()
+        vm.shutdown()
+
+    def test_no_sync_vm_omits_section(self, qtbot):
+        from gui.panels.settings_panel import SettingsPanel
+
+        panel = SettingsPanel(get_tags_fn=lambda: [])
+        qtbot.addWidget(panel)
+        panel.show()
+        assert getattr(panel, "_cloud_sync_section", None) is None

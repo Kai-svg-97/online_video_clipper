@@ -3,6 +3,8 @@
 > 이 문서는 원격(웹) 세션에서 진행한 클라우드 동기화 기능의 상태와 **로컬에서 이어서 작업하기 위한** 핸드오프다.
 > 설계 세부는 `planning/ddd_design.md`의 **Sync Context**, 파일 맵은 `CLAUDE.md`의 아키텍처 트리 및 "클라우드 동기화 캡처" Key Design Decision을 함께 볼 것.
 
+> **현황(2026-07-23): Phase 0~F 전부 구현·검증 완료.** 미디어 파일 동기화(A)·provider 어댑터(B)·컴팩션/부트스트랩(C)·전 엔티티 캡처/적용(D)·GUI 배선(E)·패키징(F). 비-GUI 214 + GUI 스모크 통과, offscreen 전체 기동 확인. **남은 것은 코드가 아니라 검증뿐**: 실계정 OAuth 왕복(Google/Azure client 발급 + 브라우저 로그인 + 실제 파일 왕복), 두 실기기 간 수렴 실사용 테스트.
+
 ## 이 기능이 하는 일 (확정된 방향)
 
 여러 PC(집↔회사)에서 라이브러리·카테고리·태그·노래정보·메모·다운로드 이력 **+ 미디어 파일**을 OneDrive / Google Drive로 동기화한다.
@@ -25,12 +27,12 @@
 
 ## 테스트 상태
 
-- 비-GUI 테스트 **210개 통과**. 실행:
+- 비-GUI 테스트 **214개 통과**(+ GUI 스모크: 클라우드 동기화 섹션 2건). 실행:
   ```bash
   pytest tests/unit tests/integration -q
   ```
 - 원격 샌드박스엔 PyQt6가 없어 GUI 스모크(`tests/gui/`)는 미실행. 로컬에선 `pytest`로 전체 실행 가능.
-- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12), `tests/integration/test_sync_providers.py`(provider 어댑터 14), `tests/integration/test_sync_compaction.py`(컴팩션·부트스트랩 6), `tests/integration/test_sync_entities.py`(엔티티 확장 D-1 6).
+- 관련 테스트 파일: `tests/unit/domain/test_sync.py`(순수 병합 로직 20 + 파일 동기화 계획 8), `tests/integration/test_sync_infra.py`(11), `tests/integration/test_merge_applier.py`(10), `tests/integration/test_sync_flow.py`(6), `tests/integration/test_file_syncer.py`(파일 동기화 엔진 12), `tests/integration/test_sync_providers.py`(provider 어댑터 14), `tests/integration/test_sync_compaction.py`(컴팩션·부트스트랩 6), `tests/integration/test_sync_entities.py`(엔티티 확장 16), `tests/integration/test_sync_providers.py`(provider 14), `tests/integration/test_file_syncer.py`(미디어 12), `tests/integration/test_sync_service.py`(SyncService 4), `tests/gui/test_smoke.py`(설정 섹션 2).
 
 ---
 
@@ -118,12 +120,14 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 - 테스트 4건(playlist 멤버십/제거/삭제·category order). ENTITY_ORDER에서 playlist_folder를 playlist보다 앞으로. 비-GUI 210개 통과.
 - **D(엔티티 확장) 전체 완료** — video·category·tag·song·clip·download·playlist·folder·playlist_item·category_video_order 캡처/적용.
 
-### E. Phase 5 — GUI 배선 (기능이 앱에 켜지는 단계)
-- `gui/view_models/sync_vm.py` — `gui/view_models/song_vm.py` 패턴 복제(`SyncViewModel(QObject)`, 시그널, `_SyncWorker(QThread)`, `shutdown()`).
-- `gui/panels/settings_panel.py` — `_build_ui`의 `layout.addStretch()`(약 1001줄) 직전에 "클라우드 동기화" 섹션(기존 9px 헤더+행 패턴 재사용, YouTube OAuth 섹션 811-868을 연결/해제 UI 템플릿으로). `__init__`에 `sync_vm=None`.
-- `gui/main_window.py` — 생성자 트레일링 `sync_vm=None` + `self._sync_vm`, `SettingsPanel(...)`에 전달, **`closeEvent` shutdown 튜플(707-719)에 `self._sync_vm` 추가**.
-- `main.py` — ① `db=Database()`(233줄) **직전 `bootstrap_sync_pull()`**, ② repo 생성부(237-243)에서 **각 repo를 RecordingXxxRepository로 래핑**해 핸들러에 주입, ③ 431줄 인근 `sync_vm` 조립, 445줄 `MainWindow(...)`에 전달, ④ 기동 후 백그라운드 미디어 diff.
-- **CLAUDE.md 규칙**: GUI 변경 후 `/verify` 필수(로컬 PyQt6 필요).
+### E. ✅ GUI 배선 완료 (기능이 앱에 켜짐)
+- ✅ `infrastructure/sync/sync_service.py` `SyncService` — sync 스택 조립 + 고수준 동작(sync_now·sync_media·compact·connect_gdrive/onedrive·disconnect·status·make_recording_repos). `pre_db_bootstrap()`/`build_secret_store()`/`build_provider()` 모듈 함수.
+- ✅ `gui/view_models/sync_vm.py` `SyncViewModel` — `_SyncWorker`(push/pull+미디어)·`_ConnectWorker`(OAuth) QThread + QTimer 주기 자동 동기화 + `start_auto_sync()`/`shutdown()`.
+- ✅ `gui/panels/settings_panel.py` — `_CloudSyncSection`(제공자 드롭다운·Client ID/Secret·연결/해제/지금 동기화·상태 라벨), `sync_vm` 주입 시에만 표시.
+- ✅ `gui/main_window.py` — 생성자 `sync_vm=None` + `SettingsPanel`에 전달 + `closeEvent` shutdown 튜플에 추가.
+- ✅ `main.py` — `db=Database()` 직전 `pre_db_bootstrap()`, repo 생성 직후 `SyncService.make_recording_repos`로 **연결 시에만** repo 교체, `sync_vm` 조립·`MainWindow`에 전달, `window.show()` 후 `sync_vm.start_auto_sync()`.
+- ✅ 검증: SyncService 테스트 4건(fake provider), GUI 스모크 2건(설정 섹션 미연결 렌더/미주입 시 생략), **offscreen 전체 기동(`main()` return 0)으로 composition root 무오류 확인**. 미연결 시 기존 앱 동작 무변경.
+- ⚠️ **실계정 OAuth 왕복은 사용자만 가능**(client_id/secret + 브라우저 로그인). keyring은 이 샌드박스에 미설치(파일 폴백 확인) — 로컬/프로덕션에서 설치 필요.
 
 ### F. ✅ 패키징 (완료)
 - ✅ `requirements.txt`: `msal>=1.28`, `keyring>=25.0` 추가(Phase B).

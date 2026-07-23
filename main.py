@@ -229,7 +229,10 @@ def main() -> int:
     from gui.view_models.playlist_vm import PlaylistViewModel
     from gui.view_models.song_vm import SongViewModel
 
-    # 5. Initialize database
+    # 5. Initialize database — DB 열기 전 클라우드 스냅샷 부트스트랩(신규 기기만)
+    from infrastructure.sync.sync_service import SyncService, pre_db_bootstrap
+    if pre_db_bootstrap():
+        logger.info("클라우드 스냅샷에서 로컬 DB 부트스트랩 완료")
     db = Database()
     db.initialize()
 
@@ -241,6 +244,18 @@ def main() -> int:
     playlist_repo  = SqlitePlaylistRepository(db)
     folder_repo    = SqlitePlaylistFolderRepository(db)
     song_repo      = SqliteSongRepository(db)
+
+    # 6b. 클라우드 동기화 — 연결돼 있으면 repo를 캡처(Recording*)로 교체(미연결이면 무변경).
+    sync_service = SyncService(db)
+    _rec_repos = sync_service.make_recording_repos(db)
+    if _rec_repos is not None:
+        video_repo    = _rec_repos["video"]
+        song_repo     = _rec_repos["song"]
+        clip_repo     = _rec_repos["clip"]
+        download_repo = _rec_repos["download"]
+        playlist_repo = _rec_repos["playlist"]
+        folder_repo   = _rec_repos["folder"]
+        logger.info("클라우드 동기화 연결됨 — 변경 캡처 활성화")
 
     # 7. Infrastructure services
     event_bus    = EventBus()
@@ -440,6 +455,9 @@ def main() -> int:
         delete_source=DeleteLyricsSourceHandler(song_repo),
         reorder_sources=ReorderLyricsSourcesHandler(song_repo),
     )
+    # 클라우드 동기화 뷰모델 (설정 패널 연결/해제·상태·지금 동기화)
+    from gui.view_models.sync_vm import SyncViewModel  # noqa: PLC0415
+    sync_vm = SyncViewModel(sync_service)
 
     # 16. Launch GUI
     window = MainWindow(
@@ -450,6 +468,7 @@ def main() -> int:
         auth_service=auth_service,
         yt_oauth=yt_oauth,
         song_vm=song_vm,
+        sync_vm=sync_vm,
     )
 
     # 자동 업데이트 — composition root에서 조립
@@ -463,6 +482,8 @@ def main() -> int:
     # 17. 스플래시 닫기 + 메인 창 표시
     _splash.finish(window)
     window.show()
+    # 연결돼 있으면 기동 후 1회 동기화 + 주기 자동 동기화 시작.
+    sync_vm.start_auto_sync()
     exit_code = app.exec()
 
     # 앱 완전 종료 후 pending 업데이트 installer 실행 (파일 잠금 방지)
