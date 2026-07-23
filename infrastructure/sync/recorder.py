@@ -43,8 +43,9 @@ class OplogRecorder:
     ) -> Op | None:
         """upsert 변경을 기록한다. 바뀐 필드가 없고 이미 존재하면 no-op(None)."""
         changed = {k: v for k, v in new_values.items() if old_values.get(k) != v}
-        exists = self._identity_exists(entity, nkey)
-        if not changed and exists:
+        # present면(그리고 바뀐 필드 없으면) no-op. present=0(tombstone)이면 되살리기 위해
+        # 변경이 없어도 진행한다(링크의 remove→재add 등).
+        if not changed and self._presence(entity, nkey) == 1:
             return None
 
         lam = self._clock.tick()

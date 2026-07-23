@@ -25,7 +25,7 @@
 
 ## 테스트 상태
 
-- 비-GUI 테스트 **206개 통과**. 실행:
+- 비-GUI 테스트 **210개 통과**. 실행:
   ```bash
   pytest tests/unit tests/integration -q
   ```
@@ -111,8 +111,12 @@ oplog는 **메타데이터만** 다룬다. "미디어 파일까지" 동기화는
 - `ClipApplyHandler`(resolve_video로 source_video_id 해석)·`DownloadApplyHandler`. handler registry 등록.
 - 테스트 4건: clip 수렴/삭제, download 수렴/상태갱신. 비-GUI 206개 통과.
 
-#### D-2b-2 (남음)
-- playlist·playlist_folder(origin-identity) + playlist_item·category_video_order(링크) 캡처/적용. playlist는 folder 참조·item_count·position 처리 주의.
+#### ✅ D-2b-2 완료 (playlist·folder·playlist_item·category_video_order)
+- `RecordingPlaylistFolderRepository`(origin-id)·`RecordingPlaylistRepository`(origin-id, folder ref + set_items/add_video/remove_video/update_folder에서 playlist_item 멤버십 링크 캡처)·`RecordingVideoRepository.set_category_video_order`(category_video_order 링크).
+- 핸들러: PlaylistFolder·Playlist·PlaylistItem·CategoryVideoOrder ApplyHandler + resolve_playlist/resolve_folder. **item_count는 apply 측이 재계산, position(순서)은 append** — 멤버십만 동기화(수동 정렬 순서는 기기 로컬, 문서화된 제한).
+- **버그 수정**: 링크 자연키를 `_LINK_SEP`(\x1e)로 조합 — 부모 nkey가 origin_key(내부 \x1f)일 때 split_link_key가 오파싱하던 문제. **배치 내 부모/자식 순서 무관**을 위해 부모 핸들러가 `_register_identity`로 sync_identity 즉시 등록(_persist_state는 모든 핸들러 이후라 늦음).
+- 테스트 4건(playlist 멤버십/제거/삭제·category order). ENTITY_ORDER에서 playlist_folder를 playlist보다 앞으로. 비-GUI 210개 통과.
+- **D(엔티티 확장) 전체 완료** — video·category·tag·song·clip·download·playlist·folder·playlist_item·category_video_order 캡처/적용.
 
 ### E. Phase 5 — GUI 배선 (기능이 앱에 켜지는 단계)
 - `gui/view_models/sync_vm.py` — `gui/view_models/song_vm.py` 패턴 복제(`SyncViewModel(QObject)`, 시그널, `_SyncWorker(QThread)`, `shutdown()`).

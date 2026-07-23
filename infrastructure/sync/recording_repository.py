@@ -18,6 +18,10 @@ from domain.sync.services import link_key, video_key
 from infrastructure.persistence.database import Database
 from infrastructure.persistence.sqlite_clip_repository import SqliteClipRepository
 from infrastructure.persistence.sqlite_download_repository import SqliteDownloadRepository
+from infrastructure.persistence.sqlite_playlist_repository import (
+    SqlitePlaylistFolderRepository,
+    SqlitePlaylistRepository,
+)
 from infrastructure.persistence.sqlite_song_repository import SqliteSongRepository
 from infrastructure.persistence.sqlite_video_repository import SqliteVideoRepository
 from infrastructure.sync.recorder import OplogRecorder
@@ -200,6 +204,30 @@ class RecordingVideoRepository(SqliteVideoRepository):
             ).fetchall()
         return {r["name"] for r in rows}
 
+    # -- 카테고리 내 수동 정렬(category_video_order) ----------------------
+    def set_category_video_order(self, category_id: UUID, video_ids: list[UUID]) -> None:
+        cnk = self._category_ref(str(category_id))
+        old = self._order_video_nkeys(category_id)
+        super().set_category_video_order(category_id, video_ids)
+        new = {vk for vk in (_video_nkey_of(self._db, v) for v in video_ids) if vk}
+        # 멤버십만 동기화(순서는 적용 측에서 append) — link/unlink.
+        for vnk in sorted(new - old):
+            self._recorder.record_link(
+                "category_video_order", link_key(cnk, vnk), str(uuid4()),
+                {"category": cnk, "video": vnk},
+            )
+        for vnk in sorted(old - new):
+            self._recorder.record_unlink("category_video_order", link_key(cnk, vnk))
+
+    def _order_video_nkeys(self, category_id: UUID) -> set[str]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT v.url FROM category_video_order o "
+                "JOIN videos v ON v.id=o.video_id WHERE o.category_id=?",
+                (str(category_id),),
+            ).fetchall()
+        return {video_key(r["url"]) for r in rows}
+
 
 class RecordingSongRepository(SqliteSongRepository):
     """SqliteSongRepository + song_info save/delete op 캡처.
@@ -323,3 +351,140 @@ class RecordingDownloadRepository(SqliteDownloadRepository):
                 f"SELECT {cols} FROM download_history WHERE id=?", (str(job_id),)
             ).fetchone()
         return {c: row[c] for c in _DOWNLOAD_COLS} if row else None
+
+
+class RecordingPlaylistFolderRepository(SqlitePlaylistFolderRepository):
+    """playlist_folders 캡처(origin-identity). 필드=name·source."""
+
+    def __init__(self, db: Database, recorder: OplogRecorder) -> None:
+        super().__init__(db)
+        self._db = db
+        self._recorder = recorder
+
+    def save(self, folder) -> None:
+        old = self._read_folder(folder.id)
+        super().save(folder)
+        nkey = self._recorder.origin_nkey("playlist_folder", str(folder.id))
+        new = {"name": folder.name, "source": folder.source}
+        self._recorder.record_change("playlist_folder", nkey, str(folder.id), old or {}, new)
+
+    def delete(self, folder_id: UUID) -> None:
+        nkey = self._recorder.origin_nkey("playlist_folder", str(folder_id))
+        super().delete(folder_id)
+        self._recorder.record_delete("playlist_folder", nkey)
+
+    def _read_folder(self, folder_id) -> dict | None:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT name, source FROM playlist_folders WHERE id=?", (str(folder_id),)
+            ).fetchone()
+        return {"name": row["name"], "source": row["source"]} if row else None
+
+
+class RecordingPlaylistRepository(SqlitePlaylistRepository):
+    """playlists 캡처(origin-identity, folder ref) + playlist_item 멤버십 링크 캡처.
+
+    item_count·position(순서)은 캡처하지 않는다 — apply 측이 재계산/append 한다(순서는
+    기기 로컬). 멤버십(어느 영상이 재생목록에 있는지)만 동기화한다.
+    """
+
+    def __init__(self, db: Database, recorder: OplogRecorder) -> None:
+        super().__init__(db)
+        self._db = db
+        self._recorder = recorder
+
+    def save(self, playlist) -> None:
+        old = self._read_playlist(playlist.id)
+        super().save(playlist)
+        nkey = self._recorder.origin_nkey("playlist", str(playlist.id))
+        new = {
+            "title": playlist.title,
+            "yt_playlist_id": playlist.yt_playlist_id,
+            "source": playlist.source,
+            _REF + "folder": self._folder_ref(playlist.folder_id),
+        }
+        self._recorder.record_change("playlist", nkey, str(playlist.id), old or {}, new)
+
+    def delete(self, playlist_id: UUID) -> None:
+        nkey = self._recorder.origin_nkey("playlist", str(playlist_id))
+        super().delete(playlist_id)
+        self._recorder.record_delete("playlist", nkey)
+
+    def set_items(self, playlist_id: UUID, video_ids: list[UUID]) -> None:
+        old = self._item_video_nkeys(playlist_id)
+        super().set_items(playlist_id, video_ids)
+        self._emit_item_diff(playlist_id, old)
+
+    def add_video(self, playlist_id: UUID, video_id: UUID, position: int | None = None) -> None:
+        pnk = self._recorder.origin_nkey("playlist", str(playlist_id))
+        super().add_video(playlist_id, video_id, position)
+        vnk = _video_nkey_of(self._db, video_id)
+        if vnk:
+            self._recorder.record_link(
+                "playlist_item", link_key(pnk, vnk), str(uuid4()),
+                {"playlist": pnk, "video": vnk},
+            )
+
+    def remove_video(self, playlist_id: UUID, video_id: UUID) -> None:
+        pnk = self._recorder.origin_nkey("playlist", str(playlist_id))
+        vnk = _video_nkey_of(self._db, video_id)
+        super().remove_video(playlist_id, video_id)
+        if vnk:
+            self._recorder.record_unlink("playlist_item", link_key(pnk, vnk))
+
+    def update_folder(self, playlist_id: UUID, folder_id: UUID | None) -> None:
+        old_ref = self._folder_ref(self._current_folder(playlist_id))
+        super().update_folder(playlist_id, folder_id)
+        nkey = self._recorder.origin_nkey("playlist", str(playlist_id))
+        self._recorder.record_change(
+            "playlist", nkey, str(playlist_id),
+            {_REF + "folder": old_ref}, {_REF + "folder": self._folder_ref(folder_id)},
+        )
+
+    # -- 내부 -----------------------------------------------------------
+    def _emit_item_diff(self, playlist_id: UUID, old: set[str]) -> None:
+        pnk = self._recorder.origin_nkey("playlist", str(playlist_id))
+        new = self._item_video_nkeys(playlist_id)
+        for vnk in sorted(new - old):
+            self._recorder.record_link(
+                "playlist_item", link_key(pnk, vnk), str(uuid4()),
+                {"playlist": pnk, "video": vnk},
+            )
+        for vnk in sorted(old - new):
+            self._recorder.record_unlink("playlist_item", link_key(pnk, vnk))
+
+    def _item_video_nkeys(self, playlist_id: UUID) -> set[str]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT v.url FROM playlist_items pi "
+                "JOIN videos v ON v.id=pi.video_id WHERE pi.playlist_id=?",
+                (str(playlist_id),),
+            ).fetchall()
+        return {video_key(r["url"]) for r in rows}
+
+    def _read_playlist(self, playlist_id) -> dict | None:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT title, yt_playlist_id, source, folder_id FROM playlists WHERE id=?",
+                (str(playlist_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "title": row["title"],
+            "yt_playlist_id": row["yt_playlist_id"],
+            "source": row["source"],
+            _REF + "folder": self._folder_ref(row["folder_id"]),
+        }
+
+    def _current_folder(self, playlist_id):
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT folder_id FROM playlists WHERE id=?", (str(playlist_id),)
+            ).fetchone()
+        return row["folder_id"] if row else None
+
+    def _folder_ref(self, folder_id) -> str:
+        if not folder_id:
+            return ""
+        return self._recorder.origin_nkey("playlist_folder", str(folder_id))

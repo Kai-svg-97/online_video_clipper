@@ -10,12 +10,14 @@ from domain.clip.aggregates import ClipAggregate
 from domain.clip.value_objects import TimeRange
 from domain.download.entities import DownloadJob, JobStatus
 from domain.library.aggregates import VideoAggregate
-from domain.library.entities import Category, Tag
+from domain.library.entities import Category, Playlist, PlaylistFolder, Tag
 from domain.library.value_objects import VideoUrl
 from domain.song.aggregates import SongInfoAggregate
 from infrastructure.sync.recording_repository import (
     RecordingClipRepository,
     RecordingDownloadRepository,
+    RecordingPlaylistFolderRepository,
+    RecordingPlaylistRepository,
     RecordingSongRepository,
 )
 from tests.integration.test_sync_flow import _NK, _URL, FakeCloudProvider, Install
@@ -316,3 +318,94 @@ class TestDownloadHistory:
             ).fetchone()
         assert row["status"] == JobStatus.COMPLETED.value
         assert row["file_path"] == "downloads/done.mp4"
+
+
+class TestPlaylist:
+    def test_playlist_folder_and_membership_converge(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        _seed_video(a, b)
+
+        folder_repo = RecordingPlaylistFolderRepository(a.db, a.recorder)
+        pl_repo = RecordingPlaylistRepository(a.db, a.recorder)
+        folder = PlaylistFolder.create("내 폴더")
+        folder_repo.save(folder)
+        pl = Playlist.create("내 재생목록", folder_id=folder.id)
+        pl_repo.save(pl)
+        pl_repo.add_video(pl.id, _video_id(a))
+        a.push()
+        b.pull()
+
+        with b.db.connection() as conn:
+            # 폴더에 속한 재생목록
+            prow = conn.execute(
+                "SELECT p.item_count, f.name AS folder FROM playlists p "
+                "JOIN playlist_folders f ON f.id=p.folder_id WHERE p.title=?",
+                ("내 재생목록",),
+            ).fetchone()
+            assert prow is not None and prow["folder"] == "내 폴더"
+            assert prow["item_count"] == 1  # 적용 측 재계산
+            # 멤버십
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM playlist_items pi "
+                "JOIN playlists p ON p.id=pi.playlist_id "
+                "JOIN videos v ON v.id=pi.video_id WHERE p.title=? AND v.url=?",
+                ("내 재생목록", _NK),
+            ).fetchone()[0]
+            assert cnt == 1
+
+    def test_playlist_remove_video_converges(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        _seed_video(a, b)
+        pl_repo = RecordingPlaylistRepository(a.db, a.recorder)
+        pl = Playlist.create("목록")
+        pl_repo.save(pl)
+        pl_repo.add_video(pl.id, _video_id(a))
+        a.push()
+        b.pull()
+
+        pl_repo.remove_video(pl.id, _video_id(a))
+        a.push()
+        b.pull()
+        with b.db.connection() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM playlist_items").fetchone()[0] == 0
+
+    def test_playlist_delete_converges(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        _seed_video(a, b)
+        pl_repo = RecordingPlaylistRepository(a.db, a.recorder)
+        pl = Playlist.create("삭제될 목록")
+        pl_repo.save(pl)
+        a.push()
+        b.pull()
+        with b.db.connection() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM playlists").fetchone()[0] == 1
+
+        pl_repo.delete(pl.id)
+        a.push()
+        b.pull()
+        with b.db.connection() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM playlists").fetchone()[0] == 0
+
+
+class TestCategoryVideoOrder:
+    def test_order_membership_converges(self, tmp_path, provider):
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        _seed_video(a, b)
+        cat = Category.create("정렬카테고리")
+        a.repo.save_category(cat)
+        a.repo.set_category_video_order(cat.id, [_video_id(a)])
+        a.push()
+        b.pull()
+
+        with b.db.connection() as conn:
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM category_video_order o "
+                "JOIN categories c ON c.id=o.category_id "
+                "JOIN videos v ON v.id=o.video_id WHERE c.name=? AND v.url=?",
+                ("정렬카테고리", _NK),
+            ).fetchone()[0]
+        assert cnt == 1

@@ -20,8 +20,11 @@ from domain.sync.value_objects import ClockEntry, EntityKey, FileEntry, Op
 # 자연키 (NaturalKey)
 # ---------------------------------------------------------------------------
 
-# 경로/링크 조합에 쓰는 구분자 — 일반 텍스트에 등장하지 않는 제어문자.
+# 경로/origin 조합에 쓰는 구분자 — 일반 텍스트에 등장하지 않는 제어문자.
 _SEP = "\x1f"
+# 링크 자연키 전용 구분자 — 부모 nkey가 origin_key(내부에 _SEP 포함)일 수 있으므로
+# _SEP과 다른 문자를 써야 split_link_key가 (부모, 자식)을 올바르게 복원한다.
+_LINK_SEP = "\x1e"
 
 
 def video_key(url: str) -> str:
@@ -48,13 +51,15 @@ def channel_key(channel_id: str) -> str:
 
 
 def link_key(parent_nkey: str, child_nkey: str) -> str:
-    """조인 테이블(video_tag/playlist_item/category_video_order)의 링크 자연키."""
-    return f"{parent_nkey}{_SEP}{child_nkey}"
+    """조인 테이블(video_tag/playlist_item/category_video_order)의 링크 자연키.
+
+    부모 nkey가 origin_key(내부 _SEP 포함)일 수 있어 _LINK_SEP으로 구분한다."""
+    return f"{parent_nkey}{_LINK_SEP}{child_nkey}"
 
 
 def split_link_key(nkey: str) -> tuple[str, str]:
     """link_key의 역 — (부모nkey, 자식nkey). UNLINK op는 refs가 없어 nkey에서 복원한다."""
-    parts = nkey.split(_SEP, 1)
+    parts = nkey.split(_LINK_SEP, 1)
     return (parts[0], parts[1]) if len(parts) == 2 else (nkey, "")
 
 
@@ -75,11 +80,11 @@ ENTITY_ORDER: tuple[str, ...] = (
     "category",
     "tag",
     "channel_subscription",
+    "playlist_folder",  # playlist.folder_id FK 대상 — playlist보다 먼저
     "video",
     "video_description",
     "song_info",
     "playlist",
-    "playlist_folder",
     "video_tag",
     "playlist_item",
     "category_video_order",

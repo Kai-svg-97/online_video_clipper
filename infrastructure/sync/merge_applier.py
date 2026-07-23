@@ -39,15 +39,32 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _register_identity(conn, entity: str, nkey: str, local_uuid: str) -> None:
+    """origin-identity 엔티티를 배치 내 즉시 참조 가능하도록 sync_identity에 등록.
+
+    _persist_state는 모든 핸들러 이후라, 같은 배치의 자식이 부모를 resolve_*로 찾으려면
+    핸들러 적용 시점에 미리 등록돼 있어야 한다(present/clock은 이후 _persist_state가 확정)."""
+    conn.execute(
+        "INSERT OR IGNORE INTO sync_identity"
+        "(entity, nkey, local_uuid, present, pres_lamport, pres_install) "
+        "VALUES (?,?,?,1,0,'')",
+        (entity, nkey, local_uuid),
+    )
+
+
 class MergeApplier:
     def __init__(self, db, clock, handlers: dict | None = None) -> None:
         self._db = db
         self._clock = clock
         self._handlers = handlers or {
             "category": CategoryApplyHandler(),
+            "playlist_folder": PlaylistFolderApplyHandler(),
             "video": VideoApplyHandler(),
             "song_info": SongApplyHandler(),
+            "playlist": PlaylistApplyHandler(),
             "video_tag": VideoTagApplyHandler(),
+            "playlist_item": PlaylistItemApplyHandler(),
+            "category_video_order": CategoryVideoOrderApplyHandler(),
             "clip": ClipApplyHandler(),
             "download_history": DownloadApplyHandler(),
         }
@@ -202,6 +219,26 @@ class MergeApplier:
             return row["local_uuid"]
         row = conn.execute("SELECT id FROM videos WHERE url=?", (video_nkey,)).fetchone()
         return row["id"] if row else None
+
+    @staticmethod
+    def resolve_playlist(conn, nkey: str | None) -> str | None:
+        if not nkey:
+            return None
+        row = conn.execute(
+            "SELECT local_uuid FROM sync_identity WHERE entity='playlist' AND nkey=?",
+            (nkey,),
+        ).fetchone()
+        return row["local_uuid"] if row else None
+
+    @staticmethod
+    def resolve_folder(conn, nkey: str | None) -> str | None:
+        if not nkey:
+            return None
+        row = conn.execute(
+            "SELECT local_uuid FROM sync_identity WHERE entity='playlist_folder' AND nkey=?",
+            (nkey,),
+        ).fetchone()
+        return row["local_uuid"] if row else None
 
     @staticmethod
     def resolve_tag(conn, tag_nkey: str) -> str:
@@ -559,3 +596,165 @@ class DownloadApplyHandler:
 
     def delete(self, conn, local_uuid, nkey) -> None:
         conn.execute("DELETE FROM download_history WHERE id=?", (local_uuid,))
+
+
+class PlaylistFolderApplyHandler:
+    """playlist_folders 반영(origin-identity). 필드=name·source."""
+
+    _COLS = ("name", "source")
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        exists = conn.execute(
+            "SELECT 1 FROM playlist_folders WHERE id=?", (local_uuid,)
+        ).fetchone()
+        if exists:
+            sets, vals = [], []
+            for col in self._COLS:
+                if col in fields:
+                    sets.append(f"{col}=?")
+                    vals.append(fields[col])
+            if sets:
+                sets.append("updated_at=?")
+                vals.append(_now_iso())
+                conn.execute(
+                    f"UPDATE playlist_folders SET {', '.join(sets)} WHERE id=?",
+                    (*vals, local_uuid),
+                )
+        else:
+            now = _now_iso()
+            conn.execute(
+                "INSERT INTO playlist_folders(id, name, source, created_at, updated_at) "
+                "VALUES (?,?,?,?,?)",
+                (local_uuid, fields.get("name", ""), fields.get("source", "local"), now, now),
+            )
+        # 같은 배치의 playlist가 resolve_folder로 참조하려면 지금 등록돼 있어야 한다
+        # (_persist_state는 모든 핸들러 이후라 배치 내 참조엔 늦다).
+        _register_identity(conn, "playlist_folder", nkey, local_uuid)
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        conn.execute(
+            "UPDATE playlists SET folder_id=NULL WHERE folder_id=?", (local_uuid,)
+        )
+        conn.execute("DELETE FROM playlist_folders WHERE id=?", (local_uuid,))
+
+
+class PlaylistApplyHandler:
+    """playlists 반영(origin-identity, folder ref). item_count는 playlist_item 적용 시 재계산."""
+
+    _COLS = ("title", "yt_playlist_id", "source")
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        folder_id = applier.resolve_folder(conn, refs["folder"]) if refs.get("folder") else None
+        exists = conn.execute(
+            "SELECT 1 FROM playlists WHERE id=?", (local_uuid,)
+        ).fetchone()
+        if exists:
+            sets, vals = [], []
+            for col in self._COLS:
+                if col in fields:
+                    sets.append(f"{col}=?")
+                    vals.append(fields[col])
+            if "folder" in refs:
+                sets.append("folder_id=?")
+                vals.append(folder_id)
+            if sets:
+                sets.append("updated_at=?")
+                vals.append(_now_iso())
+                conn.execute(
+                    f"UPDATE playlists SET {', '.join(sets)} WHERE id=?", (*vals, local_uuid)
+                )
+        else:
+            now = _now_iso()
+            conn.execute(
+                """
+                INSERT INTO playlists
+                    (id, title, yt_playlist_id, source, item_count, folder_id, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (
+                    local_uuid, fields.get("title", ""), fields.get("yt_playlist_id"),
+                    fields.get("source", "local"), 0, folder_id, now, now,
+                ),
+            )
+        # 같은 배치의 playlist_item이 resolve_playlist로 참조할 수 있도록 즉시 등록.
+        _register_identity(conn, "playlist", nkey, local_uuid)
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        conn.execute("DELETE FROM playlists WHERE id=?", (local_uuid,))
+
+
+def _recount_playlist(conn, playlist_id) -> None:
+    conn.execute(
+        "UPDATE playlists SET item_count="
+        "(SELECT COUNT(*) FROM playlist_items WHERE playlist_id=?) WHERE id=?",
+        (playlist_id, playlist_id),
+    )
+
+
+class PlaylistItemApplyHandler:
+    """playlist_item 링크. 멤버십만 동기화 — position은 append(순서는 기기 로컬)."""
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        pnk, vnk = refs.get("playlist"), refs.get("video")
+        if not pnk or not vnk:
+            pnk, vnk = split_link_key(nkey)
+        pid = applier.resolve_playlist(conn, pnk)
+        vid = applier.resolve_video(conn, vnk)
+        if pid is None or vid is None:
+            logger.warning("playlist_item 적용 skip — 미해결(p=%s v=%s)", pnk, vnk)
+            return
+        pos = conn.execute(
+            "SELECT COALESCE(MAX(position)+1, 0) AS p FROM playlist_items WHERE playlist_id=?",
+            (pid,),
+        ).fetchone()["p"]
+        conn.execute(
+            "INSERT OR IGNORE INTO playlist_items(playlist_id, video_id, position, added_at) "
+            "VALUES (?,?,?,?)",
+            (pid, vid, pos, _now_iso()),
+        )
+        _recount_playlist(conn, pid)
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        pnk, vnk = split_link_key(nkey)
+        pid = MergeApplier.resolve_playlist(conn, pnk)
+        vid = MergeApplier.resolve_video(conn, vnk)
+        if pid is not None and vid is not None:
+            conn.execute(
+                "DELETE FROM playlist_items WHERE playlist_id=? AND video_id=?", (pid, vid)
+            )
+            _recount_playlist(conn, pid)
+
+
+class CategoryVideoOrderApplyHandler:
+    """category_video_order 링크(카테고리 내 수동 정렬 멤버십). position은 append."""
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        cnk, vnk = refs.get("category"), refs.get("video")
+        if not cnk or not vnk:
+            cnk, vnk = split_link_key(nkey)
+        cid = applier.resolve_category(conn, cnk)
+        vid = applier.resolve_video(conn, vnk)
+        if cid is None or vid is None:
+            logger.warning("category_video_order 적용 skip — 미해결(c=%s v=%s)", cnk, vnk)
+            return
+        pos = conn.execute(
+            "SELECT COALESCE(MAX(position)+1, 0) AS p FROM category_video_order WHERE category_id=?",
+            (cid,),
+        ).fetchone()["p"]
+        conn.execute(
+            "INSERT OR IGNORE INTO category_video_order(category_id, video_id, position) "
+            "VALUES (?,?,?)",
+            (cid, vid, pos),
+        )
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        cnk, vnk = split_link_key(nkey)
+        crow = conn.execute(
+            "SELECT local_uuid FROM sync_identity WHERE entity='category' AND nkey=?", (cnk,)
+        ).fetchone()
+        vid = MergeApplier.resolve_video(conn, vnk)
+        if crow is not None and vid is not None:
+            conn.execute(
+                "DELETE FROM category_video_order WHERE category_id=? AND video_id=?",
+                (crow["local_uuid"], vid),
+            )
