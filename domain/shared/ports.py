@@ -129,7 +129,8 @@ class ISummarySource(Protocol):
 
     구현체: infrastructure.browser.gemini_extractor.GeminiExtractor
 
-    로그인 쿠키가 없거나 요약 버튼을 찾지 못하면 예외 대신 빈 문자열을 반환한다.
+    로그인 쿠키가 없거나 요약 버튼을 찾지 못하면 예외 대신 빈 문자열 또는 None을
+    반환한다(호출 측은 falsy 검사로 실패를 판별한다).
     """
 
-    def extract(self, url: str) -> str: ...
+    def extract(self, url: str) -> str | None: ...

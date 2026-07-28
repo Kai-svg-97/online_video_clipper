@@ -134,6 +134,7 @@ def main() -> int:
         DeleteCategoryHandler,
         DeleteTagHandler,
         DeleteVideoHandler,
+        EnrichVideoHandler,
         ImportYouTubePlaylistToCategoryHandler,
         MarkWatchedHandler,
         MoveCategoryHandler,
@@ -271,6 +272,10 @@ def main() -> int:
     dl_queue = DownloadQueueAggregate()
 
     # 9. Application handlers — Library
+    # Gemini 요약 추출기 — 등록 후 자동 보강(EnrichVideoHandler)과 다운로드 완료 캡처가 공유
+    from infrastructure.browser.gemini_extractor import GeminiExtractor
+    _gemini_extractor = GeminiExtractor()
+
     # 노래 정보 조회 핸들러 — AddVideoHandler가 등록 시 노래 감지·메타데이터 기록에 사용.
     fetch_song = FetchSongInfoHandler(
         song_repo, video_repo, event_bus,
@@ -279,6 +284,13 @@ def main() -> int:
         media_source=ytdlp,
     )
     add_video           = AddVideoHandler(video_repo, event_bus, ytdlp, song_fetch=fetch_song)
+    # 단건 등록 직후 요약(비노래)·가사(노래) 자동 보강 — GUI 워커가 백그라운드에서 호출
+    enrich_video        = EnrichVideoHandler(
+        video_repo, song_repo,
+        song_fetch=fetch_song,
+        summary_source=_gemini_extractor,
+        event_bus=event_bus,
+    )
     update_video        = UpdateVideoHandler(video_repo, event_bus)
     delete_video        = DeleteVideoHandler(video_repo, event_bus)
     mark_watched        = MarkWatchedHandler(video_repo, event_bus)
@@ -305,8 +317,6 @@ def main() -> int:
     )
 
     # 10. Application handlers — Download
-    from infrastructure.browser.gemini_extractor import GeminiExtractor
-    _gemini_extractor = GeminiExtractor()
     start_dl  = StartDownloadHandler(
         dl_queue, download_repo, ytdlp, event_bus,
         make_downloader=lambda cb: YtDlpAdapter(on_progress=cb),
@@ -394,6 +404,7 @@ def main() -> int:
         get_video_id_by_url=get_video_id_by_url,
         refresh_video_metadata=refresh_video_meta,
         find_song_videos=FindSongVideoIdsHandler(song_repo),
+        enrich_video=enrich_video,
     )
     get_yt_playlists_h = GetYouTubePlaylistsHandler(ytdlp, _yt_api)
     playlist_vm = PlaylistViewModel(

@@ -169,6 +169,18 @@ class TestSummaryBranch:
         assert "쿠키" in result.detail
         repo.save.assert_not_called()
 
+    def test_none_summary_reports_cookie_hint(self):
+        """GeminiExtractor.extract는 실패 시 None도 반환한다 — 빈 문자열과 동일 처리."""
+        handler, repo, _ = _make(
+            _video_agg(), _song_agg(False), MagicMock(), _FakeSummarySource(None)
+        )
+
+        result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
+
+        assert result.ok is False
+        assert "쿠키" in result.detail
+        repo.save.assert_not_called()
+
     def test_missing_summary_source_skipped(self):
         """요약 추출기가 주입되지 않아도 예외 없이 skipped."""
         handler, _repo, _ = _make(_video_agg(), _song_agg(False), MagicMock(), None)

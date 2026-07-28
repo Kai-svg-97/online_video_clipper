@@ -536,6 +536,16 @@ class LibraryViewModel(QObject):
             logger.exception("재생목록 첫 영상 조회 실패")
             return None
 
+    def get_video_id_by_url(self, url: str) -> "UUID | None":
+        """URL로 라이브러리 영상 ID를 조회한다(없으면 None)."""
+        if self._get_video_id_by_url is None:
+            return None
+        try:
+            return self._get_video_id_by_url.handle(url)
+        except Exception:
+            logger.exception("URL로 영상 ID 조회 실패: %s", url)
+            return None
+
     def delete_video(self, video_id: UUID) -> None:
         try:
             self._delete_video.handle(DeleteVideoCommand(video_id))

@@ -576,6 +576,8 @@ class MainWindow(QMainWindow):
         self._library_vm.error_occurred.connect(self._show_library_error)
         self._library_vm.video_add_started.connect(self._on_add_started)
         self._library_vm.video_add_finished.connect(self._on_add_finished)
+        self._library_vm.enrich_started.connect(self._on_enrich_started)
+        self._library_vm.enrich_finished.connect(self._on_enrich_finished)
 
         # 다운로드
         lp.download_requested.connect(
@@ -621,6 +623,29 @@ class MainWindow(QMainWindow):
         self._add_progress.hide()
         short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
         self.statusBar().showMessage(f"등록 완료: {short}", 5000)
+
+    # ── 등록 후 자동 보강 (요약/가사) ──────────────────────────────────
+    _ENRICH_LABEL = {"song": "가사 조회", "summary": "요약 생성"}
+
+    def _on_enrich_started(self, url: str, kind: str) -> None:
+        label = self._ENRICH_LABEL.get(kind, "정보 보강")
+        short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
+        self.statusBar().showMessage(f"{label} 중: {short}", 0)
+        self._add_progress.show()
+
+    def _on_enrich_finished(self, url: str, kind: str, ok: bool, detail: str) -> None:
+        self._add_progress.hide()
+        label = self._ENRICH_LABEL.get(kind, "정보 보강")
+        if kind == "skipped" and ok:
+            # 이미 값이 있어 건너뛴 경우 — 사용자에게 알릴 것이 없다.
+            self.statusBar().clearMessage()
+            return
+        if ok:
+            suffix = f" ({detail})" if detail else ""
+            self.statusBar().showMessage(f"{label} 완료{suffix}", 5000)
+        else:
+            reason = detail or "알 수 없는 오류"
+            self.statusBar().showMessage(f"{label} 실패: {reason}", 8000)
 
     # ------------------------------------------------------------------
     def _on_clipboard_changed(self) -> None:

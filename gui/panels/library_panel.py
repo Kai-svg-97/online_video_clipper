@@ -3893,6 +3893,7 @@ class LibraryPanel(QWidget):
         self._vm.metadata_refresh_progress.connect(self._on_refresh_progress)
         self._vm.metadata_refresh_finished.connect(self._on_refresh_finished)
         self._vm.video_metadata_refreshed.connect(self._on_video_metadata_refreshed)
+        self._vm.enrich_finished.connect(self._on_enrich_finished)
         self._tag_list.itemClicked.connect(self._on_tag_clicked)
         self._tag_list.delete_requested.connect(self._on_tag_delete_requested)
         self._tag_list.favorite_toggled.connect(self._toggle_favorite)
@@ -4874,6 +4875,23 @@ class LibraryPanel(QWidget):
             return
         # 갱신 도중 다른 화면/영상으로 이동했으면 재로드하지 않는다.
         if self._detail_widget.current_detail_id() != video_id:
+            return
+        self._reload_detail_in_place(video_id)
+
+    def _on_enrich_finished(self, url: str, kind: str, ok: bool, detail: str) -> None:
+        """등록 후 자동 보강 완료 — 그 영상 상세가 열려 있으면 제자리 재로드.
+
+        요약 추출은 수십 초가 걸려 그 사이 사용자가 영상을 열어 볼 수 있다.
+        _reload_detail_in_place가 상세 DTO와 노래 정보를 함께 다시 읽으므로
+        요약 탭·노래 탭 어느 쪽이 채워졌든 반영된다.
+        """
+        if not ok:
+            return
+        video_id = self._detail_widget.current_detail_id()
+        if video_id is None:
+            return
+        enriched_id = self._vm.get_video_id_by_url(url)
+        if enriched_id != video_id:
             return
         self._reload_detail_in_place(video_id)
 
