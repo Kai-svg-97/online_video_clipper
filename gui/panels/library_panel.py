@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import zlib
 from collections import OrderedDict
 from pathlib import Path
 from uuid import UUID
@@ -154,6 +155,17 @@ _TAG_PALETTE: tuple[str, ...] = (
     "#6b1a3a", "#3a6b1a", "#8a4a1a", "#1a4a6b",
     "#6b6b1a", "#4a8a4a", "#8a1a6b", "#1a8a8a",
 )
+
+
+def tag_color(name: str) -> str:
+    """태그·카테고리 이름에서 표시 색상을 결정한다.
+
+    `hash()`는 파이썬 str 해시가 PYTHONHASHSEED로 프로세스마다 무작위화되어
+    앱을 다시 켤 때마다 색이 바뀌었다. crc32는 시드에 의존하지 않아
+    실행·플랫폼에 걸쳐 항상 같은 색을 준다.
+    """
+    digest = zlib.crc32(name.encode("utf-8"))
+    return _TAG_PALETTE[digest % len(_TAG_PALETTE)]
 
 
 # ------------------------------------------------------------------
@@ -1354,7 +1366,7 @@ class _ActiveTagsBar(QWidget):
         for tid, name in tags:
             label     = f"#{name}  ✕"
             chip_w    = min(len(label) * 7 + 24, 186)
-            color     = _TAG_PALETTE[hash(name) % len(_TAG_PALETTE)]
+            color     = tag_color(name)
 
             if row is None or row_used + chip_w + 4 > MAX_ROW_W:
                 if row is not None:
@@ -2758,7 +2770,7 @@ class _BreadcrumbBar(QWidget):
             div.setStyleSheet(f"color:{tok.text_muted};font-size:9pt;")
             self._row.addWidget(div)
             for tag_id, tname in tag_pairs:
-                color = _TAG_PALETTE[hash(tname) % len(_TAG_PALETTE)]
+                color = tag_color(tname)
                 chip = QPushButton(f"#{tname}  ✕")
                 chip.setFlat(True)
                 chip.setStyleSheet(
@@ -4194,7 +4206,7 @@ class LibraryPanel(QWidget):
         )[:5]
         for tag in top_tags:
             selected = tag.id in self._active_tag_ids
-            color = _TAG_PALETTE[hash(tag.name) % len(_TAG_PALETTE)]
+            color = tag_color(tag.name)
             btn = _PopularTagButton(tag.name, tag.count, color, selected)
             btn.clicked.connect(lambda _, tid=tag.id: self._on_popular_tag_clicked(tid))
             btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
