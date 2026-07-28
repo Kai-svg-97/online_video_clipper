@@ -178,6 +178,30 @@ SAND = ThemeTokens(
 )
 
 
+MIST = ThemeTokens(
+    name="mist",
+    display_name="Mist",
+    # 계층 간 휘도 차이를 12~18단위로 벌려 경계가 눈에 보이게 한다.
+    # 순백 대신 #f8fafc를 카드에 써 장시간 사용 시 눈 부담을 줄인다.
+    bg_base="#d9dee6",
+    bg_surface="#e7ebf1",
+    bg_elevated="#f8fafc",
+    bg_overlay="#c9d2dd",
+    border="#aab6c5",
+    border_muted="#c4cdd9",
+    text_primary="#121a25",
+    text_secondary="#4d5c70",
+    text_muted="#8290a2",
+    accent="#2563eb",
+    accent_hover="#1d4ed8",
+    selected_border="#2563eb",
+    progress_fg="#2563eb",
+    badge_bg="rgba(0, 0, 0, 0.55)",
+    star_color="#b45309",
+    text_on_accent="#ffffff",
+)
+
+
 PRESETS: dict[str, ThemeTokens] = {
     "slate": SLATE,
     "zinc": ZINC,
@@ -185,6 +209,7 @@ PRESETS: dict[str, ThemeTokens] = {
     "cloud": CLOUD,
     "rose": ROSE,
     "sand": SAND,
+    "mist": MIST,
 }
 
-DEFAULT_PRESET = "slate"
+DEFAULT_PRESET = "mist"
