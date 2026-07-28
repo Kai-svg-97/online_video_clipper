@@ -43,6 +43,7 @@ def library_vm(qapp_instance):
         assign_category=MagicMock(),
         get_video_detail=_handler(None),
         refresh_metadata=MagicMock(),
+        enrich_video=MagicMock(),
     )
 
 
