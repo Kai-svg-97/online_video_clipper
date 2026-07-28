@@ -125,6 +125,8 @@ CLIPBOARD_MONITORING: bool = _load_bool("clipboard_monitoring", True)
 DEFAULT_QUALITY: str = _resolve_str("default_quality", "best[ext=mp4]/best")
 DEFAULT_FORMAT: str = _resolve_str("default_format", "mp4")
 AUTO_UPDATE_CHECK: bool = _load_bool("auto_update_check", True)
+# 단건 등록 직후 요약(비노래)·가사(노래) 자동 보강. 일괄 임포트는 대상이 아니다.
+AUTO_ENRICH_ON_ADD: bool = _load_bool("auto_enrich_on_add", True)
 LAST_UPDATE_CHECK: float = float(_load_config().get("last_update_check", 0) or 0)
 SNOOZED_UPDATE_VERSION: str = _resolve_str("snoozed_update_version", "")
 
@@ -165,6 +167,7 @@ def save_setting(key: str, value) -> None:
         "default_format": "DEFAULT_FORMAT",
         "theme": "THEME",
         "auto_update_check": "AUTO_UPDATE_CHECK",
+        "auto_enrich_on_add": "AUTO_ENRICH_ON_ADD",
         "last_update_check": "LAST_UPDATE_CHECK",
         "snoozed_update_version": "SNOOZED_UPDATE_VERSION",
         "yt_auth_browser": "YT_AUTH_BROWSER",

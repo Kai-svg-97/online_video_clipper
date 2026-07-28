@@ -795,11 +795,13 @@ class SettingsPanel(QWidget):
             cur_concurrent = s.MAX_CONCURRENT_DOWNLOADS
             cur_feed_workers = s.MAX_CONCURRENT_FEED_WORKERS
             cur_clipboard = s.CLIPBOARD_MONITORING
+            cur_auto_enrich = s.AUTO_ENRICH_ON_ADD
         except Exception:
             logger.exception("일반 설정 로드 실패")
             cur_concurrent = 3
             cur_feed_workers = 4
             cur_clipboard = True
+            cur_auto_enrich = True
 
         # 동시 다운로드 수
         concurrent_row = QHBoxLayout()
@@ -840,6 +842,23 @@ class SettingsPanel(QWidget):
         self._clipboard_check.setChecked(cur_clipboard)
         self._clipboard_check.checkStateChanged.connect(self._on_clipboard_changed)
         layout.addWidget(self._clipboard_check)
+        layout.addSpacing(10)
+
+        # 등록 시 요약·가사 자동 채우기
+        self._auto_enrich_check = QCheckBox("등록 시 요약·가사 자동 채우기")
+        self._auto_enrich_check.setChecked(cur_auto_enrich)
+        self._auto_enrich_check.checkStateChanged.connect(self._on_auto_enrich_changed)
+        layout.addWidget(self._auto_enrich_check)
+
+        enrich_hint = QLabel(
+            "영상을 한 건씩 등록할 때 음원용 영상은 가사를, 그 외 영상은 Gemini 요약을 "
+            "백그라운드에서 채웁니다. 재생목록·채널 일괄 가져오기는 대상이 아닙니다.\n"
+            "요약은 YouTube 로그인 쿠키가 필요합니다 — Chrome 127 이상은 쿠키 자동 추출이 "
+            "불가하므로 아래 인증 섹션에서 쿠키 파일을 직접 등록해야 합니다."
+        )
+        enrich_hint.setWordWrap(True)
+        enrich_hint.setStyleSheet("font-size: 10px; color: #777; margin-left: 22px;")
+        layout.addWidget(enrich_hint)
         layout.addSpacing(28)
 
         # ── 구분선 ──
@@ -1187,6 +1206,11 @@ class SettingsPanel(QWidget):
         from config import settings as s
         checked = (state == Qt.CheckState.Checked)
         s.save_setting("clipboard_monitoring", checked)
+
+    def _on_auto_enrich_changed(self, state) -> None:
+        from config import settings as s
+        checked = (state == Qt.CheckState.Checked)
+        s.save_setting("auto_enrich_on_add", checked)
 
     def _on_browse_folder(self) -> None:
         from config import settings as s
