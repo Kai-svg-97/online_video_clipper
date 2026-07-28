@@ -122,3 +122,14 @@ class IClipExtractor(Protocol):
         width: int = 160,
         height: int = 90,
     ) -> Path: ...
+
+
+class ISummarySource(Protocol):
+    """YouTube Gemini AI 요약 추출 추상화.
+
+    구현체: infrastructure.browser.gemini_extractor.GeminiExtractor
+
+    로그인 쿠키가 없거나 요약 버튼을 찾지 못하면 예외 대신 빈 문자열을 반환한다.
+    """
+
+    def extract(self, url: str) -> str: ...

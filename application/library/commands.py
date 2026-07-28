@@ -10,7 +10,7 @@ from uuid import UUID
 from domain.library.aggregates import VideoAggregate
 from domain.library.repositories import IVideoRepository, SearchQuery
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
-from domain.shared.ports import IEventBus, IMediaSource
+from domain.shared.ports import IEventBus, IMediaSource, ISummarySource
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,23 @@ class UpdateVideoCommand:
 @dataclass
 class DeleteVideoCommand:
     video_id: UUID
+
+
+@dataclass
+class EnrichVideoCommand:
+    """등록 직후 요약/가사를 자동 보강한다(단건 등록 경로에서만 호출)."""
+    video_id: UUID
+
+
+@dataclass
+class EnrichVideoResult:
+    """보강 결과 — GUI 상태바 표시용.
+
+    kind: "song"(가사 조회) | "summary"(요약 추출) | "skipped"(대상 아님·이미 있음)
+    """
+    kind: str
+    ok: bool
+    detail: str = ""
 
 
 @dataclass
@@ -225,6 +242,110 @@ class AddVideoHandler:
             )
         except Exception:
             logger.exception("노래 정보 등록 실패(무시): %s", video_id)
+
+
+class EnrichVideoHandler:
+    """등록된 영상의 성격에 따라 가사 또는 요약 한쪽만 자동으로 채운다.
+
+    분기 기준은 `song_info.is_song`이다 — 등록 시 `AddVideoHandler._register_song`이
+    이미 기록해 두므로 yt-dlp를 다시 조회하지 않는다.
+
+    - 노래 영상: 가사만 조회한다(메타데이터는 등록 시점에 채워져 있고, 체인은 빈 값만
+      채우므로 실질적으로 가사만 추가된다). 가사를 못 찾아도 **요약으로 폴백하지 않는다.**
+    - 그 외: Gemini 요약을 추출해 `gemini_summary`에 저장한다.
+
+    모든 실패는 EnrichVideoResult(ok=False)로 변환해 등록 결과에 영향을 주지 않는다.
+    """
+
+    def __init__(
+        self,
+        repo: IVideoRepository,
+        song_repo: "object",                   # ISongRepository
+        song_fetch: "object | None" = None,    # FetchSongInfoHandler
+        summary_source: ISummarySource | None = None,
+        event_bus: IEventBus | None = None,
+    ) -> None:
+        self._repo = repo
+        self._songs = song_repo
+        self._song_fetch = song_fetch
+        self._summary = summary_source
+        self._bus = event_bus
+
+    def is_song_video(self, video_id: UUID) -> bool:
+        """상태바 라벨용 사전 판정.
+
+        실제 실행 분기는 handle()이 단독으로 결정한다 — 이 값은 표시용일 뿐이다.
+        """
+        try:
+            agg = self._songs.get(video_id)
+        except Exception:
+            logger.exception("노래 여부 조회 실패: %s", video_id)
+            return False
+        return bool(agg is not None and agg.info.is_song)
+
+    def handle(self, cmd: EnrichVideoCommand) -> EnrichVideoResult:
+        video_agg = self._repo.get_by_id(cmd.video_id)
+        if video_agg is None:
+            return EnrichVideoResult("skipped", False, "영상을 찾을 수 없습니다")
+
+        try:
+            song_agg = self._songs.get(cmd.video_id)
+        except Exception:
+            logger.exception("노래 정보 조회 실패: %s", cmd.video_id)
+            song_agg = None
+
+        if song_agg is not None and song_agg.info.is_song:
+            return self._enrich_lyrics(cmd.video_id, song_agg)
+        return self._enrich_summary(video_agg)
+
+    # ------------------------------------------------------------------
+    def _enrich_lyrics(self, video_id: UUID, song_agg) -> EnrichVideoResult:
+        if song_agg.info.lyrics_lines:
+            return EnrichVideoResult("song", True, "가사가 이미 있습니다")
+        if self._song_fetch is None:
+            return EnrichVideoResult("skipped", False, "가사 조회기가 설정되지 않았습니다")
+
+        try:
+            from application.song.commands import FetchSongInfoCommand  # noqa: PLC0415
+            result = self._song_fetch.handle(
+                FetchSongInfoCommand(video_id=video_id, fetch_lyrics=True)
+            )
+        except Exception as exc:
+            logger.exception("가사 자동 조회 실패: %s", video_id)
+            return EnrichVideoResult("song", False, str(exc))
+
+        lines = list(result.info.lyrics_lines) if result is not None else []
+        if not lines:
+            # 폴백 없음 — 요약으로 넘어가지 않는다(확정된 정책).
+            logger.warning("가사를 찾지 못했습니다: %s", video_id)
+            return EnrichVideoResult("song", False, "가사를 찾지 못했습니다")
+        return EnrichVideoResult("song", True, f"{len(lines)}줄")
+
+    def _enrich_summary(self, video_agg) -> EnrichVideoResult:
+        if video_agg.video.gemini_summary:
+            return EnrichVideoResult("skipped", True, "요약이 이미 있습니다")
+        if self._summary is None:
+            return EnrichVideoResult("skipped", False, "요약 추출기가 설정되지 않았습니다")
+
+        url = str(video_agg.video.url)
+        try:
+            summary = self._summary.extract(url)
+        except Exception as exc:
+            logger.exception("요약 자동 추출 실패: %s", url)
+            return EnrichVideoResult("summary", False, str(exc))
+
+        if not summary:
+            # 미로그인·쿠키 미설정에서 흔한 정상 실패 — 트레이스백 없이 안내만 남긴다.
+            logger.warning("요약을 가져오지 못했습니다(YouTube 쿠키 확인): %s", url)
+            return EnrichVideoResult(
+                "summary", False, "요약을 가져오지 못했습니다(YouTube 쿠키 확인)"
+            )
+
+        video_agg.update_metadata(gemini_summary=summary)
+        self._repo.save(video_agg)
+        if self._bus is not None:
+            self._bus.publish_all(video_agg.pull_events())
+        return EnrichVideoResult("summary", True, f"{len(summary)}자")
 
 
 class UpdateVideoHandler:
