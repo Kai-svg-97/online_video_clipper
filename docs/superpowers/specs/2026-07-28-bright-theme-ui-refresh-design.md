@@ -56,15 +56,31 @@ MIST = ThemeTokens(
 
 QSS를 거치지 않고 `QPainter`로 직접 칠하는 두 지점을 토큰 기반으로 바꾼다.
 
-| 위치 | 현재 | 변경 |
+| 위치 | 현재 (하드코딩) | 변경 |
 | --- | --- | --- |
-| `library_panel.py:1012` `_TagChip.paintEvent` | 미선택 `#2a3a4a` | `bg_elevated` 채움 + `border_muted` 1px 테두리 |
-| `library_panel.py:1208` `_TagChipDelegate.paint` | 선택 `#1a4f82` / 미선택 `#2a3a4a` | 선택 `accent` / 미선택 위와 동일 |
+| `library_panel.py:1007` `_PopularTagButton.paintEvent` | 배경 `#2a3a4a`, 뱃지 `#1a6fa0`/`#204060`, 뱃지텍스트 `#ddeeff`, 이름 `#fff`/`#ccc` | `chip_colors()`가 토큰에서 파생 |
+| `library_panel.py:1196` `_TagChipDelegate.paint` | 배경 `#1a4f82`/`#2a3a4a` + 위와 동일한 뱃지·텍스트 색 | 같음 |
+| `library_panel.py:1302` `_BreadcrumbBar` | 배경 `#182430` | `bg_surface` + `theme_changed` 구독 |
 
-두 위젯은 `ThemeManager.instance().current()`로 토큰을 읽고 `theme_changed`를 구독해 재도색한다.
+각 지점마다 색이 5개씩 하드코딩돼 있다. 공통 헬퍼
+`chip_colors(tokens, selected, data_color=None) -> dict[str, str]`로 파생값을 한곳에서 계산하고
+두 페인터가 이를 사용한다. `ThemeManager.instance().current()`로 토큰을 읽으므로
+테마 전환 시 자동으로 따라간다.
 
-카테고리·태그 구분용 색상 팔레트 약 40종(`#8b2252`, `#6b3d9a` 등)은 **항목을 식별하는 데이터
-색상이므로 유지**한다. 어두운 톤이지만 밝은 배경 위의 점·칩 채움으로는 오히려 대비가 좋다.
+카테고리·태그 구분용 색상 팔레트 `_TAG_PALETTE`의 32색(`#8b2252`, `#6b3d9a` 등)은 **항목을
+식별하는 데이터 색상이므로 값을 바꾸지 않는다.** 어두운 톤이지만 밝은 배경 위의 점·칩
+채움으로는 오히려 대비가 좋다.
+
+### 색상 배정 안정화 (추가 발견)
+
+배정 방식은 고쳐야 한다. 현재 `_TAG_PALETTE[hash(name) % len(_TAG_PALETTE)]`를 쓰는데,
+파이썬 `str` 해시는 `PYTHONHASHSEED`로 **프로세스마다 무작위화**된다. 실측 결과 같은 이름
+`music`이 3회 실행에서 팔레트 인덱스 31 → 31 → 5로 달라졌다. 즉 **앱을 켤 때마다 태그·
+카테고리 색이 바뀐다.**
+
+카테고리 색상 점(아래 3-b)이 의미를 가지려면 — 사용자가 "Music은 보라색"으로 학습할 수
+있어야 하므로 — 이 문제를 먼저 고친다. `zlib.crc32(name.encode("utf-8"))`는 해시 시드에
+의존하지 않아 실행·플랫폼에 걸쳐 항상 같은 색을 준다. 팔레트 값 자체는 그대로다.
 
 ## 2. 아이콘 제거
 
