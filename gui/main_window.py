@@ -74,12 +74,6 @@ _SVG_FEED = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
   <polyline points="9 22 9 12 15 12 15 22"/>
 </svg>"""
 
-_SVG_ACCOUNT = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-  <circle cx="12" cy="8" r="4"/>
-  <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
-</svg>"""
-
 _SVG_SETTINGS = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
   fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
   <circle cx="12" cy="12" r="3"/>
@@ -208,12 +202,6 @@ class _SideBar(QWidget):
         layout.setSpacing(4)
         layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        # 로고
-        logo = QLabel("▶")
-        logo.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        logo.setStyleSheet("font-size: 14px; font-weight: 700; margin-bottom: 10px;")
-        layout.addWidget(logo)
-
         # 주 내비게이션 버튼
         nav_defs = [
             (_SVG_LIBRARY,  "라이브러리",        _PAGE_LIBRARY),
@@ -229,12 +217,6 @@ class _SideBar(QWidget):
 
         layout.addStretch()
 
-        # 계정 버튼 → 설정 페이지의 YouTube 연동 섹션으로 이동
-        self._account_btn = _NavButton(_SVG_ACCOUNT, "YouTube 연동 설정")
-        self._account_btn.setCheckable(False)
-        self._account_btn.clicked.connect(lambda: self._navigate(_PAGE_SETTINGS))
-        layout.addWidget(self._account_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-
         # 설정 버튼 (하단)
         self._settings_btn = _NavButton(_SVG_SETTINGS, "설정")
         self._settings_btn.clicked.connect(lambda: self._navigate(_PAGE_SETTINGS))
@@ -243,11 +225,6 @@ class _SideBar(QWidget):
 
         # 첫 번째(라이브러리) 선택
         self._buttons[0].setChecked(True)
-
-    def update_account_status(self, is_connected: bool) -> None:
-        """YouTube 연동 상태에 따라 계정 버튼 tooltip을 갱신한다."""
-        tip = "YouTube 연결됨 — 설정에서 관리" if is_connected else "YouTube 미연결 — 설정에서 연동"
-        self._account_btn.setToolTip(tip)
 
     def show_update_badge(self, visible: bool) -> None:
         self._settings_btn.set_badge(visible)
