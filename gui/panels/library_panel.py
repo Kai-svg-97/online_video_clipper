@@ -168,6 +168,33 @@ def tag_color(name: str) -> str:
     return _TAG_PALETTE[digest % len(_TAG_PALETTE)]
 
 
+# "영상 없음"(count == 0) 경고 뱃지 색 — 상태를 뜻하는 의미 색이라 테마와 무관하게 고정한다.
+_BADGE_EMPTY_BG = "#b03030"
+
+
+def chip_colors(tokens, selected: bool, data_color: str | None = None) -> dict[str, str]:
+    """칩(인기 태그 버튼·태그 리스트 항목)의 색상을 테마 토큰에서 파생한다.
+
+    미선택은 카드 표면(bg_elevated) + 약한 테두리로 배경에서 떠 보이게 하고,
+    선택은 accent(또는 태그 고유 색)로 채운다.
+    """
+    if selected:
+        return {
+            "bg": data_color or tokens.accent,
+            "border": data_color or tokens.accent,
+            "text": tokens.text_on_accent,
+            "badge_bg": tokens.bg_overlay,
+            "badge_text": tokens.text_primary,
+        }
+    return {
+        "bg": tokens.bg_elevated,
+        "border": tokens.border_muted,
+        "text": tokens.text_secondary,
+        "badge_bg": tokens.bg_overlay,
+        "badge_text": tokens.text_secondary,
+    }
+
+
 # ------------------------------------------------------------------
 # Multi-size LRU thumbnail cache
 # ------------------------------------------------------------------
@@ -1017,13 +1044,15 @@ class _PopularTagButton(QPushButton):
         self.setFlat(True)
 
     def paintEvent(self, _event) -> None:
+        tokens = ThemeManager.instance().current()
+        c = chip_colors(tokens, selected=self._selected, data_color=self._color)
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect().adjusted(1, 1, -1, -1)
 
-        bg = QColor(self._color) if self._selected else QColor("#2a3a4a")
-        painter.setBrush(QBrush(bg))
-        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(c["bg"])))
+        painter.setPen(QPen(QColor(c["border"]), 1))
         painter.drawRoundedRect(rect, 10, 10)
 
         badge_text = str(self._count)
@@ -1035,16 +1064,15 @@ class _PopularTagButton(QPushButton):
         badge_y = rect.center().y() - badge_h // 2
         badge_rect = QRect(badge_x, badge_y, badge_w, badge_h)
 
-        badge_bg = QColor("#1a6fa0") if self._selected else QColor("#204060")
-        painter.setBrush(QBrush(badge_bg))
+        painter.setBrush(QBrush(QColor(c["badge_bg"])))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(badge_rect, badge_h // 2, badge_h // 2)
 
-        painter.setPen(QColor("#ddeeff"))
+        painter.setPen(QColor(c["badge_text"]))
         painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge_text)
 
         painter.setFont(QFont("", 9))
-        painter.setPen(QColor("#fff") if self._selected else QColor("#ccc"))
+        painter.setPen(QColor(c["text"]))
         name_rect = QRect(rect.left() + 8, rect.top(), badge_x - rect.left() - 12, rect.height())
         painter.drawText(
             name_rect,
@@ -1092,17 +1120,19 @@ class _FavChipDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index) -> None:
         from PyQt6.QtWidgets import QStyle  # noqa: PLC0415
+
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         count = index.data(Qt.ItemDataRole.UserRole + 1) or 0
         text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        tokens = ThemeManager.instance().current()
+        c = chip_colors(tokens, selected=selected)
 
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         chip = option.rect.adjusted(2, 2, -2, -2)
 
-        bg = QColor("#1a6fa0") if selected else QColor("#253545")
-        painter.setBrush(QBrush(bg))
-        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(c["bg"])))
+        painter.setPen(QPen(QColor(c["border"]), 1))
         painter.drawRoundedRect(chip, 10, 10)
 
         # Count badge (right side)
@@ -1114,17 +1144,21 @@ class _FavChipDelegate(QStyledItemDelegate):
         badge_x = chip.right() - badge_w - 3
         badge_y = chip.center().y() - badge_h // 2
         badge_rect = QRect(badge_x, badge_y, badge_w, badge_h)
-        badge_bg = QColor("#b03030") if count == 0 else (QColor("#2a6fa0") if selected else QColor("#1a4060"))
+        # count == 0은 "영상 없음" 경고 상태다 — 테마 색이 아닌 의미 색을 유지한다.
+        if count == 0:
+            badge_bg, badge_fg = QColor(_BADGE_EMPTY_BG), QColor("#ffffff")
+        else:
+            badge_bg, badge_fg = QColor(c["badge_bg"]), QColor(c["badge_text"])
         painter.setBrush(QBrush(badge_bg))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(badge_rect, badge_h // 2, badge_h // 2)
         painter.setFont(QFont("", 7))
-        painter.setPen(QColor("#ddeeff"))
+        painter.setPen(badge_fg)
         painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge_text)
 
         # Name text
         painter.setFont(QFont("", 8))
-        painter.setPen(QColor("#fff") if selected else QColor("#ccc"))
+        painter.setPen(QColor(c["text"]))
         name_rect = QRect(chip.left() + 6, chip.top(), badge_x - chip.left() - 8, chip.height())
         painter.drawText(name_rect, Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine, text)
 
@@ -1207,9 +1241,12 @@ class _TagChipDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index) -> None:
         from PyQt6.QtWidgets import QStyle  # noqa: PLC0415
+
         text  = index.data(Qt.ItemDataRole.DisplayRole) or ""
         count = index.data(Qt.ItemDataRole.UserRole + 1) or 0
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        tokens = ThemeManager.instance().current()
+        c = chip_colors(tokens, selected=selected)
 
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -1217,9 +1254,8 @@ class _TagChipDelegate(QStyledItemDelegate):
         chip = option.rect.adjusted(3, 3, -3, -3)
 
         # Chip background
-        bg = QColor("#1a4f82") if selected else QColor("#2a3a4a")
-        painter.setBrush(QBrush(bg))
-        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(c["bg"])))
+        painter.setPen(QPen(QColor(c["border"]), 1))
         painter.drawRoundedRect(chip, 10, 10)
 
         # Count badge (right side) — also acts as the delete hit area
@@ -1228,18 +1264,17 @@ class _TagChipDelegate(QStyledItemDelegate):
         badge_x = chip.right() - badge_w - 4
         badge_y = chip.center().y() - badge_h // 2
         badge_rect = QRect(badge_x, badge_y, badge_w, badge_h)
-        badge_bg = QColor("#1a6fa0") if selected else QColor("#204060")
-        painter.setBrush(QBrush(badge_bg))
+        painter.setBrush(QBrush(QColor(c["badge_bg"])))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(badge_rect, badge_h // 2, badge_h // 2)
 
         painter.setFont(QFont("", 7))
-        painter.setPen(QColor("#ddeeff"))
+        painter.setPen(QColor(c["badge_text"]))
         painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, str(count))
 
         # Tag text
         painter.setFont(QFont("", 8))
-        painter.setPen(QColor("#fff") if selected else QColor("#ccc"))
+        painter.setPen(QColor(c["text"]))
         painter.drawText(
             QRect(chip.left() + 8, chip.top(), badge_x - chip.left() - 10, chip.height()),
             Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
@@ -1309,11 +1344,21 @@ class _ActiveTagsBar(QWidget):
 
     tag_removed = pyqtSignal(object)  # UUID
 
+    def _apply_theme(self, tokens: ThemeTokens) -> None:
+        """배경·제목 색을 테마 토큰으로 갱신한다."""
+        self.setStyleSheet(
+            f"background:{tokens.bg_surface}; border-radius:4px;"
+        )
+        self._dot.setStyleSheet(
+            f"color:{tokens.accent}; font-size:7pt; background:transparent;"
+        )
+        self._title_lbl.setStyleSheet(
+            f"font-size:8pt; color:{tokens.text_secondary}; "
+            "font-weight:600; background:transparent;"
+        )
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setStyleSheet(
-            "background:#182430; border-radius:4px;"
-        )
 
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(0, 6, 0, 6)
@@ -1323,16 +1368,16 @@ class _ActiveTagsBar(QWidget):
         title_row = QHBoxLayout()
         title_row.setContentsMargins(8, 0, 8, 0)
         title_row.setSpacing(5)
-        dot = QLabel("◆")
-        dot.setStyleSheet("color:#5a9ad4; font-size:7pt; background:transparent;")
-        dot.setFixedWidth(10)
-        title_row.addWidget(dot)
-        lbl = QLabel("활성 태그 필터")
-        lbl.setStyleSheet(
-            "font-size:8pt; color:#aac; font-weight:600; background:transparent;"
-        )
-        title_row.addWidget(lbl)
+        self._dot = QLabel("◆")
+        self._dot.setFixedWidth(10)
+        title_row.addWidget(self._dot)
+        self._title_lbl = QLabel("활성 태그 필터")
+        title_row.addWidget(self._title_lbl)
         title_row.addStretch()
+
+        # 배경·점·라벨 색은 테마 토큰에서 가져온다 (과거 #182430·#5a9ad4·#aac 하드코딩)
+        self._apply_theme(ThemeManager.instance().current())
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
         self._root.addLayout(title_row)
 
         # Chip container — replaced wholesale on each refresh()
