@@ -167,8 +167,10 @@ QTreeWidget::item:selected {{
     color: {text_primary};
     border-left: 2px solid {accent};
 }}
+/* branch는 _PlaylistTree.drawBranches()가 직접 그린다 — 네이티브 화살표를 숨긴다 */
 QTreeWidget::branch {{
     background: transparent;
+    image: none;
 }}
 
 /* ====== 테이블 ====== */

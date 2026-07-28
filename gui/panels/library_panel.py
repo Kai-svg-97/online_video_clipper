@@ -171,6 +171,11 @@ def tag_color(name: str) -> str:
 # "영상 없음"(count == 0) 경고 뱃지 색 — 상태를 뜻하는 의미 색이라 테마와 무관하게 고정한다.
 _BADGE_EMPTY_BG = "#b03030"
 
+# YouTube 섹션 강조색 — 브랜드 색이라 테마와 무관하게 유지한다. 밝은 배경에서도 읽히도록
+# 기존 #ff7070(밝은 회색 배경 위 대비 부족)보다 진한 톤을 쓴다.
+_YT_BRAND_RED = "#d32f2f"
+_YT_BRAND_RED_HOVER = "#f04438"
+
 
 def chip_colors(tokens, selected: bool, data_color: str | None = None) -> dict[str, str]:
     """칩(인기 태그 버튼·태그 리스트 항목)의 색상을 테마 토큰에서 파생한다.
@@ -1454,12 +1459,130 @@ _CAT_ID_ROLE      = Qt.ItemDataRole.UserRole + 204  # category UUID
 _CHANNEL_URL_ROLE = Qt.ItemDataRole.UserRole + 205  # 구독 채널 URL
 _ORIG_TEXT_ROLE   = Qt.ItemDataRole.UserRole + 299  # 스피너 중 원본 텍스트 보존
 
+# 그리기 전용 롤 — _TreeRowDelegate가 읽는다. 항목 텍스트를 파싱하지 않기 위해
+# 팩토리가 이름·개수·글리프·색을 따로 심는다(스피너가 setText로 텍스트를 변형하므로).
+_NAME_ROLE  = Qt.ItemDataRole.UserRole + 300   # 아이콘·개수 없는 순수 이름
+_COUNT_ROLE = Qt.ItemDataRole.UserRole + 301   # int | None
+_GLYPH_ROLE = Qt.ItemDataRole.UserRole + 302   # "category" | "folder" | "playlist" | "channel" | "feed" | "group"
+_COLOR_ROLE = Qt.ItemDataRole.UserRole + 303   # 카테고리 색상 점 (#rrggbb | None)
+_STAR_ROLE  = Qt.ItemDataRole.UserRole + 304   # bool — 즐겨찾기
+
 _ITYPE_ROOT     = "root"
 _ITYPE_FOLDER   = "folder"
 _ITYPE_PLAYLIST = "playlist"
 _ITYPE_CATEGORY = "category"
 _ITYPE_CHANNEL  = "channel"    # 구독 채널 노드 (클릭 시 채널 영상 피드)
 _ITYPE_FEED_ALL = "feed_all"   # 전체 구독 피드 노드
+
+
+class _TreeRowDelegate(QStyledItemDelegate):
+    """트리 행을 직접 그린다 — 둥근 pill 행 + 색상 점 + 우측 개수 뱃지 + ★.
+
+    셰브론과 들여쓰기 가이드는 여기서 그리지 않는다. 아이템 영역에 그리면
+    클릭이 확장으로 처리되지 않으므로 _PlaylistTree.drawBranches()가 담당한다.
+    """
+
+    _ROW_H = 30
+    _EMOJI = {"folder": "📂", "playlist": "≡", "channel": "📺", "feed": "📡"}
+
+    def sizeHint(self, option, index) -> QSize:  # noqa: N802
+        size = super().sizeHint(option, index)
+        return QSize(size.width(), self._ROW_H)
+
+    def paint(self, painter, option, index) -> None:
+        from PyQt6.QtWidgets import QStyle  # noqa: PLC0415
+
+        tokens = ThemeManager.instance().current()
+        name = index.data(_NAME_ROLE) or index.data(Qt.ItemDataRole.DisplayRole) or ""
+        count = index.data(_COUNT_ROLE)
+        glyph = index.data(_GLYPH_ROLE) or ""
+        color = index.data(_COLOR_ROLE)
+
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        is_group = glyph == "group"
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        row = option.rect.adjusted(3, 2, -3, -2)
+
+        # 배경 — 그룹 행은 배경 없이 라벨처럼 보이게 한다
+        if not is_group and (selected or hovered):
+            if selected:
+                bg = QColor(tokens.accent)
+                bg.setAlpha(36)            # accent 약 14%
+            else:
+                bg = QColor(tokens.bg_overlay)
+            painter.setBrush(QBrush(bg))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(row, 6, 6)
+
+        x = row.left() + 8
+
+        # 카테고리는 색상 점, 나머지는 작은 글리프
+        if glyph == "category" and color:
+            dot = QRect(x, row.center().y() - 4, 8, 8)
+            painter.setBrush(QBrush(QColor(color)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(dot)
+            x += 16
+        elif glyph and self._EMOJI.get(glyph):
+            painter.setPen(QColor(tokens.text_muted))
+            painter.setFont(QFont("", 8))
+            painter.drawText(
+                QRect(x, row.top(), 16, row.height()),
+                Qt.AlignmentFlag.AlignVCenter,
+                self._EMOJI[glyph],
+            )
+            x += 20
+
+        # 즐겨찾기 ★ (최우측)
+        right = row.right() - 6
+        if index.data(_STAR_ROLE):
+            painter.setPen(QColor(tokens.star_color))
+            painter.setFont(QFont("", 8))
+            star_rect = QRect(right - 14, row.top(), 14, row.height())
+            painter.drawText(star_rect, Qt.AlignmentFlag.AlignCenter, "★")
+            right = star_rect.left() - 4
+
+        # 우측 개수 뱃지
+        if count:
+            painter.setFont(QFont("", 7))
+            fm = painter.fontMetrics()
+            txt = str(count)
+            bw = fm.horizontalAdvance(txt) + 12
+            bh = 16
+            badge = QRect(right - bw, row.center().y() - bh // 2, bw, bh)
+            painter.setBrush(QBrush(QColor(tokens.bg_overlay)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(badge, bh // 2, bh // 2)
+            painter.setPen(QColor(tokens.text_secondary))
+            painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, txt)
+            right = badge.left() - 6
+
+        # 이름 — 그룹 행은 자간을 넓힌 muted 라벨
+        font = QFont(option.font)
+        if is_group:
+            font.setPointSize(9)
+            font.setWeight(QFont.Weight.Bold)
+            font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 108)
+            painter.setPen(QColor(tokens.text_muted))
+        else:
+            painter.setPen(QColor(tokens.accent if selected else tokens.text_primary))
+        painter.setFont(font)
+
+        name_rect = QRect(x, row.top(), max(10, right - x), row.height())
+        elided = painter.fontMetrics().elidedText(
+            name, Qt.TextElideMode.ElideRight, name_rect.width()
+        )
+        painter.drawText(
+            name_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
+            elided,
+        )
+
+        painter.restore()
 
 
 class _PlaylistTree(QTreeWidget):
@@ -1499,6 +1622,9 @@ class _PlaylistTree(QTreeWidget):
         self._favs: set[tuple[str, str]] = set()   # {("category"|"playlist", id_str)}
         self.setHeaderHidden(True)
         self.setIndentation(20)
+        self.setItemDelegate(_TreeRowDelegate(self))
+        self.setMouseTracking(True)      # 호버 배경용 State_MouseOver 활성화
+        self.setUniformRowHeights(True)
         # DragDrop: 내부 재생목록 폴더 이동 + 외부 영상 드롭 모두 지원
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
@@ -1515,6 +1641,43 @@ class _PlaylistTree(QTreeWidget):
         self._spinner_timer = QTimer(self)
         self._spinner_timer.setInterval(120)
         self._spinner_timer.timeout.connect(self._tick_spinner)
+
+    def drawBranches(self, painter, rect, index) -> None:  # noqa: N802
+        """셰브론과 들여쓰기 가이드를 branch 영역에 직접 그린다.
+
+        델리게이트(아이템 영역)에 그리면 클릭이 확장/축소로 처리되지 않는다 —
+        QTreeView는 branch 영역의 클릭만 확장 히트로 본다. 여기서 그리면
+        네이티브 히트테스트가 그대로 유지된다.
+        """
+        tokens = ThemeManager.instance().current()
+        painter.save()
+
+        indent = self.indentation()
+        depth = 0
+        walk = index.parent()
+        while walk.isValid():
+            depth += 1
+            walk = walk.parent()
+
+        # 깊이별 세로 가이드선 — 화살표에 의존하지 않고 계층을 읽히게 한다
+        painter.setPen(QPen(QColor(tokens.border_muted), 1))
+        for level in range(depth):
+            gx = rect.left() + indent * level + indent // 2
+            painter.drawLine(gx, rect.top(), gx, rect.bottom())
+
+        # 셰브론 — 자식이 있는 항목만
+        item = self.itemFromIndex(index)
+        if item is not None and item.childCount() > 0:
+            cx = rect.left() + indent * depth + indent // 2
+            painter.setPen(QColor(tokens.text_muted))
+            painter.setFont(QFont("", 7))
+            painter.drawText(
+                QRect(cx - 6, rect.top(), 14, rect.height()),
+                Qt.AlignmentFlag.AlignCenter,
+                "▾" if item.isExpanded() else "▸",
+            )
+
+        painter.restore()
 
     # ── 스피너 ───────────────────────────────────────────────────────────────
 
@@ -1696,12 +1859,16 @@ class _PlaylistTree(QTreeWidget):
         feed_all = QTreeWidgetItem(["📡  전체 구독 피드"])
         feed_all.setData(0, _ITEM_TYPE_ROLE, _ITYPE_FEED_ALL)
         feed_all.setData(0, _SECTION_ROLE, "youtube")
+        feed_all.setData(0, _NAME_ROLE, "전체 구독 피드")
+        feed_all.setData(0, _GLYPH_ROLE, "feed")
         feed_all.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         self.addTopLevelItem(feed_all)
 
         sub_group = QTreeWidgetItem(["📡  구독 채널"])
         sub_group.setData(0, _ITEM_TYPE_ROLE, _ITYPE_ROOT)
         sub_group.setData(0, _SECTION_ROLE, "youtube")
+        sub_group.setData(0, _NAME_ROLE, "구독 채널")
+        sub_group.setData(0, _GLYPH_ROLE, "group")
         sub_group.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         gf = sub_group.font(0)
         gf.setWeight(QFont.Weight.Bold)
@@ -1812,6 +1979,8 @@ class _PlaylistTree(QTreeWidget):
         item = QTreeWidgetItem([label])
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_ROOT)
         item.setData(0, _SECTION_ROLE, source)
+        item.setData(0, _NAME_ROLE, label)
+        item.setData(0, _GLYPH_ROLE, "group")
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled)
         f = item.font(0)
         f.setWeight(QFont.Weight.Bold)
@@ -1824,6 +1993,8 @@ class _PlaylistTree(QTreeWidget):
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_FOLDER)
         item.setData(0, _FOLDER_ID_ROLE, folder_id)
         item.setData(0, _SECTION_ROLE, source)
+        item.setData(0, _NAME_ROLE, name)
+        item.setData(0, _GLYPH_ROLE, "folder")
         item.setToolTip(0, name)
         item.setFlags(
             Qt.ItemFlag.ItemIsEnabled
@@ -1838,6 +2009,8 @@ class _PlaylistTree(QTreeWidget):
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_FOLDER)
         item.setData(0, _FOLDER_ID_ROLE, None)   # None = 미분류
         item.setData(0, _SECTION_ROLE, source)
+        item.setData(0, _NAME_ROLE, "미분류")
+        item.setData(0, _GLYPH_ROLE, "folder")
         item.setFlags(
             Qt.ItemFlag.ItemIsEnabled
             | Qt.ItemFlag.ItemIsDropEnabled
@@ -1856,12 +2029,14 @@ class _PlaylistTree(QTreeWidget):
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_CATEGORY)
         item.setData(0, _CAT_ID_ROLE, cat_id)
         item.setData(0, _SECTION_ROLE, "local")
+        item.setData(0, _NAME_ROLE, name)
+        item.setData(0, _COUNT_ROLE, video_count if video_count > 0 else None)
+        item.setData(0, _GLYPH_ROLE, "category")
+        item.setData(0, _COLOR_ROLE, tag_color(name))
+        # 즐겨찾기는 배경 틴트가 아니라 _TreeRowDelegate가 그리는 ★로 표시한다
+        # (델리게이트가 배경을 직접 그리므로 setBackground 틴트는 가려진다).
+        item.setData(0, _STAR_ROLE, starred)
         item.setToolTip(0, name)
-        if starred:
-            from PyQt6.QtGui import QBrush, QColor  # noqa: PLC0415
-            c = QColor(_t().star_color)
-            c.setAlpha(50)
-            item.setBackground(0, QBrush(c))
         item.setFlags(
             Qt.ItemFlag.ItemIsEnabled
             | Qt.ItemFlag.ItemIsSelectable
@@ -1875,11 +2050,11 @@ class _PlaylistTree(QTreeWidget):
         item = QTreeWidgetItem([f"{title}  ({count})"])
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_PLAYLIST)
         item.setData(0, _PLAYLIST_ID_ROLE, pl_id)
-        if starred:
-            from PyQt6.QtGui import QBrush, QColor  # noqa: PLC0415
-            c = QColor(_t().star_color)
-            c.setAlpha(50)
-            item.setBackground(0, QBrush(c))
+        item.setData(0, _NAME_ROLE, title)
+        item.setData(0, _COUNT_ROLE, count if count > 0 else None)
+        item.setData(0, _GLYPH_ROLE, "playlist")
+        # 즐겨찾기는 배경 틴트가 아니라 델리게이트가 그리는 ★로 표시한다.
+        item.setData(0, _STAR_ROLE, starred)
         if yt_id:
             item.setToolTip(0, f"{title}\nYouTube: {yt_id}")
         else:
@@ -1897,6 +2072,8 @@ class _PlaylistTree(QTreeWidget):
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_CHANNEL)
         item.setData(0, _CHANNEL_URL_ROLE, channel_url)
         item.setData(0, _SECTION_ROLE, "youtube")
+        item.setData(0, _NAME_ROLE, name)
+        item.setData(0, _GLYPH_ROLE, "channel")
         item.setToolTip(0, f"{name}\n{channel_url}")
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         return item
@@ -2691,59 +2868,6 @@ class _FolderContentsView(QScrollArea):
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet("color:#888; font-size:11pt;")
             grid.addWidget(lbl, 0, 0)
-
-
-# ── 브랜치 인디케이터 화살표 픽스맵 헬퍼 ─────────────────────────────────────
-
-_arrow_cache: dict[str, str] = {}   # (state+color) → 임시 png 경로
-
-
-def _write_branch_arrow_pixmap(state: str, color: str) -> str:
-    """QSS image:url() 에 주입할 화살표 PNG를 생성해 임시 파일 경로를 반환한다.
-
-    state: "closed" → ▶(오른쪽), "open" → ▼(아래쪽)
-    결과를 _arrow_cache에 캐싱해 동일 색상 재호출을 방지한다.
-    """
-    import os  # noqa: PLC0415
-    import tempfile  # noqa: PLC0415
-    from PyQt6.QtGui import QPainter, QColor, QPolygonF  # noqa: PLC0415
-    from PyQt6.QtCore import QPointF  # noqa: PLC0415
-
-    key = f"{state}:{color}"
-    if key in _arrow_cache and os.path.exists(_arrow_cache[key]):
-        return _arrow_cache[key]
-
-    size = 12
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pm)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    c = QColor(color)
-    painter.setBrush(c)
-    painter.setPen(Qt.PenStyle.NoPen)
-
-    half = size / 2
-    if state == "closed":
-        # ▶ 오른쪽 삼각형
-        poly = QPolygonF([
-            QPointF(3, 2), QPointF(size - 3, half), QPointF(3, size - 2),
-        ])
-    else:
-        # ▼ 아래쪽 삼각형
-        poly = QPolygonF([
-            QPointF(2, 3), QPointF(size - 2, 3), QPointF(half, size - 3),
-        ])
-    painter.drawPolygon(poly)
-    painter.end()
-
-    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    tmp.close()
-    pm.save(tmp.name, "PNG")
-    # QSS image:url() 는 반드시 슬래시(/)만 허용한다.
-    # Windows 백슬래시 경로를 그대로 넣으면 QSS가 파싱 실패해 이미지가 표시되지 않는다.
-    fwd_path = tmp.name.replace("\\", "/")
-    _arrow_cache[key] = fwd_path
-    return fwd_path
 
 
 class _BreadcrumbBar(QWidget):
@@ -4126,49 +4250,16 @@ class LibraryPanel(QWidget):
 
     def _apply_sidebar_tree_style(self) -> None:
         tok = _t()
-        style = f"""
-            QTreeWidget {{
+        # 행 배경·선택 표시·셰브론은 모두 _TreeRowDelegate와 _PlaylistTree.drawBranches()가
+        # 직접 그린다. 따라서 여기서는 ::item / ::branch 배경·이미지 규칙을 두지 않는다
+        # (두면 델리게이트가 그린 위에 QSS가 겹쳐 그려질 위험이 있고, 실제로는 우회되어
+        #  죽은 CSS가 된다). 컨테이너 속성만 남긴다.
+        branch_style = """
+            QTreeWidget {
                 background: transparent;
                 border: none;
                 outline: none;
-            }}
-            QTreeWidget::item {{
-                padding: 4px 6px;
-                border-radius: 4px;
-            }}
-            QTreeWidget::item:selected {{
-                background: {tok.accent};
-                color: {tok.text_on_accent};
-                font-weight: 700;
-                border-radius: 4px;
-                border: 1px solid {tok.accent_hover};
-                padding-left: 8px;
-            }}
-            QTreeWidget::item:hover:!selected {{
-                background: {tok.bg_overlay};
-            }}
-            QTreeWidget::branch {{
-                background: transparent;
-            }}
-            QTreeWidget::branch:hover {{
-                background: {tok.bg_overlay};
-                border-radius: 3px;
-            }}
-        """
-        # 로컬 트리 branch 컬럼에 화살표 인디케이터를 픽스맵으로 그린다.
-        # 테마 accent 색상 기반 ▶(접힘) / ▼(펼침) 아이콘을 임시 파일에 저장해 QSS에 주입.
-        arrow_color = tok.accent
-        arrow_closed_path = _write_branch_arrow_pixmap("closed", arrow_color)
-        arrow_open_path   = _write_branch_arrow_pixmap("open",   arrow_color)
-        branch_style = style + f"""
-            QTreeWidget::branch:has-children:!has-siblings:closed,
-            QTreeWidget::branch:closed:has-children:has-siblings {{
-                image: url({arrow_closed_path});
-            }}
-            QTreeWidget::branch:open:has-children:!has-siblings,
-            QTreeWidget::branch:open:has-children:has-siblings {{
-                image: url({arrow_open_path});
-            }}
+            }
         """
         hdr_style = f"""
             QLabel#playlist_section_header {{
@@ -4181,7 +4272,8 @@ class LibraryPanel(QWidget):
             QPushButton#playlist_section_header_local {{
                 font-size: 9pt;
                 font-weight: 700;
-                color: {tok.text_secondary};
+                color: {tok.text_muted};
+                letter-spacing: 0.6px;
                 padding: 4px 6px 2px 4px;
                 background: transparent;
                 border: none;
@@ -4194,14 +4286,15 @@ class LibraryPanel(QWidget):
             QPushButton#playlist_section_header_yt_btn {{
                 font-size: 9pt;
                 font-weight: 700;
-                color: #ff7070;
+                color: {_YT_BRAND_RED};
+                letter-spacing: 0.6px;
                 padding: 2px 4px;
                 background: transparent;
                 border: none;
                 text-align: left;
             }}
             QPushButton#playlist_section_header_yt_btn:hover {{
-                color: #ff9090;
+                color: {_YT_BRAND_RED_HOVER};
                 text-decoration: underline;
             }}
             QWidget#yt_toggle_bar {{
@@ -4209,13 +4302,13 @@ class LibraryPanel(QWidget):
                 background: {tok.bg_overlay};
             }}
             QToolButton#yt_toggle_arrow {{
-                color: #ff7070;
+                color: {_YT_BRAND_RED};
                 font-size: 10pt;
                 border: none;
                 background: transparent;
             }}
             QToolButton#yt_toggle_arrow:hover {{
-                color: #ff9090;
+                color: {_YT_BRAND_RED_HOVER};
             }}
         """
         local_tree, yt_tree = self._playlist_panel.trees

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import QSize, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QColor, QIcon, QPainter, QPixmap, QPixmapCache
+from PyQt6.QtGui import QCloseEvent, QColor, QIcon, QPainter, QPen, QPixmap, QPixmapCache
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
     QApplication,
@@ -191,6 +191,10 @@ class _SideBar(QWidget):
         super().__init__(parent)
         self._stack = stack
         self._buttons: list[_NavButton] = []
+        # paintEvent가 _apply_theme보다 먼저 불릴 수 있어 기본값을 먼저 잡는다.
+        _tok = ThemeManager.instance().current()
+        self._bg = QColor(_tok.bg_surface)
+        self._border = QColor(_tok.border)
         self.setFixedWidth(48)
         self._build_ui()
         self._apply_theme(ThemeManager.instance().current())
@@ -250,14 +254,22 @@ class _SideBar(QWidget):
             btn.setChecked(i == page_to_btn.get(page, 0))
 
     def _apply_theme(self, tokens: ThemeTokens) -> None:
-        self.setStyleSheet(f"""
-            _SideBar, QWidget#sidebar {{
-                background-color: {tokens.bg_surface};
-                border-right: 1px solid {tokens.border};
-            }}
-        """)
+        # 배경은 paintEvent에서 직접 칠한다. 앱 레벨 QSS의 `QWidget { background-color }`가
+        # 위젯 레벨 스타일시트(ID 선택자 포함)를 덮어써서 bg_surface가 적용되지 않았다
+        # (slate에서는 base/surface 차이가 3단위라 눈에 안 띄어 방치돼 있었음).
+        self._bg = QColor(tokens.bg_surface)
+        self._border = QColor(tokens.border)
         self.setObjectName("sidebar")
-        self.setAutoFillBackground(True)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self._bg)
+        painter.setPen(QPen(self._border, 1))
+        x = self.width() - 1
+        painter.drawLine(x, 0, x, self.height())
+        painter.end()
+        super().paintEvent(event)
 
 
 # ---------------------------------------------------------------------------
