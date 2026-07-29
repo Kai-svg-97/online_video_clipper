@@ -3007,13 +3007,14 @@ class _PlaylistPanel(QWidget):
         local_layout.setSpacing(2)
         local_hdr_row = QHBoxLayout()
         local_hdr_row.setContentsMargins(0, 0, 0, 0)
-        local_hdr = QPushButton("📁  로컬")
-        local_hdr.setObjectName("playlist_section_header_local")
-        local_hdr.setFlat(True)
-        local_hdr.setCursor(Qt.CursorShape.PointingHandCursor)
-        local_hdr.setToolTip("클릭: 카테고리 전체 영상 표시")
-        local_hdr.clicked.connect(lambda: self.category_selected.emit(None))
-        local_hdr_row.addWidget(local_hdr, stretch=1)
+        self._local_hdr = QPushButton("📁  로컬")
+        self._local_hdr.setObjectName("playlist_section_header_local")
+        self._local_hdr.setFlat(True)
+        self._local_hdr.setCheckable(True)   # QSS :checked 로 활성 표시
+        self._local_hdr.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._local_hdr.setToolTip("클릭: 카테고리 전체 영상 표시")
+        self._local_hdr.clicked.connect(self._on_local_root_clicked)
+        local_hdr_row.addWidget(self._local_hdr, stretch=1)
         local_cat_btn = QToolButton()
         local_cat_btn.setText("🏷+")
         local_cat_btn.setToolTip("새 카테고리 만들기")
@@ -3073,7 +3074,40 @@ class _PlaylistPanel(QWidget):
         self._connect_tree(self._local_tree)
         self._connect_tree(self._yt_tree)
 
+    # ── "로컬" 루트 활성 상태 ────────────────────────────────────────────────
+    def is_local_root_active(self) -> bool:
+        return self._local_hdr.isChecked()
+
+    def set_local_root_active(self, active: bool) -> None:
+        """"로컬" 헤더의 활성 표시를 켜고 끈다(QSS :checked 규칙이 걸린다)."""
+        if self._local_hdr.isChecked() != active:
+            self._local_hdr.setChecked(active)
+
+    def _clear_tree_selection(self) -> None:
+        """두 트리의 선택을 해제한다.
+
+        blockSignals로 감싸 currentItemChanged가 선택 핸들러를 재실행하지 않게 한다
+        (select_snapshot이 쓰는 것과 같은 패턴).
+        """
+        for tr in self.trees:
+            tr.blockSignals(True)
+            tr.clearSelection()
+            tr.setCurrentItem(None)
+            tr.blockSignals(False)
+
+    def _on_local_root_clicked(self) -> None:
+        """"로컬" 헤더 클릭 — 트리 선택을 지우고 헤더를 활성으로 표시한다."""
+        self._clear_tree_selection()
+        self.set_local_root_active(True)
+        self.category_selected.emit(None)
+
+    def _on_tree_current_changed(self, current, _prev) -> None:
+        """트리에서 노드를 선택하면 "로컬" 루트 활성 표시를 해제한다."""
+        if current is not None:
+            self.set_local_root_active(False)
+
     def _connect_tree(self, tree: _PlaylistTree) -> None:
+        tree.currentItemChanged.connect(self._on_tree_current_changed)
         tree.playlist_selected.connect(self.playlist_selected)
         tree.folder_selected.connect(self.folder_selected)
         tree.unfiled_selected.connect(self.unfiled_selected)
@@ -3171,6 +3205,8 @@ class _PlaylistPanel(QWidget):
                 tr.blockSignals(True)
                 tr.clearSelection()
                 tr.blockSignals(False)
+        # 어떤 트리 노드와도 일치하지 않으면 "로컬" 루트 화면이다.
+        self.set_local_root_active(matched is None)
 
 
 # ------------------------------------------------------------------
@@ -4282,6 +4318,11 @@ class LibraryPanel(QWidget):
             QPushButton#playlist_section_header_local:hover {{
                 color: {tok.text_primary};
                 background: transparent;
+            }}
+            QPushButton#playlist_section_header_local:checked {{
+                color: {tok.accent};
+                background: {tok.bg_overlay};
+                border-radius: 4px;
             }}
             QPushButton#playlist_section_header_yt_btn {{
                 font-size: 9pt;
