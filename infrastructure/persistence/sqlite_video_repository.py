@@ -1,26 +1,54 @@
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime
 from uuid import UUID
 
 from domain.library.aggregates import VideoAggregate
 from domain.library.entities import Category, Tag, Video
-from domain.library.repositories import IVideoRepository, SearchQuery
+from domain.library.repositories import MATCH_FIELD_KEYS, IVideoRepository, SearchQuery
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl, normalize_video_url
 from infrastructure.persistence.database import Database
 
+logger = logging.getLogger(__name__)
 
-def _sanitize_fts_query(text: str) -> str:
-    """사용자 검색어를 FTS5 안전 형태로 변환.
 
-    각 공백 토큰을 큰따옴표로 감싼 구문(phrase)으로 만들어 결합한다. 이렇게 하면
-    ``-``·``(``·``*`` 등 FTS5 연산자 문자가 리터럴로 처리돼 ``fts5: syntax error``가
-    발생하지 않는다. 토큰 내부의 ``"``는 ``""``로 이스케이프한다. 결과가 비면
-    빈 문자열을 반환하며, 호출부는 이 경우 MATCH 절을 생략해 전체 목록을 반환한다.
+# LIKE 패턴에서 특수 취급되는 문자 — ESCAPE 절과 함께 이스케이프한다.
+_LIKE_ESCAPE = "\\"
+
+
+def _like_pattern(text: str) -> str:
+    """부분 일치용 LIKE 패턴을 만든다.
+
+    %·_ 는 LIKE 와일드카드이고 백슬래시는 우리가 지정한 ESCAPE 문자이므로 모두
+    이스케이프해야 사용자가 입력한 문자 그대로 찾는다.
     """
-    tokens = text.split()
-    quoted = [f'"{t.replace(chr(34), chr(34) * 2)}"' for t in tokens if t]
-    return " ".join(quoted)
+    escaped = (
+        text.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+    return f"%{escaped}%"
+
+
+def _lyrics_text(lyrics_json: str) -> str:
+    """lyrics_json 에서 원문·번역 텍스트만 뽑아 이어붙인다.
+
+    JSON 문자열에 LIKE 를 직접 쓰면 검색어 'o'·'t' 가 키 이름에 걸려 모든 노래를
+    오탐한다. 그래서 파싱해 값만 비교한다.
+    """
+    try:
+        lines = json.loads(lyrics_json or "[]")
+    except (ValueError, TypeError):
+        logger.warning("가사 JSON 파싱 실패 — 가사 검색에서 제외한다")
+        return ""
+    parts: list[str] = []
+    for ln in lines:
+        if isinstance(ln, dict):
+            parts.append(str(ln.get("o", "")))
+            parts.append(str(ln.get("t", "")))
+    return "\n".join(parts)
 
 
 def _parse_dt(s: str | None) -> datetime | None:
@@ -419,6 +447,94 @@ class SqliteVideoRepository(IVideoRepository):
         ]
 
     # ------------------------------------------------------------------
+    # 검색 일치 속성
+    # ------------------------------------------------------------------
+
+    def _lyrics_match_ids(self, text: str) -> list[str]:
+        """가사(원문·번역)에 검색어가 든 video_id 목록을 반환한다.
+
+        lyrics_json 에 SQL LIKE 를 쓰면 검색어 'o'·'t' 가 JSON 키에 걸려 모든 노래를
+        오탐하므로 파싱해서 값만 비교한다.
+        """
+        needle = text.lower()
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT video_id, lyrics_json FROM song_info WHERE lyrics_json <> '[]'"
+            ).fetchall()
+        return [
+            r["video_id"]
+            for r in rows
+            if needle in _lyrics_text(r["lyrics_json"]).lower()
+        ]
+
+    def match_fields_for(
+        self, video_ids: list[UUID], text: str
+    ) -> dict[UUID, tuple[str, ...]]:
+        """각 영상이 검색어와 어느 속성에서 일치했는지 판정한다.
+
+        현재 페이지(기본 50건)에만 실행하므로 영상당 몇 번의 조회로 끝난다.
+        """
+        if not text or not video_ids:
+            return {}
+
+        ids = [str(v) for v in video_ids]
+        ph = ",".join("?" * len(ids))
+        like = _like_pattern(text)
+        found: dict[str, set[str]] = {i: set() for i in ids}
+
+        probes = [
+            ("title", f"SELECT id FROM videos WHERE id IN ({ph}) AND title LIKE ? ESCAPE '\\'", 1),
+            ("notes", f"SELECT id FROM videos WHERE id IN ({ph}) AND notes LIKE ? ESCAPE '\\'", 1),
+            (
+                "summary",
+                f"SELECT id FROM videos WHERE id IN ({ph}) "
+                "AND gemini_summary LIKE ? ESCAPE '\\'",
+                1,
+            ),
+            (
+                "description",
+                f"SELECT video_id FROM video_descriptions WHERE video_id IN ({ph}) "
+                "AND description LIKE ? ESCAPE '\\'",
+                1,
+            ),
+            (
+                "tags",
+                "SELECT vt.video_id FROM video_tags vt JOIN tags t ON t.id = vt.tag_id "
+                f"WHERE vt.video_id IN ({ph}) AND t.name LIKE ? ESCAPE '\\'",
+                1,
+            ),
+            (
+                "song",
+                f"SELECT video_id FROM song_info WHERE video_id IN ({ph}) AND ("
+                "artist LIKE ? ESCAPE '\\' OR album LIKE ? ESCAPE '\\' "
+                "OR song_title LIKE ? ESCAPE '\\' OR release_year LIKE ? ESCAPE '\\')",
+                4,
+            ),
+        ]
+
+        with self._db.connection() as conn:
+            for key, sql, n_like in probes:
+                for row in conn.execute(sql, [*ids, *([like] * n_like)]).fetchall():
+                    found[row[0]].add(key)
+
+            # 가사는 파싱해서 비교한다(JSON 키 오탐 방지).
+            needle = text.lower()
+            lyric_rows = conn.execute(
+                f"SELECT video_id, lyrics_json FROM song_info WHERE video_id IN ({ph})",
+                ids,
+            ).fetchall()
+
+        for row in lyric_rows:
+            if needle in _lyrics_text(row["lyrics_json"]).lower():
+                found[row["video_id"]].add("lyrics")
+
+        return {
+            UUID(vid): tuple(k for k in MATCH_FIELD_KEYS if k in keys)
+            for vid, keys in found.items()
+            if keys
+        }
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -430,13 +546,33 @@ class SqliteVideoRepository(IVideoRepository):
         where: list[str] = []
 
         if query.text:
-            fts_expr = _sanitize_fts_query(query.text)
-            if fts_expr:
-                joins.append(
-                    "JOIN videos_fts ON videos_fts.rowid = videos.rowid"
-                )
-                where.append("videos_fts MATCH ?")
-                params.append(fts_expr)
+            # 부분 일치 — 제목·메모·요약·설명·태그·노래 정보를 UNION 으로 덮는다.
+            # 가사는 lyrics_json 을 파싱해 별도로 구한다(JSON 키 오탐 방지).
+            like = _like_pattern(query.text)
+            clauses = [
+                "SELECT id FROM videos WHERE title LIKE ? ESCAPE '\\'",
+                "SELECT id FROM videos WHERE notes LIKE ? ESCAPE '\\'",
+                "SELECT id FROM videos WHERE gemini_summary LIKE ? ESCAPE '\\'",
+                "SELECT video_id FROM video_descriptions WHERE description LIKE ? ESCAPE '\\'",
+                "SELECT vt.video_id FROM video_tags vt JOIN tags t ON t.id = vt.tag_id "
+                "WHERE t.name LIKE ? ESCAPE '\\'",
+                "SELECT video_id FROM song_info WHERE artist LIKE ? ESCAPE '\\' "
+                "OR album LIKE ? ESCAPE '\\' OR song_title LIKE ? ESCAPE '\\' "
+                "OR release_year LIKE ? ESCAPE '\\'",
+            ]
+            union = " UNION ".join(clauses)
+            # ? 개수를 세어 바인딩한다 — 절을 추가·삭제해도 어긋나지 않는다.
+            text_params = [like] * union.count("?")
+
+            lyric_ids = self._lyrics_match_ids(query.text)
+            if lyric_ids:
+                ph = ",".join("?" * len(lyric_ids))
+                where.append(f"(videos.id IN ({union}) OR videos.id IN ({ph}))")
+                params.extend(text_params)
+                params.extend(lyric_ids)
+            else:
+                where.append(f"videos.id IN ({union})")
+                params.extend(text_params)
 
         if query.category_ids:
             placeholders = ",".join("?" * len(query.category_ids))

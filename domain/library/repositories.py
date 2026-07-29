@@ -10,6 +10,11 @@ from domain.library.entities import Category, Playlist, PlaylistFolder, Tag
 
 _ALLOWED_SORT_COLUMNS = frozenset({"created_at", "title", "channel_name", "duration_sec"})
 
+# 검색 일치 속성 식별자 — 표시 순서를 고정한다. 한글 라벨 매핑은 GUI가 갖는다.
+MATCH_FIELD_KEYS: tuple[str, ...] = (
+    "title", "tags", "description", "notes", "summary", "song", "lyrics",
+)
+
 
 @dataclass
 class SearchQuery:
@@ -38,6 +43,16 @@ class IVideoRepository(ABC):
 
     @abstractmethod
     def search(self, query: SearchQuery) -> list[VideoAggregate]: ...
+
+    @abstractmethod
+    def match_fields_for(
+        self, video_ids: list[UUID], text: str
+    ) -> dict[UUID, tuple[str, ...]]:
+        """각 영상이 검색어와 어느 속성에서 일치했는지 반환한다.
+
+        반환 값은 MATCH_FIELD_KEYS 순서를 따른다. 일치가 없는 영상은 키를 생략한다.
+        현재 페이지 분량(기본 50건)만 넘겨 호출하는 것을 전제로 한다.
+        """
 
     @abstractmethod
     def count(self, query: SearchQuery) -> int: ...
