@@ -59,7 +59,14 @@ _ERROR_PHRASE = "문제가 발생했습니다"
 _MAX_ERROR_RETRIES = 2
 
 _PAGE_LOAD_TIMEOUT_MS = 20_000
-_BUTTON_SCAN_TIMEOUT_MS = 5_000
+# "질문하기" 버튼이 나타나기를 기다리는 **총** 예산.
+# 유의: 예전에는 셀렉터마다 `is_visible(timeout=...)`로 확인했는데, Playwright 문서는
+# 이 timeout 을 "Deprecated: This option is ignored. locator.is_visible() does not wait
+# for the element to become visible and returns immediately." 라고 명시한다. 즉 대기가
+# 전혀 없었고, 액션 행이 아직 스켈레톤인 영상에서는 0.2초 만에 미발견으로 포기했다.
+# 이제 모든 셀렉터를 or_ 로 합쳐 `wait_for(state="visible")`로 한 번만 기다린다.
+_ASK_BUTTON_TIMEOUT_MS = 20_000
+_LOGIN_PROBE_TIMEOUT_MS = 8_000
 _RESPONSE_TIMEOUT_MS = 30_000
 # 응답 스트리밍이 끝났다고 판단하기까지 텍스트가 변하지 않아야 하는 시간
 _STABLE_POLL_INTERVAL_MS = 1_000
@@ -171,23 +178,40 @@ class GeminiExtractor:
                 Path(temp_cookie_path).unlink(missing_ok=True)
 
     @staticmethod
-    def _log_login_state(page) -> None:
+    def _detect_login_state(page, timeout_ms: int = _LOGIN_PROBE_TIMEOUT_MS) -> str:
+        """로그인 상태를 판정한다 — "signed_in" | "signed_out" | "unknown".
+
+        `is_visible(timeout=...)`을 쓰지 않는다: Playwright 가 그 timeout 을 무시하고
+        즉시 반환해, 아바타가 아직 렌더되지 않았으면 로그인 상태인데도 "판별 불가"로
+        기록됐다. 그 오판이 실패 원인을 잘못 짚게 만들었다.
+        """
+        try:
+            avatar = page.locator("ytd-topbar-menu-button-renderer #avatar-btn").first
+            avatar.wait_for(state="visible", timeout=timeout_ms)
+            return "signed_in"
+        except Exception:
+            pass
+        try:
+            signin = page.locator(
+                "a[aria-label='로그인'], tp-yt-paper-button:has-text('로그인'), "
+                "a:has-text('Sign in')"
+            ).first
+            signin.wait_for(state="visible", timeout=timeout_ms)
+            return "signed_out"
+        except Exception:
+            pass
+        return "unknown"
+
+    @classmethod
+    def _log_login_state(cls, page) -> None:
         """쿠키 주입 후 실제 로그인 상태인지 진단 로그를 남긴다."""
-        try:
-            signed_in = page.locator("ytd-topbar-menu-button-renderer #avatar-btn").first
-            if signed_in.is_visible(timeout=3_000):
-                logger.info("Gemini 추출: 로그인 상태로 페이지 로드됨")
-                return
-        except Exception:
-            pass
-        try:
-            signed_out = page.locator("a[aria-label='로그인'], tp-yt-paper-button:has-text('로그인'), a:has-text('Sign in')").first
-            if signed_out.is_visible(timeout=3_000):
-                logger.info("Gemini 추출: 비로그인 상태로 페이지 로드됨 — 쿠키 미적용 또는 만료")
-                return
-        except Exception:
-            pass
-        logger.info("Gemini 추출: 로그인 상태 판별 불가 (셀렉터 미매칭)")
+        state = cls._detect_login_state(page)
+        if state == "signed_in":
+            logger.info("Gemini 추출: 로그인 상태로 페이지 로드됨")
+        elif state == "signed_out":
+            logger.info("Gemini 추출: 비로그인 상태로 페이지 로드됨 — 쿠키 미적용 또는 만료")
+        else:
+            logger.info("Gemini 추출: 로그인 상태 판별 불가 (셀렉터 미매칭)")
 
     @staticmethod
     def _save_debug_screenshot(page) -> None:
@@ -202,25 +226,62 @@ class GeminiExtractor:
         except Exception:
             logger.debug("디버그 스크린샷 저장 실패")
 
+    @staticmethod
+    def _find_ask_button(page, timeout_ms: int = _ASK_BUTTON_TIMEOUT_MS):
+        """"질문하기" 버튼이 보일 때까지 기다렸다가 반환한다(없으면 None).
+
+        모든 fallback 셀렉터를 `or_`로 하나로 합쳐 **총 예산 한 번**만 소비한다.
+        셀렉터마다 따로 기다리면 미지원 영상에서 대기 시간이 셀렉터 수만큼 늘어난다.
+
+        `is_visible(timeout=...)`을 쓰지 않는 이유: Playwright 가 그 timeout 을 무시하고
+        즉시 반환하므로 대기 수단이 되지 못한다(버튼이 늦게 렌더되면 놓친다).
+
+        각 셀렉터에 `>> visible=true`를 붙이는 이유: 실측 결과 지원되는 영상에서
+        `button[aria-label*='질문하기']`가 5개 매칭 중 **첫 번째가 숨은 요소**였다.
+        필터 없이 or_ 로 합치면 `.first`가 그 숨은 요소를 가리켜 `wait_for(visible)`가
+        영원히 실패한다(정상 영상까지 못 찾는 회귀).
+        """
+        combined = None
+        for sel in _ASK_BUTTON_SELECTORS:
+            loc = page.locator(f"{sel} >> visible=true")
+            combined = loc if combined is None else combined.or_(loc)
+        if combined is None:
+            return None
+
+        btn = combined.first
+        try:
+            btn.wait_for(state="visible", timeout=timeout_ms)
+        except Exception:
+            return None
+        return btn
+
     def _click_and_extract(self, page) -> str | None:
         """Ask 버튼 클릭 → 요약 칩 클릭 → 응답 안정화 대기 후 텍스트를 추출한다.
 
         "질문하기" 클릭은 채팅 패널을 열 뿐이며, 실제 요약은 추천 칩
         (예: "동영상을 요약해 줘")을 다시 클릭해야 생성된다.
         """
-        ask_btn = None
-        for sel in _ASK_BUTTON_SELECTORS:
-            try:
-                btn = page.locator(sel).first
-                if btn.is_visible(timeout=_BUTTON_SCAN_TIMEOUT_MS):
-                    ask_btn = btn
-                    logger.debug("Gemini Ask 버튼 발견: %s", sel)
-                    break
-            except Exception:
-                continue
-
+        ask_btn = self._find_ask_button(page)
         if ask_btn is None:
-            logger.info("Gemini Ask 버튼 미발견 — 로그인 필요 또는 미지원 영상")
+            # 원인을 구분해 기록한다. 예전에는 "로그인 필요 또는 미지원 영상"으로 뭉쳐
+            # 있어, 로그인이 정상인데도 인증 문제로 오해하게 만들었다.
+            state = self._detect_login_state(page)
+            if state == "signed_out":
+                logger.warning(
+                    "Gemini '질문하기' 버튼 없음 — 비로그인 상태다. 설정에서 쿠키를 "
+                    "다시 등록하세요: %s",
+                    page.url,
+                )
+            else:
+                logger.info(
+                    "Gemini '질문하기' 버튼이 %d초 안에 나타나지 않음 — YouTube가 이 "
+                    "영상에 요약 기능을 제공하지 않는 것으로 보인다(로그인 상태: %s). "
+                    "조회수가 적거나 업로드가 최근인 영상은 기능이 제공되지 않는 사례가 "
+                    "있다: %s",
+                    _ASK_BUTTON_TIMEOUT_MS // 1000,
+                    state,
+                    page.url,
+                )
             self._save_debug_screenshot(page)
             return None
 

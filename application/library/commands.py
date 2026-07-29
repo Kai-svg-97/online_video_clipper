@@ -335,10 +335,16 @@ class EnrichVideoHandler:
             return EnrichVideoResult("summary", False, str(exc))
 
         if not summary:
-            # 미로그인·쿠키 미설정에서 흔한 정상 실패 — 트레이스백 없이 안내만 남긴다.
-            logger.warning("요약을 가져오지 못했습니다(YouTube 쿠키 확인): %s", url)
+            # 정상 실패가 두 가지다: ① YouTube가 그 영상에 요약 기능을 제공하지 않음
+            # (조회수가 적거나 최근 업로드인 영상에서 관측됨) ② 쿠키 미설정·만료.
+            # 어느 쪽인지는 추출기 로그가 구분해 남기므로 여기서는 단정하지 않는다.
+            logger.warning(
+                "요약을 가져오지 못했습니다(영상이 요약 미지원이거나 쿠키 미설정): %s", url
+            )
             return EnrichVideoResult(
-                "summary", False, "요약을 가져오지 못했습니다(YouTube 쿠키 확인)"
+                "summary",
+                False,
+                "요약을 가져오지 못했습니다(이 영상이 요약을 지원하지 않거나 쿠키 미설정)",
             )
 
         video_agg.update_metadata(gemini_summary=summary)
