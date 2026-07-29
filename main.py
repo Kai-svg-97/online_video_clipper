@@ -112,6 +112,17 @@ def main() -> int:
     ensure_data_dirs()
     setup_logging()
 
+    # 3-1. 단일 인스턴스 가드 — 업데이트 직후 인스톨러/배치가 겹쳐 실행되거나 사용자가
+    # 아이콘을 연달아 눌러도 하나만 살아남게 한다. **DB를 열기 전에** 판단해야
+    # 두 프로세스가 같은 DB를 동시에 건드리지 않는다.
+    from gui.single_instance import SingleInstanceGuard  # noqa: PLC0415
+
+    _guard = SingleInstanceGuard()
+    if not _guard.try_acquire():
+        logger.info("이미 실행 중인 인스턴스가 있어 종료한다")
+        _splash.close()
+        return 0
+
     # 4. 무거운 임포트 — 스플래시가 보이는 동안 수행
     from infrastructure.event_bus import EventBus
     from infrastructure.persistence.database import Database
@@ -495,9 +506,18 @@ def main() -> int:
     # 17. 스플래시 닫기 + 메인 창 표시
     _splash.finish(window)
     window.show()
+
+    # 두 번째 인스턴스가 실행되면 이 창을 앞으로 불러온다(그쪽은 즉시 종료된다).
+    def _activate_existing() -> None:
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
+
+    _guard.set_activate_callback(_activate_existing)
     # 연결돼 있으면 기동 후 1회 동기화 + 주기 자동 동기화 시작.
     sync_vm.start_auto_sync()
     exit_code = app.exec()
+    _guard.release()
 
     # 앱 완전 종료 후 pending 업데이트 installer 실행 (파일 잠금 방지)
     # batch 파일로 지연 실행: 5초 대기 후 설치 → 설치 완료 후 앱 자동 재실행
