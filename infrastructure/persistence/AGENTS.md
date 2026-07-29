@@ -25,7 +25,10 @@ SQLite 기반 영속성 레이어. DB 연결·WAL 설정·스키마 마이그레
 - 썸네일은 파일 경로만 저장 — BLOB 금지.
 - 스키마 변경 시 `database.py` 마이그레이션 로직도 함께 수정 (버전 증가).
 - `description`, `notes` 필드는 `GetVideoDetailHandler` 호출 시에만 로드.
-- `SqliteVideoRepository.search()`는 FTS5 가상 테이블(`videos_fts`) 사용.
+- `SqliteVideoRepository.search()`는 부분 일치(LIKE + ESCAPE) UNION 서브쿼리를 쓴다.
+  가사는 `lyrics_json`을 파싱해 비교한다 — JSON 키(`"o"`,`"t"`)에 LIKE 가 걸려
+  검색어 `o`·`t` 가 모든 노래를 오탐하기 때문이다.
+- 일치 속성은 `match_fields_for(video_ids, text)`가 현재 페이지에만 실행해 반환한다.
 
 ### Common Patterns
 ```python
