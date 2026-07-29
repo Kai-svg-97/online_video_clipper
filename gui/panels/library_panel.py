@@ -157,6 +157,21 @@ _TAG_PALETTE: tuple[str, ...] = (
 )
 
 
+# 검색 일치 속성 배지 라벨 — 도메인은 영어 키를 쓰고 표시 문자열은 GUI가 갖는다.
+MATCH_FIELD_LABELS: dict[str, str] = {
+    "title": "제목",
+    "tags": "태그",
+    "description": "설명",
+    "notes": "메모",
+    "summary": "요약",
+    "song": "노래",
+    "lyrics": "가사",
+}
+
+# 검색 일치 속성 배지 한 줄 높이(항상 확보해 타이핑 중 리플로우 방지)
+_MATCH_ROW_H = 18
+
+
 def tag_color(name: str) -> str:
     """태그·카테고리 이름에서 표시 색상을 결정한다.
 
@@ -600,12 +615,43 @@ def _paint_duration_badge(painter: QPainter, dur: str, tx: int, ty: int, tw: int
 # Icon-grid delegate: YouTube-style card
 # ------------------------------------------------------------------
 
+def _paint_match_badges(painter, rect, keys: tuple[str, ...]) -> None:
+    """검색 일치 속성 배지를 rect 안 좌측부터 그린다.
+
+    keys 가 비면 아무것도 그리지 않는다(검색 중이 아닐 때).
+    """
+    if not keys:
+        return
+    tokens = ThemeManager.instance().current()
+    c = chip_colors(tokens, selected=False)
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setFont(QFont("", 7))
+    fm = painter.fontMetrics()
+    x = rect.left()
+    h = 15
+    for key in keys:
+        label = MATCH_FIELD_LABELS.get(key, key)
+        w = fm.horizontalAdvance(label) + 12
+        if x + w > rect.right():
+            break
+        chip = QRect(x, rect.top(), w, h)
+        painter.setBrush(QBrush(QColor(c["bg"])))
+        painter.setPen(QPen(QColor(tokens.accent), 1))
+        painter.drawRoundedRect(chip, 7, 7)
+        painter.setPen(QColor(tokens.accent))
+        painter.drawText(chip, Qt.AlignmentFlag.AlignCenter, label)
+        x += w + 4
+    painter.restore()
+
+
 class _IconDelegate(QStyledItemDelegate):
     _TW    = _TW_ICON
     _TH    = _TH_ICON
     _PAD   = _ICON_PAD
     _ITEM_W = _TW_ICON + _ICON_PAD * 2
-    _ITEM_H = _TH_ICON + _ICON_TEXT_H
+    # 배지 높이는 항상 확보한다 — 검색 중일 때만 늘리면 타이핑마다 그리드가 리플로우된다.
+    _ITEM_H = _TH_ICON + _ICON_TEXT_H + _MATCH_ROW_H
 
     def __init__(self, parent=None, filter_cat_id: UUID | None = None) -> None:
         super().__init__(parent)
@@ -711,6 +757,13 @@ class _IconDelegate(QStyledItemDelegate):
                 painter.drawText(row3_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignRight, cat_name)
         painter.restore()
 
+        # 검색 일치 속성 배지 — 메타 행 아래
+        match_keys: tuple = index.data(VideoListModel.MatchFieldsRole) or ()
+        if match_keys:
+            _paint_match_badges(
+                painter, QRect(text_x, title_top + 78, text_w, 15), match_keys
+            )
+
         # Hover / Selection border (drawn last, on top of everything)
         from PyQt6.QtWidgets import QStyle  # noqa: PLC0415
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
@@ -742,7 +795,8 @@ class _IconDelegate(QStyledItemDelegate):
 class _ListDelegate(QStyledItemDelegate):
     _TW    = _TW_LIST   # 213
     _TH    = _TH_LIST   # 120
-    _ROW_H = _TH_LIST + 40  # 160 px per row (room for 3 text lines)
+    # 3 텍스트 행 + 검색 일치 배지 한 줄. 배지 높이는 항상 확보해 타이핑 중 리플로우를 막는다.
+    _ROW_H = _TH_LIST + 40 + _MATCH_ROW_H
 
     def __init__(self, parent=None, filter_cat_id: UUID | None = None) -> None:
         super().__init__(parent)
@@ -845,6 +899,13 @@ class _ListDelegate(QStyledItemDelegate):
             painter.drawText(tag_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft, tags_text)
             painter.restore()
 
+        # 검색 일치 속성 배지 — 태그 행 아래
+        match_keys: tuple = index.data(VideoListModel.MatchFieldsRole) or ()
+        if match_keys:
+            _paint_match_badges(
+                painter, QRect(text_x, text_top + 100, text_w, 15), match_keys
+            )
+
         # Favourite star
         if fav:
             painter.save()
@@ -898,6 +959,7 @@ class VideoListModel(QAbstractListModel):
     ViewCountRole   = Qt.ItemDataRole.UserRole + 11
     CategoryIdRole  = Qt.ItemDataRole.UserRole + 12
     TagNamesRole    = Qt.ItemDataRole.UserRole + 13
+    MatchFieldsRole = Qt.ItemDataRole.UserRole + 14
 
     reordered = pyqtSignal(list)   # list[UUID] — 새 순서
 
@@ -963,8 +1025,10 @@ class VideoListModel(QAbstractListModel):
             return dto.category_id
         if role == self.TagNamesRole:
             return dto.tag_names
+        if role == self.MatchFieldsRole:
+            return dto.match_fields
         if role == Qt.ItemDataRole.SizeHintRole:
-            return QSize(_TW_ICON + _ICON_PAD * 2, _TH_ICON + _ICON_TEXT_H)
+            return QSize(_TW_ICON + _ICON_PAD * 2, _TH_ICON + _ICON_TEXT_H + _MATCH_ROW_H)
         return None
 
     def notify_thumb_cached(self, paths: set[str]) -> None:

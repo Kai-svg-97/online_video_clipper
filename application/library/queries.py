@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import UUID
 
@@ -157,26 +157,29 @@ class SearchVideosHandler:
     def handle(self, query: SearchVideosQuery) -> list[VideoDTO]:
         cats = _cats_dict(self._repo)
         tag_id_to_name = _tags_dict(self._repo)
-        return [
-            _to_dto(agg, cats, tag_id_to_name)
-            for agg in self._repo.search(
-                SearchQuery(
-                    text=query.text,
-                    category_id=query.category_id,
-                    category_ids=query.category_ids,
-                    tag_ids=query.tag_ids,
-                    video_ids=query.video_ids,
-                    categorized_only=query.categorized_only,
-                    favorite_only=query.favorite_only,
-                    limit=query.limit,
-                    offset=query.offset,
-                    sort_by=query.sort_by,
-                    sort_asc=query.sort_asc,
-                    min_duration_sec=query.min_duration_sec,
-                    max_duration_sec=query.max_duration_sec,
-                )
+        aggs = self._repo.search(
+            SearchQuery(
+                text=query.text,
+                category_id=query.category_id,
+                category_ids=query.category_ids,
+                tag_ids=query.tag_ids,
+                video_ids=query.video_ids,
+                categorized_only=query.categorized_only,
+                favorite_only=query.favorite_only,
+                limit=query.limit,
+                offset=query.offset,
+                sort_by=query.sort_by,
+                sort_asc=query.sort_asc,
+                min_duration_sec=query.min_duration_sec,
+                max_duration_sec=query.max_duration_sec,
             )
-        ]
+        )
+        dtos = [_to_dto(agg, cats, tag_id_to_name) for agg in aggs]
+        if not query.text:
+            return dtos
+        # 일치 속성은 현재 페이지에만 판정한다(전체 스캔 방지).
+        matches = self._repo.match_fields_for([d.id for d in dtos], query.text)
+        return [replace(d, match_fields=matches.get(d.id, ())) for d in dtos]
 
 
 class GetVideoByIdHandler:

@@ -36,6 +36,8 @@ class VideoDTO:
     view_count: int | None = None
     tag_names: tuple[str, ...] = ()
     created_at: str | None = None
+    # 검색 시 어느 속성이 일치했는지(도메인 MATCH_FIELD_KEYS 순서). 검색어가 없으면 빈 튜플.
+    match_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
