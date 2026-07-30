@@ -41,6 +41,8 @@ class UpdateVideoCommand:
     category_id: UUID | None = None
     tags: list[str] | None = None
     gemini_summary: str | None = None
+    # 요약 실패 사유. ""는 "지우기", None은 "건드리지 않음".
+    summary_status: str | None = None
 
 
 @dataclass
@@ -328,30 +330,50 @@ class EnrichVideoHandler:
             return EnrichVideoResult("skipped", False, "요약 추출기가 설정되지 않았습니다")
 
         url = str(video_agg.video.url)
+        # 실패 사유까지 받아 저장한다 — 상세 화면이 "질문하기 버튼이 없어 실패"와
+        # 쿠키·네트워크 문제를 구분해 안내하기 위해 필요하다.
+        reason = ""
         try:
-            summary = self._summary.extract(url)
+            get_reason = getattr(self._summary, "extract_with_reason", None)
+            if callable(get_reason):
+                summary, reason = get_reason(url)
+            else:
+                summary = self._summary.extract(url)
         except Exception as exc:
             logger.exception("요약 자동 추출 실패: %s", url)
+            self._record_summary_status(video_agg.id, "error")
             return EnrichVideoResult("summary", False, str(exc))
 
         if not summary:
             # 정상 실패가 두 가지다: ① YouTube가 그 영상에 요약 기능을 제공하지 않음
             # (조회수가 적거나 최근 업로드인 영상에서 관측됨) ② 쿠키 미설정·만료.
-            # 어느 쪽인지는 추출기 로그가 구분해 남기므로 여기서는 단정하지 않는다.
-            logger.warning(
-                "요약을 가져오지 못했습니다(영상이 요약 미지원이거나 쿠키 미설정): %s", url
-            )
-            return EnrichVideoResult(
-                "summary",
-                False,
-                "요약을 가져오지 못했습니다(이 영상이 요약을 지원하지 않거나 쿠키 미설정)",
-            )
+            self._record_summary_status(video_agg.id, reason or "error")
+            if reason == "no_button":
+                detail = "이 영상에는 '질문하기' 버튼이 없어 요약을 가져올 수 없습니다"
+            elif reason == "not_signed_in":
+                detail = "YouTube 로그인이 필요합니다(설정에서 쿠키 등록)"
+            else:
+                detail = "요약을 가져오지 못했습니다"
+            logger.warning("%s: %s", detail, url)
+            return EnrichVideoResult("summary", False, detail)
 
         video_agg.update_metadata(gemini_summary=summary)
         self._repo.save(video_agg)
+        # 성공했으니 이전 실패 사유는 지운다(상세 안내 문구가 남지 않게).
+        self._record_summary_status(video_agg.id, "")
         if self._bus is not None:
             self._bus.publish_all(video_agg.pull_events())
         return EnrichVideoResult("summary", True, f"{len(summary)}자")
+
+    def _record_summary_status(self, video_id: UUID, status: str) -> None:
+        """요약 실패 사유를 저장한다(빈 문자열이면 삭제). 실패는 격리한다."""
+        try:
+            if status:
+                self._repo.set_summary_status(video_id, status)
+            else:
+                self._repo.clear_summary_status(video_id)
+        except Exception:
+            logger.exception("요약 상태 기록 실패(무시): %s", video_id)
 
 
 class UpdateVideoHandler:
@@ -378,6 +400,14 @@ class UpdateVideoHandler:
             agg.set_tags(tag_ids)
 
         self._repo.save(agg)
+
+        # 요약 실패 사유는 videos 행이 아니라 별도 테이블에 있어 따로 처리한다.
+        if cmd.summary_status is not None:
+            if cmd.summary_status:
+                self._repo.set_summary_status(cmd.video_id, cmd.summary_status)
+            else:
+                self._repo.clear_summary_status(cmd.video_id)
+
         self._bus.publish_all(agg.pull_events())
 
 

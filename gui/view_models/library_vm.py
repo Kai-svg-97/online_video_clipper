@@ -929,6 +929,19 @@ class LibraryViewModel(QObject):
         except Exception:
             logger.exception("Gemini 요약 저장 실패: %s", video_id)
 
+    def save_summary_status(self, video_id: UUID, status: str) -> None:
+        """요약 실패 사유 저장(빈 문자열이면 삭제).
+
+        상세 화면이 다음에 열릴 때도 "질문하기 버튼이 없어 실패" 같은 정확한 안내를
+        띄우기 위한 진단 상태다. 저장 실패는 기능에 영향이 없어 로그만 남긴다.
+        """
+        try:
+            self._update_video.handle(
+                UpdateVideoCommand(video_id=video_id, summary_status=status)
+            )
+        except Exception:
+            logger.exception("요약 상태 저장 실패: %s", video_id)
+
     def update_video_tags(self, video_id: UUID, tag_names: list[str]) -> None:
         """Replace the tag list for a single video (used from detail panel)."""
         try:

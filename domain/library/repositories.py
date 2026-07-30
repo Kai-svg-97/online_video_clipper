@@ -45,6 +45,21 @@ class IVideoRepository(ABC):
     def search(self, query: SearchQuery) -> list[VideoAggregate]: ...
 
     @abstractmethod
+    def get_summary_status(self, video_id: UUID) -> str:
+        """Gemini 요약 실패 사유를 반환한다(없으면 빈 문자열).
+
+        상세 화면이 "질문하기 버튼이 없어 실패"와 일반 오류를 구분해 안내하는 데 쓴다.
+        """
+
+    @abstractmethod
+    def set_summary_status(self, video_id: UUID, status: str) -> None:
+        """Gemini 요약 실패 사유를 기록한다(기존 값 덮어씀)."""
+
+    @abstractmethod
+    def clear_summary_status(self, video_id: UUID) -> None:
+        """요약을 성공적으로 가져왔을 때 실패 사유를 지운다(없어도 예외 없음)."""
+
+    @abstractmethod
     def match_fields_for(
         self, video_ids: list[UUID], text: str
     ) -> dict[UUID, tuple[str, ...]]:

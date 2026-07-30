@@ -25,6 +25,7 @@ MIGRATION_IDS: tuple[str, ...] = (
     "migrate_song_tables",
     "migrate_song_sources_reorder",
     "migrate_media_paths_relative",
+    "migrate_video_summary_status",
 )
 
 
@@ -133,6 +134,20 @@ class Database:
                 logger.info("videos.gemini_summary 컬럼 추가 완료")
             except Exception:
                 logger.debug("videos.gemini_summary 컬럼 이미 존재 — 건너뜀")
+
+    def _migrate_video_summary_status(self) -> None:
+        """video_summary_status 테이블을 만든다 (idempotent).
+
+        Gemini 요약 실패 사유를 담아 상세 화면이 정확한 안내 문구를 띄우게 한다.
+        진단 정보이므로 동기화 대상이 아니며, videos 행을 늘리지 않도록 분리했다.
+        """
+        with self.connection() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS video_summary_status ("
+                " video_id   TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,"
+                " status     TEXT NOT NULL,"
+                " updated_at TEXT NOT NULL)"
+            )
 
     def _migrate_song_tables(self) -> None:
         """노래 정보/가사 출처 테이블 시드 (idempotent).

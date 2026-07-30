@@ -67,6 +67,13 @@ _PAGE_LOAD_TIMEOUT_MS = 20_000
 # 이제 모든 셀렉터를 or_ 로 합쳐 `wait_for(state="visible")`로 한 번만 기다린다.
 _ASK_BUTTON_TIMEOUT_MS = 20_000
 _LOGIN_PROBE_TIMEOUT_MS = 8_000
+
+# 요약 실패 사유 — 상세 화면이 원인별로 다른 안내 문구를 띄우는 데 쓴다.
+# "질문하기 버튼이 없어서" 실패한 경우는 사용자가 손쓸 수 없는 YouTube 측 제약이므로
+# 쿠키·네트워크 문제와 반드시 구분해 알려야 한다.
+SUMMARY_REASON_NO_BUTTON = "no_button"
+SUMMARY_REASON_NOT_SIGNED_IN = "not_signed_in"
+SUMMARY_REASON_ERROR = "error"
 _RESPONSE_TIMEOUT_MS = 30_000
 # 응답 스트리밍이 끝났다고 판단하기까지 텍스트가 변하지 않아야 하는 시간
 _STABLE_POLL_INTERVAL_MS = 1_000
@@ -94,15 +101,30 @@ class GeminiExtractor:
     def extract(self, url: str) -> str | None:
         """Gemini 요약 텍스트를 반환한다. 실패·미지원 시 None.
 
+        `ISummarySource` 포트 계약이며 다운로드 완료 캡처 경로가 이 형태를 쓴다.
+        실패 사유까지 필요하면 `extract_with_reason()`을 쓸 것.
+
         반드시 QThread(백그라운드 스레드)에서 호출해야 한다.
         """
+        return self.extract_with_reason(url)[0]
+
+    def extract_with_reason(self, url: str) -> tuple[str | None, str]:
+        """(요약, 실패사유)를 반환한다. 성공 시 사유는 빈 문자열.
+
+        사유는 SUMMARY_REASON_* 중 하나다. 상세 화면이 "질문하기 버튼이 없어서"와
+        쿠키·네트워크 문제를 구분해 안내하기 위해 필요하다.
+        """
+        out: dict[str, str] = {}
         try:
-            return self._do_extract(url)
+            summary = self._do_extract(url, out)
         except Exception:
             logger.exception("Gemini 요약 추출 실패 (무시하고 계속): %s", url)
-            return None
+            return None, SUMMARY_REASON_ERROR
+        if summary:
+            return summary, ""
+        return None, out.get("reason", SUMMARY_REASON_ERROR)
 
-    def _do_extract(self, url: str) -> str | None:
+    def _do_extract(self, url: str, out: dict | None = None) -> str | None:
         try:
             from playwright.sync_api import sync_playwright  # noqa: PLC0415
         except ImportError:
@@ -167,7 +189,7 @@ class GeminiExtractor:
 
                     self._log_login_state(page)
 
-                    return self._click_and_extract(page)
+                    return self._click_and_extract(page, out)
                 finally:
                     try:
                         browser.close()
@@ -255,7 +277,7 @@ class GeminiExtractor:
             return None
         return btn
 
-    def _click_and_extract(self, page) -> str | None:
+    def _click_and_extract(self, page, out: dict | None = None) -> str | None:
         """Ask 버튼 클릭 → 요약 칩 클릭 → 응답 안정화 대기 후 텍스트를 추출한다.
 
         "질문하기" 클릭은 채팅 패널을 열 뿐이며, 실제 요약은 추천 칩
@@ -266,6 +288,12 @@ class GeminiExtractor:
             # 원인을 구분해 기록한다. 예전에는 "로그인 필요 또는 미지원 영상"으로 뭉쳐
             # 있어, 로그인이 정상인데도 인증 문제로 오해하게 만들었다.
             state = self._detect_login_state(page)
+            if out is not None:
+                out["reason"] = (
+                    SUMMARY_REASON_NOT_SIGNED_IN
+                    if state == "signed_out"
+                    else SUMMARY_REASON_NO_BUTTON
+                )
             if state == "signed_out":
                 logger.warning(
                     "Gemini '질문하기' 버튼 없음 — 비로그인 상태다. 설정에서 쿠키를 "

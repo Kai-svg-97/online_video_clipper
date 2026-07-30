@@ -254,6 +254,7 @@ class GetVideoDetailHandler:
             downloads=downloads,
             failed_downloads=failed_downloads,
             gemini_summary=v.gemini_summary,
+            summary_status=self._video_repo.get_summary_status(agg.id),
         )
 
 

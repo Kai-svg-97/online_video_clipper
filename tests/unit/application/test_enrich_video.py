@@ -157,8 +157,11 @@ class TestSummaryBranch:
         assert summary.calls == []
         repo.save.assert_not_called()
 
-    def test_empty_summary_reports_cookie_hint(self):
-        """빈 문자열 반환(미로그인)은 쿠키 안내 메시지로 보고한다."""
+    def test_empty_summary_reports_failure_with_guidance(self):
+        """빈 문자열 반환은 실패로 보고하고 안내 문구를 남긴다.
+
+        사유를 알 수 없는 추출기(extract_with_reason 미제공)면 일반 문구를 쓴다.
+        """
         handler, repo, _ = _make(
             _video_agg(), _song_agg(False), MagicMock(), _FakeSummarySource("")
         )
@@ -166,10 +169,10 @@ class TestSummaryBranch:
         result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
 
         assert result.ok is False
-        assert "쿠키" in result.detail
+        assert result.detail, "안내 문구가 비었다"
         repo.save.assert_not_called()
 
-    def test_none_summary_reports_cookie_hint(self):
+    def test_none_summary_reports_failure(self):
         """GeminiExtractor.extract는 실패 시 None도 반환한다 — 빈 문자열과 동일 처리."""
         handler, repo, _ = _make(
             _video_agg(), _song_agg(False), MagicMock(), _FakeSummarySource(None)
@@ -178,7 +181,7 @@ class TestSummaryBranch:
         result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
 
         assert result.ok is False
-        assert "쿠키" in result.detail
+        assert result.detail
         repo.save.assert_not_called()
 
     def test_missing_summary_source_skipped(self):
@@ -189,6 +192,82 @@ class TestSummaryBranch:
 
         assert result.kind == "skipped"
         assert result.ok is False
+
+
+class _ReasoningSummarySource:
+    """실패 사유를 함께 반환하는 추출기(실제 GeminiExtractor와 같은 계약)."""
+
+    def __init__(self, summary: str | None, reason: str) -> None:
+        self._summary = summary
+        self._reason = reason
+
+    def extract(self, url: str):
+        return self._summary
+
+    def extract_with_reason(self, url: str):
+        return self._summary, ("" if self._summary else self._reason)
+
+
+class TestFailureReasonHandling:
+    """사유별로 안내 문구가 달라지고 상태가 저장돼야 한다."""
+
+    def test_no_button_message_mentions_button(self):
+        handler, repo, _ = _make(
+            _video_agg(), _song_agg(False), MagicMock(),
+            _ReasoningSummarySource(None, "no_button"),
+        )
+
+        result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
+
+        assert result.ok is False
+        assert "질문하기" in result.detail
+
+    def test_no_button_status_is_persisted(self):
+        """상세 화면이 재시작 후에도 문구를 바꿀 수 있도록 저장해야 한다."""
+        video = _video_agg()
+        handler, repo, _ = _make(
+            video, _song_agg(False), MagicMock(),
+            _ReasoningSummarySource(None, "no_button"),
+        )
+
+        handler.handle(EnrichVideoCommand(video_id=uuid4()))
+
+        repo.set_summary_status.assert_called_once()
+        assert repo.set_summary_status.call_args.args[1] == "no_button"
+
+    def test_not_signed_in_message_mentions_login(self):
+        handler, _repo, _ = _make(
+            _video_agg(), _song_agg(False), MagicMock(),
+            _ReasoningSummarySource(None, "not_signed_in"),
+        )
+
+        result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
+
+        assert "로그인" in result.detail
+
+    def test_success_clears_previous_status(self):
+        """성공하면 이전 실패 사유를 지워 안내 문구가 사라져야 한다."""
+        handler, repo, _ = _make(
+            _video_agg(), _song_agg(False), MagicMock(),
+            _ReasoningSummarySource("요약 본문", "no_button"),
+        )
+
+        result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
+
+        assert result.ok is True
+        repo.clear_summary_status.assert_called_once()
+
+    def test_status_write_failure_does_not_break_enrichment(self):
+        """상태 기록 실패가 등록·보강 결과를 망가뜨리면 안 된다."""
+        handler, repo, _ = _make(
+            _video_agg(), _song_agg(False), MagicMock(),
+            _ReasoningSummarySource(None, "no_button"),
+        )
+        repo.set_summary_status.side_effect = RuntimeError("DB 오류")
+
+        result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
+
+        assert result.ok is False   # 예외가 전파되지 않는다
 
 
 class TestGuards:

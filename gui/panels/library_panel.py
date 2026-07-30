@@ -4217,6 +4217,9 @@ class LibraryPanel(QWidget):
         self._detail_widget.gemini_summary_saved.connect(
             lambda vid_id, text: self._vm.save_gemini_summary(vid_id, text)
         )
+        self._detail_widget.summary_status_saved.connect(
+            lambda vid_id, status: self._vm.save_summary_status(vid_id, status)
+        )
         self._detail_widget.downloads_refresh_requested.connect(
             self._on_detail_downloads_refresh
         )

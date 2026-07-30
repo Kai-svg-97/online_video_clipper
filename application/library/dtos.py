@@ -165,3 +165,5 @@ class VideoDetailDTO:
     downloads: list[DownloadInfoDTO] = field(default_factory=list)
     failed_downloads: list[FailedDownloadInfoDTO] = field(default_factory=list)
     gemini_summary: str = ""
+    # 요약 실패 사유(SUMMARY_REASON_*) — 상세 화면 안내 문구 분기용. 없으면 빈 문자열.
+    summary_status: str = ""

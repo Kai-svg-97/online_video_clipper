@@ -125,6 +125,35 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")   # # 제목
 _BULLET_RE = re.compile(r"^([-*•·])\s+(.*)$")    # 불릿 목록
 _NUMBERED_RE = re.compile(r"^(\d+)[.)]\s+(.*)$")  # 번호 목록
 
+# 요약 탭 안내 문구 — 실패 사유(SUMMARY_REASON_*)별로 다르게 보여준다.
+# "질문하기 버튼이 없어서"는 사용자가 손쓸 수 없는 YouTube 측 제약이므로
+# 쿠키·네트워크 문제와 반드시 구분해야 한다(그냥 "요약이 없습니다"로 두면
+# 사용자가 설정을 계속 확인하게 된다).
+_SUMMARY_PLACEHOLDERS: dict[str, str] = {
+    "": (
+        "Gemini AI 요약이 없습니다.\n"
+        "⟳ 버튼으로 갱신하거나 더블클릭하여 직접 입력하세요."
+    ),
+    "no_button": (
+        "질문하기 버튼이 없어 가져오는데 실패했습니다.\n"
+        "조회수가 적거나 최근 업로드된 영상은 YouTube가 요약 기능을 제공하지 않습니다. "
+        "나중에 ⟳ 버튼으로 다시 시도하거나 더블클릭하여 직접 입력하세요."
+    ),
+    "not_signed_in": (
+        "YouTube 로그인이 필요해 요약을 가져오지 못했습니다.\n"
+        "설정에서 쿠키를 등록한 뒤 ⟳ 버튼으로 다시 시도하세요."
+    ),
+    "error": (
+        "요약을 가져오는 중 오류가 발생했습니다.\n"
+        "⟳ 버튼으로 다시 시도하거나 더블클릭하여 직접 입력하세요."
+    ),
+}
+
+
+def summary_placeholder(status: str) -> str:
+    """요약 실패 사유에 맞는 안내 문구를 반환한다(모르는 값은 기본 문구)."""
+    return _SUMMARY_PLACEHOLDERS.get(status or "", _SUMMARY_PLACEHOLDERS[""])
+
 
 class _RelatedRow(QFrame):
     """연관 영상 1행 — 작은 썸네일 + 제목 2줄 + 채널/메타. 단일 클릭으로 선택."""
@@ -981,6 +1010,8 @@ class VideoDetailWidget(QWidget):
     notes_saved             = pyqtSignal(object, str)   # (video_id, notes)
     category_path_clicked   = pyqtSignal(object)  # (category_id: UUID)
     gemini_summary_saved    = pyqtSignal(object, str)   # (video_id, summary)
+    # 요약 실패 사유 저장 요청 — (video_id, SUMMARY_REASON_* 또는 "" = 지우기)
+    summary_status_saved    = pyqtSignal(object, str)
     downloads_refresh_requested = pyqtSignal(object)    # video_id
     detail_refresh_requested    = pyqtSignal(object)    # video_id — 제목행 ⟳ 버튼
     song_field_saved            = pyqtSignal(object, str, str)  # (video_id, field, value)
@@ -1183,9 +1214,7 @@ class VideoDetailWidget(QWidget):
         self._summary_edit = QTextBrowser()
         self._summary_edit.setOpenLinks(False)
         self._summary_edit.setOpenExternalLinks(False)
-        self._summary_edit.setPlaceholderText(
-            "Gemini AI 요약이 없습니다.\n⟳ 버튼으로 갱신하거나 더블클릭하여 직접 입력하세요."
-        )
+        self._summary_edit.setPlaceholderText(_SUMMARY_PLACEHOLDERS[""])
         self._summary_edit.anchorClicked.connect(self._on_summary_anchor_clicked)
         self._summary_stack.addWidget(self._summary_edit)      # index 0: 표시
         self._summary_editor = QPlainTextEdit()
@@ -1337,6 +1366,10 @@ class VideoDetailWidget(QWidget):
         self._notes_edit.setPlainText(detail.notes or "")
         self._notes_edit.blockSignals(False)
         self._summary_raw = detail.gemini_summary or ""
+        # 요약이 비어 있을 때 왜 없는지 알려준다(저장된 실패 사유 기준).
+        self._summary_edit.setPlaceholderText(
+            summary_placeholder(getattr(detail, "summary_status", ""))
+        )
         self._summary_edit.setHtml(
             self._render_timestamped_html(self._summary_raw, line_gap=self._SUMMARY_LINE_GAP)
         )
@@ -2137,15 +2170,19 @@ class VideoDetailWidget(QWidget):
         worker.start()
         self._gemini_worker = worker
 
-    def _on_gemini_done(self, video_id, summary: str) -> None:
+    def _on_gemini_done(self, video_id, summary: str, reason: str = "") -> None:
         # 요청 시점의 영상과 현재 표시 중인 영상이 다르면(사용자가 다른 영상으로
         # 이동) 화면은 건드리지 않는다. 단, 유효한 요약은 원래 요청 영상 id로
         # 저장해 데이터 정합을 유지한다.
         is_current = self._detail is not None and video_id == self._detail.id
         if summary:
             self.gemini_summary_saved.emit(video_id, summary)
+        # 실패 사유(또는 성공 시 "")를 저장해 다음에 상세를 열 때도 이유가 보이게 한다.
+        self.summary_status_saved.emit(video_id, "" if summary else (reason or "error"))
         if not is_current:
             return
+        if not summary:
+            self._summary_edit.setPlaceholderText(summary_placeholder(reason or "error"))
         self._summary_refresh_btn.setEnabled(True)
         if summary:
             self._summary_raw = summary
@@ -2194,7 +2231,8 @@ class VideoDetailWidget(QWidget):
 class _GeminiSummaryWorker(QThread):
     """백그라운드에서 Gemini AI 요약을 추출한다."""
 
-    done = pyqtSignal(object, str)  # (video_id, 요약 텍스트) — 실패 시 빈 문자열
+    # (video_id, 요약 텍스트, 실패 사유) — 성공 시 사유는 빈 문자열
+    done = pyqtSignal(object, str, str)
 
     def __init__(self, url: str, video_id, parent=None) -> None:
         super().__init__(parent)
@@ -2204,11 +2242,11 @@ class _GeminiSummaryWorker(QThread):
     def run(self) -> None:
         try:
             from infrastructure.browser.gemini_extractor import GeminiExtractor  # noqa: PLC0415
-            result = GeminiExtractor().extract(self._url)
-            self.done.emit(self._video_id, result or "")
+            summary, reason = GeminiExtractor().extract_with_reason(self._url)
+            self.done.emit(self._video_id, summary or "", reason)
         except Exception:
             logger.exception("Gemini 요약 워커 실패")
-            self.done.emit(self._video_id, "")
+            self.done.emit(self._video_id, "", "error")
 
 
 def _bold_font(size: int) -> QFont:

@@ -447,6 +447,33 @@ class SqliteVideoRepository(IVideoRepository):
         ]
 
     # ------------------------------------------------------------------
+    # Gemini 요약 실패 사유 (상세 화면 안내 문구용)
+    # ------------------------------------------------------------------
+
+    def get_summary_status(self, video_id: UUID) -> str:
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT status FROM video_summary_status WHERE video_id=?",
+                (str(video_id),),
+            ).fetchone()
+        return row["status"] if row else ""
+
+    def set_summary_status(self, video_id: UUID, status: str) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "INSERT INTO video_summary_status (video_id, status, updated_at) "
+                "VALUES (?, ?, ?) ON CONFLICT(video_id) DO UPDATE SET "
+                "status=excluded.status, updated_at=excluded.updated_at",
+                (str(video_id), status, _fmt_dt(datetime.now())),
+            )
+
+    def clear_summary_status(self, video_id: UUID) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM video_summary_status WHERE video_id=?", (str(video_id),)
+            )
+
+    # ------------------------------------------------------------------
     # 검색 일치 속성
     # ------------------------------------------------------------------
 

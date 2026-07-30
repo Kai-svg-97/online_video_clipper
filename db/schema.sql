@@ -45,6 +45,16 @@ CREATE TABLE IF NOT EXISTS video_descriptions (
     description TEXT NOT NULL DEFAULT ''
 );
 
+-- Gemini 요약 실패 사유 (상세 화면 안내 문구용, 진단 정보라 로컬 전용).
+-- videos 행을 늘리지 않도록 video_descriptions 와 같은 방식으로 분리한다.
+-- status: "no_button"(YouTube가 그 영상에 요약 기능 미제공) | "not_signed_in" | "error"
+-- 요약을 성공적으로 가져오면 해당 행을 삭제한다.
+CREATE TABLE IF NOT EXISTS video_summary_status (
+    video_id   TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    status     TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS video_tags (
     video_id    TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
     tag_id      TEXT NOT NULL REFERENCES tags(id)   ON DELETE CASCADE,
