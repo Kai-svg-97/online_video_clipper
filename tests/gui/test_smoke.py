@@ -42,15 +42,24 @@ class TestDownloadPanel:
         from PyQt6.QtWidgets import QTabWidget
 
         from gui.panels.download_panel import DownloadPanel
+        from gui.panels.video_detail_panel import VideoDetailWidget
 
         panel = DownloadPanel(vm=download_vm)
         qtbot.addWidget(panel)
         # DownloadPanel은 자체 QTabWidget이 없고 상세 페이지로 VideoDetailWidget을
-        # 임베드하므로, findChild(QTabWidget)는 상세 화면의 탭을 찾는다:
-        # 설명 / 요약 / 다운로드·클립 = 3개.
+        # 임베드하므로, findChild(QTabWidget)는 상세 화면의 탭을 찾는다.
         tabs = panel.findChild(QTabWidget)
         assert tabs is not None
-        assert tabs.count() == 3
+
+        labels = [tabs.tabText(i) for i in range(tabs.count())]
+        assert labels == ["설명", "요약", "다운로드 / 클립", "노래"]
+
+        # 인덱스 상수와 실제 탭 순서가 어긋나면 탭 전환 코드가 엉뚱한 탭을 연다.
+        # (개수만 세던 옛 테스트는 노래 탭이 추가된 뒤 그냥 깨졌고 이 위험은 못 잡았다.)
+        assert labels[VideoDetailWidget._TAB_INFO] == "설명"
+        assert labels[VideoDetailWidget._TAB_SUMMARY] == "요약"
+        assert labels[VideoDetailWidget._TAB_FILES] == "다운로드 / 클립"
+        assert labels[VideoDetailWidget._TAB_SONG] == "노래"
 
 
 class TestFeedPanel:
@@ -87,27 +96,65 @@ class TestLibraryPanel:
 
 
 class TestLibraryCategorizedOnly:
-    """\"로컬\" 루트 선택 시 카테고리 영상만(category_id IS NOT NULL) 조회하는지 검증."""
+    """\"로컬\" 루트 선택 시 카테고리 영상만(category_id IS NOT NULL) 조회하는지 검증.
 
-    def _last_query(self, library_vm):
-        return library_vm._get_videos.handle.call_args.args[0]
+    목록 조회는 `_ListVideosWorker`(QThread)에서 실행되고 `categorized_only`도 워커
+    안에서 계산되므로, 필터를 바꾼 직후에는 핸들러가 아직 불리지 않았다. 예전 테스트는
+    바로 `call_args`를 읽어 `None`에 걸려 깨져 있었다. 워커가 끝날 때까지 기다린 뒤
+    마지막으로 전달된 쿼리를 확인한다.
+    """
 
-    def test_local_root_requests_categorized_only(self, library_vm):
+    def _wait_for_query(self, library_vm, qapp_instance, min_calls: int, timeout_s: float = 5.0):
+        """목록 조회가 min_calls회 이상 실행되기를 기다리고 마지막 쿼리를 반환한다."""
+        import time
+
+        handle = library_vm._get_videos.handle
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            for worker in list(library_vm._list_workers):
+                worker.wait(50)
+            qapp_instance.processEvents()
+            if handle.call_count >= min_calls:
+                return handle.call_args.args[0]
+            time.sleep(0.01)
+        raise AssertionError(
+            f"목록 조회가 {timeout_s}초 안에 {min_calls}회 실행되지 않았다 "
+            f"(call_count={handle.call_count})"
+        )
+
+    def test_local_root_requests_categorized_only(self, library_vm, qapp_instance):
         from uuid import uuid4
 
-        # 특정 카테고리 선택 → categorized_only=False
-        library_vm.set_category_filter(uuid4())
-        assert self._last_query(library_vm).categorized_only is False
+        try:
+            # 특정 카테고리 선택 → categorized_only=False
+            library_vm.set_category_filter(uuid4())
+            first = self._wait_for_query(library_vm, qapp_instance, 1)
+            assert first.categorized_only is False
 
-        # "로컬"/전체(None) 선택 → categorized_only=True
-        library_vm.set_category_filter(None)
-        assert self._last_query(library_vm).categorized_only is True
+            # "로컬"/전체(None) 선택 → categorized_only=True
+            library_vm.set_category_filter(None)
+            second = self._wait_for_query(library_vm, qapp_instance, 2)
+            assert second.categorized_only is True
+        finally:
+            library_vm.shutdown()
 
-    def test_playlist_view_not_categorized_only(self, library_vm):
+    def test_playlist_view_not_categorized_only(self, library_vm, qapp_instance):
+        """재생목록 보기에서는 카테고리 미지정 영상도 보여야 한다.
+
+        참고(뮤테이션으로 확인): 이 동작은 두 곳이 독립적으로 보장한다 —
+        `set_playlist_filter`의 `_filter_categorized_only = False`와 워커 안의
+        `and filter_playlist_id is None`. 한쪽만 없애도 동작이 유지되므로 단일
+        뮤테이션에서는 이 테스트가 살아남는다. 이 테스트가 고정하는 것은 구현 절이
+        아니라 **동작**이며, 둘 다 사라지면 실패한다.
+        """
         from uuid import uuid4
 
-        library_vm.set_playlist_filter(uuid4())
-        assert self._last_query(library_vm).categorized_only is False
+        try:
+            library_vm.set_playlist_filter(uuid4())
+            query = self._wait_for_query(library_vm, qapp_instance, 1)
+            assert query.categorized_only is False
+        finally:
+            library_vm.shutdown()
 
 
 class TestPlaylistTreeCategorySelection:
