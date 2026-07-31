@@ -97,6 +97,31 @@ class SqliteDownloadRepository(IDownloadRepository):
                 jobs.append(self._row_to_job(row))
         return jobs
 
+    def find_completed_formats_by_urls(self, urls: list[str]) -> dict[str, set[str]]:
+        """URL 목록의 완료 다운로드 포맷을 단일 쿼리로 조회한다(목록 화면 배지용).
+
+        SQLite 의 바인딩 변수 상한(기본 999)을 넘지 않도록 청크로 나눈다.
+        """
+        uniq = [u for u in dict.fromkeys(urls) if u]
+        result: dict[str, set[str]] = {}
+        if not uniq:
+            return result
+        chunk_size = 400
+        with self._db.connection() as conn:
+            for i in range(0, len(uniq), chunk_size):
+                chunk = uniq[i : i + chunk_size]
+                ph = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT url, format FROM download_history "
+                    f"WHERE status='completed' AND url IN ({ph})",
+                    chunk,
+                ).fetchall()
+                for row in rows:
+                    fmt = (row["format"] or "").lower()
+                    if fmt:
+                        result.setdefault(row["url"], set()).add(fmt)
+        return result
+
     def delete_completed_duplicates(
         self, url: str, quality: str, fmt: str, keep_job_id: UUID
     ) -> None:

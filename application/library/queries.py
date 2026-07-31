@@ -36,6 +36,7 @@ from application.library.dtos import (
     VideoDetailDTO,
 )
 from domain.download.repositories import IDownloadRepository
+from domain.download.value_objects import AUDIO_FORMAT_VALUES
 from domain.library.aggregates import VideoAggregate
 from domain.library.repositories import IVideoRepository, SearchQuery
 
@@ -256,6 +257,34 @@ class GetVideoDetailHandler:
             gemini_summary=v.gemini_summary,
             summary_status=self._video_repo.get_summary_status(agg.id),
         )
+
+
+@dataclass
+class GetDownloadedFormatsQuery:
+    """목록에 보이는 영상들의 다운로드 여부를 일괄 판정하기 위한 URL 묶음."""
+
+    urls: list[str] = field(default_factory=list)
+
+
+class GetDownloadedFormatsHandler:
+    """URL별 (영상 받음, 음원 받음) 플래그를 단일 쿼리로 조회한다.
+
+    목록(표) 화면이 행마다 GetVideoDetail 을 호출하면 50행 × 여러 쿼리 + 파일
+    stat 이 메인 스레드에서 돌아 검색 입력조차 막힌다. 배지 판정에 필요한 정보는
+    포맷뿐이므로 이 쿼리 하나로 대체한다.
+    """
+
+    def __init__(self, dl_repo: IDownloadRepository) -> None:
+        self._dl_repo = dl_repo
+
+    def handle(self, query: GetDownloadedFormatsQuery) -> dict[str, tuple[bool, bool]]:
+        formats = self._dl_repo.find_completed_formats_by_urls(list(query.urls))
+        result: dict[str, tuple[bool, bool]] = {}
+        for url, fmts in formats.items():
+            has_audio = any(f in AUDIO_FORMAT_VALUES for f in fmts)
+            has_video = any(f and f not in AUDIO_FORMAT_VALUES for f in fmts)
+            result[url] = (has_video, has_audio)
+        return result
 
 
 class GetVideoIdByUrlHandler:

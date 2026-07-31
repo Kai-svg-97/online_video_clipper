@@ -22,6 +22,13 @@ class MediaFormat(str, Enum):
     M4A  = "m4a"
 
 
+# 음원으로 취급하는 확장자 — 목록 화면의 영상/음원 배지 판정에 사용한다.
+# MediaFormat 밖의 값(yt-dlp 가 남긴 flac·opus 등)도 이력에 남을 수 있어 함께 담는다.
+AUDIO_FORMAT_VALUES = frozenset(
+    ("mp3", "m4a", "aac", "flac", "opus", "wav", "ogg")
+)
+
+
 class DownloadSettings:
     __slots__ = (
         "quality",

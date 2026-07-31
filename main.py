@@ -159,6 +159,7 @@ def main() -> int:
     from application.library.queries import (
         GetCategoriesHandler,
         GetCategoryVideoOrderHandler,
+        GetDownloadedFormatsHandler,
         GetTagsHandler,
         GetVideoDetailHandler,
         GetVideoIdByUrlHandler,
@@ -318,6 +319,7 @@ def main() -> int:
     get_cats            = GetCategoriesHandler(video_repo)
     get_tags            = GetTagsHandler(video_repo)
     get_video_detail    = GetVideoDetailHandler(video_repo, download_repo)
+    get_dl_formats      = GetDownloadedFormatsHandler(download_repo)
     get_video_id_by_url = GetVideoIdByUrlHandler(video_repo)
     stats_handler       = LibraryStatsHandler(video_repo, download_repo)
     get_cat_order_h        = GetCategoryVideoOrderHandler(video_repo)
@@ -416,6 +418,7 @@ def main() -> int:
         refresh_video_metadata=refresh_video_meta,
         find_song_videos=FindSongVideoIdsHandler(song_repo),
         enrich_video=enrich_video,
+        get_downloaded_formats=get_dl_formats,
     )
     get_yt_playlists_h = GetYouTubePlaylistsHandler(ytdlp, _yt_api)
     playlist_vm = PlaylistViewModel(

@@ -119,6 +119,55 @@ class TestLyricsJsonFalsePositive:
         assert _ids(repo.search(SearchQuery(text="Sunshine"))) == {a.id}
 
 
+class TestLyricsPrefilter:
+    """가사 후보를 SQL LIKE 로 먼저 좁히는 최적화가 결과를 바꾸지 않아야 한다.
+
+    프리필터는 lyrics_json 원문에 검색어가 그대로 들어 있다는 전제 위에서만 안전하다.
+    그 전제가 깨지는 입력(따옴표·역슬래시·대소문자 있는 비ASCII)에서는 전체 스캔으로
+    되돌아가야 하며, 아래 테스트가 그 폴백을 고정한다.
+    """
+
+    def _song(self, repo, songs, url, original, translation=""):
+        a = _add(repo, url, "무제")
+        s = SongInfoAggregate.create(a.id)
+        s.apply_fetched(
+            lyrics_lines=[LyricsLine(original, translation)], mark_song=True
+        )
+        songs.save(s)
+        return a
+
+    def test_quote_in_lyrics_is_found(self, repo, songs):
+        # JSON 직렬화가 큰따옴표를 이스케이프하므로 LIKE 프리필터로는 못 찾는다.
+        a = self._song(repo, songs, "https://youtu.be/q1", 'He said "hello" softly')
+        assert _ids(repo.search(SearchQuery(text='said "hello"'))) == {a.id}
+
+    def test_backslash_in_lyrics_is_found(self, repo, songs):
+        a = self._song(repo, songs, "https://youtu.be/q2", "back\\slash line")
+        assert _ids(repo.search(SearchQuery(text="back\\slash"))) == {a.id}
+
+    def test_non_ascii_case_insensitive(self, repo, songs):
+        # SQLite LIKE 는 비ASCII 대소문자를 무시하지 않으므로 전체 스캔으로 찾아야 한다.
+        a = self._song(repo, songs, "https://youtu.be/q3", "CAFÉ au lait")
+        assert _ids(repo.search(SearchQuery(text="café"))) == {a.id}
+
+    def test_prefiltered_path_still_matches(self, repo, songs):
+        a = self._song(repo, songs, "https://youtu.be/q4", "Sunshine", "햇살")
+        self._song(repo, songs, "https://youtu.be/q5", "Moonlight", "달빛")
+        assert _ids(repo.search(SearchQuery(text="햇살"))) == {a.id}
+
+    def test_prefilter_safety_predicate(self):
+        from infrastructure.persistence.sqlite_video_repository import (
+            _lyrics_prefilter_safe,
+        )
+
+        assert _lyrics_prefilter_safe("햇살")
+        assert _lyrics_prefilter_safe("Sunshine 햇살")
+        assert not _lyrics_prefilter_safe('say "hi"')
+        assert not _lyrics_prefilter_safe("back\\slash")
+        assert not _lyrics_prefilter_safe("line\nbreak")
+        assert not _lyrics_prefilter_safe("café")
+
+
 class TestSubstringAndEscaping:
     def test_partial_match_inside_word(self, repo):
         """한글 어미가 붙어도 찾아야 한다."""

@@ -46,6 +46,7 @@ from application.library.queries import (
     GetCategoriesHandler,
     GetCategoryVideoOrderHandler,
     GetCategoryVideoOrderQuery,
+    GetDownloadedFormatsQuery,
     GetTagsHandler,
     GetTagsQuery,
     GetVideoDetailHandler,
@@ -268,9 +269,11 @@ class LibraryViewModel(QObject):
         refresh_video_metadata: RefreshVideoMetadataHandler | None = None,
         find_song_videos=None,   # FindSongVideoIdsHandler | None — 같은 가수/앨범 필터
         enrich_video=None,       # EnrichVideoHandler | None — 등록 후 요약/가사 자동 보강
+        get_downloaded_formats=None,  # GetDownloadedFormatsHandler | None — 목록 배지 일괄 판정
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
+        self._get_downloaded_formats = get_downloaded_formats
         self._get_video_id_by_url = get_video_id_by_url
         self._get_videos = get_videos
         self._search_videos = search_videos
@@ -418,7 +421,15 @@ class LibraryViewModel(QObject):
         self._refresh_videos(append=True)
 
     def set_search_text(self, text: str) -> None:
-        self._search_text = text.strip()
+        """검색어를 적용한다. 실제로 바뀐 경우에만 재조회한다.
+
+        IME 조합·공백 입력처럼 strip 결과가 같은 입력이 반복될 때 워커를 새로
+        띄우지 않도록 막는다(호출 측은 별도로 디바운스한다).
+        """
+        text = text.strip()
+        if text == self._search_text:
+            return
+        self._search_text = text
         self._current_page = 0
         self._refresh_videos()
 
@@ -592,6 +603,18 @@ class LibraryViewModel(QObject):
         except Exception as exc:
             self.error_occurred.emit(str(exc))
             return None
+
+    def get_downloaded_flags(self, urls: list[str]) -> dict[str, tuple[bool, bool]]:
+        """URL별 (영상 받음, 음원 받음)을 한 번의 쿼리로 조회한다(표 뷰 배지용)."""
+        if self._get_downloaded_formats is None or not urls:
+            return {}
+        try:
+            return self._get_downloaded_formats.handle(
+                GetDownloadedFormatsQuery(urls=list(urls))
+            )
+        except Exception:
+            logger.exception("다운로드 포맷 일괄 조회 실패")
+            return {}
 
     def find_video_id_by_url(self, url: str) -> UUID | None:
         if self._get_video_id_by_url is None:

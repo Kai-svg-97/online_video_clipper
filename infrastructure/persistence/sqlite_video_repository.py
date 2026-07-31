@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from functools import lru_cache
 from uuid import UUID
 
 from domain.library.aggregates import VideoAggregate
@@ -32,11 +33,34 @@ def _like_pattern(text: str) -> str:
     return f"%{escaped}%"
 
 
+def _lyrics_prefilter_safe(text: str) -> bool:
+    """가사 원문(lyrics_json)에 LIKE 프리필터를 걸어도 누락이 없는 검색어인지 판정.
+
+    가사는 `[{"o":원문,"t":번역}]` JSON 으로 저장되며 ensure_ascii=False 라 값이
+    그대로 들어 있다. 따라서 값에 검색어가 있으면 원문 JSON 에도 반드시 있다 —
+    단 아래 경우는 예외라 프리필터를 포기하고 전체 스캔으로 돌아간다.
+
+    - `"`·`\\`·제어문자: JSON 직렬화가 이스케이프해 원문과 글자가 달라진다.
+      (줄 사이는 개행으로 이어 붙이므로 개행이 없는 검색어는 한 줄 안에서만 매칭된다.)
+    - 대소문자가 있는 비ASCII 문자: SQLite LIKE 는 ASCII 만 대소문자를 무시한다.
+    """
+    for ch in text:
+        if ch in '"\\' or ord(ch) < 0x20:
+            return False
+        if not ch.isascii() and ch.lower() != ch.upper():
+            return False
+    return True
+
+
+@lru_cache(maxsize=256)
 def _lyrics_text(lyrics_json: str) -> str:
     """lyrics_json 에서 원문·번역 텍스트만 뽑아 이어붙인다.
 
     JSON 문자열에 LIKE 를 직접 쓰면 검색어 'o'·'t' 가 키 이름에 걸려 모든 노래를
     오탐한다. 그래서 파싱해 값만 비교한다.
+
+    같은 가사를 검색어마다 다시 파싱하지 않도록 결과를 캐시한다(입력 문자열이
+    곧 키라 가사가 바뀌면 자연히 다른 항목이 된다).
     """
     try:
         lines = json.loads(lyrics_json or "[]")
@@ -484,10 +508,15 @@ class SqliteVideoRepository(IVideoRepository):
         오탐하므로 파싱해서 값만 비교한다.
         """
         needle = text.lower()
+        sql = "SELECT video_id, lyrics_json FROM song_info WHERE lyrics_json <> '[]'"
+        params: list = []
+        if _lyrics_prefilter_safe(text):
+            # 후보를 SQL 로 먼저 좁힌다 — 전체 가사를 매 검색마다 JSON 파싱하면
+            # 검색어를 한 글자 칠 때마다 라이브러리 전체를 파싱하게 된다.
+            sql += " AND lyrics_json LIKE ? ESCAPE '\\'"
+            params.append(_like_pattern(text))
         with self._db.connection() as conn:
-            rows = conn.execute(
-                "SELECT video_id, lyrics_json FROM song_info WHERE lyrics_json <> '[]'"
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         return [
             r["video_id"]
             for r in rows

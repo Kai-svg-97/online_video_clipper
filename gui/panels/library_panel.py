@@ -115,6 +115,9 @@ _VIEW_FOLDER = 3   # 폴더 내 재생목록 카드 그리드
 _VIEW_FEED   = 4   # 구독 채널/전체 피드 카드 그리드
 _VIEW_CHANNELS = 5 # 구독 채널 목록(아바타 카드) 그리드
 
+# 검색어 입력 디바운스(ms) — 입력이 멎은 뒤 한 번만 조회한다.
+_SEARCH_DEBOUNCE_MS = 300
+
 
 def _fmt_elapsed(iso: str | None) -> str:
     """ISO 시간 문자열을 '3일 전' 형식으로 변환한다."""
@@ -295,10 +298,21 @@ class _ThumbBgLoader(QThread):
     def __init__(self, items: list[tuple[str, int, int]], parent=None) -> None:
         super().__init__(parent)
         self._items = items
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        """남은 항목의 디코딩을 중단한다(협조적 취소).
+
+        검색어를 입력하면 결과 목록이 연달아 바뀌는데, 이전 결과의 썸네일 50장을
+        계속 디코딩하면 CPU·GIL을 잡아 메인 스레드 입력이 밀린다.
+        """
+        self._cancelled = True
 
     def run(self) -> None:
         batch: list = []
         for path, w, h in self._items:
+            if self._cancelled:
+                return
             key = f"{path}@{w}x{h}"
             if _thumb_cache.get(key) is not None:
                 continue  # 이미 캐시에 있으면 스킵 (읽기만이므로 스레드 안전)
@@ -3857,6 +3871,8 @@ class LibraryPanel(QWidget):
         self._current_feed_key: str = ""         # 현재 화면에 표시 중인 피드 key
         self._thumb_load_gen: int = 0  # 썸네일 bg 로더 세대 (구 로더 UI 반영 방지용)
         self._active_thumb_loaders: list = []  # GC 방지용 강한 참조 보관
+        # 표(상세) 뷰가 숨겨진 동안 목록이 바뀌었는지 — 표시될 때 한 번만 채운다.
+        self._table_dirty: bool = False
         self._setup_ui()
         self._connect_signals()
         QTimer.singleShot(0, vm.load)
@@ -3988,9 +4004,15 @@ class LibraryPanel(QWidget):
         toolbar.addSpacing(12)
 
         self._search_box = QLineEdit()
-        self._search_box.setPlaceholderText("검색...")
+        self._search_box.setPlaceholderText("검색... (Enter: 즉시 검색)")
         self._search_box.setClearButtonEnabled(True)
         toolbar.addWidget(self._search_box, stretch=1)
+        # 입력 디바운스 — 키를 누를 때마다 조회하면(한글 IME는 조합 중에도 방출)
+        # DB 조회 워커가 폭주해 메인 스레드가 멈춘다. 입력이 멎으면 한 번만 조회한다.
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(_SEARCH_DEBOUNCE_MS)
+        self._search_timer.timeout.connect(self._apply_search_text)
 
         # 정렬 옵션
         toolbar.addSpacing(8)
@@ -4155,7 +4177,8 @@ class LibraryPanel(QWidget):
         self._vm.yt_import_finished.connect(self._on_yt_import_finished)
 
         self._view_group.idClicked.connect(self._switch_view)
-        self._search_box.textChanged.connect(self._vm.set_search_text)
+        self._search_box.textChanged.connect(self._on_search_text_changed)
+        self._search_box.returnPressed.connect(self._apply_search_text)
         self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         self._btn_reorder.toggled.connect(self._on_reorder_toggled)
         self._model.reordered.connect(self._on_category_reordered)
@@ -4259,12 +4282,32 @@ class LibraryPanel(QWidget):
                 viewport().installEventFilter(self)
             w.installEventFilter(self)
 
+    # ── 검색 ───────────────────────────────────────────────────────
+
+    def _on_search_text_changed(self, text: str) -> None:
+        """입력 중에는 타이머만 다시 시작하고, 지우기(빈 문자열)는 즉시 반영한다."""
+        if not text.strip():
+            self._search_timer.stop()
+            self._apply_search_text()
+            return
+        self._search_timer.start()
+
+    def _apply_search_text(self) -> None:
+        """디바운스가 끝났거나 Enter를 눌렀을 때 실제 검색을 수행한다."""
+        self._search_timer.stop()
+        self._vm.set_search_text(self._search_box.text())
+
     # ── VM → UI ────────────────────────────────────────────────────
 
     def _on_videos_changed(self) -> None:
         videos = self._vm.videos
         self._model.set_videos(videos)
-        self._refresh_table()
+        # 표(상세) 뷰는 행마다 위젯을 만들고 다운로드 여부까지 조회하므로
+        # 실제로 보고 있을 때만 채운다. 숨겨져 있으면 표시 시점으로 미룬다.
+        if self._view_stack.currentIndex() == _VIEW_DETAIL:
+            self._refresh_table()
+        else:
+            self._table_dirty = True
         self._start_thumb_preload(videos)
 
     def _start_thumb_preload(self, videos: list) -> None:
@@ -4278,6 +4321,10 @@ class LibraryPanel(QWidget):
             return
         self._thumb_load_gen += 1
         gen = self._thumb_load_gen
+        # 이전 목록의 로더는 취소한다 — 이미 지나간 결과의 썸네일을 계속 디코딩하면
+        # 검색어 입력 중 CPU를 붙잡아 키 입력이 밀린다(캐시된 배치는 이미 반영됨).
+        for old in self._active_thumb_loaders:
+            old.cancel()
         loader = _ThumbBgLoader(items)
         self._active_thumb_loaders.append(loader)
 
@@ -4594,8 +4641,6 @@ class LibraryPanel(QWidget):
         return " > ".join(parts)
 
     def _refresh_table(self) -> None:
-        _AUDIO_FMTS = frozenset(("mp3", "m4a", "aac", "flac", "opus", "wav", "ogg"))
-
         def _fmt(s):
             if s is None:
                 return "—"
@@ -4604,6 +4649,11 @@ class LibraryPanel(QWidget):
             return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
         videos = self._vm.videos
+        self._table_dirty = False
+        # 영상/음원 배지는 한 번의 쿼리로 일괄 판정한다.
+        # (행마다 get_video_detail 을 부르면 50행 × 수 쿼리 + 파일 stat 이
+        #  메인 스레드에서 돌아 검색어 입력이 멈춘다.)
+        dl_flags = self._vm.get_downloaded_flags([dto.url for dto in videos])
         self._table.setRowCount(len(videos))
         for row, dto in enumerate(videos):
             t = QTableWidgetItem(dto.title)
@@ -4620,16 +4670,8 @@ class LibraryPanel(QWidget):
             self._table.setItem(row, 5, wtc)
             # 등록 일시
             self._table.setItem(row, 6, QTableWidgetItem(dto.created_at or "—"))
-            # 영상/음원 다운로드 여부 (lazy: 개별 detail 조회)
-            detail = self._vm.get_video_detail(dto.id)
-            has_video = has_audio = False
-            if detail:
-                for dl in detail.downloads:
-                    fmt_lower = (dl.fmt or "").lower()
-                    if fmt_lower in _AUDIO_FMTS:
-                        has_audio = True
-                    elif fmt_lower:
-                        has_video = True
+            # 영상/음원 다운로드 여부 (일괄 조회 결과에서 조회)
+            has_video, has_audio = dl_flags.get(dto.url, (False, False))
             v_item = QTableWidgetItem("✓" if has_video else "—")
             v_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, 7, v_item)
@@ -4645,6 +4687,9 @@ class LibraryPanel(QWidget):
         btn = self._view_group.button(view_id)
         if btn is not None and not btn.isChecked():
             btn.setChecked(True)
+        # 숨어 있는 동안 목록이 바뀌었으면 이제 채운다(지연 갱신).
+        if view_id == _VIEW_DETAIL and self._table_dirty:
+            self._refresh_table()
 
     # ── Category / tag selection ───────────────────────────────────
 
