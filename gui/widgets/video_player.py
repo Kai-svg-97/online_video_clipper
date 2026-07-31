@@ -10,6 +10,7 @@ player, redirects QMediaPlayer output there, and restores on exit.
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from pathlib import Path
 
 from PyQt6.QtCore import (
@@ -179,6 +180,59 @@ QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 9pt; 
 """
 
 
+class _FormatProbeWorker(QThread):
+    """영상이 실제로 제공하는 화질(세로 해상도) 목록을 조회한다.
+
+    화질 메뉴를 고정 목록으로 두면 최대 1080p인 영상에도 4K가 뜬다. 다운로드
+    포맷 문자열은 `height<=N` 이라 실제 최대치를 넘는 선택지는 같은 파일을
+    받으므로 무의미하다. yt-dlp 호출이라 반드시 백그라운드에서 실행한다.
+    """
+
+    heights_ready = pyqtSignal(str, list)   # (url, 내림차순 높이 목록)
+    failed        = pyqtSignal(str)
+
+    def __init__(self, url: str, parent=None) -> None:
+        super().__init__(parent)
+        self._url = url
+
+    def run(self) -> None:
+        try:
+            import yt_dlp  # noqa: PLC0415
+
+            opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(self._url, download=False) or {}
+            heights = sorted(
+                {
+                    int(f["height"])
+                    for f in (info.get("formats") or [])
+                    if f.get("height") and f.get("vcodec") not in (None, "none")
+                },
+                reverse=True,
+            )
+            if not heights and info.get("height"):
+                heights = [int(info["height"])]
+            self.heights_ready.emit(self._url, heights)
+        except Exception as exc:
+            # 네트워크·추출 실패는 치명적이지 않다 — 호출측이 전체 목록으로 폴백한다.
+            logger.warning("사용 가능한 화질 조회 실패(%s): %s", self._url, exc)
+            self.failed.emit(str(exc))
+
+
+# URL → 사용 가능한 높이 목록 (세션 캐시, 상한 있음)
+_HEIGHT_CACHE: "OrderedDict[str, list[int]]" = OrderedDict()
+_HEIGHT_CACHE_MAX = 64
+
+
+def _cache_heights(url: str, heights: list[int]) -> None:
+    if not url:
+        return
+    _HEIGHT_CACHE[url] = heights
+    _HEIGHT_CACHE.move_to_end(url)
+    while len(_HEIGHT_CACHE) > _HEIGHT_CACHE_MAX:
+        _HEIGHT_CACHE.popitem(last=False)
+
+
 def _quality_badge_style() -> str:
     tok = ThemeManager.instance().current()
     return (
@@ -207,6 +261,10 @@ _QUALITY_OPTIONS = [
 ]
 _DEFAULT_QUALITY_FMT = _QUALITY_OPTIONS[0][1]
 _DEFAULT_QUALITY_MERGE = _QUALITY_OPTIONS[0][3]
+# 재생 품질 단축 라벨 → 세로 해상도 ("자동"은 제한 없음)
+_QUALITY_HEIGHTS: dict[str, int] = {
+    "1080p": 1080, "720p": 720, "480p": 480, "360p": 360, "240p": 240,
+}
 
 
 class _TrackSlider(QSlider):
@@ -265,6 +323,8 @@ class _ControlBar(QWidget):
     pip_toggled        = pyqtSignal()         # 화면 속 화면(PiP) 토글
     download_requested = pyqtSignal(object)   # DownloadSettings
     quality_changed    = pyqtSignal(str, str, bool) # (fmt_string, short_label, merge)
+    # ⬇ 클릭 — 플레이어가 사용 가능한 화질을 확인한 뒤 open_download_menu()를 부른다
+    download_menu_requested = pyqtSignal()
 
     _HEIGHT = 72
 
@@ -273,6 +333,7 @@ class _ControlBar(QWidget):
         self.setObjectName("ctrlbar")
         self.setStyleSheet(_bar_style())
         self.setFixedHeight(self._HEIGHT)
+        self._heights: list[int] | None = None   # 이 영상이 제공하는 화질(미확인이면 None)
         ThemeManager.instance().theme_changed.connect(
             lambda _: self.setStyleSheet(_bar_style())
         )
@@ -334,7 +395,7 @@ class _ControlBar(QWidget):
         )
         self._btn_quality.clicked.connect(self._show_quality_menu)
 
-        self._btn_dl = btn("⬇", "다운로드", self._show_download_menu)
+        self._btn_dl = btn("⬇", "다운로드", self.download_menu_requested.emit)
         self._btn_pip = btn("⧉", "화면 속 화면  (P)", self.pip_toggled.emit)
         self._btn_fs = btn("⛶", "전체화면  (F)", self.fullscreen_toggled.emit)
 
@@ -380,6 +441,29 @@ class _ControlBar(QWidget):
         self._dragging = False
         self.seek_to_ms.emit(self._progress.value())
 
+    # ── 사용 가능한 화질 ───────────────────────────────────────────
+    def set_available_heights(self, heights: "list[int] | None") -> None:
+        """이 영상이 실제로 제공하는 세로 해상도 목록. None이면 '알 수 없음'."""
+        self._heights = list(heights) if heights else None
+
+    def set_download_busy(self, busy: bool) -> None:
+        """화질 확인 중에는 ⬇ 버튼을 잠근다(중복 조회 방지)."""
+        self._btn_dl.setEnabled(not busy)
+        self._btn_dl.setToolTip("화질 확인 중…" if busy else "다운로드")
+
+    def _max_height(self) -> "int | None":
+        return max(self._heights) if self._heights else None
+
+    def _height_offered(self, height: "int | None") -> bool:
+        """해당 화질이 의미 있는 선택지인지.
+
+        포맷 문자열이 `height<=N` 이라 최대치를 넘는 항목은 같은 결과를 주므로 뺀다.
+        (세로 영상은 높이가 1920처럼 크게 잡히니 '정확히 존재하는 값'이 아니라
+        최대치 이하인지로 판정한다.)
+        """
+        top = self._max_height()
+        return height is None or top is None or height <= top
+
     def _show_quality_menu(self) -> None:
         menu = QMenu(self)
         tok = ThemeManager.instance().current()
@@ -388,6 +472,8 @@ class _ControlBar(QWidget):
             f"QMenu::item:selected{{background:{tok.bg_overlay};}}"
         )
         for menu_label, fmt, short, merge in _QUALITY_OPTIONS:
+            if not self._height_offered(_QUALITY_HEIGHTS.get(short)):
+                continue
             act = menu.addAction(menu_label)
             act.triggered.connect(
                 lambda _c, f=fmt, s=short, m=merge: self._on_quality_item(f, s, m)
@@ -400,7 +486,8 @@ class _ControlBar(QWidget):
         self._btn_quality.setText(short)
         self.quality_changed.emit(fmt, short, merge)
 
-    def _show_download_menu(self) -> None:
+    def open_download_menu(self) -> None:
+        """다운로드 메뉴를 연다 — 이 영상이 실제로 제공하는 화질만 나열한다."""
         menu = QMenu(self)
         tok = ThemeManager.instance().current()
         menu.setStyleSheet(
@@ -409,14 +496,18 @@ class _ControlBar(QWidget):
         )
 
         vm = menu.addMenu("🎬  동영상")
-        for quality, label in [
-            (Quality.BEST,  "최고 화질"),
-            (Quality.P2160, "2160p  (4K)"),
-            (Quality.P1080, "1080p  (HD)"),
-            (Quality.P720,  "720p"),
-            (Quality.P480,  "480p"),
-            (Quality.P360,  "360p"),
+        top = self._max_height()
+        best_label = f"최고 화질  ({top}p)" if top else "최고 화질"
+        for quality, height, label in [
+            (Quality.BEST,  None, best_label),
+            (Quality.P2160, 2160, "2160p  (4K)"),
+            (Quality.P1080, 1080, "1080p  (HD)"),
+            (Quality.P720,   720, "720p"),
+            (Quality.P480,   480, "480p"),
+            (Quality.P360,   360, "360p"),
         ]:
+            if not self._height_offered(height):
+                continue
             act = vm.addAction(label)
             act.triggered.connect(
                 lambda _c, q=quality: self.download_requested.emit(
@@ -742,6 +833,7 @@ class InlinePlayer(QWidget):
         self._video_url: str    = ""
         self._video_title: str  = ""
         self._worker: _StreamWorker | None  = None
+        self._probe: _FormatProbeWorker | None = None
         self._fs_win: _FullscreenWindow | None = None
         self._pip_win: _PipWindow | None = None
         self._volume    = 100
@@ -820,6 +912,7 @@ class InlinePlayer(QWidget):
         self._bar.fullscreen_toggled.connect(self._toggle_fullscreen)
         self._bar.pip_toggled.connect(self._toggle_pip)
         self._bar.download_requested.connect(self._on_download_requested)
+        self._bar.download_menu_requested.connect(self._on_download_menu_requested)
         self._bar.quality_changed.connect(self._on_quality_changed)
 
         # Wire player signals → control bar
@@ -965,6 +1058,9 @@ class InlinePlayer(QWidget):
             self._thumb_label.setText("미리보기 없음" if not video_url else "")
         self._status_lbl.hide()
         self._bar.set_quality("")
+        # 화질 목록은 영상마다 다르다 — 캐시가 있으면 즉시, 없으면 ⬇ 클릭 시 조회한다.
+        self._bar.set_available_heights(_HEIGHT_CACHE.get(video_url))
+        self._bar.set_download_busy(False)
         self._bar.show()
         self._bar.raise_()
         self._hide_timer.stop()
@@ -1009,6 +1105,17 @@ class InlinePlayer(QWidget):
             # 즉시 참조를 버리지 않고 Qt에 위임 — 스레드 종료 후 안전하게 삭제
             self._worker.deleteLater()
             self._worker = None
+        if self._probe:
+            # 화질 조회 결과가 늦게 와도 이미 다른 영상으로 넘어갔을 수 있다
+            try:
+                self._probe.heights_ready.disconnect()
+                self._probe.failed.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self._probe.quit()
+            self._probe.deleteLater()
+            self._probe = None
+        self._bar.set_download_busy(False)
         self._visual_stack.setCurrentIndex(0)
         self._status_lbl.hide()
         self._bar.show()
@@ -1135,6 +1242,7 @@ class InlinePlayer(QWidget):
         bar.volume_changed.connect(self._on_volume_changed)
         bar.mute_toggled.connect(self._toggle_mute)
         bar.download_requested.connect(self._on_download_requested)
+        bar.download_menu_requested.connect(self._on_download_menu_requested)
         bar.quality_changed.connect(self._on_quality_changed)
         bar.fullscreen_toggled.connect(self._toggle_fullscreen)
         bar.pip_toggled.connect(self._toggle_pip)
@@ -1150,6 +1258,7 @@ class InlinePlayer(QWidget):
         bar.set_quality(
             "" if self._current_quality_short == "자동" else self._current_quality_short
         )
+        bar.set_available_heights(_HEIGHT_CACHE.get(self._video_url))
 
         self._fs_win.exit_requested.connect(self._exit_fullscreen)
 
@@ -1198,6 +1307,7 @@ class InlinePlayer(QWidget):
         bar.volume_changed.connect(self._on_volume_changed)
         bar.mute_toggled.connect(self._toggle_mute)
         bar.download_requested.connect(self._on_download_requested)
+        bar.download_menu_requested.connect(self._on_download_menu_requested)
         bar.quality_changed.connect(self._on_quality_changed)
         bar.pip_toggled.connect(self._exit_pip)
         # 플레이어 → PiP 바 (재생시간). 위치/재생상태는 _on_position/_on_playback_state가 fan-out.
@@ -1212,6 +1322,7 @@ class InlinePlayer(QWidget):
         bar.set_quality(
             "" if self._current_quality_short == "자동" else self._current_quality_short
         )
+        bar.set_available_heights(_HEIGHT_CACHE.get(self._video_url))
 
         self._pip_win.exit_requested.connect(self._exit_pip)
         self._show_pip_placeholder(True)
@@ -1409,3 +1520,36 @@ class InlinePlayer(QWidget):
 
     def _on_download_requested(self, settings: DownloadSettings) -> None:
         self.download_requested.emit(self._video_url, self._video_title, settings)
+
+    def _on_download_menu_requested(self) -> None:
+        """⬇ 클릭 — 사용 가능한 화질을 확인한 뒤 메뉴를 연다.
+
+        고정 목록을 그대로 띄우면 최대 1080p인 영상에도 4K가 나열돼 혼란스럽다.
+        조회는 네트워크 작업이라 워커에서 하고, 끝나면 그 바의 메뉴를 대신 연다.
+        실패하면 예전처럼 전체 목록을 보여준다(다운로드 자체는 막지 않는다).
+        """
+        bar = self.sender() if isinstance(self.sender(), _ControlBar) else self._bar
+        url = self._video_url
+        cached = _HEIGHT_CACHE.get(url)
+        if not url or cached is not None:
+            bar.set_available_heights(cached)
+            bar.open_download_menu()
+            return
+
+        bar.set_download_busy(True)
+
+        def _ready(u: str, heights: list, b=bar) -> None:
+            _cache_heights(u, heights)
+            b.set_download_busy(False)
+            b.set_available_heights(heights)
+            b.open_download_menu()
+
+        def _failed(_msg: str, b=bar) -> None:
+            b.set_download_busy(False)
+            b.set_available_heights(None)   # 알 수 없으면 전체 목록으로
+            b.open_download_menu()
+
+        self._probe = _FormatProbeWorker(url, self)
+        self._probe.heights_ready.connect(_ready)
+        self._probe.failed.connect(_failed)
+        self._probe.start()

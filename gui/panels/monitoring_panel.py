@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 from application.monitoring.dtos import SubscriptionDTO
 from domain.monitoring.value_objects import MonitoringRule
 from gui.view_models.monitoring_vm import MonitoringViewModel
+from gui.themes.colors import sem, tok
 
 
 class _SubscriptionRow(QWidget):
@@ -41,7 +42,7 @@ class _SubscriptionRow(QWidget):
         name_lbl.setMinimumWidth(140)
         name_lbl.setMaximumWidth(200)
         url_lbl = QLabel(sub.channel_url)
-        url_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+        url_lbl.setStyleSheet(f"font-size: 9pt; color: {tok().text_secondary};")
         url_lbl.setMaximumWidth(240)
         auto_lbl = QLabel("자동DL" if sub.auto_download else "수동")
         auto_lbl.setFixedWidth(52)
@@ -124,7 +125,7 @@ class _RuleEditor(QWidget):
         layout.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self._status_lbl = QLabel("")
-        self._status_lbl.setStyleSheet("font-size: 9pt; color: #4caf50;")
+        self._status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('success')};")
         layout.addWidget(self._status_lbl)
 
         layout.addStretch()
@@ -205,7 +206,7 @@ class MonitoringPanel(QWidget):
         outer.addLayout(yt_row)
 
         self._error_lbl = QLabel("")
-        self._error_lbl.setStyleSheet("color: #f44336; font-size: 9pt; padding: 0 12px;")
+        self._error_lbl.setStyleSheet(f"color: {sem('danger')}; font-size: 9pt; padding: 0 12px;")
         outer.addWidget(self._error_lbl)
 
         sep = QFrame()
@@ -222,7 +223,7 @@ class MonitoringPanel(QWidget):
         list_layout.setSpacing(0)
 
         list_header = QLabel("구독 채널")
-        list_header.setStyleSheet("font-size: 9pt; font-weight: 600; padding: 6px 8px; color: #888;")
+        list_header.setStyleSheet(f"font-size: 9pt; font-weight: 600; padding: 6px 8px; color: {tok().text_secondary};")
         list_layout.addWidget(list_header)
 
         scroll = QScrollArea()
@@ -235,7 +236,7 @@ class MonitoringPanel(QWidget):
         self._list_layout.addStretch()
         self._empty_lbl = QLabel("구독 중인 채널이 없습니다.")
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_lbl.setStyleSheet("color: #666; font-size: 10pt; padding: 32px;")
+        self._empty_lbl.setStyleSheet(f"color: {tok().text_secondary}; font-size: 10pt; padding: 32px;")
         self._list_layout.insertWidget(0, self._empty_lbl)
         scroll.setWidget(self._list_container)
         list_layout.addWidget(scroll, 1)
@@ -296,5 +297,5 @@ class MonitoringPanel(QWidget):
     def _on_import_finished(self, count: int) -> None:
         self._yt_import_btn.setEnabled(True)
         self._yt_import_btn.setText("YouTube 구독 채널 가져오기")
-        self._error_lbl.setStyleSheet("color: #4caf50; font-size: 9pt; padding: 0 12px;")
+        self._error_lbl.setStyleSheet(f"color: {sem('success')}; font-size: 9pt; padding: 0 12px;")
         self._error_lbl.setText(f"YouTube 구독 채널 {count}개를 가져왔습니다.")

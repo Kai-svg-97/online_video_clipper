@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -35,6 +36,7 @@ from PyQt6.QtWidgets import (
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import PRESETS, ThemeTokens
 from version import __version__
+from gui.themes.colors import sem
 
 logger = logging.getLogger(__name__)
 
@@ -66,20 +68,19 @@ class _ThemeCard(QWidget):
         self._preview.setFixedSize(self._CARD_W, self._CARD_H)
         layout.addWidget(self._preview, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # 이름 레이블
+        # 이름 레이블 — 카드가 놓인 배경은 "현재" 테마이므로 미리보기 테마 색이 아니라
+        # 현재 테마 색으로 칠해야 한다(어두운 프리셋 이름이 밝은 배경에서 흐려지지 않게).
         self._name_lbl = QLabel(tokens.display_name)
         self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self._name_lbl.setStyleSheet(
-            f"font-size: 11px; font-weight: 500; color: {tokens.text_secondary};"
-        )
+        self.set_selected(False)
         layout.addWidget(self._name_lbl)
 
     # ------------------------------------------------------------------
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         self._preview.set_selected(selected)
-        tok = self._tokens
-        color = tok.text_primary if selected else tok.text_secondary
+        cur = _t()
+        color = cur.accent if selected else cur.text_secondary
         weight = "600" if selected else "500"
         self._name_lbl.setStyleSheet(
             f"font-size: 11px; font-weight: {weight}; color: {color};"
@@ -272,7 +273,7 @@ class _HiddenTagsSection(QWidget):
             "표시 태그를 더블클릭하거나 오른쪽으로 드래그하면 태그 목록에서 숨겨집니다."
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("font-size: 10px; color: #666; margin-bottom: 4px;")
+        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary}; margin-bottom: 4px;")
         root.addWidget(hint)
 
         lists_row = QHBoxLayout()
@@ -300,7 +301,7 @@ class _HiddenTagsSection(QWidget):
         lbl_l = QLabel("←")
         for lbl in (lbl_r, lbl_l):
             lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            lbl.setStyleSheet("font-size: 14px; color: #666;")
+            lbl.setStyleSheet(f"font-size: 14px; color: {_t().text_secondary};")
         arrow_col.addStretch()
         arrow_col.addWidget(lbl_r)
         arrow_col.addSpacing(8)
@@ -407,7 +408,7 @@ class _LyricsSourcesSection(QWidget):
         hint = QLabel(
             "위에서 아래 순서로 조회하며 부족한 항목을 채웁니다. 체크 해제 시 건너뜁니다."
         )
-        hint.setStyleSheet("font-size: 10px; color: #555;")
+        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_muted};")
         hint.setWordWrap(True)
         root.addWidget(hint)
 
@@ -506,7 +507,7 @@ class _CloudSyncSection(QWidget):
             "동기화됩니다. 다른 PC에서도 같은 폴더(그 PC의 OneDrive 안 같은 위치)를 지정하세요."
         )
         help_lbl.setWordWrap(True)
-        help_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        help_lbl.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
         root.addWidget(help_lbl)
 
         # 로컬 폴더 경로 행 (기본 방식)
@@ -565,7 +566,7 @@ class _CloudSyncSection(QWidget):
         root.addLayout(btn_row)
 
         self._status_lbl = QLabel("상태 확인 중…")
-        self._status_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        self._status_lbl.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
         self._status_lbl.setWordWrap(True)
         root.addWidget(self._status_lbl)
         self._on_provider_changed()
@@ -698,33 +699,35 @@ class SettingsPanel(QWidget):
         theme_label = QLabel("테마")
         theme_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
-            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+            f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
         )
         layout.addWidget(theme_label)
         layout.addSpacing(10)
 
-        cards_row = QHBoxLayout()
-        cards_row.setContentsMargins(0, 0, 0, 0)
-        cards_row.setSpacing(16)
-
-        for name, tokens in PRESETS.items():
+        # 프리셋이 늘어 한 줄에 다 들어가지 않으므로 격자로 배치한다.
+        cards_grid = QGridLayout()
+        cards_grid.setContentsMargins(0, 0, 0, 0)
+        cards_grid.setHorizontalSpacing(16)
+        cards_grid.setVerticalSpacing(14)
+        per_row = 6
+        for i, (name, tokens) in enumerate(PRESETS.items()):
             card = _ThemeCard(tokens)
             self._theme_cards[name] = card
-            cards_row.addWidget(card)
-        cards_row.addStretch()
+            cards_grid.addWidget(card, i // per_row, i % per_row)
+        cards_grid.setColumnStretch(per_row, 1)
 
-        layout.addLayout(cards_row)
+        layout.addLayout(cards_grid)
         layout.addSpacing(8)
 
         hint = QLabel("클릭하면 즉시 적용됩니다. 재시작 후에도 유지됩니다.")
-        hint.setStyleSheet("font-size: 10px; color: #555; margin-top: 4px;")
+        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_muted}; margin-top: 4px;")
         layout.addWidget(hint)
         layout.addSpacing(28)
 
         # ── 구분선 ──
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #1a1a1a;")
+        sep.setStyleSheet(f"color: {_t().border};")
         layout.addWidget(sep)
         layout.addSpacing(24)
 
@@ -732,7 +735,7 @@ class SettingsPanel(QWidget):
         path_label = QLabel("저장 경로")
         path_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
-            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+            f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
         )
         layout.addWidget(path_label)
         layout.addSpacing(10)
@@ -755,10 +758,10 @@ class SettingsPanel(QWidget):
             row.setSpacing(12)
             lbl = QLabel(label_text)
             lbl.setFixedWidth(90)
-            lbl.setStyleSheet("font-size: 11px; color: #555;")
+            lbl.setStyleSheet(f"font-size: 11px; color: {_t().text_muted};")
             val = QLabel(path_text)
             val.setStyleSheet(
-                "font-size: 10px; color: #444; font-family: monospace;"
+                f"font-size: 10px; color: {_t().text_muted}; font-family: monospace;"
             )
             val.setWordWrap(False)
             val.setTextInteractionFlags(
@@ -770,14 +773,14 @@ class SettingsPanel(QWidget):
             layout.addSpacing(6)
 
         note = QLabel("경로를 변경하려면 data/config.yaml 을 편집하세요.")
-        note.setStyleSheet("font-size: 10px; color: #444; margin-top: 8px;")
+        note.setStyleSheet(f"font-size: 10px; color: {_t().text_muted}; margin-top: 8px;")
         layout.addWidget(note)
         layout.addSpacing(28)
 
         # ── 구분선 ──
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet("color: #1a1a1a;")
+        sep2.setStyleSheet(f"color: {_t().border};")
         layout.addWidget(sep2)
         layout.addSpacing(24)
 
@@ -785,7 +788,7 @@ class SettingsPanel(QWidget):
         gen_label = QLabel("일반")
         gen_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
-            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+            f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
         )
         layout.addWidget(gen_label)
         layout.addSpacing(10)
@@ -857,14 +860,14 @@ class SettingsPanel(QWidget):
             "불가하므로 아래 인증 섹션에서 쿠키 파일을 직접 등록해야 합니다."
         )
         enrich_hint.setWordWrap(True)
-        enrich_hint.setStyleSheet("font-size: 10px; color: #777; margin-left: 22px;")
+        enrich_hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary}; margin-left: 22px;")
         layout.addWidget(enrich_hint)
         layout.addSpacing(28)
 
         # ── 구분선 ──
         sep3 = QFrame()
         sep3.setFrameShape(QFrame.Shape.HLine)
-        sep3.setStyleSheet("color: #1a1a1a;")
+        sep3.setStyleSheet(f"color: {_t().border};")
         layout.addWidget(sep3)
         layout.addSpacing(24)
 
@@ -872,7 +875,7 @@ class SettingsPanel(QWidget):
         dl_label = QLabel("다운로드")
         dl_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
-            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+            f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
         )
         layout.addWidget(dl_label)
         layout.addSpacing(10)
@@ -956,13 +959,13 @@ class SettingsPanel(QWidget):
             layout.addSpacing(24)
             sep_lyr = QFrame()
             sep_lyr.setFrameShape(QFrame.Shape.HLine)
-            sep_lyr.setStyleSheet("color: #1a1a1a;")
+            sep_lyr.setStyleSheet(f"color: {_t().border};")
             layout.addWidget(sep_lyr)
             layout.addSpacing(24)
             lyr_label = QLabel("가사 출처 관리")
             lyr_label.setStyleSheet(
                 "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
-                "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+                f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
             )
             layout.addWidget(lyr_label)
             layout.addSpacing(10)
@@ -974,13 +977,13 @@ class SettingsPanel(QWidget):
             layout.addSpacing(24)
             sep_sync = QFrame()
             sep_sync.setFrameShape(QFrame.Shape.HLine)
-            sep_sync.setStyleSheet("color: #1a1a1a;")
+            sep_sync.setStyleSheet(f"color: {_t().border};")
             layout.addWidget(sep_sync)
             layout.addSpacing(24)
             sync_label = QLabel("클라우드 동기화")
             sync_label.setStyleSheet(
                 "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
-                "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+                f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
             )
             layout.addWidget(sync_label)
             layout.addSpacing(10)
@@ -992,7 +995,7 @@ class SettingsPanel(QWidget):
         yt_label = QLabel("YouTube API 연동")
         yt_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
-            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+            f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
         )
         layout.addWidget(yt_label)
         layout.addSpacing(10)
@@ -1002,7 +1005,7 @@ class SettingsPanel(QWidget):
             "아래에 입력하고 인증하세요. 무료 — 일 10,000 유닛 할당.\n"
             "인증 완료 시 재생목록 동기화(읽기+쓰기) + 구독 채널 가져오기가 활성화됩니다."
         )
-        yt_desc.setStyleSheet("font-size: 9pt; color: #888;")
+        yt_desc.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         yt_desc.setWordWrap(True)
         layout.addWidget(yt_desc)
         layout.addSpacing(8)
@@ -1050,7 +1053,7 @@ class SettingsPanel(QWidget):
         layout.addSpacing(16)
         feed_label = QLabel("구독 피드 — 브라우저 쿠키 (선택)")
         feed_label.setStyleSheet(
-            "font-size: 9px; font-weight: 600; letter-spacing: 0.5px; color: #666;"
+            f"font-size: 9px; font-weight: 600; letter-spacing: 0.5px; color: {_t().text_secondary};"
         )
         layout.addWidget(feed_label)
         feed_hint = QLabel(
@@ -1058,7 +1061,7 @@ class SettingsPanel(QWidget):
             "브라우저 쿠키가 필요합니다. Firefox 권장 (Chrome 실행 중 오류 발생)."
         )
         feed_hint.setWordWrap(True)
-        feed_hint.setStyleSheet("font-size: 8pt; color: #888;")
+        feed_hint.setStyleSheet(f"font-size: 8pt; color: {_t().text_secondary};")
         layout.addWidget(feed_hint)
         layout.addSpacing(6)
 
@@ -1105,7 +1108,7 @@ class SettingsPanel(QWidget):
 
         self._feed_status_lbl = QLabel()
         self._feed_status_lbl.setWordWrap(True)
-        self._feed_status_lbl.setStyleSheet("font-size: 8pt; color: #888;")
+        self._feed_status_lbl.setStyleSheet(f"font-size: 8pt; color: {_t().text_secondary};")
         layout.addWidget(self._feed_status_lbl)
         self._refresh_feed_auth_ui()
 
@@ -1113,14 +1116,14 @@ class SettingsPanel(QWidget):
         layout.addSpacing(28)
         sep_hidden = QFrame()
         sep_hidden.setFrameShape(QFrame.Shape.HLine)
-        sep_hidden.setStyleSheet("color: #1a1a1a;")
+        sep_hidden.setStyleSheet(f"color: {_t().border};")
         layout.addWidget(sep_hidden)
         layout.addSpacing(24)
 
         hidden_label = QLabel("숨김 태그 관리")
         hidden_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
-            "text-transform: uppercase; color: #555; margin-bottom: 12px;"
+            f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
         )
         layout.addWidget(hidden_label)
         layout.addSpacing(10)
@@ -1131,7 +1134,7 @@ class SettingsPanel(QWidget):
             layout.addWidget(self._hidden_tags_section)
         else:
             no_tags_lbl = QLabel("태그 목록을 불러올 수 없습니다.")
-            no_tags_lbl.setStyleSheet("font-size: 10px; color: #555;")
+            no_tags_lbl.setStyleSheet(f"font-size: 10px; color: {_t().text_muted};")
             layout.addWidget(no_tags_lbl)
             self._hidden_tags_section = None
 
@@ -1155,7 +1158,7 @@ class SettingsPanel(QWidget):
         self._auto_update_check.checkStateChanged.connect(self._on_auto_update_changed)
         row.addWidget(self._auto_update_check)
         self._upd_status_lbl = QLabel(f"v{__version__}")
-        self._upd_status_lbl.setStyleSheet("font-size: 11px; color: #888;")
+        self._upd_status_lbl.setStyleSheet(f"font-size: 11px; color: {_t().text_secondary};")
         row.addWidget(self._upd_status_lbl)
         self._upd_install_btn = QPushButton("지금 설치")
         self._upd_install_btn.setToolTip("앱을 재시작하여 업데이트를 설치합니다")
@@ -1170,7 +1173,7 @@ class SettingsPanel(QWidget):
         self._pending_dto = dto
         self._upd_status_lbl.setText(f"업데이트 준비됨 · v{dto.version}")
         self._upd_status_lbl.setStyleSheet(
-            "font-size: 11px; color: #d23737; font-weight: 600;"
+            f"font-size: 11px; color: {sem('danger')}; font-weight: 600;"
         )
         self._upd_install_btn.show()
 
@@ -1247,15 +1250,15 @@ class SettingsPanel(QWidget):
     def _refresh_yt_status(self) -> None:
         if self._yt_oauth is None:
             self._yt_status_lbl.setText("○ YouTube API 미초기화")
-            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+            self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
             return
         if self._yt_oauth.is_authenticated():
             name = self._yt_oauth.get_channel_name() or "인증됨"
             self._yt_status_lbl.setText(f"● 연결됨: {name}")
-            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #4caf50;")
+            self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('success')};")
         else:
             self._yt_status_lbl.setText("○ 미연결 — OAuth 인증이 필요합니다")
-            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #f44336;")
+            self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('danger')};")
 
     def _on_yt_auth(self) -> None:
         if self._yt_oauth is None:
@@ -1264,7 +1267,7 @@ class SettingsPanel(QWidget):
         client_secret = self._yt_client_secret_edit.text().strip()
         if not client_id or not client_secret:
             self._yt_status_lbl.setText("Client ID와 Client Secret을 입력하세요.")
-            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #f4a336;")
+            self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('warning')};")
             return
 
         from PyQt6.QtCore import QThread, pyqtSignal as _sig  # noqa: PLC0415
@@ -1290,7 +1293,7 @@ class SettingsPanel(QWidget):
         self._yt_auth_btn.setEnabled(False)
         self._yt_auth_btn.setText("인증 중…")
         self._yt_status_lbl.setText("브라우저에서 Google 계정으로 승인하세요…")
-        self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+        self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
 
         worker = _AuthWorker(self._yt_oauth, client_id, client_secret, self)
 
@@ -1298,14 +1301,14 @@ class SettingsPanel(QWidget):
             self._yt_auth_btn.setEnabled(True)
             self._yt_auth_btn.setText("OAuth 인증하기")
             self._yt_status_lbl.setText(f"● 연결됨: {name}")
-            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #4caf50;")
+            self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('success')};")
             self._yt_auth_worker = None
 
         def _on_err(msg: str) -> None:
             self._yt_auth_btn.setEnabled(True)
             self._yt_auth_btn.setText("OAuth 인증하기")
             self._yt_status_lbl.setText(f"인증 실패: {msg[:120]}")
-            self._yt_status_lbl.setStyleSheet("font-size: 9pt; color: #f44336;")
+            self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('danger')};")
             self._yt_auth_worker = None
 
         worker.done.connect(_on_done)
@@ -1376,7 +1379,7 @@ class SettingsPanel(QWidget):
         self._feed_status_lbl.setText(
             f"저장됨: {self._feed_profile_combo.currentText()}"
         )
-        self._feed_status_lbl.setStyleSheet("font-size: 8pt; color: #4caf50;")
+        self._feed_status_lbl.setStyleSheet(f"font-size: 8pt; color: {sem('success')};")
 
     def _on_browse_cookie_file(self) -> None:
         from PyQt6.QtWidgets import QFileDialog  # noqa: PLC0415
@@ -1394,4 +1397,4 @@ class SettingsPanel(QWidget):
         browser = self._feed_browser_combo.currentText()
         YouTubeAuthService().save_auth(browser=browser, profile_key=None, cookiefile=cookiefile)
         self._feed_status_lbl.setText("쿠키 파일이 설정되었습니다.")
-        self._feed_status_lbl.setStyleSheet("font-size: 8pt; color: #4caf50;")
+        self._feed_status_lbl.setStyleSheet(f"font-size: 8pt; color: {sem('success')};")

@@ -104,6 +104,77 @@ class TestDelegate:
         assert isinstance(tree.itemDelegate(), _TreeRowDelegate)
 
 
+class TestBadgeAlignment:
+    """개수 뱃지는 ★ 유무와 상관없이 항상 같은 오른쪽 끝에 붙어야 한다.
+
+    ★이 최우측이던 시절엔 즐겨찾기 행만 뱃지가 왼쪽으로 밀려 숫자 열이 들쑥날쑥했다.
+    실제로 델리게이트를 그려 픽셀 위치로 확인한다.
+    """
+
+    _W, _H = 220, 30
+
+    def _paint(self, tree, item) -> "tuple":
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QImage, QPainter
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from gui.themes.manager import ThemeManager
+
+        tokens = ThemeManager.instance().current()
+        img = QImage(self._W, self._H, QImage.Format.Format_RGB32)
+        img.fill(0xFF000000 | 0x123456)   # 배경과 확실히 구분되는 채움색
+        painter = QPainter(img)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, self._W, self._H)
+        _TreeRowDelegate(tree).paint(painter, opt, tree.indexFromItem(item, 0))
+        painter.end()
+        return img, tokens
+
+    @staticmethod
+    def _x_range(img, hex_color: str, width: int, height: int):
+        """해당 색이 칠해진 픽셀의 x 범위 — 없으면 None."""
+        from PyQt6.QtGui import QColor
+
+        target = QColor(hex_color)
+        xs = [
+            x
+            for x in range(width)
+            for y in range(height)
+            if QColor(img.pixel(x, y)) == target
+        ]
+        return (min(xs), max(xs)) if xs else None
+
+    def test_badge_right_edge_same_with_and_without_star(self, qapp_instance):
+        tree = _PlaylistTree(section="local")
+        plain = tree._make_category("보통", uuid4(), video_count=7)
+        starred_id = uuid4()
+        tree._favs.add(("category", str(starred_id)))
+        starred = tree._make_category("즐겨찾기", starred_id, video_count=7)
+        tree.addTopLevelItem(plain)
+        tree.addTopLevelItem(starred)
+
+        img_a, tokens = self._paint(tree, plain)
+        img_b, _ = self._paint(tree, starred)
+
+        a = self._x_range(img_a, tokens.bg_overlay, self._W, self._H)
+        b = self._x_range(img_b, tokens.bg_overlay, self._W, self._H)
+        assert a is not None and b is not None, "개수 뱃지가 그려지지 않았다"
+        assert a == b, f"★ 때문에 뱃지 위치가 달라졌다: {a} != {b}"
+
+    def test_star_is_left_of_badge(self, qapp_instance):
+        tree = _PlaylistTree(section="local")
+        cid = uuid4()
+        tree._favs.add(("category", str(cid)))
+        item = tree._make_category("즐겨찾기", cid, video_count=7)
+        tree.addTopLevelItem(item)
+
+        img, tokens = self._paint(tree, item)
+        badge = self._x_range(img, tokens.bg_overlay, self._W, self._H)
+        star = self._x_range(img, tokens.star_color, self._W, self._H)
+        assert badge is not None and star is not None
+        assert star[1] < badge[0], "★이 개수 뱃지보다 오른쪽에 그려졌다"
+
+
 class TestBranchClickStillExpands:
     """drawBranches() 오버라이드가 네이티브 펼침 히트테스트를 깨지 않았는지 검증한다.
 

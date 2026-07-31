@@ -33,6 +33,7 @@ from gui.themes.manager import ThemeManager
 from gui.view_models.feed_vm import FeedViewModel
 
 from typing import TYPE_CHECKING
+from gui.themes.colors import sem
 if TYPE_CHECKING:
     from gui.view_models.library_vm import LibraryViewModel
     from gui.view_models.playlist_vm import PlaylistViewModel
@@ -430,7 +431,7 @@ class _FeedCard(QFrame):
             f4 = QFont()
             f4.setPointSize(8)
             badge.setFont(f4)
-            badge.setStyleSheet("color: #4caf50;")
+            badge.setStyleSheet(f"color: {sem('success')};")
             layout.addWidget(badge)
 
     def _start_thumb_load(self) -> None:

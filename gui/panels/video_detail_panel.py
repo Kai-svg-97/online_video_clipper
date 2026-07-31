@@ -58,6 +58,7 @@ from domain.song.value_objects import LyricsLine
 from application.library.dtos import FailedDownloadInfoDTO, VideoDetailDTO
 from gui.themes.manager import ThemeManager
 from gui.widgets.video_player import InlinePlayer
+from gui.themes.colors import sem
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +333,7 @@ class _RelatedList(QScrollArea):
                 item.widget().deleteLater()
         if not items:
             empty = QLabel("표시할 영상이 없습니다.")
-            empty.setStyleSheet("color:#888;padding:8px;")
+            empty.setStyleSheet(f"color:{_t().text_secondary};padding:8px;")
             self._layout.insertWidget(1, empty)
             return
         for i, it in enumerate(items):
@@ -748,7 +749,7 @@ class _SongTab(QWidget):
         self._flag_chk.toggled.connect(self._on_flag_toggled)
         header.addWidget(self._flag_chk)
         self._status_lbl = QLabel("")
-        self._status_lbl.setStyleSheet("font-size:9pt; color:#888;")
+        self._status_lbl.setStyleSheet(f"font-size:9pt; color:{_t().text_secondary};")
         header.addWidget(self._status_lbl)
         root.addLayout(header)
 
@@ -795,12 +796,12 @@ class _SongTab(QWidget):
         self._translate_btn.setVisible(False)
         lyr_header.addWidget(self._translate_btn)
         self._src_lbl = QLabel("")
-        self._src_lbl.setStyleSheet("font-size:8pt; color:#888;")
+        self._src_lbl.setStyleSheet(f"font-size:8pt; color:{_t().text_secondary};")
         self._src_lbl.setOpenExternalLinks(True)
         lyr_header.addWidget(self._src_lbl)
         lyr_header.addStretch()
         hint = QLabel("(더블클릭하여 편집)")
-        hint.setStyleSheet("font-size:8pt; color:#888;")
+        hint.setStyleSheet(f"font-size:8pt; color:{_t().text_secondary};")
         lyr_header.addWidget(hint)
         # 번역 배치 전환 아이콘 (비한국어 병행 가사일 때만 노출)
         self._layout_btn = QPushButton("⬌")
@@ -903,7 +904,7 @@ class _SongTab(QWidget):
                 else "'노래로 표시'하면 영상 제목으로 정보를 채웁니다."
             )
             empty = QLabel(msg)
-            empty.setStyleSheet("color:#888; padding:12px;")
+            empty.setStyleSheet(f"color:{_t().text_secondary}; padding:12px;")
             empty.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             self._lyrics_layout.addWidget(empty)
             self._lyrics_layout.addStretch()
@@ -1195,11 +1196,11 @@ class VideoDetailWidget(QWidget):
         refresh_row = QHBoxLayout()
         refresh_row.addWidget(QLabel("<b>요약</b>"))
         edit_hint = QLabel("(더블클릭하여 편집)")
-        edit_hint.setStyleSheet("font-size: 8pt; color: #888;")
+        edit_hint.setStyleSheet(f"font-size: 8pt; color: {_t().text_secondary};")
         refresh_row.addWidget(edit_hint)
         refresh_row.addStretch()
         self._summary_status_lbl = QLabel("")
-        self._summary_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+        self._summary_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         refresh_row.addWidget(self._summary_status_lbl)
         self._summary_refresh_btn = QPushButton("⟳")
         self._summary_refresh_btn.setFixedSize(28, 28)
@@ -1443,7 +1444,7 @@ class VideoDetailWidget(QWidget):
         _clear_layout(self._clip_tab_layout)
         info = QLabel("스트리밍 영상은 클립을 추출할 수 없습니다.\n다운로드 후 다시 시도해 주세요.")
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info.setStyleSheet("color:#888; font-size:10pt; padding:24px;")
+        info.setStyleSheet(f"color:{_t().text_secondary}; font-size:10pt; padding:24px;")
         self._clip_tab_layout.addWidget(info)
         self._clip_tab_layout.addStretch()
         self._tabs.setCurrentIndex(self._TAB_FILES)
@@ -1783,7 +1784,7 @@ class VideoDetailWidget(QWidget):
                     grid.addWidget(open_btn, row_idx, 3, Qt.AlignmentFlag.AlignLeft)
                 else:
                     na_lbl = QLabel("파일 없음")
-                    na_lbl.setStyleSheet("color:#f44336; font-size:8pt;")
+                    na_lbl.setStyleSheet(f"color:{sem('danger')}; font-size:8pt;")
                     grid.addWidget(na_lbl, row_idx, 3)
 
             dl_layout.addWidget(grid_w)
@@ -1794,7 +1795,7 @@ class VideoDetailWidget(QWidget):
         if failed_downloads:
             fail_hdr = QLabel("다운로드 실패 이력")
             fail_hdr.setStyleSheet(
-                "color:#f44336; font-weight:bold; font-size:9pt; margin-top:8px;"
+                f"color:{sem('danger')}; font-weight:bold; font-size:9pt; margin-top:8px;"
             )
             dl_layout.addWidget(fail_hdr)
             for fd in failed_downloads:
@@ -1805,7 +1806,7 @@ class VideoDetailWidget(QWidget):
                 )
                 row = QFrame()
                 row.setStyleSheet(
-                    "QFrame { border-left: 3px solid #f44336;"
+                    f"QFrame {{ border-left: 3px solid {sem('danger')};"
                     " background: transparent; }"
                 )
                 rl = QVBoxLayout(row)
@@ -1813,11 +1814,11 @@ class VideoDetailWidget(QWidget):
                 rl.setSpacing(2)
                 if date_str:
                     date_lbl = QLabel(date_str)
-                    date_lbl.setStyleSheet("color:#888; font-size:8pt;")
+                    date_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-size:8pt;")
                     rl.addWidget(date_lbl)
                 err_lbl = QLabel(err_text)
                 err_lbl.setWordWrap(True)
-                err_lbl.setStyleSheet("color:#f44336; font-size:8pt;")
+                err_lbl.setStyleSheet(f"color:{sem('danger')}; font-size:8pt;")
                 rl.addWidget(err_lbl)
                 dl_layout.addWidget(row)
 
@@ -1870,7 +1871,7 @@ class VideoDetailWidget(QWidget):
         if not self._clip_source_file:
             info = QLabel("로컬 파일이 있어야 클립 추출이 가능합니다.\n다운로드 후 다시 시도해 주세요.")
             info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            info.setStyleSheet("color: #888; font-size: 10pt; padding: 24px;")
+            info.setStyleSheet(f"color: {_t().text_secondary}; font-size: 10pt; padding: 24px;")
             self._clip_tab_layout.addWidget(info)
             self._clip_tab_layout.addStretch()
             return
@@ -1924,7 +1925,7 @@ class VideoDetailWidget(QWidget):
         range_layout.addWidget(extract_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self._clip_status_lbl = QLabel("")
-        self._clip_status_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+        self._clip_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         range_layout.addWidget(self._clip_status_lbl)
 
         self._clip_tab_layout.addWidget(range_grp)
@@ -1982,7 +1983,7 @@ class VideoDetailWidget(QWidget):
         for i, (name, cat_id) in enumerate(path):
             if i > 0:
                 sep = QLabel(" ›")
-                sep.setStyleSheet("color:#888; font-size:9pt;")
+                sep.setStyleSheet(f"color:{_t().text_secondary}; font-size:9pt;")
                 self._crumb_layout.addWidget(sep)
             btn = QPushButton(name)
             btn.setFlat(True)

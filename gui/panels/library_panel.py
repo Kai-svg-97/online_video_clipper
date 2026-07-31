@@ -562,8 +562,9 @@ class _CollapseHandle(QSplitterHandle):
         self._btn = QPushButton("◀", self)
         self._btn.setFixedSize(14, 40)
         self._btn.setStyleSheet(
-            "QPushButton{background:#444;color:#ccc;border:none;border-radius:3px;font-size:9px;}"
-            "QPushButton:hover{background:#666;}"
+            f"QPushButton{{background:{_t().bg_overlay};color:{_t().text_secondary};"
+            "border:none;border-radius:3px;font-size:9px;}"
+            f"QPushButton:hover{{background:{_t().accent};color:{_t().text_on_accent};}}"
         )
         self._btn.clicked.connect(self._toggle)
 
@@ -1615,16 +1616,9 @@ class _TreeRowDelegate(QStyledItemDelegate):
             )
             x += 20
 
-        # 즐겨찾기 ★ (최우측)
+        # 개수 뱃지 (최우측) — ★ 유무와 무관하게 항상 오른쪽 끝에 고정한다.
+        # (예전엔 ★이 최우측이라 즐겨찾기 행만 뱃지가 왼쪽으로 밀려 숫자 열이 들쑥날쑥했다.)
         right = row.right() - 6
-        if index.data(_STAR_ROLE):
-            painter.setPen(QColor(tokens.star_color))
-            painter.setFont(QFont("", 8))
-            star_rect = QRect(right - 14, row.top(), 14, row.height())
-            painter.drawText(star_rect, Qt.AlignmentFlag.AlignCenter, "★")
-            right = star_rect.left() - 4
-
-        # 우측 개수 뱃지
         if count:
             painter.setFont(QFont("", 7))
             fm = painter.fontMetrics()
@@ -1637,7 +1631,15 @@ class _TreeRowDelegate(QStyledItemDelegate):
             painter.drawRoundedRect(badge, bh // 2, bh // 2)
             painter.setPen(QColor(tokens.text_secondary))
             painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, txt)
-            right = badge.left() - 6
+            right = badge.left() - 4
+
+        # 즐겨찾기 ★ — 뱃지 왼쪽
+        if index.data(_STAR_ROLE):
+            painter.setPen(QColor(tokens.star_color))
+            painter.setFont(QFont("", 8))
+            star_rect = QRect(right - 14, row.top(), 14, row.height())
+            painter.drawText(star_rect, Qt.AlignmentFlag.AlignCenter, "★")
+            right = star_rect.left() - 4
 
         # 이름 — 그룹 행은 자간을 넓힌 muted 라벨
         font = QFont(option.font)
@@ -2864,7 +2866,7 @@ class _PlaylistCard(_BaseCard):
         layout.addWidget(title_lbl)
 
         time_lbl = QLabel(_fmt_elapsed(pl.updated_at))
-        time_lbl.setStyleSheet("font-size:8pt; color:#888;")
+        time_lbl.setStyleSheet(f"font-size:8pt; color:{_t().text_secondary};")
         layout.addWidget(time_lbl)
 
         first = get_first_item(pl.id) if get_first_item else None
@@ -2944,7 +2946,7 @@ class _FolderContentsView(QScrollArea):
         if idx == 0:
             lbl = QLabel("이 폴더에 재생목록이 없습니다.")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("color:#888; font-size:11pt;")
+            lbl.setStyleSheet(f"color:{_t().text_secondary}; font-size:11pt;")
             grid.addWidget(lbl, 0, 0)
 
 

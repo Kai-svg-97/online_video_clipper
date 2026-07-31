@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 
 from config.settings import DATA_DIR
 from infrastructure.auth.youtube_auth import YouTubeAuthService, write_netscape_cookies
+from gui.themes.colors import sem, tok
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,8 @@ class YouTubeAuthDialog(QDialog):
         self._status_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status_banner.setFixedHeight(44)
         self._status_banner.setStyleSheet(
-            "background: #1e1e2e; border-radius: 6px; color: #cdd6f4; font-size: 10pt;"
+            f"background: {tok().bg_elevated}; border: 1px solid {tok().border_muted};"
+            f" border-radius: 6px; color: {tok().text_secondary}; font-size: 10pt;"
         )
         root.addWidget(self._status_banner)
 
@@ -217,7 +219,7 @@ class YouTubeAuthDialog(QDialog):
 
         self._progress_lbl = QLabel("")
         self._progress_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._progress_lbl.setStyleSheet("font-size: 9pt; color: #888;")
+        self._progress_lbl.setStyleSheet(f"font-size: 9pt; color: {tok().text_secondary};")
         root.addWidget(self._progress_lbl)
 
     def _build_browser_tab(self) -> QWidget:
@@ -244,8 +246,9 @@ class YouTubeAuthDialog(QDialog):
         )
         guide.setWordWrap(True)
         guide.setStyleSheet(
-            "font-size: 9pt; color: #888; "
-            "background: #1e1e2e; border-radius: 4px; padding: 6px;"
+            f"font-size: 9pt; color: {tok().text_secondary}; "
+            f"background: {tok().bg_elevated}; border: 1px solid {tok().border_muted};"
+            " border-radius: 4px; padding: 6px;"
         )
         layout.addWidget(guide)
 
@@ -265,14 +268,15 @@ class YouTubeAuthDialog(QDialog):
         )
         self._chrome_warn.setWordWrap(True)
         self._chrome_warn.setStyleSheet(
-            "font-size: 8pt; color: #f4a336; "
-            "background: #2e2a1a; border-radius: 4px; padding: 4px;"
+            f"font-size: 8pt; color: {sem('warning')}; "
+            f"background: {tok().bg_elevated}; border: 1px solid {sem('warning')};"
+            " border-radius: 4px; padding: 4px;"
         )
         self._chrome_warn.hide()
         layout.addWidget(self._chrome_warn)
 
         hint = QLabel("계정 클릭 → 선택 저장 → 상단에서 연결된 YouTube 채널 확인")
-        hint.setStyleSheet("font-size: 8pt; color: #666;")
+        hint.setStyleSheet(f"font-size: 8pt; color: {tok().text_secondary};")
         layout.addWidget(hint)
 
         return w
@@ -288,7 +292,7 @@ class YouTubeAuthDialog(QDialog):
             "브라우저 확장 프로그램(예: Get cookies.txt LOCALLY)으로 내보낸 파일을 사용하세요."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("font-size: 9pt; color: #888;")
+        desc.setStyleSheet(f"font-size: 9pt; color: {tok().text_secondary};")
         layout.addWidget(desc)
 
         file_row = QHBoxLayout()
@@ -352,7 +356,8 @@ class YouTubeAuthDialog(QDialog):
     def _check_status(self) -> None:
         self._status_banner.setText("상태 확인 중…")
         self._status_banner.setStyleSheet(
-            "background: #1e1e2e; border-radius: 6px; color: #888; font-size: 10pt;"
+            f"background: {tok().bg_elevated}; border: 1px solid {tok().border_muted};"
+            f" border-radius: 6px; color: {tok().text_secondary}; font-size: 10pt;"
         )
         if self._status_worker and self._status_worker.isRunning():
             return
@@ -368,7 +373,8 @@ class YouTubeAuthDialog(QDialog):
                 "구독 채널 / 재생목록 / 피드가 이 계정 기준으로 동작합니다."
             )
             self._status_banner.setStyleSheet(
-                "background: #1e3a1e; border-radius: 6px; color: #4caf50; "
+                f"background: {tok().bg_elevated}; border: 1px solid {sem('success')};"
+                f" border-radius: 6px; color: {sem('success')}; "
                 "font-size: 10pt; font-weight: 600; padding: 4px;"
             )
         else:
@@ -377,7 +383,8 @@ class YouTubeAuthDialog(QDialog):
                 "구독 채널·재생목록 기능을 사용하려면 연결이 필요합니다."
             )
             self._status_banner.setStyleSheet(
-                "background: #3a1e1e; border-radius: 6px; color: #f44336; "
+                f"background: {tok().bg_elevated}; border: 1px solid {sem('danger')};"
+                f" border-radius: 6px; color: {sem('danger')}; "
                 "font-size: 9pt; padding: 4px;"
             )
 

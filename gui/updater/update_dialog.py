@@ -22,6 +22,7 @@ from application.updater.commands import DownloadUpdateHandler
 from application.updater.dtos import UpdateDTO
 from domain.shared.ports import UpdateInfo
 from gui.updater.update_checker_worker import UpdateDownloadWorker
+from gui.themes.colors import tok
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class UpdateDialog(QDialog):
         layout.addWidget(ver_lbl)
 
         sub_lbl = QLabel("새 버전이 출시되었습니다")
-        sub_lbl.setStyleSheet("font-size: 11px; color: #888; margin-bottom: 16px;")
+        sub_lbl.setStyleSheet(f"font-size: 11px; color: {tok().text_secondary}; margin-bottom: 16px;")
         layout.addWidget(sub_lbl)
         layout.addSpacing(16)
 
@@ -80,14 +81,14 @@ class UpdateDialog(QDialog):
         self._progress.setTextVisible(False)
         self._progress.setFixedHeight(4)
         self._progress.setStyleSheet(
-            "QProgressBar { background: #2a2a2a; border-radius: 2px; }"
-            "QProgressBar::chunk { background: #5b9bd5; border-radius: 2px; }"
+            f"QProgressBar {{ background: {tok().bg_overlay}; border-radius: 2px; }}"
+            f"QProgressBar::chunk {{ background: {tok().accent}; border-radius: 2px; }}"
         )
         self._progress.hide()
         layout.addWidget(self._progress)
 
         self._status_lbl = QLabel()
-        self._status_lbl.setStyleSheet("font-size: 9px; color: #666; margin-top: 4px;")
+        self._status_lbl.setStyleSheet(f"font-size: 9px; color: {tok().text_secondary}; margin-top: 4px;")
         self._status_lbl.hide()
         layout.addWidget(self._status_lbl)
 
@@ -100,7 +101,7 @@ class UpdateDialog(QDialog):
         self._later_btn = QPushButton("나중에")
         self._later_btn.setFixedWidth(72)
         self._later_btn.setFlat(True)
-        self._later_btn.setStyleSheet("color: #888;")
+        self._later_btn.setStyleSheet(f"color: {tok().text_secondary};")
         self._later_btn.clicked.connect(self._on_later)
         btn_row.addWidget(self._later_btn)
 
