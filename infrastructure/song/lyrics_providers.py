@@ -19,6 +19,7 @@ from urllib.parse import quote
 import requests
 
 from domain.song.ports import LyricsResult
+from infrastructure.song.lrc import parse_lrc
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,6 @@ _UA = (
 )
 # (connect, read) 초 — 접근이 느린/막힌 출처에서 빨리 다음 출처로 넘어가도록 짧게 잡는다.
 _TIMEOUT = (5, 8)
-_LRC_TS_RE = re.compile(r"^\s*(?:\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*)+")
 
 
 def _log_provider_error(name: str, exc: Exception) -> None:
@@ -57,10 +57,6 @@ def _split_lines(text: str) -> list[str]:
     while lines and not lines[-1].strip():
         lines.pop()
     return lines
-
-
-def _strip_lrc_timestamps(text: str) -> str:
-    return "\n".join(_LRC_TS_RE.sub("", ln) for ln in text.splitlines())
 
 
 class LrclibProvider:
@@ -96,14 +92,29 @@ class LrclibProvider:
         if not data:
             return None
 
-        raw = data.get("plainLyrics") or ""
-        if not raw and data.get("syncedLyrics"):
-            raw = _strip_lrc_timestamps(data["syncedLyrics"])
-        lines = _split_lines(raw)
+        # 싱크 가사(syncedLyrics)가 있으면 우선 채택한다 — 텍스트 내용은 plainLyrics와
+        # 같고 줄별 시각까지 얻을 수 있어, 자막·싱크 기능의 유일한 타이밍 출처다.
+        lines: list[str] = []
+        timings: list[int | None] = []
+        synced = data.get("syncedLyrics") or ""
+        if synced:
+            parsed = parse_lrc(synced)
+            if any(ms is not None for ms, _ in parsed):
+                # 맨 뒤에 몰린 '타임스탬프 없는 빈 줄'은 표시상 의미가 없어 잘라낸다.
+                while parsed and parsed[-1][0] is None and not parsed[-1][1].strip():
+                    parsed.pop()
+                lines = [text for _, text in parsed]
+                timings = [ms for ms, _ in parsed]
+            else:
+                logger.debug("LRCLIB syncedLyrics에 타임스탬프가 없음 — plain으로 폴백")
+        if not lines:
+            lines = _split_lines(data.get("plainLyrics") or "")
+            timings = []
         if not lines:
             return None
         return LyricsResult(
             lines=lines,
+            timings=timings,
             language="",
             source_name="LRCLIB",
             source_url="https://lrclib.net",
