@@ -36,7 +36,7 @@ def parse_lrc(text: str) -> list[tuple[int | None, str]]:
       정렬 시 시각이 있는 줄 뒤로 밀린다.
     - 실패해도 예외를 던지지 않는다(파싱 가능한 것만 돌려준다).
     """
-    if not text:
+    if not text.strip():
         return []
 
     offset_ms = 0
@@ -75,10 +75,5 @@ def parse_lrc(text: str) -> list[tuple[int | None, str]]:
         (max(0, ms + offset_ms), content)
         for ms, _, content in sorted(timed, key=lambda t: (t[0], t[1]))
     ]
-    # 타임스탐프 있는 줄이 있으면 모든 타임스탐프 없는 줄을 추가한다.
-    # 없으면 공백이 아닌 내용만 보존한다 (순수 헤더/주석만 있는 경우 제외).
-    if result:
-        result.extend(untimed)
-    else:
-        result.extend([(ms, content) for ms, content in untimed if content])
+    result.extend(untimed)
     return result
