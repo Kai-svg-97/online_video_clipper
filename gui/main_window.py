@@ -675,6 +675,12 @@ class MainWindow(QMainWindow):
             )
         controller.update_notification.connect(self._on_update_notification)
         controller.update_ready.connect(self._on_update_ready)
+        controller.check_started.connect(
+            lambda: self._settings_panel.set_update_busy(True)
+        )
+        controller.check_finished.connect(
+            lambda: self._settings_panel.set_update_busy(False)
+        )
         self._sidebar.settings_navigated_with_badge.connect(
             self._settings_panel.scroll_and_flash_update_section
         )
@@ -686,9 +692,13 @@ class MainWindow(QMainWindow):
         self._settings_panel.set_update_ready(dto)
 
     def _on_update_notification(self, dto) -> None:
-        # 폴백(다운로드 실패 등) — 배지+툴팁만.
+        """자동 설치 준비 실패 — 배지+툴팁에 더해 설정 헤더에 설치 버튼을 노출한다.
+
+        예전에는 배지만 켜져, 설정 화면을 열어도 업데이트를 진행할 방법이 없었다.
+        """
         self._sidebar.show_update_badge(True)
-        self._sidebar.set_settings_tooltip(f"업데이트 발견: v{dto.version} — 설정에서 확인")
+        self._sidebar.set_settings_tooltip(f"업데이트 발견: v{dto.version} — 설정에서 설치")
+        self._settings_panel.set_update_available(dto)
 
     def _on_download_video_open(self, url: str) -> None:
         """다운로드 카드 클릭 → 라이브러리 영상 상세화면 오픈."""

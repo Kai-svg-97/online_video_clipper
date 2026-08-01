@@ -25,8 +25,10 @@ _CHECK_INTERVAL_SEC = 3_600  # 1시간
 class UpdateController(QObject):
     """업데이트 확인·자동 다운로드·설치 트리거를 담당. MainWindow가 소유하며 shutdown()으로 정리."""
 
-    update_notification = pyqtSignal(object)   # UpdateDTO — 발견(폴백: 배지만)
+    update_notification = pyqtSignal(object)   # UpdateDTO — 발견했지만 자동 설치 준비 실패
     update_ready = pyqtSignal(object)          # UpdateDTO — 자동 다운로드 완료(종료 시 설치 준비됨)
+    check_started = pyqtSignal()               # 확인 시작 — 설정 화면 상태 표시용
+    check_finished = pyqtSignal()              # 확인/다운로드 종료(성공·실패 무관)
 
     def __init__(
         self,
@@ -70,7 +72,7 @@ class UpdateController(QObject):
 
     # ------------------------------------------------------------------
     def _should_check(self) -> bool:
-        """AUTO_UPDATE_CHECK 설정이 켜져 있고, 24시간이 지났는지 확인."""
+        """AUTO_UPDATE_CHECK 설정이 켜져 있고, 마지막 확인 후 1시간이 지났는지 확인."""
         try:
             from config import settings as s  # noqa: PLC0415
             if not getattr(s, "AUTO_UPDATE_CHECK", True):
@@ -81,10 +83,25 @@ class UpdateController(QObject):
             logger.exception("업데이트 체크 조건 확인 실패")
             return True
 
+    @staticmethod
+    def _mark_checked() -> None:
+        """자동 확인 인터벌(1시간)을 소진 처리한다.
+
+        **성공적으로 끝난 경우에만** 호출한다. 예전에는 확인을 시작하자마자 기록해,
+        다운로드가 실패해도 다음 1시간 동안 재시도가 막혔다 — 앱을 다시 켜도 배지조차
+        뜨지 않아 사용자가 업데이트할 방법이 없었다.
+        """
+        try:
+            from config import settings as s  # noqa: PLC0415
+            s.save_setting("last_update_check", time.time())
+        except Exception:
+            logger.exception("last_update_check 저장 실패")
+
     def _run_check(self, *, interactive: bool) -> None:
         if self._worker and self._worker.isRunning():
             return
 
+        self.check_started.emit()
         self._worker = UpdateCheckWorker(self._check_handler, self)
         self._worker.found.connect(
             lambda dto: self._on_found(dto, interactive=interactive)
@@ -97,19 +114,13 @@ class UpdateController(QObject):
         )
         self._worker.start()
 
-        # 자동 체크 시에만 타임스탬프 갱신 — 수동 확인은 24h 인터벌에 영향 없음
-        if not interactive:
-            try:
-                from config import settings as s  # noqa: PLC0415
-                s.save_setting("last_update_check", time.time())
-            except Exception:
-                logger.exception("last_update_check 저장 실패")
-
     def _on_found(self, dto: UpdateDTO, *, interactive: bool) -> None:
         if not interactive:
             try:
                 from config import settings as s  # noqa: PLC0415
                 if dto.version == getattr(s, "SNOOZED_UPDATE_VERSION", ""):
+                    self._mark_checked()
+                    self.check_finished.emit()
                     return
             except Exception:
                 logger.exception("snoozed_update_version 확인 실패")
@@ -125,6 +136,7 @@ class UpdateController(QObject):
         )
 
         if interactive:
+            self.check_finished.emit()
             self._show_update_dialog(dto)
         else:
             # 자동: 백그라운드 다운로드 → 완료 시 종료 설치 준비(배지/헤더).
@@ -149,6 +161,8 @@ class UpdateController(QObject):
 
     def _on_download_done(self, installer_path: str, dto: UpdateDTO) -> None:
         self._downloaded_version = dto.version
+        self._mark_checked()
+        self.check_finished.emit()
         if write_pending_update(installer_path):
             # 앱 종료 시 main.py tail이 설치. 지금은 준비 완료만 알림.
             self.update_ready.emit(dto)
@@ -157,8 +171,10 @@ class UpdateController(QObject):
             self.update_notification.emit(dto)
 
     def _on_download_failed(self, msg: str, dto: UpdateDTO) -> None:
+        # 인터벌을 소진하지 않는다 — 다음 실행에서 곧바로 다시 시도할 수 있어야 한다.
         logger.warning("업데이트 자동 다운로드 실패: %s", msg)
-        self.update_notification.emit(dto)   # 폴백: 배지만(다음 확인에서 재시도)
+        self.check_finished.emit()
+        self.update_notification.emit(dto)   # 배지 + 설정 헤더에 수동 설치 버튼
 
     def install_now(self, *_args) -> None:
         """헤더 '지금 설치' — pending 마커가 있으면 앱을 종료해 tail이 설치하도록 한다."""
@@ -178,6 +194,8 @@ class UpdateController(QObject):
         dlg.exec()
 
     def _on_none_found(self, *, interactive: bool) -> None:
+        self._mark_checked()
+        self.check_finished.emit()
         if interactive:
             QMessageBox.information(
                 self._parent_window,
@@ -186,7 +204,9 @@ class UpdateController(QObject):
             )
 
     def _on_failed(self, msg: str, *, interactive: bool) -> None:
+        # 확인 자체가 실패했으면 인터벌을 소진하지 않는다(다음 실행에서 재시도).
         logger.warning("업데이트 확인 실패: %s", msg)
+        self.check_finished.emit()
         if interactive:
             QMessageBox.warning(
                 self._parent_window,

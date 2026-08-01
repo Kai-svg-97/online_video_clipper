@@ -1160,6 +1160,11 @@ class SettingsPanel(QWidget):
         self._upd_status_lbl = QLabel(f"v{__version__}")
         self._upd_status_lbl.setStyleSheet(f"font-size: 11px; color: {_t().text_secondary};")
         row.addWidget(self._upd_status_lbl)
+        # 수동 확인 — 자동 확인은 1시간 간격이라, 실패한 뒤 바로 다시 시도할 길이 필요하다.
+        self._upd_check_btn = QPushButton("확인")
+        self._upd_check_btn.setToolTip("지금 업데이트를 확인합니다")
+        self._upd_check_btn.clicked.connect(self.check_update_requested.emit)
+        row.addWidget(self._upd_check_btn)
         self._upd_install_btn = QPushButton("지금 설치")
         self._upd_install_btn.setToolTip("앱을 재시작하여 업데이트를 설치합니다")
         self._upd_install_btn.clicked.connect(self._on_install_update)
@@ -1175,7 +1180,38 @@ class SettingsPanel(QWidget):
         self._upd_status_lbl.setStyleSheet(
             f"font-size: 11px; color: {sem('danger')}; font-weight: 600;"
         )
+        self._upd_install_btn.setText("지금 설치")
+        self._upd_install_btn.setToolTip("앱을 재시작하여 업데이트를 설치합니다")
         self._upd_install_btn.show()
+
+    def set_update_available(self, dto) -> None:
+        """새 버전을 찾았지만 자동 설치 준비에 실패한 상태.
+
+        예전에는 이때 기어의 빨간 점만 켜지고 설정 화면은 그대로여서, 사용자가
+        업데이트를 진행할 방법이 화면에 없었다. 여기서 직접 내려받을 버튼을 준다.
+        """
+        self._pending_dto = dto
+        self._upd_status_lbl.setText(f"업데이트 있음 · v{dto.version}")
+        self._upd_status_lbl.setStyleSheet(
+            f"font-size: 11px; color: {sem('warning')}; font-weight: 600;"
+        )
+        self._upd_install_btn.setText("설치하기")
+        self._upd_install_btn.setToolTip("업데이트를 내려받아 설치합니다")
+        self._upd_install_btn.show()
+
+    def set_update_busy(self, busy: bool) -> None:
+        """확인·다운로드 진행 중 표시(중복 요청 방지)."""
+        self._upd_check_btn.setEnabled(not busy)
+        if busy:
+            self._upd_status_lbl.setText("확인 중…")
+            self._upd_status_lbl.setStyleSheet(
+                f"font-size: 11px; color: {_t().text_secondary};"
+            )
+        elif self._pending_dto is None:
+            self._upd_status_lbl.setText(f"v{__version__}")
+            self._upd_status_lbl.setStyleSheet(
+                f"font-size: 11px; color: {_t().text_secondary};"
+            )
 
     def scroll_and_flash_update_section(self) -> None:
         # 업데이트 상태가 헤더에 상시 노출되므로 스크롤/플래시는 불필요(no-op).

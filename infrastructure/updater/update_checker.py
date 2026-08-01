@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
@@ -24,6 +25,13 @@ logger = logging.getLogger(__name__)
 _API_URL = "https://api.github.com/repos/Kai-svg-97/online_video_clipper/releases/latest"
 _TIMEOUT = 10
 _CHUNK = 65_536  # 64 KB
+
+# 인스톨러는 130MB가 넘어 API 조회용 타임아웃(10초)으로는 끊긴다.
+# requests 의 read 타임아웃은 "청크 사이 정체 허용 시간"이므로 넉넉히 잡고,
+# 그래도 끊기면 Range 로 이어받아 재시도한다.
+_DL_TIMEOUT = (10, 60)      # (connect, read)
+_DL_MAX_ATTEMPTS = 4
+_DL_RETRY_BACKOFF_SEC = 3   # 시도마다 배수로 증가
 _ALLOWED_HOSTS = frozenset({
     "github.com",
     "objects.githubusercontent.com",
@@ -42,6 +50,19 @@ def _validate_url(url: str) -> None:
     host = parsed.netloc.lower().split(":")[0]
     if host not in _ALLOWED_HOSTS:
         raise ValueError(f"허용되지 않은 다운로드 호스트: {host!r}")
+
+
+def _sha256_of(path: Path) -> str:
+    """파일 전체를 읽어 SHA-256 을 계산한다.
+
+    이어받기(Range) 로 여러 응답에 걸쳐 받을 수 있으므로 스트리밍 중 누적하지 않고
+    완료된 파일에서 한 번에 계산한다.
+    """
+    sha = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            sha.update(block)
+    return sha.hexdigest()
 
 
 def _validate_asset_name(name: str) -> str:
@@ -134,28 +155,7 @@ class GithubUpdateChecker:
         part = dest.with_suffix(dest.suffix + ".part")
 
         try:
-            resp = self._session.get(
-                info.download_url,
-                stream=True,
-                timeout=_TIMEOUT,
-                verify=True,
-            )
-            resp.raise_for_status()
-
-            total = int(resp.headers.get("content-length", info.size_bytes) or 0)
-            downloaded = 0
-            sha = hashlib.sha256()
-
-            with part.open("wb") as f:
-                for chunk in resp.iter_content(chunk_size=_CHUNK):
-                    if not chunk:
-                        continue
-                    f.write(chunk)
-                    sha.update(chunk)
-                    downloaded += len(chunk)
-                    if on_progress:
-                        on_progress(downloaded, total)
-
+            self._download_with_resume(info, part, on_progress)
         except requests.RequestException:
             part.unlink(missing_ok=True)
             raise
@@ -165,15 +165,77 @@ class GithubUpdateChecker:
             part.unlink(missing_ok=True)
             raise RuntimeError("SHA-256 체크섬이 없어 무결성을 검증할 수 없습니다 — 설치 중단")
 
-        digest = sha.hexdigest()
+        digest = _sha256_of(part)
         if not hmac.compare_digest(digest, info.sha256.lower()):
             part.unlink(missing_ok=True)
             raise RuntimeError(
                 f"SHA-256 불일치: expected {info.sha256}, got {digest}"
             )
 
+        dest.unlink(missing_ok=True)
         part.rename(dest)
         return dest
+
+    # ------------------------------------------------------------------
+    def _download_with_resume(
+        self,
+        info: UpdateInfo,
+        part: Path,
+        on_progress: Callable[[int, int], None] | None,
+    ) -> None:
+        """`.part` 에 내려받는다 — 끊기면 Range 로 이어받아 재시도한다.
+
+        130MB 인스톨러는 네트워크가 잠깐만 정체돼도 read 타임아웃에 걸린다.
+        예전에는 한 번 실패하면 그대로 포기해 업데이트가 영영 진행되지 않았다
+        (사용자에게는 '빨간 점만 뜨고 설치는 안 됨'으로 보였다).
+        """
+        last_exc: Exception | None = None
+        for attempt in range(1, _DL_MAX_ATTEMPTS + 1):
+            have = part.stat().st_size if part.exists() else 0
+            headers = {"Range": f"bytes={have}-"} if have else {}
+            try:
+                resp = self._session.get(
+                    info.download_url,
+                    stream=True,
+                    timeout=_DL_TIMEOUT,
+                    headers=headers,
+                    verify=True,
+                )
+                if have and resp.status_code == 200:
+                    # 서버가 Range 를 무시했다 — 처음부터 다시 받는다.
+                    have = 0
+                    part.unlink(missing_ok=True)
+                resp.raise_for_status()
+
+                remaining = int(resp.headers.get("content-length", 0) or 0)
+                total = (have + remaining) or info.size_bytes or 0
+                downloaded = have
+                with part.open("ab" if have else "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=_CHUNK):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if on_progress:
+                            on_progress(downloaded, total)
+
+                if total and downloaded < total:
+                    raise requests.ConnectionError(
+                        f"다운로드가 도중에 끊겼습니다({downloaded}/{total} bytes)"
+                    )
+                return
+            except requests.RequestException as exc:
+                last_exc = exc
+                got = part.stat().st_size if part.exists() else 0
+                logger.warning(
+                    "업데이트 다운로드 %d/%d 실패(%s) — %d bytes 확보, 이어받기 재시도",
+                    attempt, _DL_MAX_ATTEMPTS, exc, got,
+                )
+                if attempt == _DL_MAX_ATTEMPTS:
+                    break
+                time.sleep(_DL_RETRY_BACKOFF_SEC * attempt)
+
+        raise last_exc if last_exc else RuntimeError("업데이트 다운로드 실패")
 
     # ------------------------------------------------------------------
     @staticmethod
