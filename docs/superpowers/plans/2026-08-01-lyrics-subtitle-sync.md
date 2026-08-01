@@ -539,7 +539,9 @@ Modify `domain/song/aggregates.py`:
 
 ```python
 # 자막 싱크 보정 허용 범위(ms). 30초를 넘는 어긋남은 가사가 잘못 매칭된 것이므로 막는다.
-_MAX_OFFSET_MS = 30_000
+# GUI(gui/widgets/lyrics_overlay.py)도 저장 전에 같은 상한으로 자르므로 **공개 상수**로 두고
+# 그쪽에서 import한다 — 두 곳에 따로 적으면 값이 어긋나는 사고가 난다.
+MAX_LYRICS_OFFSET_MS = 30_000
 ```
 
 `set_lyrics_translations` **앞**에 메서드 추가:
@@ -551,7 +553,7 @@ _MAX_OFFSET_MS = 30_000
         허용 범위를 벗어나면 clamp한다 — 30초를 넘는 어긋남은 보정이 아니라
         가사가 잘못 매칭된 것이라 사용자가 되돌리기 어려운 상태가 된다.
         """
-        clamped = max(-_MAX_OFFSET_MS, min(_MAX_OFFSET_MS, int(ms)))
+        clamped = max(-MAX_LYRICS_OFFSET_MS, min(MAX_LYRICS_OFFSET_MS, int(ms)))
         if self._info.lyrics_offset_ms == clamped:
             return
         self._info.lyrics_offset_ms = clamped
@@ -1692,11 +1694,11 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QWidget
 
-logger = logging.getLogger(__name__)
+# 오프셋 상한은 도메인 상수를 그대로 쓴다 — GUI도 저장 전에 같은 값으로 자르는데,
+# 두 곳에 따로 적으면 어긋난다(gui → domain 방향이라 레이어 규칙에 맞다).
+from domain.song.aggregates import MAX_LYRICS_OFFSET_MS
 
-# 오프셋 허용 범위(ms) — domain.song.aggregates._MAX_OFFSET_MS와 같은 값.
-# GUI에서도 같은 상한을 걸어 저장 전에 미리 잘라낸다.
-MAX_OFFSET_MS = 30_000
+logger = logging.getLogger(__name__)
 
 # 자막 색은 테마 토큰을 쓰지 않는다 — 영상 프레임 위에 얹히므로 앱 테마가 아니라
 # '어떤 영상 위에서도 읽히는가'가 기준이다(의미·가독성 고정색, CLAUDE.md 색상 규칙 예외).
@@ -1792,7 +1794,9 @@ class LyricsTrack:
 
     @offset_ms.setter
     def offset_ms(self, value: int) -> None:
-        self._offset_ms = max(-MAX_OFFSET_MS, min(MAX_OFFSET_MS, int(value)))
+        self._offset_ms = max(
+            -MAX_LYRICS_OFFSET_MS, min(MAX_LYRICS_OFFSET_MS, int(value))
+        )
 
     def index_at(self, pos_ms: int) -> int | None:
         """재생 위치에 해당하는 줄 인덱스. 표시할 줄이 없으면 None."""
@@ -3653,7 +3657,11 @@ git commit -m "fix: /verify에서 발견한 자막 동작 문제 수정"
 - `_ControlBar.set_has_subtitle/set_subtitle_on/set_subtitle_offset_ms` — T6 정의, T6 내부 사용 ✓
 - `SongViewModel.fetch_synced_lyrics/set_lyrics_offset` — T8 정의, T8 배선 ✓
 
-`MAX_OFFSET_MS`(gui)와 `_MAX_OFFSET_MS`(domain)가 같은 값 30,000으로 **중복 정의**된다.
-domain은 gui를 import할 수 없고 gui가 domain 상수를 쓰는 것은 레이어 규칙상 가능하지만,
-위젯이 도메인 상수를 직접 참조하면 결합이 늘어난다. 값이 같아야 한다는 사실을 양쪽 주석에
-명시했으므로 그대로 둔다 (T5 구현의 주석이 이를 담고 있다).
+**실행 전 조율(사용자 결정)**
+
+1. 오프셋 상한은 처음에 domain·gui 양쪽에 상수를 따로 두려 했으나, 값이 어긋나는 사고를
+   막기 위해 **domain의 공개 상수 `MAX_LYRICS_OFFSET_MS` 하나로 통일**하고 gui가 import한다
+   (T2에서 정의, T5에서 import). `gui → domain`이라 레이어 규칙에 맞다.
+2. T6 Step 8의 전체화면·PiP 자막 배선 블록은 **의도적으로 복사**한다 — 바로 옆 컨트롤바
+   배선이 이미 같은 방식이라 주변 코드와 어법을 맞추는 쪽을 택했다. 리뷰에서 중복으로
+   지적되면 이 결정을 근거로 유지한다.
