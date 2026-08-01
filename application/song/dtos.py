@@ -8,6 +8,7 @@ from uuid import UUID
 class LyricsLineDTO:
     original: str
     translation: str = ""
+    start_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class SongInfoDTO:
     release_year: str = ""
     lyrics_lines: tuple[LyricsLineDTO, ...] = ()
     lyrics_language: str = ""
+    lyrics_offset_ms: int = 0
     source_name: str = ""
     source_url: str = ""
 
@@ -31,6 +33,11 @@ class SongInfoDTO:
     def is_bilingual(self) -> bool:
         """번역이 병행 표기된 가사인지(원문≠한국어)."""
         return any(line.translation for line in self.lyrics_lines)
+
+    @property
+    def is_synced(self) -> bool:
+        """시간 정보가 있는 줄이 있는지 — 자막·싱크 UI 활성 조건."""
+        return any(line.start_ms is not None for line in self.lyrics_lines)
 
 
 @dataclass(frozen=True)
