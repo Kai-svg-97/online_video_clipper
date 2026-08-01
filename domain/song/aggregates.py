@@ -12,6 +12,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# 자막 싱크 보정 허용 범위(ms). 30초를 넘는 어긋남은 가사가 잘못 매칭된 것이므로 막는다.
+# GUI(gui/widgets/lyrics_overlay.py)도 저장 전에 같은 상한으로 자르므로 **공개 상수**로 두고
+# 그쪽에서 import한다 — 두 곳에 따로 적으면 값이 어긋나는 사고가 난다.
+MAX_LYRICS_OFFSET_MS = 30_000
+
+
 class SongInfoAggregate:
     """노래 정보 애그리게이트 루트. 상태 변경은 모두 이 메서드를 통해서만 이뤄진다.
 
@@ -109,6 +115,18 @@ class SongInfoAggregate:
         self._info.manual_fields = self._info.manual_fields | {field}
         self._touch((field,))
 
+    def set_lyrics_offset(self, ms: int) -> None:
+        """자막 싱크 보정값을 설정한다(양수 = 자막을 늦게 띄움).
+
+        허용 범위를 벗어나면 clamp한다 — 30초를 넘는 어긋남은 보정이 아니라
+        가사가 잘못 매칭된 것이라 사용자가 되돌리기 어려운 상태가 된다.
+        """
+        clamped = max(-MAX_LYRICS_OFFSET_MS, min(MAX_LYRICS_OFFSET_MS, int(ms)))
+        if self._info.lyrics_offset_ms == clamped:
+            return
+        self._info.lyrics_offset_ms = clamped
+        self._touch(("lyrics_offset",))
+
     def set_lyrics_translations(self, lines: list[LyricsLine]) -> None:
         """현재 가사를 번역 포함 버전으로 교체한다(출처 유지·수동 표시 안 함).
 
@@ -120,13 +138,35 @@ class SongInfoAggregate:
         self._touch(("lyrics",))
 
     def edit_lyrics(self, lines: list[LyricsLine], *, source_name: str = "직접 입력") -> None:
-        """사용자의 가사 편집 — 수동 필드로 표시하고 출처를 사용자 입력으로 바꾼다."""
-        if lines == self._info.lyrics_lines:
+        """사용자의 가사 편집 — 수동 필드로 표시하고 출처를 사용자 입력으로 바꾼다.
+
+        편집기는 평문 한 줄씩만 다루므로 들어오는 ``lines``에는 시각이 없다. 줄 수가
+        그대로면 기존 시각을 그 순서대로 되살린다(오탈자 수정으로 싱크가 날아가지
+        않게). 줄 구성이 바뀌었으면 시각을 신뢰할 수 없으므로 폐기한다.
+        """
+        merged = self._merge_timings(lines)
+        if merged == self._info.lyrics_lines:
             return
-        self._info.lyrics_lines = list(lines)
+        self._info.lyrics_lines = merged
         self._info.manual_fields = self._info.manual_fields | {"lyrics"}
         self._info.source = SongSourceRef(name=source_name, url="")
         self._touch(("lyrics",))
+
+    def _merge_timings(self, lines: list[LyricsLine]) -> list[LyricsLine]:
+        old = self._info.lyrics_lines
+        if len(lines) != len(old):
+            return [
+                LyricsLine(original=ln.original, translation=ln.translation)
+                for ln in lines
+            ]
+        return [
+            LyricsLine(
+                original=new.original,
+                translation=new.translation,
+                start_ms=new.start_ms if new.start_ms is not None else prev.start_ms,
+            )
+            for new, prev in zip(lines, old)
+        ]
 
     # ── Event infrastructure ──────────────────────────────────────
     def _touch(self, changed: tuple[str, ...]) -> None:

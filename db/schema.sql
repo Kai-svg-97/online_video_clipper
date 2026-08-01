@@ -229,8 +229,9 @@ CREATE TABLE IF NOT EXISTS song_info (
     album           TEXT NOT NULL DEFAULT '',
     song_title      TEXT NOT NULL DEFAULT '',
     release_year    TEXT NOT NULL DEFAULT '',
-    lyrics_json     TEXT NOT NULL DEFAULT '[]',   -- [{"o": 원문, "t": 한글번역}, ...]
+    lyrics_json     TEXT NOT NULL DEFAULT '[]',   -- [{"o": 원문, "t": 한글번역, "s": 시작ms}, ...]
     lyrics_language TEXT NOT NULL DEFAULT '',      -- ISO 639-1 ("" 미상)
+    lyrics_offset_ms INTEGER NOT NULL DEFAULT 0,   -- 자막 싱크 보정(ms). 양수 = 자막 지연
     source_name     TEXT NOT NULL DEFAULT '',      -- 가사 출처 표시 이름
     source_url      TEXT NOT NULL DEFAULT '',
     manual_fields   TEXT NOT NULL DEFAULT '[]',    -- 사용자가 직접 편집한 필드명(JSON array)

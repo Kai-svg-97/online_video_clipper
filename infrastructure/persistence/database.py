@@ -26,6 +26,7 @@ MIGRATION_IDS: tuple[str, ...] = (
     "migrate_song_sources_reorder",
     "migrate_media_paths_relative",
     "migrate_video_summary_status",
+    "migrate_lyrics_offset",
 )
 
 
@@ -148,6 +149,21 @@ class Database:
                 " status     TEXT NOT NULL,"
                 " updated_at TEXT NOT NULL)"
             )
+
+    def _migrate_lyrics_offset(self) -> None:
+        """song_info에 lyrics_offset_ms 컬럼을 추가한다 (idempotent).
+
+        기존 설치본은 schema.sql의 CREATE TABLE IF NOT EXISTS로는 컬럼이 늘지 않으므로
+        ALTER TABLE로 보강한다.
+        """
+        with self.connection() as conn:
+            try:
+                conn.execute(
+                    "ALTER TABLE song_info ADD COLUMN lyrics_offset_ms INTEGER NOT NULL DEFAULT 0"
+                )
+                logger.info("song_info.lyrics_offset_ms 컬럼 추가 완료")
+            except Exception:
+                logger.debug("song_info.lyrics_offset_ms 컬럼 이미 존재 — 건너뜀")
 
     def _migrate_song_tables(self) -> None:
         """노래 정보/가사 출처 테이블 시드 (idempotent).

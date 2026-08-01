@@ -32,6 +32,7 @@ class SongInfo:
     release_year: str = ""
     lyrics_lines: list[LyricsLine] = field(default_factory=list)
     lyrics_language: str = ""          # "" 미상, "ko", "en" 등 (ISO 639-1)
+    lyrics_offset_ms: int = 0          # 자막 싱크 보정(ms). 양수 = 자막을 늦게 띄움
     source: SongSourceRef | None = None
     manual_fields: frozenset[str] = frozenset()
     updated_at: datetime = field(default_factory=_now)
@@ -39,6 +40,11 @@ class SongInfo:
     @classmethod
     def create(cls, video_id: UUID, *, is_song: bool = False) -> "SongInfo":
         return cls(video_id=video_id, is_song=is_song)
+
+    @property
+    def is_synced(self) -> bool:
+        """시간 정보가 있는 줄이 하나라도 있으면 True — 자막·싱크 활성 조건."""
+        return any(ln.start_ms is not None for ln in self.lyrics_lines)
 
 
 @dataclass
