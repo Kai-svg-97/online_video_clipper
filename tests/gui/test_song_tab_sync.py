@@ -40,6 +40,18 @@ def _plain_dto() -> SongInfoDTO:
     return _dto([LyricsLineDTO(original="a"), LyricsLineDTO(original="b")])
 
 
+def _gapped_dto() -> SongInfoDTO:
+    """절 사이에 빈 줄(간주)이 낀 가사 — _render_lyrics가 spacer로 대체하고 _rows에서
+    제외하므로, _rows의 위치와 lyrics_lines의 인덱스가 어긋난다(실제 LRC에 흔한 형태)."""
+    return _dto(
+        [
+            LyricsLineDTO(original="one", start_ms=1000),
+            LyricsLineDTO(original="", start_ms=3000),
+            LyricsLineDTO(original="two", start_ms=5000),
+        ]
+    )
+
+
 def _rows(tab) -> list:
     layout = tab._lyrics_layout
     return [
@@ -110,6 +122,18 @@ class TestHighlight:
         tab.set_current_line(0)
         tab.set_info(_synced_dto())
         assert all(not r.is_current for r in _rows(tab))
+
+    def test_빈_줄이_있어도_line_index로_올바른_행을_강조한다(self, tab):
+        """빈 줄(간주)은 spacer가 되어 _rows에 들어가지 않으므로 _rows[index] 같은
+        위치 인덱싱으로 퇴행하면 엉뚱한 행(또는 범위 밖)이 강조된다. line_index
+        조회라면 lyrics_lines 인덱스 2("two")가 _rows의 두 번째(위치 1) 행이다."""
+        tab.set_info(_gapped_dto())
+        rows = _rows(tab)
+        assert len(rows) == 2  # 빈 줄은 행이 되지 않는다
+        tab.set_current_line(2)
+        assert rows[0].is_current is False
+        assert rows[1].is_current is True
+        assert rows[1].line_index == 2
 
 
 class TestClickSeek:

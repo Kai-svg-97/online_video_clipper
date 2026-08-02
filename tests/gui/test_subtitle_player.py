@@ -264,6 +264,22 @@ class TestFullscreenSubtitleWiring:
         assert bar._subtitle_offset_ms == 0
         assert player._fs_win.subtitle.current_text == ("one", "하나")
 
+    def test_진입시_오프셋이_그대로_전달된다(self, player):
+        _fake_position(player, 1200)
+        track = _track()
+        track.offset_ms = 500
+        player.set_lyrics(track)
+        player._enter_fullscreen()
+        assert player._fs_win.bar._subtitle_offset_ms == 500
+
+    def test_자막을_끈_채_진입하면_꺼진_상태로_열린다(self, player):
+        player.set_lyrics(_track())
+        player.set_subtitle_enabled(False)
+        player._enter_fullscreen()
+        assert player._fs_win.bar._subtitle_on is False
+        assert player._fs_win.bar._btn_cc.text() == "🗨"
+        assert player._fs_win.subtitle._visible_text is False
+
     def test_바에서_토글하면_인라인까지_반영된다(self, player):
         player.set_lyrics(_track())
         player._enter_fullscreen()

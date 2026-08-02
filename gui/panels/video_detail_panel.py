@@ -744,6 +744,8 @@ class _LyricRow(QWidget):
             color = QColor(tok.accent)
             bg = f"rgba({color.red()},{color.green()},{color.blue()},0.14)"
         elif self._shaded:
+            # 중립 회색 틴트 — 교대 음영 용도라 밝은/어두운 테마 어느 쪽 배경에도
+            # 자연스럽게 섞이므로 테마 토큰 대신 고정값을 쓴다(기존 코드에서 이식).
             bg = "rgba(127,127,127,0.09)"
         else:
             bg = "transparent"

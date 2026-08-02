@@ -5164,6 +5164,8 @@ class LibraryPanel(QWidget):
                     if detail.thumbnail_path else None
                 )
                 self._detail_widget.load(detail, tag_ids, related=related, poster=poster)
+                if self._song_vm is not None:
+                    self._song_vm.load(video_id)
 
     def _on_detail_refresh_requested(self, video_id: object) -> None:
         """제목행 ⟳ — YouTube(yt-dlp)에서 메타데이터를 재수집(백그라운드)한다.

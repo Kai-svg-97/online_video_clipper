@@ -47,6 +47,7 @@ _DOWNLOAD_COLS = (
 )
 
 # song_info 캡처 컬럼(updated_at은 메타라 제외 — churn).
+# lyrics_offset_ms(자막 싱크 보정)도 같은 영상 파일을 보는 다른 기기라면 어긋남이 같으므로 동기화한다.
 _SONG_COLS = (
     "is_song",
     "artist",
@@ -58,6 +59,7 @@ _SONG_COLS = (
     "source_name",
     "source_url",
     "manual_fields",
+    "lyrics_offset_ms",
 )
 
 # 캡처할 video 컬럼(로그 대상). view_count는 churn이라 제외(스냅샷이 담당),

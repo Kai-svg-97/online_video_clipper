@@ -255,6 +255,7 @@ class LyricsOverlay(QWidget):
             for line in self._wrap(self._translation, sub_metrics, max_w)
         ]
         if not rows:
+            painter.end()
             return
 
         total_h = sum(h for *_, h in rows) + self._LINE_GAP * (len(rows) - 1)
