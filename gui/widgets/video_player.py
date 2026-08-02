@@ -897,7 +897,8 @@ class InlinePlayer(QWidget):
     Control bar overlays the bottom of the video, auto-hides after 3 s of
     mouse inactivity while playing, reappears on mouse movement over the area.
 
-    YouTube-compatible keyboard shortcuts (Space/K, J, L, ←/→, ↑/↓, M, F, 0-9).
+    YouTube-compatible keyboard shortcuts (Space/K, J, L, ←/→, ↑/↓, M, F, 0-9,
+    C, [, ], \\).
     """
 
     playback_failed    = pyqtSignal(str)

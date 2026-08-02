@@ -127,11 +127,12 @@ ffmpeg 기반 구간 추출.
 **Aggregate Root:** `SongInfoAggregate`
 
 **Entities:**
-- `SongInfo` — video_id, is_song, artist, album, song_title, release_year, lyrics_lines, lyrics_language, source, manual_fields, updated_at
+- `SongInfo` — video_id, is_song, artist, album, song_title, release_year, lyrics_lines, lyrics_language, **`lyrics_offset_ms: int`**(영상별 자막 싱크 보정값, ±30초), source, manual_fields, updated_at.
+  **`is_synced` 프로퍼티**는 시각이 있는 줄이 1개 이상인지 알려주며 자막·싱크 기능의 활성 조건이다.
 - `LyricsSource` — id, name, provider_key, base_url, enabled, priority (가사 조회 출처 관리형 레지스트리)
 
 **Value Objects:**
-- `LyricsLine` — original, translation (비한국어 노래는 원문+한글 병행)
+- `LyricsLine` — original, translation (비한국어 노래는 원문+한글 병행), **`start_ms: int | None`** — 줄 시작 시각. `None`이면 시간 정보 없음(LRC 싱크 가사 출처에서만 채워짐)
 - `SongSourceRef` — name, url (가사를 실제로 가져온 출처)
 
 **Domain Events:**
@@ -147,6 +148,7 @@ ffmpeg 기반 구간 추출.
 - **번역**: 비한국어 가사에 한글 병행. 한국어/번역기 미설치 시 원문만(graceful).
 - **수동 편집 보존**: 사용자가 편집한 필드는 `manual_fields`에 기록돼 갱신 시 덮어쓰지 않는다(`apply_fetched`).
 - **등록 시 메타데이터만, 가사는 상세 진입 시 조회**: 대량 임포트가 네트워크로 막히지 않게 함(`FetchSongInfoCommand.fetch_lyrics`).
+- **자막 싱크 보정은 애그리게이트를 통해서만**: `SongInfoAggregate.set_lyrics_offset(ms)`가 오프셋 변경(±30초 clamp 포함)을 담당한다. `edit_lyrics`(가사 수동 편집)는 줄 수가 같을 때만 기존 타이밍(`start_ms`)을 유지하고, 줄 구성이 바뀌면 신뢰할 수 없으므로 폐기한다.
 
 ---
 
