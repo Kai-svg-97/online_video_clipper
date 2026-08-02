@@ -10,6 +10,7 @@ import logging
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -26,7 +27,15 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QTransform
+from PyQt6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QImage,
+    QTransform,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -701,6 +710,50 @@ class _SpinRefreshButton(QPushButton):
         self.setIcon(self._base_icon)
 
 
+class _LyricRow(QWidget):
+    """가사 한 줄 컨테이너 — 하이라이트·클릭 대상.
+
+    예전에는 원문/번역 라벨을 레이아웃에 낱개로 넣어 '줄'이라는 단위가 없었다.
+    재생 위치를 따라 강조하고 클릭으로 seek 하려면 줄마다 위젯이 필요하다.
+    """
+
+    clicked = pyqtSignal()
+
+    def __init__(self, line_index: int, seekable: bool, shaded: bool,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.line_index = line_index
+        self.is_current = False
+        self._seekable = seekable
+        self._shaded = shaded
+        if seekable:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._apply_style()
+
+    def set_current(self, on: bool) -> None:
+        if self.is_current == on:
+            return
+        self.is_current = on
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        tok = _t()
+        if self.is_current:
+            # 트리 선택 표현과 같은 어법 — accent 14% 틴트. 색은 테마 토큰에서 파생한다.
+            color = QColor(tok.accent)
+            bg = f"rgba({color.red()},{color.green()},{color.blue()},0.14)"
+        elif self._shaded:
+            bg = "rgba(127,127,127,0.09)"
+        else:
+            bg = "transparent"
+        self.setStyleSheet(f"background:{bg}; border-radius:4px;")
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt 시그니처)
+        if self._seekable and event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class _SongTab(QWidget):
     """상세화면 '노래' 탭 — 가수/앨범/제목/발매년도 + 가사(원문·한글 병행).
 
@@ -717,6 +770,8 @@ class _SongTab(QWidget):
     translate_requested = pyqtSignal()       # 현재 가사를 한글로 재번역
     flag_toggled = pyqtSignal(bool)
     filter_requested = pyqtSignal(str, str)  # (field_key, value) — 같은 가수/앨범 필터
+    synced_requested = pyqtSignal()          # 싱크(시간 정보) 가사 찾기
+    lyrics_seek_requested = pyqtSignal(int)  # 가사 줄 클릭 → 그 줄 시작 ms
 
     _FIELDS = (
         ("artist", "가수"),
@@ -733,6 +788,9 @@ class _SongTab(QWidget):
         self._lyrics_lines: list[LyricsLine] = []
         self._current_dto: SongInfoDTO | None = None
         self._side_by_side = False   # 번역 배치: False=원문 아래, True=원문 오른쪽
+        self._rows: list[_LyricRow] = []
+        self._current_row: _LyricRow | None = None
+        self._scroll_hold_until = 0.0   # 사용자 스크롤 후 자동 스크롤을 멈추는 시각(monotonic)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -795,6 +853,14 @@ class _SongTab(QWidget):
         self._translate_btn.clicked.connect(self.translate_requested.emit)
         self._translate_btn.setVisible(False)
         lyr_header.addWidget(self._translate_btn)
+        # 싱크 가사 찾기 — 시간 정보가 없는 가사일 때만 노출(자막 기능의 전제).
+        self._synced_btn = QPushButton("⏱")
+        self._synced_btn.setFixedSize(26, 24)
+        self._synced_btn.setToolTip("싱크(시간 정보) 가사 찾기 — 자막 표시에 필요합니다")
+        self._synced_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._synced_btn.clicked.connect(self.synced_requested.emit)
+        self._synced_btn.setVisible(False)
+        lyr_header.addWidget(self._synced_btn)
         self._src_lbl = QLabel("")
         self._src_lbl.setStyleSheet(f"font-size:8pt; color:{_t().text_secondary};")
         self._src_lbl.setOpenExternalLinks(True)
@@ -825,6 +891,13 @@ class _SongTab(QWidget):
         self._lyrics_layout.setSpacing(2)
         self._lyrics_scroll.setWidget(self._lyrics_holder)
         self._lyrics_stack.addWidget(self._lyrics_scroll)     # index 0: 표시
+        # 사용자가 직접 스크롤하면 자동 스크롤을 잠시 멈춘다. valueChanged가 아니라
+        # sliderPressed·actionTriggered를 쓰는 이유: valueChanged는 자동 스크롤 자신이
+        # 일으키는 변화까지 잡아버려서, 한 번 자동 스크롤되고 나면 영구히 억제된다.
+        self._lyrics_scroll.verticalScrollBar().sliderPressed.connect(self._on_user_scroll)
+        self._lyrics_scroll.verticalScrollBar().actionTriggered.connect(
+            lambda _a: self._on_user_scroll()
+        )
 
         self._lyrics_editor = QPlainTextEdit()
         self._lyrics_editor.setPlaceholderText("가사를 입력하세요 (한 줄당 한 줄)…")
@@ -838,6 +911,7 @@ class _SongTab(QWidget):
         self._flag_chk.setEnabled(editable)
         self._lyrics_refresh_btn.setEnabled(editable)
         self._translate_btn.setEnabled(editable)
+        self._synced_btn.setEnabled(editable)
         for f in self._fields.values():
             f.set_editable(editable)
 
@@ -866,6 +940,10 @@ class _SongTab(QWidget):
         self._lyrics_refresh_btn.setToolTip(
             "다음 출처에서 가사 검색" if has_lyrics else "가사 검색"
         )
+        is_synced = bool(dto and dto.is_synced)
+        # 싱크 가사가 이미 있으면 찾을 이유가 없다.
+        self._synced_btn.setVisible(has_lyrics and not is_synced and self._editable)
+        self._synced_btn.setEnabled(self._editable)
         is_song = bool(dto and dto.is_song)
         self._flag_chk.blockSignals(True)
         self._flag_chk.setChecked(is_song)
@@ -894,6 +972,8 @@ class _SongTab(QWidget):
 
     def _render_lyrics(self, dto: SongInfoDTO | None) -> None:
         _clear_layout(self._lyrics_layout)
+        self._rows = []
+        self._current_row = None
         bilingual = bool(dto and dto.is_bilingual)
         # 번역 배치 전환 아이콘은 병행(번역 있는) 가사일 때만 노출
         self._layout_btn.setVisible(bilingual)
@@ -912,17 +992,24 @@ class _SongTab(QWidget):
         tok = _t()
         side = self._side_by_side and bilingual
         content_idx = 0   # 오른쪽 배치 시 행 교대 음영용(빈 줄 제외)
-        for line in dto.lyrics_lines:
+        for idx, line in enumerate(dto.lyrics_lines):
             if not line.original.strip() and not line.translation.strip():
                 spacer = QLabel(" ")
                 spacer.setFixedHeight(8)
                 self._lyrics_layout.addWidget(spacer)
                 continue
+            # 오른쪽 배치일 때만 교대 음영을 준다(원문 아래 배치는 두 줄이 한 덩어리라
+            # 음영을 주면 오히려 경계가 헷갈린다).
+            row = _LyricRow(
+                line_index=idx,
+                seekable=line.start_ms is not None,
+                shaded=side and content_idx % 2 == 0,
+            )
+            if line.start_ms is not None:
+                row.clicked.connect(
+                    lambda ms=int(line.start_ms): self.lyrics_seek_requested.emit(ms)
+                )
             if side:
-                # 원문(좌) | 번역(우) 2열 — 행마다 교대 음영으로 경계를 구분
-                row = QWidget()
-                shade = "rgba(127,127,127,0.09)" if content_idx % 2 == 0 else "transparent"
-                row.setStyleSheet(f"background:{shade}; border-radius:4px;")
                 rl = QHBoxLayout(row)
                 rl.setContentsMargins(6, 3, 6, 3)
                 rl.setSpacing(12)
@@ -932,16 +1019,17 @@ class _SongTab(QWidget):
                 trans.setAlignment(Qt.AlignmentFlag.AlignTop)
                 rl.addWidget(orig, 1)
                 rl.addWidget(trans, 1)
-                self._lyrics_layout.addWidget(row)
             else:
-                # 원문 위, 번역 아래
-                self._lyrics_layout.addWidget(
-                    self._lyric_label(line.original or " ", tok.text_primary, 10)
-                )
+                rl = QVBoxLayout(row)
+                rl.setContentsMargins(6, 1, 6, 1)
+                rl.setSpacing(0)
+                rl.addWidget(self._lyric_label(line.original or " ", tok.text_primary, 10))
                 if line.translation:
-                    self._lyrics_layout.addWidget(
+                    rl.addWidget(
                         self._lyric_label(line.translation, tok.text_secondary, 9)
                     )
+            self._lyrics_layout.addWidget(row)
+            self._rows.append(row)
             content_idx += 1
         self._lyrics_layout.addStretch()
 
@@ -953,6 +1041,36 @@ class _SongTab(QWidget):
         lbl.setTextFormat(Qt.TextFormat.PlainText)
         lbl.setStyleSheet(f"color:{color}; font-size:{pt}pt; background:transparent;")
         return lbl
+
+    # ── 재생 연동 (현재 줄 강조·자동 스크롤) ──────────────────────
+    _SCROLL_HOLD_SEC = 3.0   # 사용자가 직접 스크롤한 뒤 자동 스크롤을 멈추는 시간
+
+    def _on_user_scroll(self) -> None:
+        """사용자가 가사를 직접 훑는 중에는 화면을 끌고 가지 않는다."""
+        self._scroll_hold_until = time.monotonic() + self._SCROLL_HOLD_SEC
+
+    def _autoscroll_suppressed(self) -> bool:
+        return time.monotonic() < self._scroll_hold_until
+
+    def set_current_line(self, index: int | None) -> None:
+        """재생 중인 가사 줄을 강조하고(필요하면) 보이도록 스크롤한다.
+
+        ``index``는 ``SongInfoDTO.lyrics_lines`` 기준 인덱스다(빈 줄 때문에 화면 행
+        순서와 다를 수 있어 ``_LyricRow.line_index``로 찾는다).
+        """
+        target = None
+        if index is not None:
+            target = next((r for r in self._rows if r.line_index == index), None)
+        if target is self._current_row:
+            return
+        if self._current_row is not None:
+            self._current_row.set_current(False)
+        self._current_row = target
+        if target is None:
+            return
+        target.set_current(True)
+        if not self._autoscroll_suppressed():
+            self._lyrics_scroll.ensureWidgetVisible(target, 0, target.height() * 2)
 
     def _toggle_lyrics_layout(self) -> None:
         """번역 배치를 원문 아래 ↔ 오른쪽으로 전환한다(세션 내 유지)."""
