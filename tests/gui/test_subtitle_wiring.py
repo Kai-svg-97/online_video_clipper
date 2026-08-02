@@ -4,6 +4,7 @@ DB·네트워크 없이 핸들러를 목으로 대체해 '무엇이 호출되는
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -113,4 +114,105 @@ class TestDetailWidgetTrack:
         widget = VideoDetailWidget()
         widget.set_song_info(None)
         assert widget._player._track is None
+        widget.deleteLater()
+
+
+class TestOffsetDebounceRace:
+    """오프셋 디바운스 저장이 영상 전환과 경합하지 않는지 검증한다(리뷰 지적 사항).
+
+    500ms 타이머를 실제로 기다리지 않고 `_flush_offset()`을 직접 호출해 결정적으로
+    검증한다(실제 sleep 없음). `widget._detail`은 `.id`만 있으면 되므로 전체
+    VideoDetailDTO 대신 가벼운 스텁으로 영상 전환을 흉내낸다.
+    """
+
+    def test_타이머가_끝나기_전에_다음_영상으로_전환해도_원래_영상에_저장된다(self, qapp_instance):
+        from gui.panels.video_detail_panel import VideoDetailWidget
+
+        widget = VideoDetailWidget()
+        video_a = SimpleNamespace(id=uuid4())
+        video_b = SimpleNamespace(id=uuid4())
+        widget._detail = video_a
+        widget._on_subtitle_offset_changed(500)   # A에서 조정
+        widget._detail = video_b                  # 타이머가 끝나기 전 B로 전환(자동재생 등)
+
+        seen: list[tuple] = []
+        widget.song_offset_saved.connect(lambda vid, ms: seen.append((vid, ms)))
+        widget._flush_offset()
+
+        assert seen == [(video_a.id, 500)]
+        widget.deleteLater()
+
+    def test_평상시엔_현재_영상_id로_저장된다(self, qapp_instance):
+        from gui.panels.video_detail_panel import VideoDetailWidget
+
+        widget = VideoDetailWidget()
+        video_id = uuid4()
+        widget._detail = SimpleNamespace(id=video_id)
+        widget._on_subtitle_offset_changed(250)
+
+        seen: list[tuple] = []
+        widget.song_offset_saved.connect(lambda vid, ms: seen.append((vid, ms)))
+        widget._flush_offset()
+
+        assert seen == [(video_id, 250)]
+        widget.deleteLater()
+
+    def test_연속_조정은_한_번만_마지막_값으로_저장된다(self, qapp_instance):
+        from gui.panels.video_detail_panel import VideoDetailWidget
+
+        widget = VideoDetailWidget()
+        video_id = uuid4()
+        widget._detail = SimpleNamespace(id=video_id)
+        widget._on_subtitle_offset_changed(100)
+        widget._on_subtitle_offset_changed(200)
+        widget._on_subtitle_offset_changed(300)
+
+        seen: list[tuple] = []
+        widget.song_offset_saved.connect(lambda vid, ms: seen.append((vid, ms)))
+        widget._flush_offset()
+
+        assert seen == [(video_id, 300)]
+        widget.deleteLater()
+
+    def test_스트리밍_중에는_저장하지_않는다(self, qapp_instance):
+        from gui.panels.video_detail_panel import VideoDetailWidget
+
+        widget = VideoDetailWidget()
+        widget._detail = SimpleNamespace(id=uuid4())
+        widget._streaming = True
+        widget._on_subtitle_offset_changed(400)
+
+        seen: list[tuple] = []
+        widget.song_offset_saved.connect(lambda vid, ms: seen.append((vid, ms)))
+        widget._flush_offset()
+
+        assert seen == []
+        widget.deleteLater()
+
+
+class TestLyricsSeekAndHighlight:
+    """가사 줄 클릭 seek 연산과 현재 줄 하이라이트 해제 변환 — 한 줄 로직이지만
+    부호 반전이나 `subtitle_offset_ms`가 프로퍼티로 바뀌는 리팩터를 회귀로 잡기 위한 테스트."""
+
+    def test_가사_줄_클릭은_오프셋을_더해_seek한다(self, qapp_instance):
+        from gui.panels.video_detail_panel import VideoDetailWidget
+
+        widget = VideoDetailWidget()
+        widget._player.subtitle_offset_ms = MagicMock(return_value=750)
+        widget._player.seek_to_ms = MagicMock()
+
+        widget._on_lyrics_seek(2000)
+
+        widget._player.seek_to_ms.assert_called_once_with(2750)
+        widget.deleteLater()
+
+    def test_현재_줄_인덱스가_음수면_하이라이트를_해제한다(self, qapp_instance):
+        from gui.panels.video_detail_panel import VideoDetailWidget
+
+        widget = VideoDetailWidget()
+        widget._song_tab.set_current_line = MagicMock()
+
+        widget._on_current_line_changed(-1)
+
+        widget._song_tab.set_current_line.assert_called_once_with(None)
         widget.deleteLater()

@@ -1178,7 +1178,9 @@ class VideoDetailWidget(QWidget):
         self._offset_timer.setSingleShot(True)
         self._offset_timer.setInterval(500)
         self._offset_timer.timeout.connect(self._flush_offset)
-        self._pending_offset: int | None = None
+        # (video_id, offset_ms) — 변경 시점의 video_id를 함께 담아, flush 시점에
+        # self._detail이 이미 다른 영상으로 바뀌어 있어도 원래 영상에 저장한다.
+        self._pending_offset: tuple[UUID, int] | None = None
         self._gemini_worker: object | None = None  # _GeminiSummaryWorker | None
         if download_vm is not None:
             download_vm.queue_changed.connect(self._on_queue_changed)
@@ -2283,15 +2285,23 @@ class VideoDetailWidget(QWidget):
         self._song_tab.set_current_line(line_index if line_index >= 0 else None)
 
     def _on_subtitle_offset_changed(self, offset_ms: int) -> None:
-        self._pending_offset = offset_ms
+        # video_id를 지금(변경 시점) 캡처한다 — 500ms 뒤 flush 시 self._detail이
+        # 이미 다음 영상(자동재생 등)으로 바뀌어 있을 수 있어, 그때 self._detail.id를
+        # 읽으면 A에서 조정한 값이 B에 저장되는 사고가 난다. load()/load_stream()에서
+        # 타이머를 멈추는 방식(대안)은 사용자가 방금 조정한 값을 버리게 되므로 채택하지
+        # 않았다 — A에서 조정한 값은 화면이 넘어갔어도 A에 저장돼야 한다는 것이 결론이다.
+        if self._detail is None or self._streaming:
+            return
+        self._pending_offset = (self._detail.id, offset_ms)
         self._offset_timer.start()
 
     def _flush_offset(self) -> None:
-        if self._pending_offset is None or self._detail is None or self._streaming:
-            self._pending_offset = None
-            return
-        self.song_offset_saved.emit(self._detail.id, self._pending_offset)
+        pending = self._pending_offset
         self._pending_offset = None
+        if pending is None:
+            return
+        video_id, offset_ms = pending
+        self.song_offset_saved.emit(video_id, offset_ms)
 
     def _on_play_failed(self, err: str) -> None:
         if self._current_url:
