@@ -66,6 +66,7 @@ from domain.song.value_objects import LyricsLine
 
 from application.library.dtos import FailedDownloadInfoDTO, VideoDetailDTO
 from gui.themes.manager import ThemeManager
+from gui.widgets.lyrics_overlay import LyricsTrack
 from gui.widgets.video_player import InlinePlayer
 from gui.themes.colors import sem
 
@@ -1141,6 +1142,8 @@ class VideoDetailWidget(QWidget):
     song_flag_toggled           = pyqtSignal(object, bool)      # (video_id, is_song)
     song_filter_requested       = pyqtSignal(str, str)   # (field, value) — 같은 가수/앨범 필터
     play_next_requested         = pyqtSignal(object)     # 재생목록 다음 항목 payload(자동재생)
+    song_synced_requested       = pyqtSignal(object)     # video_id — 싱크 가사 찾기
+    song_offset_saved           = pyqtSignal(object, int)  # (video_id, offset_ms)
 
     # 하단 탭 인덱스
     _TAB_INFO = 0       # 설명(태그~메모)
@@ -1170,6 +1173,12 @@ class VideoDetailWidget(QWidget):
         self._notes_timer.setSingleShot(True)
         self._notes_timer.setInterval(1000)
         self._notes_timer.timeout.connect(self._save_notes)
+        # 단축키 연타마다 DB에 쓰지 않도록 오프셋 저장을 묶는다.
+        self._offset_timer = QTimer(self)
+        self._offset_timer.setSingleShot(True)
+        self._offset_timer.setInterval(500)
+        self._offset_timer.timeout.connect(self._flush_offset)
+        self._pending_offset: int | None = None
         self._gemini_worker: object | None = None  # _GeminiSummaryWorker | None
         if download_vm is not None:
             download_vm.queue_changed.connect(self._on_queue_changed)
@@ -1218,6 +1227,8 @@ class VideoDetailWidget(QWidget):
         self._player.playback_failed.connect(self._on_play_failed)
         self._player.download_requested.connect(self.download_requested.emit)
         self._player.playback_finished.connect(self._on_playback_finished)
+        self._player.current_line_changed.connect(self._on_current_line_changed)
+        self._player.subtitle_offset_changed.connect(self._on_subtitle_offset_changed)
         left_layout.addWidget(self._player)
 
         # ── 제목 행 (플레이어 바로 아래): 제목 + ⟳상세갱신 + 🌐브라우저 ──
@@ -1363,6 +1374,8 @@ class VideoDetailWidget(QWidget):
         self._song_tab.translate_requested.connect(self._on_song_translate)
         self._song_tab.flag_toggled.connect(self._on_song_flag_toggled)
         self._song_tab.filter_requested.connect(self.song_filter_requested.emit)
+        self._song_tab.synced_requested.connect(self._on_song_synced)
+        self._song_tab.lyrics_seek_requested.connect(self._on_lyrics_seek)
         self._tabs.addTab(_wrap(self._song_tab), "노래")
 
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -2221,8 +2234,15 @@ class VideoDetailWidget(QWidget):
 
     # ── 노래 탭 (외부=LibraryPanel/SongViewModel이 데이터 주입) ─────────
     def set_song_info(self, dto) -> None:
-        """SongViewModel이 로드/갱신한 노래 정보를 노래 탭에 반영한다."""
+        """SongViewModel이 로드/갱신한 노래 정보를 노래 탭과 플레이어 자막에 반영한다."""
         self._song_tab.set_info(dto)
+        # 스트리밍은 안정적 video_id가 없어 편집·자막 대상이 아니다.
+        if dto is None or self._streaming or not dto.is_synced:
+            self._player.set_lyrics(None)
+            return
+        self._player.set_lyrics(
+            LyricsTrack.from_lines(dto.lyrics_lines, offset_ms=dto.lyrics_offset_ms)
+        )
 
     def set_song_busy(self, busy: bool) -> None:
         self._song_tab.set_busy(busy)
@@ -2250,6 +2270,28 @@ class VideoDetailWidget(QWidget):
     def _on_song_flag_toggled(self, is_song: bool) -> None:
         if self._detail is not None and not self._streaming:
             self.song_flag_toggled.emit(self._detail.id, is_song)
+
+    def _on_song_synced(self) -> None:
+        if self._detail is not None and not self._streaming:
+            self.song_synced_requested.emit(self._detail.id)
+
+    def _on_lyrics_seek(self, start_ms: int) -> None:
+        """가사 줄 클릭 → 그 줄이 실제로 뜨는 위치로 이동(오프셋 반영)."""
+        self._player.seek_to_ms(max(0, start_ms + self._player.subtitle_offset_ms()))
+
+    def _on_current_line_changed(self, line_index: int) -> None:
+        self._song_tab.set_current_line(line_index if line_index >= 0 else None)
+
+    def _on_subtitle_offset_changed(self, offset_ms: int) -> None:
+        self._pending_offset = offset_ms
+        self._offset_timer.start()
+
+    def _flush_offset(self) -> None:
+        if self._pending_offset is None or self._detail is None or self._streaming:
+            self._pending_offset = None
+            return
+        self.song_offset_saved.emit(self._detail.id, self._pending_offset)
+        self._pending_offset = None
 
     def _on_play_failed(self, err: str) -> None:
         if self._current_url:

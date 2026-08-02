@@ -4273,6 +4273,10 @@ class LibraryPanel(QWidget):
                 self._song_vm.translate_lyrics
             )
             self._detail_widget.song_flag_toggled.connect(self._song_vm.toggle_song)
+            self._detail_widget.song_synced_requested.connect(
+                self._song_vm.fetch_synced_lyrics
+            )
+            self._detail_widget.song_offset_saved.connect(self._song_vm.set_lyrics_offset)
 
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
         self._feed_grid.video_clicked.connect(self._open_stream_detail)
