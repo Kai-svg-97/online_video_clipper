@@ -34,9 +34,23 @@ def _key(player, key: int) -> None:
     player.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier))
 
 
+def _fake_position(player, ms: int) -> None:
+    """재생 위치를 고정한다.
+
+    분리 창 진입/이탈 코드는 ``self._player.position()``을 읽는데, 미디어가 없으면 항상 0이라
+    "첫 줄 이전"이 되어 자막 전달을 검증할 수 없다. 실제 재생과 같은 일관된 상태를 만들려고
+    위치만 고정한다(재생은 하지 않는다).
+    """
+    player._player.position = lambda: ms
+
+
 class TestSubtitleButtonEnablement:
     def test_가사가_없으면_비활성(self, player):
         assert player._bar._btn_cc.isEnabled() is False
+
+    def test_가사가_붙기_전_글리프가_상태와_맞는다(self, player):
+        # 버튼을 만들 때의 텍스트("💬")가 아니라 '비활성' 상태에 맞는 글리프여야 한다.
+        assert player._bar._btn_cc.text() == "🗨"
 
     def test_싱크_가사를_주면_활성(self, player):
         player.set_lyrics(_track())
@@ -72,6 +86,17 @@ class TestCurrentLine:
         player._apply_subtitle_position(1200)
         player._apply_subtitle_position(6000)
         assert seen[-2:] == [0, 1]
+
+    def test_새_가사의_현재_줄이_없으면_해제_신호가_나간다(self, player):
+        # 이전 곡의 3번째 줄을 강조하던 소비자(노래 탭)가 해제 신호를 받아야 한다.
+        # set_lyrics가 _current_line_index를 -1로 두면 새 판정도 -1이라 조용히 넘어간다.
+        _fake_position(player, 1200)
+        player.set_lyrics(_track())
+        seen: list[int] = []
+        player.current_line_changed.connect(seen.append)
+        later = LyricsTrack([LyricsCue(start_ms=5000, original="late", line_index=0)])
+        player.set_lyrics(later)
+        assert seen == [-1]
 
     def test_같은_줄이면_신호를_반복하지_않는다(self, player):
         seen: list[int] = []
@@ -145,3 +170,137 @@ class TestLoadResetsSubtitle:
         player.load("https://youtu.be/other", [])
         assert player._track is None
         assert player._bar._btn_cc.isEnabled() is False
+
+
+class TestInlineOverlayVisible:
+    def test_인라인_오버레이가_보인다(self, player):
+        # 분리 창과 달리 인라인 오버레이만 명시적 show() 없이 _VideoArea 자식으로 얹힌다.
+        assert player._subtitle.isVisibleTo(player) is True
+
+
+# ── 분리 창(PiP·전체화면) ─────────────────────────────────────────
+# CLAUDE.md 경고: 분리 창의 컨트롤바 신호는 외부(InlinePlayer)가 배선하지 않으면
+# 버튼이 조용히 죽는다. 아래 테스트가 자막 4개 신호의 배선을 실제 동작으로 고정한다.
+# 창 정리는 player 픽스처의 stop()이 _exit_pip/_exit_fullscreen을 호출해 처리하므로
+# 도중에 실패해도 창이 다음 테스트로 새지 않는다.
+
+class TestPipSubtitleWiring:
+    def test_진입시_현재_줄과_상태가_반영된다(self, player):
+        _fake_position(player, 1200)
+        player.set_lyrics(_track())
+        player._enter_pip()
+        bar = player._pip_win.bar
+        assert bar._btn_cc.isEnabled() is True
+        assert bar._subtitle_on is True
+        assert bar._subtitle_offset_ms == 0
+        assert player._pip_win.subtitle.current_text == ("one", "하나")
+
+    def test_진입시_오프셋이_그대로_전달된다(self, player):
+        _fake_position(player, 1200)
+        track = _track()
+        track.offset_ms = 500
+        player.set_lyrics(track)
+        player._enter_pip()
+        assert player._pip_win.bar._subtitle_offset_ms == 500
+
+    def test_자막을_끈_채_진입하면_꺼진_상태로_열린다(self, player):
+        player.set_lyrics(_track())
+        player.set_subtitle_enabled(False)
+        player._enter_pip()
+        assert player._pip_win.bar._subtitle_on is False
+        assert player._pip_win.bar._btn_cc.text() == "🗨"
+        assert player._pip_win.subtitle._visible_text is False
+
+    def test_바에서_토글하면_인라인까지_반영된다(self, player):
+        player.set_lyrics(_track())
+        player._enter_pip()
+        player._pip_win.bar.subtitle_toggled.emit(False)
+        assert player._subtitle_on is False
+        assert player._bar._btn_cc.text() == "🗨"
+
+    def test_바에서_오프셋을_조정할_수_있다(self, player):
+        player.set_lyrics(_track())
+        player._enter_pip()
+        player._pip_win.bar.subtitle_offset_nudged.emit(250)
+        assert player._track.offset_ms == 250
+
+    def test_바에서_이_줄에_맞춤을_할_수_있다(self, player):
+        _fake_position(player, 3000)
+        player.set_lyrics(_track())
+        player._enter_pip()
+        player._pip_win.bar.subtitle_sync_here.emit()
+        assert player._track.offset_ms == 2000
+
+    def test_바에서_초기화할_수_있다(self, player):
+        player.set_lyrics(_track())
+        player._nudge_subtitle_offset(250)
+        player._enter_pip()
+        player._pip_win.bar.subtitle_offset_reset.emit()
+        assert player._track.offset_ms == 0
+
+    def test_열려_있는_동안_set_lyrics가_반영된다(self, player):
+        player._enter_pip()
+        assert player._pip_win.bar._btn_cc.isEnabled() is False
+        player.set_lyrics(_track())
+        assert player._pip_win.bar._btn_cc.isEnabled() is True
+
+    def test_닫으면_인라인이_현재_줄을_되찾는다(self, player):
+        _fake_position(player, 1200)
+        player.set_lyrics(_track())
+        player._enter_pip()
+        player._exit_pip()
+        assert player._pip_win is None
+        assert player._subtitle.current_text == ("one", "하나")
+
+
+class TestFullscreenSubtitleWiring:
+    def test_진입시_현재_줄과_상태가_반영된다(self, player):
+        _fake_position(player, 1200)
+        player.set_lyrics(_track())
+        player._enter_fullscreen()
+        bar = player._fs_win.bar
+        assert bar._btn_cc.isEnabled() is True
+        assert bar._subtitle_on is True
+        assert bar._subtitle_offset_ms == 0
+        assert player._fs_win.subtitle.current_text == ("one", "하나")
+
+    def test_바에서_토글하면_인라인까지_반영된다(self, player):
+        player.set_lyrics(_track())
+        player._enter_fullscreen()
+        player._fs_win.bar.subtitle_toggled.emit(False)
+        assert player._subtitle_on is False
+        assert player._bar._btn_cc.text() == "🗨"
+
+    def test_바에서_오프셋을_조정할_수_있다(self, player):
+        player.set_lyrics(_track())
+        player._enter_fullscreen()
+        player._fs_win.bar.subtitle_offset_nudged.emit(-250)
+        assert player._track.offset_ms == -250
+
+    def test_바에서_이_줄에_맞춤을_할_수_있다(self, player):
+        _fake_position(player, 3000)
+        player.set_lyrics(_track())
+        player._enter_fullscreen()
+        player._fs_win.bar.subtitle_sync_here.emit()
+        assert player._track.offset_ms == 2000
+
+    def test_바에서_초기화할_수_있다(self, player):
+        player.set_lyrics(_track())
+        player._nudge_subtitle_offset(250)
+        player._enter_fullscreen()
+        player._fs_win.bar.subtitle_offset_reset.emit()
+        assert player._track.offset_ms == 0
+
+    def test_열려_있는_동안_set_lyrics가_반영된다(self, player):
+        player._enter_fullscreen()
+        assert player._fs_win.bar._btn_cc.isEnabled() is False
+        player.set_lyrics(_track())
+        assert player._fs_win.bar._btn_cc.isEnabled() is True
+
+    def test_닫으면_인라인이_현재_줄을_되찾는다(self, player):
+        _fake_position(player, 1200)
+        player.set_lyrics(_track())
+        player._enter_fullscreen()
+        player._exit_fullscreen()
+        assert player._fs_win is None
+        assert player._subtitle.current_text == ("one", "하나")

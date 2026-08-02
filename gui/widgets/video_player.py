@@ -427,6 +427,9 @@ class _ControlBar(QWidget):
         row.addWidget(self._btn_fs)
         outer.addLayout(row)
 
+        # 초기 글리프를 상태와 맞춘다 — 가사가 붙기 전(비활성)에는 빈 말풍선이어야 한다.
+        self._update_cc_look()
+
     # ── State helpers ──────────────────────────────────────────────
 
     def update_position(self, pos_ms: int, dur_ms: int) -> None:
@@ -472,7 +475,8 @@ class _ControlBar(QWidget):
         self._subtitle_offset_ms = int(ms)
 
     def _update_cc_look(self) -> None:
-        # 꺼진 상태는 흐리게 — 아이콘 하나로 on/off를 구분한다.
+        # 자막이 실제로 나오는 상태(가사 있음 + 켜짐)면 말풍선을 채우고, 그 밖에는
+        # 빈 말풍선으로 바꾼다 — 아이콘 하나로 on/off를 구분한다.
         self._btn_cc.setText("💬" if (self._subtitle_on and self._has_subtitle) else "🗨")
 
     def _on_cc_clicked(self) -> None:
@@ -1140,7 +1144,9 @@ class InlinePlayer(QWidget):
         """표시할 싱크 가사를 설정한다. None/빈 트랙이면 자막 UI를 비활성한다."""
         self._track = track if (track is not None and not track.is_empty) else None
         has = self._track is not None
-        self._current_line_index = -1
+        # -1이 아니라 강제 갱신 센티넬(-2)로 둔다 — 새 트랙의 현재 줄이 마침 '없음'(-1)이어도
+        # 이전 줄을 강조하던 소비자가 해제 신호(current_line_changed(-1))를 받아야 한다.
+        self._current_line_index = -2
         for bar in self._all_bars():
             bar.set_has_subtitle(has)
             bar.set_subtitle_on(self._subtitle_on)
