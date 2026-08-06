@@ -4273,6 +4273,10 @@ class LibraryPanel(QWidget):
                 self._song_vm.translate_lyrics
             )
             self._detail_widget.song_flag_toggled.connect(self._song_vm.toggle_song)
+            self._detail_widget.song_synced_requested.connect(
+                self._song_vm.fetch_synced_lyrics
+            )
+            self._detail_widget.song_offset_saved.connect(self._song_vm.set_lyrics_offset)
 
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
         self._feed_grid.video_clicked.connect(self._open_stream_detail)
@@ -5160,6 +5164,8 @@ class LibraryPanel(QWidget):
                     if detail.thumbnail_path else None
                 )
                 self._detail_widget.load(detail, tag_ids, related=related, poster=poster)
+                if self._song_vm is not None:
+                    self._song_vm.load(video_id)
 
     def _on_detail_refresh_requested(self, video_id: object) -> None:
         """제목행 ⟳ — YouTube(yt-dlp)에서 메타데이터를 재수집(백그라운드)한다.

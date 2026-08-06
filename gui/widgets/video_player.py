@@ -48,6 +48,7 @@ from PyQt6.QtWidgets import (
 from application.library.dtos import DownloadInfoDTO
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
 from gui.themes.manager import ThemeManager
+from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +326,11 @@ class _ControlBar(QWidget):
     quality_changed    = pyqtSignal(str, str, bool) # (fmt_string, short_label, merge)
     # ⬇ 클릭 — 플레이어가 사용 가능한 화질을 확인한 뒤 open_download_menu()를 부른다
     download_menu_requested = pyqtSignal()
+    # 자막(가사) — 좌클릭 토글, 우클릭 메뉴에서 싱크 조정
+    subtitle_toggled       = pyqtSignal(bool)
+    subtitle_offset_nudged = pyqtSignal(int)   # ±ms
+    subtitle_sync_here     = pyqtSignal()      # 현재 재생 위치를 현재 줄에 맞춤
+    subtitle_offset_reset  = pyqtSignal()
 
     _HEIGHT = 72
 
@@ -334,6 +340,9 @@ class _ControlBar(QWidget):
         self.setStyleSheet(_bar_style())
         self.setFixedHeight(self._HEIGHT)
         self._heights: list[int] | None = None   # 이 영상이 제공하는 화질(미확인이면 None)
+        self._has_subtitle = False
+        self._subtitle_on = True
+        self._subtitle_offset_ms = 0
         ThemeManager.instance().theme_changed.connect(
             lambda _: self.setStyleSheet(_bar_style())
         )
@@ -395,6 +404,13 @@ class _ControlBar(QWidget):
         )
         self._btn_quality.clicked.connect(self._show_quality_menu)
 
+        self._btn_cc = btn("💬", "가사 자막  (C)", self._on_cc_clicked)
+        self._btn_cc.setEnabled(False)
+        self._btn_cc.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._btn_cc.customContextMenuRequested.connect(
+            lambda _pos: self._show_subtitle_menu()
+        )
+
         self._btn_dl = btn("⬇", "다운로드", self.download_menu_requested.emit)
         self._btn_pip = btn("⧉", "화면 속 화면  (P)", self.pip_toggled.emit)
         self._btn_fs = btn("⛶", "전체화면  (F)", self.fullscreen_toggled.emit)
@@ -405,10 +421,14 @@ class _ControlBar(QWidget):
         row.addStretch()
         row.addWidget(self._quality_lbl)
         row.addWidget(self._btn_quality)
+        row.addWidget(self._btn_cc)
         row.addWidget(self._btn_dl)
         row.addWidget(self._btn_pip)
         row.addWidget(self._btn_fs)
         outer.addLayout(row)
+
+        # 초기 글리프를 상태와 맞춘다 — 가사가 붙기 전(비활성)에는 빈 말풍선이어야 한다.
+        self._update_cc_look()
 
     # ── State helpers ──────────────────────────────────────────────
 
@@ -436,6 +456,49 @@ class _ControlBar(QWidget):
     def set_quality(self, label: str) -> None:
         self._quality_lbl.setText(label)
         self._quality_lbl.setVisible(bool(label))
+
+    # ── 자막(가사) ─────────────────────────────────────────────────
+    def set_has_subtitle(self, has: bool) -> None:
+        """싱크 가사 유무 — 없으면 버튼을 비활성하고 이유를 툴팁으로 알린다."""
+        self._has_subtitle = has
+        self._btn_cc.setEnabled(has)
+        self._btn_cc.setToolTip(
+            "가사 자막  (C)" if has else "시간 정보가 있는 가사가 없습니다"
+        )
+        self._update_cc_look()
+
+    def set_subtitle_on(self, on: bool) -> None:
+        self._subtitle_on = on
+        self._update_cc_look()
+
+    def set_subtitle_offset_ms(self, ms: int) -> None:
+        self._subtitle_offset_ms = int(ms)
+
+    def _update_cc_look(self) -> None:
+        # 자막이 실제로 나오는 상태(가사 있음 + 켜짐)면 말풍선을 채우고, 그 밖에는
+        # 빈 말풍선으로 바꾼다 — 아이콘 하나로 on/off를 구분한다.
+        self._btn_cc.setText("💬" if (self._subtitle_on and self._has_subtitle) else "🗨")
+
+    def _on_cc_clicked(self) -> None:
+        if not self._has_subtitle:
+            return
+        self._subtitle_on = not self._subtitle_on
+        self._update_cc_look()
+        self.subtitle_toggled.emit(self._subtitle_on)
+
+    def _show_subtitle_menu(self) -> None:
+        if not self._has_subtitle:
+            return
+        menu = QMenu(self)
+        sec = self._subtitle_offset_ms / 1000.0
+        menu.addAction(f"싱크: {sec:+.2f}초").setEnabled(False)
+        menu.addSeparator()
+        menu.addAction("−0.25초  ( [ )", lambda: self.subtitle_offset_nudged.emit(-250))
+        menu.addAction("+0.25초  ( ] )", lambda: self.subtitle_offset_nudged.emit(250))
+        menu.addAction("현재 위치를 이 줄에 맞춤  ( \\ )", self.subtitle_sync_here.emit)
+        menu.addSeparator()
+        menu.addAction("초기화", self.subtitle_offset_reset.emit)
+        menu.exec(self._btn_cc.mapToGlobal(self._btn_cc.rect().bottomLeft()))
 
     def _on_seek_released(self) -> None:
         self._dragging = False
@@ -550,12 +613,18 @@ class _VideoArea(QWidget):
         self.setMouseTracking(True)
         self._stack = stack
         self._bar: QWidget | None = None
+        self._subtitle: QWidget | None = None
         stack.setParent(self)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
     def set_overlay_bar(self, bar: QWidget) -> None:
         self._bar = bar
         bar.setParent(self)
+        self._layout_children()
+
+    def set_overlay_subtitle(self, widget: QWidget) -> None:
+        self._subtitle = widget
+        widget.setParent(self)
         self._layout_children()
 
     def hasHeightForWidth(self) -> bool:
@@ -575,6 +644,12 @@ class _VideoArea(QWidget):
         # 컨트롤바 Y 좌표가 위젯 바깥으로 밀리는 버그가 발생함.
         h = self.heightForWidth(self.width())
         self._stack.setGeometry(0, 0, self.width(), h)
+        if self._subtitle is not None:
+            # 컨트롤바 바로 위. 컨트롤바가 숨어 있을 때도 같은 자리를 써서 자막이
+            # 오르내리며 흔들리지 않게 한다.
+            sub_h = max(60, int(h * 0.28))
+            self._subtitle.setGeometry(0, h - self._BAR_H - sub_h, self.width(), sub_h)
+            self._subtitle.raise_()
         if self._bar is not None:
             self._bar.setGeometry(0, h - self._BAR_H, self.width(), self._BAR_H)
             self._bar.raise_()
@@ -640,6 +715,8 @@ class _PipWindow(QWidget):
     `_FullscreenWindow`와 동일하게 공유 `QMediaPlayer`의 출력을 자체 `_VideoView`로
     리다이렉트한다(재생 위치·볼륨·상태는 그대로 유지). `_FullscreenWindow`와 마찬가지로
     **컨트롤바(`bar`) 신호는 외부(InlinePlayer)에서 반드시 배선**해야 버튼이 동작한다.
+    **자막 오버레이(`subtitle`)도 `bar`와 마찬가지로 외부(InlinePlayer)가 내용을 채워야
+    한다.**
 
     프레임리스·항상 위이며, 영상 영역 드래그로 이동하고 우하단 `QSizeGrip`으로
     크기를 조절한다. 닫기(창 X/Esc/PiP 버튼/더블클릭)는 `exit_requested`로 알린다.
@@ -668,6 +745,7 @@ class _PipWindow(QWidget):
         self._vw.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._vw.viewport().setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
+        self.subtitle = LyricsOverlay(self)
         self.bar = _ControlBar(self)
         # PiP 창에서는 전체화면 버튼 숨기고, PiP 버튼은 '인라인 복귀' 용도
         self.bar._btn_fs.hide()
@@ -687,6 +765,10 @@ class _PipWindow(QWidget):
 
     def _layout_children(self) -> None:
         bh = _ControlBar._HEIGHT
+        sub_h = max(48, int(self.height() * 0.28))
+        self.subtitle.setGeometry(0, self.height() - bh - sub_h, self.width(), sub_h)
+        self.subtitle.raise_()
+        self.subtitle.show()
         self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
         self.bar.raise_()
         self.bar.show()
@@ -736,6 +818,8 @@ class _FullscreenWindow(QWidget):
 
     `_PipWindow`와 동일하게 **컨트롤바(`bar`) 신호는 외부(InlinePlayer)에서 반드시
     배선**해야 버튼이 동작한다(재생/탐색/볼륨/음소거/다운로드/화질/전체화면·PiP 전환).
+    **자막 오버레이(`subtitle`)도 `bar`와 마찬가지로 외부(InlinePlayer)가 내용을 채워야
+    한다.**
     """
 
     exit_requested = pyqtSignal()
@@ -755,6 +839,7 @@ class _FullscreenWindow(QWidget):
         self._key_handler = key_handler
 
         self._vw = _VideoView(self)
+        self.subtitle = LyricsOverlay(self)
         self.bar = _ControlBar(self)
 
         lay = QVBoxLayout(self)
@@ -769,12 +854,19 @@ class _FullscreenWindow(QWidget):
 
     def _position_bar(self) -> None:
         bh = _ControlBar._HEIGHT
+        sub_h = max(72, int(self.height() * 0.24))
+        self.subtitle.setGeometry(0, self.height() - bh - sub_h, self.width(), sub_h)
+        self.subtitle.raise_()
+        self.subtitle.show()
         self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
         self.bar.raise_()
         self.bar.show()
 
     def resizeEvent(self, event) -> None:
         bh = _ControlBar._HEIGHT
+        sub_h = max(72, int(self.height() * 0.24))
+        self.subtitle.setGeometry(0, self.height() - bh - sub_h, self.width(), sub_h)
+        self.subtitle.raise_()
         self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
         self.bar.raise_()
         super().resizeEvent(event)
@@ -805,15 +897,19 @@ class InlinePlayer(QWidget):
     Control bar overlays the bottom of the video, auto-hides after 3 s of
     mouse inactivity while playing, reappears on mouse movement over the area.
 
-    YouTube-compatible keyboard shortcuts (Space/K, J, L, ←/→, ↑/↓, M, F, 0-9).
+    YouTube-compatible keyboard shortcuts (Space/K, J, L, ←/→, ↑/↓, M, F, 0-9,
+    C, [, ], \\).
     """
 
     playback_failed    = pyqtSignal(str)
     download_requested = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
     playback_finished  = pyqtSignal()   # 미디어 끝까지 재생됨(EndOfMedia) — 재생목록 자동 다음곡용
+    subtitle_offset_changed = pyqtSignal(int)   # 사용자가 싱크를 바꿈 → 저장 요청
+    current_line_changed    = pyqtSignal(int)   # 원본 가사 줄 인덱스(없으면 -1)
 
     _HIDE_MS = 2_000   # 2초 비활성 후 숨김
     _SHOW_MS = 1_000   # 마우스 감지 1초 후 표시
+    _OFFSET_STEP_MS = 250   # [ / ] 한 번에 움직이는 폭
     _last_quality_fmt: str = _DEFAULT_QUALITY_FMT  # 세션 내 품질 선택 공유
     _last_quality_merge: bool = _DEFAULT_QUALITY_MERGE
     _last_quality_short: str = _QUALITY_OPTIONS[0][2]  # "자동"
@@ -845,6 +941,9 @@ class InlinePlayer(QWidget):
         self._resume_ms: int = 0
         self._stream_quality_label: str = ""  # yt-dlp 보고 품질 레이블
         self._temp_stream_path: str = ""      # 고화질 병합 임시 파일(재생 후 정리)
+        self._track: LyricsTrack | None = None
+        self._subtitle_on = True
+        self._current_line_index = -1
         self._setup()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
@@ -891,7 +990,9 @@ class InlinePlayer(QWidget):
         # _VideoView renders via Qt texture system (no native D3D HWND),
         # so the control bar overlay is composited correctly by Qt.
         self._bar = _ControlBar()
+        self._subtitle = LyricsOverlay()
         self._video_area = _VideoArea(self._visual_stack)
+        self._video_area.set_overlay_subtitle(self._subtitle)
         self._video_area.set_overlay_bar(self._bar)
         outer.addWidget(self._video_area)
 
@@ -914,6 +1015,12 @@ class InlinePlayer(QWidget):
         self._bar.download_requested.connect(self._on_download_requested)
         self._bar.download_menu_requested.connect(self._on_download_menu_requested)
         self._bar.quality_changed.connect(self._on_quality_changed)
+        self._bar.subtitle_toggled.connect(self.set_subtitle_enabled)
+        self._bar.subtitle_offset_nudged.connect(self._nudge_subtitle_offset)
+        self._bar.subtitle_sync_here.connect(
+            lambda: self._sync_subtitle_here(self._player.position())
+        )
+        self._bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
 
         # Wire player signals → control bar
         self._player.positionChanged.connect(self._on_position)
@@ -1033,6 +1140,96 @@ class InlinePlayer(QWidget):
         """절대 위치(ms)로 재생 위치를 이동한다. 설명 타임스탬프 클릭 등에서 사용."""
         self._player.setPosition(max(0, int(ms)))
 
+    # ── 가사 자막 ──────────────────────────────────────────────────
+    def set_lyrics(self, track: LyricsTrack | None) -> None:
+        """표시할 싱크 가사를 설정한다. None/빈 트랙이면 자막 UI를 비활성한다."""
+        self._track = track if (track is not None and not track.is_empty) else None
+        has = self._track is not None
+        # -1이 아니라 강제 갱신 센티넬(-2)로 둔다 — 새 트랙의 현재 줄이 마침 '없음'(-1)이어도
+        # 이전 줄을 강조하던 소비자가 해제 신호(current_line_changed(-1))를 받아야 한다.
+        self._current_line_index = -2
+        for bar in self._all_bars():
+            bar.set_has_subtitle(has)
+            bar.set_subtitle_on(self._subtitle_on)
+            bar.set_subtitle_offset_ms(self._track.offset_ms if has else 0)
+        for overlay in self._all_subtitles():
+            overlay.set_cue(None)
+            overlay.set_text_visible(self._subtitle_on)
+        if has:
+            self._apply_subtitle_position(self._player.position())
+
+    def set_subtitle_enabled(self, on: bool) -> None:
+        self._subtitle_on = bool(on)
+        for bar in self._all_bars():
+            bar.set_subtitle_on(self._subtitle_on)
+        for overlay in self._all_subtitles():
+            overlay.set_text_visible(self._subtitle_on)
+
+    def subtitle_offset_ms(self) -> int:
+        return self._track.offset_ms if self._track else 0
+
+    def _all_bars(self) -> list:
+        """인라인 + 분리 창의 컨트롤바 — 상태를 팬아웃할 대상."""
+        bars = [self._bar]
+        if self._fs_win:
+            bars.append(self._fs_win.bar)
+        if self._pip_win:
+            bars.append(self._pip_win.bar)
+        return bars
+
+    def _all_subtitles(self) -> list:
+        overlays = [self._subtitle]
+        if self._fs_win:
+            overlays.append(self._fs_win.subtitle)
+        if self._pip_win:
+            overlays.append(self._pip_win.subtitle)
+        return overlays
+
+    def _apply_subtitle_position(self, pos_ms: int) -> None:
+        """재생 위치에 맞춰 자막을 갱신한다. **줄이 바뀔 때만** 다시 그린다."""
+        if self._track is None:
+            return
+        idx = self._track.index_at(pos_ms)
+        line_index = self._track.cue(idx).line_index if idx is not None else -1
+        if line_index == self._current_line_index:
+            return
+        self._current_line_index = line_index
+        cue: LyricsCue | None = self._track.cue(idx) if idx is not None else None
+        for overlay in self._all_subtitles():
+            overlay.set_cue(cue)
+        self.current_line_changed.emit(line_index)
+
+    def _set_subtitle_offset(self, ms: int) -> None:
+        if self._track is None:
+            return
+        self._track.offset_ms = ms
+        for bar in self._all_bars():
+            bar.set_subtitle_offset_ms(self._track.offset_ms)
+        # 오프셋이 바뀌면 현재 줄 판정이 달라지므로 강제로 다시 계산한다.
+        # -2는 "다음 계산을 반드시 반영하라"는 센티넬 — -1(자막 없음)과 구분해야
+        # 오프셋을 늘려 자막이 사라지는 전이(-1로의 변화)도 반영된다.
+        self._current_line_index = -2
+        self._apply_subtitle_position(self._player.position())
+        self.subtitle_offset_changed.emit(self._track.offset_ms)
+
+    def _nudge_subtitle_offset(self, delta_ms: int) -> None:
+        if self._track is None:
+            return
+        self._set_subtitle_offset(self._track.offset_ms + int(delta_ms))
+
+    def _sync_subtitle_here(self, pos_ms: int) -> None:
+        """현재 재생 위치가 '지금 표시 중인 줄'의 시작이 되도록 오프셋을 맞춘다."""
+        if self._track is None:
+            return
+        idx = self._track.index_at(pos_ms)
+        if idx is None:
+            return
+        cue = self._track.cue(idx)
+        self._set_subtitle_offset(pos_ms - cue.start_ms)
+
+    def _reset_subtitle_offset(self) -> None:
+        self._set_subtitle_offset(0)
+
     def load(
         self,
         video_url: str,
@@ -1050,6 +1247,7 @@ class InlinePlayer(QWidget):
         self._current_merge         = InlinePlayer._last_quality_merge
         self._current_quality_short = InlinePlayer._last_quality_short
         self._stream_quality_label = ""
+        self.set_lyrics(None)   # 이전 영상의 자막이 남지 않게 초기화
         self._visual_stack.setCurrentIndex(0)
         if thumbnail_pixmap and not thumbnail_pixmap.isNull():
             self._thumb_label.setPixmap(thumbnail_pixmap)
@@ -1121,6 +1319,11 @@ class InlinePlayer(QWidget):
         self._bar.show()
         self._bar.raise_()
         self._bar.set_playing(False)
+        # 정지는 '같은 영상을 멈춘' 경우도 있으므로 트랙은 유지하고 현재 줄만 지운다.
+        # (다른 영상으로 넘어가는 초기화는 load()가 set_lyrics(None)으로 처리한다.)
+        self._current_line_index = -1
+        for overlay in self._all_subtitles():
+            overlay.set_cue(None)
 
     def _cleanup_temp(self) -> None:
         """고화질 병합 임시 파일/디렉터리를 삭제한다."""
@@ -1160,6 +1363,15 @@ class InlinePlayer(QWidget):
             self._change_volume(5)
         elif key == Qt.Key.Key_Down:
             self._change_volume(-5)
+        elif key == Qt.Key.Key_C:
+            if self._track is not None:
+                self.set_subtitle_enabled(not self._subtitle_on)
+        elif key == Qt.Key.Key_BracketLeft:
+            self._nudge_subtitle_offset(-self._OFFSET_STEP_MS)
+        elif key == Qt.Key.Key_BracketRight:
+            self._nudge_subtitle_offset(self._OFFSET_STEP_MS)
+        elif key == Qt.Key.Key_Backslash:
+            self._sync_subtitle_here(self._player.position())
         elif key == Qt.Key.Key_M:
             self._toggle_mute()
         elif key == Qt.Key.Key_P:
@@ -1259,6 +1471,20 @@ class InlinePlayer(QWidget):
             "" if self._current_quality_short == "자동" else self._current_quality_short
         )
         bar.set_available_heights(_HEIGHT_CACHE.get(self._video_url))
+        has = self._track is not None
+        bar.set_has_subtitle(has)
+        bar.set_subtitle_on(self._subtitle_on)
+        bar.set_subtitle_offset_ms(self._track.offset_ms if has else 0)
+        bar.subtitle_toggled.connect(self.set_subtitle_enabled)
+        bar.subtitle_offset_nudged.connect(self._nudge_subtitle_offset)
+        bar.subtitle_sync_here.connect(
+            lambda: self._sync_subtitle_here(self._player.position())
+        )
+        bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
+        self._fs_win.subtitle.set_text_visible(self._subtitle_on)
+        # 현재 줄을 새 창에도 1회 반영
+        self._current_line_index = -2
+        self._apply_subtitle_position(self._player.position())
 
         self._fs_win.exit_requested.connect(self._exit_fullscreen)
 
@@ -1281,6 +1507,9 @@ class InlinePlayer(QWidget):
             self._fs_win.close()
             self._fs_win.deleteLater()
             self._fs_win = None
+        # 창이 사라졌으니 인라인 오버레이가 현재 줄을 다시 갖도록 강제 갱신한다.
+        self._current_line_index = -2
+        self._apply_subtitle_position(self._player.position())
         self.setFocus()
 
     # ── Picture-in-Picture (화면 속 화면) ───────────────────────────
@@ -1323,6 +1552,20 @@ class InlinePlayer(QWidget):
             "" if self._current_quality_short == "자동" else self._current_quality_short
         )
         bar.set_available_heights(_HEIGHT_CACHE.get(self._video_url))
+        has = self._track is not None
+        bar.set_has_subtitle(has)
+        bar.set_subtitle_on(self._subtitle_on)
+        bar.set_subtitle_offset_ms(self._track.offset_ms if has else 0)
+        bar.subtitle_toggled.connect(self.set_subtitle_enabled)
+        bar.subtitle_offset_nudged.connect(self._nudge_subtitle_offset)
+        bar.subtitle_sync_here.connect(
+            lambda: self._sync_subtitle_here(self._player.position())
+        )
+        bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
+        self._pip_win.subtitle.set_text_visible(self._subtitle_on)
+        # 현재 줄을 새 창에도 1회 반영
+        self._current_line_index = -2
+        self._apply_subtitle_position(self._player.position())
 
         self._pip_win.exit_requested.connect(self._exit_pip)
         self._show_pip_placeholder(True)
@@ -1353,6 +1596,9 @@ class InlinePlayer(QWidget):
             self._pip_win.deleteLater()
             self._pip_win = None
         self._show_pip_placeholder(False)
+        # 창이 사라졌으니 인라인 오버레이가 현재 줄을 다시 갖도록 강제 갱신한다.
+        self._current_line_index = -2
+        self._apply_subtitle_position(self._player.position())
         self.setFocus()
 
     def _show_pip_placeholder(self, on: bool) -> None:
@@ -1381,6 +1627,7 @@ class InlinePlayer(QWidget):
             self._fs_win.bar.update_position(pos, dur)
         if self._pip_win:
             self._pip_win.bar.update_position(pos, dur)
+        self._apply_subtitle_position(pos)
 
     def _on_playback_state(self, state: QMediaPlayer.PlaybackState) -> None:
         playing = state == QMediaPlayer.PlaybackState.PlayingState

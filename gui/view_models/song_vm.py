@@ -14,6 +14,8 @@ from application.song.commands import (
     FetchSongInfoHandler,
     ReorderLyricsSourcesCommand,
     ReorderLyricsSourcesHandler,
+    SetLyricsOffsetCommand,
+    SetLyricsOffsetHandler,
     SetSongFlagCommand,
     SetSongFlagHandler,
     TranslateSongLyricsCommand,
@@ -96,6 +98,7 @@ class SongViewModel(QObject):
         update_field: UpdateSongFieldHandler,
         update_lyrics: UpdateSongLyricsHandler,
         translate_lyrics: TranslateSongLyricsHandler,
+        set_lyrics_offset: SetLyricsOffsetHandler | None = None,
         list_sources: ListLyricsSourcesHandler,
         add_source: AddLyricsSourceHandler,
         update_source: UpdateLyricsSourceHandler,
@@ -110,6 +113,7 @@ class SongViewModel(QObject):
         self._update_field = update_field
         self._update_lyrics = update_lyrics
         self._translate = translate_lyrics
+        self._set_offset = set_lyrics_offset
         self._list_sources = list_sources
         self._add_source = add_source
         self._update_source = update_source
@@ -171,6 +175,34 @@ class SongViewModel(QObject):
         )
         self._workers.append(worker)
         worker.start()
+
+    def fetch_synced_lyrics(self, video_id: UUID) -> None:
+        """'싱크 가사 찾기' — 시간 정보가 있는 가사만 채택해 교체한다.
+
+        전 출처가 실패하면 기존 가사는 그대로 남는다(핸들러 계약).
+        """
+        self._current = video_id
+        self._start_fetch(
+            FetchSongInfoCommand(
+                video_id=video_id, force=True, fetch_lyrics=True, synced_only=True
+            )
+        )
+
+    def set_lyrics_offset(self, video_id: UUID, offset_ms: int) -> None:
+        """자막 싱크 보정값을 저장한다(짧은 DB 쓰기라 워커 없이 동기 실행)."""
+        if self._set_offset is None:
+            logger.debug("오프셋 핸들러 미주입 — 저장 생략")
+            return
+        try:
+            self._set_offset.handle(
+                SetLyricsOffsetCommand(video_id=video_id, offset_ms=int(offset_ms))
+            )
+        except Exception as exc:
+            logger.exception("자막 오프셋 저장 실패: %s", video_id)
+            self.error_occurred.emit(str(exc))
+        # song_info_changed는 방출하지 않는다 — 방출하면 set_song_info가 트랙을 새로
+        # 만들어 사용자가 슬라이더/단축키로 조정 중인 오프셋 값이 저장 직전 값으로
+        # 되돌아가는 왕복이 생긴다(플레이어가 이미 자체 상태로 반영을 마쳤음).
 
     def _start_fetch(self, cmd: FetchSongInfoCommand) -> None:
         # 같은 영상이 이미 백그라운드로 조회 중이면 중복 실행하지 않는다.

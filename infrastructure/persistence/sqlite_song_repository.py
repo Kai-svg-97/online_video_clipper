@@ -19,10 +19,18 @@ def _now_iso() -> str:
 
 
 def _lyrics_to_json(lines: list[LyricsLine]) -> str:
-    return json.dumps(
-        [{"o": ln.original, "t": ln.translation} for ln in lines],
-        ensure_ascii=False,
-    )
+    """가사를 JSON으로 직렬화한다.
+
+    ``"s"``(시작ms)는 값이 있을 때만 넣는다 — 타이밍 없는 가사에 null을 잔뜩 남기지
+    않고, 검색 프리필터(lyrics_json LIKE)의 오탐 여지도 줄인다.
+    """
+    out = []
+    for ln in lines:
+        item = {"o": ln.original, "t": ln.translation}
+        if ln.start_ms is not None:
+            item["s"] = int(ln.start_ms)
+        out.append(item)
+    return json.dumps(out, ensure_ascii=False)
 
 
 def _lyrics_from_json(raw: str | None) -> list[LyricsLine]:
@@ -35,8 +43,18 @@ def _lyrics_from_json(raw: str | None) -> list[LyricsLine]:
         return []
     out: list[LyricsLine] = []
     for item in data if isinstance(data, list) else []:
-        if isinstance(item, dict):
-            out.append(LyricsLine(original=item.get("o", ""), translation=item.get("t", "")))
+        if not isinstance(item, dict):
+            continue
+        raw_start = item.get("s")
+        # "s"가 없거나(구 데이터) 정수가 아니면 시간 정보 없음으로 취급한다.
+        start_ms = int(raw_start) if isinstance(raw_start, (int, float)) else None
+        out.append(
+            LyricsLine(
+                original=item.get("o", ""),
+                translation=item.get("t", ""),
+                start_ms=start_ms,
+            )
+        )
     return out
 
 
@@ -57,6 +75,7 @@ def _row_to_aggregate(row) -> SongInfoAggregate:
         release_year=row["release_year"] or "",
         lyrics_lines=_lyrics_from_json(row["lyrics_json"]),
         lyrics_language=row["lyrics_language"] or "",
+        lyrics_offset_ms=int(row["lyrics_offset_ms"] or 0),
         source=source,
         manual_fields=manual,
         updated_at=datetime.fromisoformat(row["updated_at"]),
@@ -83,9 +102,9 @@ class SqliteSongRepository(ISongRepository):
                 """
                 INSERT INTO song_info
                     (video_id, is_song, artist, album, song_title, release_year,
-                     lyrics_json, lyrics_language, source_name, source_url,
+                     lyrics_json, lyrics_language, lyrics_offset_ms, source_name, source_url,
                      manual_fields, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(video_id) DO UPDATE SET
                     is_song=excluded.is_song,
                     artist=excluded.artist,
@@ -94,6 +113,7 @@ class SqliteSongRepository(ISongRepository):
                     release_year=excluded.release_year,
                     lyrics_json=excluded.lyrics_json,
                     lyrics_language=excluded.lyrics_language,
+                    lyrics_offset_ms=excluded.lyrics_offset_ms,
                     source_name=excluded.source_name,
                     source_url=excluded.source_url,
                     manual_fields=excluded.manual_fields,
@@ -108,6 +128,7 @@ class SqliteSongRepository(ISongRepository):
                     info.release_year,
                     _lyrics_to_json(info.lyrics_lines),
                     info.lyrics_language,
+                    info.lyrics_offset_ms,
                     info.source.name if info.source else "",
                     info.source.url if info.source else "",
                     json.dumps(sorted(info.manual_fields)),

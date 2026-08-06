@@ -81,28 +81,28 @@ class TestRunChainArtistFallback:
         provider = _ArtistPickyProvider(wanted_artist="NIKI")
         handler = _make_handler(provider)
 
-        lyrics, lang, source, artist, album, title, year = handler._run_chain(
+        out = handler._run_chain(
             "NIKI, Phil Collins", "You'll Be in My Heart", "", "", None
         )
 
-        assert lyrics == ["line 1", "line 2"]
-        assert source is not None
+        assert out.lyrics == ["line 1", "line 2"]
+        assert out.source is not None
         # 전체 아티스트를 먼저 시도한 뒤 주 아티스트로 재시도했어야 한다.
         assert "NIKI, Phil Collins" in provider.calls
         assert "NIKI" in provider.calls
         # 표시용 아티스트 값은 원본(전체)을 보존한다.
-        assert artist == "NIKI, Phil Collins"
+        assert out.artist == "NIKI, Phil Collins"
 
     def test_exact_artist_no_redundant_fallback(self):
         """전체 아티스트로 바로 성공하면 주 아티스트 재시도는 하지 않는다."""
         provider = _ArtistPickyProvider(wanted_artist="NIKI, Phil Collins")
         handler = _make_handler(provider)
 
-        lyrics, *_ = handler._run_chain(
+        out = handler._run_chain(
             "NIKI, Phil Collins", "You'll Be in My Heart", "", "", None
         )
 
-        assert lyrics == ["line 1", "line 2"]
+        assert out.lyrics == ["line 1", "line 2"]
         assert provider.calls == ["NIKI, Phil Collins"]
 
 
@@ -137,33 +137,33 @@ def _multi_handler():
 
 class TestRunChainNextSource:
     def test_default_starts_from_first(self):
-        lyrics, _l, source, *_ = _multi_handler()._run_chain("art", "t", "", "", None)
-        assert lyrics == ["p1-lyric"] and source.name == "A"
+        out = _multi_handler()._run_chain("art", "t", "", "", None)
+        assert out.lyrics == ["p1-lyric"] and out.source.name == "A"
 
     def test_start_after_picks_next(self):
-        lyrics, _l, source, *_ = _multi_handler()._run_chain(
+        out = _multi_handler()._run_chain(
             "art", "t", "", "", None, start_after_name="A"
         )
-        assert lyrics == ["p2-lyric"] and source.name == "B"
+        assert out.lyrics == ["p2-lyric"] and out.source.name == "B"
 
     def test_start_after_middle(self):
-        lyrics, _l, source, *_ = _multi_handler()._run_chain(
+        out = _multi_handler()._run_chain(
             "art", "t", "", "", None, start_after_name="B"
         )
-        assert lyrics == ["p3-lyric"] and source.name == "C"
+        assert out.lyrics == ["p3-lyric"] and out.source.name == "C"
 
     def test_wraps_around_at_end(self):
         # 마지막 출처(C) 다음 → 처음(A)으로 순환.
-        lyrics, _l, source, *_ = _multi_handler()._run_chain(
+        out = _multi_handler()._run_chain(
             "art", "t", "", "", None, start_after_name="C"
         )
-        assert lyrics == ["p1-lyric"] and source.name == "A"
+        assert out.lyrics == ["p1-lyric"] and out.source.name == "A"
 
     def test_unknown_source_starts_from_first(self):
-        lyrics, _l, source, *_ = _multi_handler()._run_chain(
+        out = _multi_handler()._run_chain(
             "art", "t", "", "", None, start_after_name="없는출처"
         )
-        assert lyrics == ["p1-lyric"] and source.name == "A"
+        assert out.lyrics == ["p1-lyric"] and out.source.name == "A"
 
 
 class _FakeTranslator:

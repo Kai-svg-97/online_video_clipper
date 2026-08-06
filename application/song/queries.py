@@ -20,10 +20,13 @@ def song_to_dto(agg: SongInfoAggregate) -> SongInfoDTO:
         song_title=info.song_title,
         release_year=info.release_year,
         lyrics_lines=tuple(
-            LyricsLineDTO(original=ln.original, translation=ln.translation)
+            LyricsLineDTO(
+                original=ln.original, translation=ln.translation, start_ms=ln.start_ms
+            )
             for ln in info.lyrics_lines
         ),
         lyrics_language=info.lyrics_language,
+        lyrics_offset_ms=info.lyrics_offset_ms,
         source_name=info.source.name if info.source else "",
         source_url=info.source.url if info.source else "",
     )

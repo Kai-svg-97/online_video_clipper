@@ -115,12 +115,22 @@ class FetchSongInfoCommand:
     prefetch: 등록 시 yt-dlp가 이미 조회한 info에서 뽑은 music 메타데이터 dict.
               (없으면 media_source로 재조회 — 갱신 버튼 경로)
     force:    True면 가사가 있어도 재조회한다.
+    synced_only: True면 **시간 정보(LRC 타이밍)가 있는 가사만** 채택한다. 타이밍이 없는
+              출처는 건너뛰고, 전 출처가 실패하면 기존 가사를 그대로 둔다(자막용 조회).
     """
     video_id: UUID
     prefetch: dict | None = None
     force: bool = False
     fetch_lyrics: bool = True   # False면 감지+메타데이터만(가사 네트워크 조회 생략)
     from_source_name: str | None = None  # 설정 시 이 출처 '다음'부터 검색(순환) — '다음 출처'
+    synced_only: bool = False
+
+
+@dataclass
+class SetLyricsOffsetCommand:
+    """자막 싱크 보정값을 저장한다(양수 = 자막을 늦게 띄움)."""
+    video_id: UUID
+    offset_ms: int
 
 
 @dataclass
@@ -176,6 +186,19 @@ class ReorderLyricsSourcesCommand:
 # ------------------------------------------------------------------
 # Handlers
 # ------------------------------------------------------------------
+
+@dataclass
+class _ChainOutcome:
+    """출처 체인 순회 결과 — 반환 튜플이 길어져 이름을 붙였다(내부 전용)."""
+    lyrics: list[str] = field(default_factory=list)
+    timings: list[int | None] = field(default_factory=list)
+    language: str = ""
+    source: SongSourceRef | None = None
+    artist: str = ""
+    album: str = ""
+    title: str = ""
+    year: str = ""
+
 
 class FetchSongInfoHandler:
     """노래 메타데이터·가사를 수집한다.
@@ -251,30 +274,31 @@ class FetchSongInfoHandler:
             duration = video.duration.seconds
 
         # 3) 출처 체인으로 가사·부족분 조회 (수동 편집 필드는 최종 apply에서 보존)
-        lyrics_lines: list[str] = []
-        lyrics_lang = ""
-        source: SongSourceRef | None = None
+        outcome = _ChainOutcome(artist=artist, album=album, title=title, year=year)
         need_lyrics = cmd.fetch_lyrics and (cmd.force or not agg.info.lyrics_lines)
         if need_lyrics:
-            lyrics_lines, lyrics_lang, source, artist, album, title, year = self._run_chain(
+            outcome = self._run_chain(
                 artist, title, album, year, duration,
                 start_after_name=cmd.from_source_name,
+                synced_only=cmd.synced_only,
             )
 
-        # 4) 번역 (비한국어 가사에 한글 병행)
-        line_objs = self._build_lyrics_lines(lyrics_lines, lyrics_lang)
+        # 4) 번역 (비한국어 가사에 한글 병행) — 줄별 시각을 함께 싣는다
+        line_objs = self._build_lyrics_lines(
+            outcome.lyrics, outcome.language, outcome.timings
+        )
 
         # 5) 반영·저장
         agg.apply_fetched(
-            artist=artist or None,
-            album=album or None,
-            song_title=title or None,
-            release_year=year or None,
+            artist=outcome.artist or None,
+            album=outcome.album or None,
+            song_title=outcome.title or None,
+            release_year=outcome.year or None,
             lyrics_lines=line_objs or None,
-            lyrics_language=lyrics_lang or None,
-            source=source,
+            lyrics_language=outcome.language or None,
+            source=outcome.source,
             mark_song=True,
-            force_lyrics=bool(cmd.from_source_name),
+            force_lyrics=bool(cmd.from_source_name) or cmd.synced_only,
         )
         self._songs.save(agg)
         self._bus.publish_all(agg.pull_events())
@@ -288,15 +312,17 @@ class FetchSongInfoHandler:
         year: str,
         duration: int | None,
         start_after_name: str | None = None,
-    ) -> tuple[list[str], str, SongSourceRef | None, str, str, str, str]:
+        synced_only: bool = False,
+    ) -> _ChainOutcome:
         """활성 출처를 순서대로 시도해 가사와 부족한 메타데이터를 채운다.
 
         start_after_name이 주어지면(‘다음 출처’ 검색) 그 출처 **다음**부터 순회하도록 목록을
         회전한다. 끝에 도달하면 처음으로 순환한다(현재 출처는 맨 뒤로 밀려 마지막에만 재시도).
+
+        synced_only면 시간 정보(timings)가 없는 결과는 가사로 채택하지 않고 다음 출처로
+        넘어간다 — 자막용 '싱크 가사 찾기' 경로다.
         """
-        lyrics: list[str] = []
-        lang = ""
-        source: SongSourceRef | None = None
+        out = _ChainOutcome(artist=artist, album=album, title=title, year=year)
         try:
             sources = [s for s in self._songs.list_lyrics_sources() if s.enabled]
         except Exception:
@@ -311,9 +337,9 @@ class FetchSongInfoHandler:
         # 검색용 아티스트 후보: 전체 문자열 → 주(첫) 아티스트 순으로 시도한다.
         # 다중 아티스트 표기("NIKI, Phil Collins")로는 제공자 매칭이 실패하므로
         # 주 아티스트("NIKI")로 재시도해 유명곡 가사를 놓치지 않는다.
-        artist_candidates = [artist]
-        primary = _primary_artist(artist)
-        if primary and primary != artist:
+        artist_candidates = [out.artist]
+        primary = _primary_artist(out.artist)
+        if primary and primary != out.artist:
             artist_candidates.append(primary)
 
         for src in sources:
@@ -323,7 +349,7 @@ class FetchSongInfoHandler:
             result: LyricsResult | None = None
             for cand_artist in artist_candidates:
                 try:
-                    result = provider.fetch(cand_artist, title, duration)
+                    result = provider.fetch(cand_artist, out.title, duration)
                 except Exception:
                     logger.exception("가사 조회 실패: provider=%s", src.provider_key)
                     result = None
@@ -331,28 +357,36 @@ class FetchSongInfoHandler:
                     break
             if result is None:
                 continue
+            # 싱크 전용 조회는 타이밍이 없는 결과를 아예 채택하지 않는다(메타데이터 보강도 생략).
+            if synced_only and not any(t is not None for t in result.timings):
+                logger.debug("싱크 전용 조회 — 타이밍 없는 출처 건너뜀: %s", src.name)
+                continue
             # 부족한 메타데이터 보강(빈 값만 채움)
-            artist = artist or result.artist
-            album = album or result.album
-            title = title or result.title
-            year = year or result.release_year
+            out.artist = out.artist or result.artist
+            out.album = out.album or result.album
+            out.title = out.title or result.title
+            out.year = out.year or result.release_year
             # 가사는 처음 확보한 출처 것을 채택
-            if not lyrics and result.lines:
-                lyrics = [ln for ln in result.lines]
-                lang = result.language or lang
+            if not out.lyrics and result.lines:
+                out.lyrics = list(result.lines)
+                out.timings = list(result.timings)
+                out.language = result.language or out.language
                 # 출처명은 DB 출처 이름(src.name)을 저장 — '다음 출처' 검색 시 정확히 매칭·순환.
-                source = SongSourceRef(
-                    name=src.name,
-                    url=result.source_url,
-                )
+                out.source = SongSourceRef(name=src.name, url=result.source_url)
             # 가사 + 핵심 메타가 모두 채워졌으면 조기 종료
-            if lyrics and artist and title and album:
+            if out.lyrics and out.artist and out.title and out.album:
                 break
-        return lyrics, lang, source, artist, album, title, year
+        return out
 
-    def _build_lyrics_lines(self, lines: list[str], language: str) -> list[LyricsLine]:
+    def _build_lyrics_lines(
+        self, lines: list[str], language: str, timings: list[int | None] | None = None
+    ) -> list[LyricsLine]:
         if not lines:
             return []
+        # 타이밍은 lines와 길이가 같을 때만 신뢰한다(길이가 어긋나면 잘못 짝지어진다).
+        stamps: list[int | None] = list(timings or [])
+        if len(stamps) != len(lines):
+            stamps = [None] * len(lines)
         lang = (language or "").lower()
         # 언어 미상이면 번역기로 추정 시도
         if not lang and self._translator is not None:
@@ -363,7 +397,10 @@ class FetchSongInfoHandler:
                 logger.exception("가사 언어 감지 실패")
         # 한국어면 번역 없이 원문만
         if lang == "ko" or self._translator is None:
-            return [LyricsLine(original=ln, translation="") for ln in lines]
+            return [
+                LyricsLine(original=ln, translation="", start_ms=ms)
+                for ln, ms in zip(lines, stamps)
+            ]
         try:
             translations = self._translator.translate(lines, target="ko")
         except Exception:
@@ -372,8 +409,8 @@ class FetchSongInfoHandler:
         if len(translations) != len(lines):
             translations = lines
         return [
-            LyricsLine(original=o, translation=(t if t != o else ""))
-            for o, t in zip(lines, translations)
+            LyricsLine(original=o, translation=(t if t != o else ""), start_ms=ms)
+            for o, t, ms in zip(lines, translations, stamps)
         ]
 
 
@@ -412,13 +449,33 @@ class TranslateSongLyricsHandler:
         if len(translations) != len(originals):
             return agg
         new_lines = [
-            LyricsLine(original=o, translation=(t if t != o else ""))
-            for o, t in zip(originals, translations)
+            LyricsLine(
+                original=old.original,
+                translation=(t if t != old.original else ""),
+                start_ms=old.start_ms,
+            )
+            for old, t in zip(agg.info.lyrics_lines, translations)
         ]
         agg.set_lyrics_translations(new_lines)
         self._songs.save(agg)
         self._bus.publish_all(agg.pull_events())
         return agg
+
+
+class SetLyricsOffsetHandler:
+    """자막 싱크 보정값을 저장한다. 노래 정보가 없으면 새로 만든다."""
+
+    def __init__(self, song_repo: ISongRepository, event_bus: IEventBus) -> None:
+        self._songs = song_repo
+        self._bus = event_bus
+
+    def handle(self, cmd: SetLyricsOffsetCommand) -> None:
+        agg = self._songs.get(cmd.video_id) or SongInfoAggregate.create(
+            cmd.video_id, is_song=True
+        )
+        agg.set_lyrics_offset(cmd.offset_ms)
+        self._songs.save(agg)
+        self._bus.publish_all(agg.pull_events())
 
 
 class SetSongFlagHandler:

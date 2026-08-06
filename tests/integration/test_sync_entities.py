@@ -219,6 +219,22 @@ class TestSongInfo:
             assert row["artist"] == "가수A"
             assert row["album"] == "앨범B"
 
+    def test_song_lyrics_offset_converges(self, tmp_path, provider):
+        """자막 오프셋도 같은 영상 파일을 보는 다른 기기라면 어긋남이 같으므로 동기화해야 한다."""
+        a = Install(tmp_path, "A", provider)
+        b = Install(tmp_path, "B", provider)
+        _seed_video(a, b)
+
+        song = SongInfoAggregate.create(_video_id(a), is_song=True)
+        song.set_lyrics_offset(1500)
+        _song_repo(a).save(song)
+        a.push()
+        b.pull()
+
+        row = _song_row(b)
+        assert row is not None
+        assert row["lyrics_offset_ms"] == 1500
+
     def test_song_delete_converges(self, tmp_path, provider):
         a = Install(tmp_path, "A", provider)
         b = Install(tmp_path, "B", provider)

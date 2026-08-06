@@ -16,11 +16,14 @@ from typing import Protocol
 class LyricsResult:
     """가사 제공자 조회 결과.
 
-    ``lines``는 가사 원문 줄 목록(빈 리스트 = 가사 없음). 제공자가 함께 알려주는
+    ``lines``는 가사 원문 줄 목록(빈 리스트 = 가사 없음). ``timings``는 각 줄의 시작
+    시각(ms)으로 ``lines``와 같은 길이이거나, 시간 정보가 없으면 빈 리스트다
+    (LRC 싱크 가사를 주는 출처에서만 채워진다). 제공자가 함께 알려주는
     메타데이터(가수·앨범·제목·발매년도)는 부족분을 채우는 데 쓰인다.
     """
 
     lines: list[str] = field(default_factory=list)
+    timings: list[int | None] = field(default_factory=list)
     language: str = ""          # ISO 639-1 (예: "en", "ko") — 미상이면 ""
     source_name: str = ""       # 표시 이름 (예: "LRCLIB")
     source_url: str = ""

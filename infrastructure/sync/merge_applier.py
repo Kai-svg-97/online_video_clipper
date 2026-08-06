@@ -419,6 +419,7 @@ class SongApplyHandler:
         "source_name",
         "source_url",
         "manual_fields",
+        "lyrics_offset_ms",
     )
 
     def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
@@ -448,8 +449,8 @@ class SongApplyHandler:
                 INSERT INTO song_info
                     (video_id, is_song, artist, album, song_title, release_year,
                      lyrics_json, lyrics_language, source_name, source_url,
-                     manual_fields, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                     manual_fields, lyrics_offset_ms, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     vid,
@@ -463,6 +464,7 @@ class SongApplyHandler:
                     fields.get("source_name", ""),
                     fields.get("source_url", ""),
                     fields.get("manual_fields", "[]"),
+                    int(fields.get("lyrics_offset_ms", 0)),
                     _now_iso(),
                 ),
             )
