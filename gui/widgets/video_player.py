@@ -645,10 +645,9 @@ class _VideoArea(QWidget):
         h = self.heightForWidth(self.width())
         self._stack.setGeometry(0, 0, self.width(), h)
         if self._subtitle is not None:
-            # 컨트롤바 바로 위. 컨트롤바가 숨어 있을 때도 같은 자리를 써서 자막이
-            # 오르내리며 흔들리지 않게 한다.
-            sub_h = max(60, int(h * 0.28))
-            self._subtitle.setGeometry(0, h - self._BAR_H - sub_h, self.width(), sub_h)
+            # 영역 전체를 덮는다 — 글자를 키우거나 위치를 올려도 잘리지 않는다.
+            # 컨트롤바를 나중에 raise_() 하므로 바가 계속 자막 위에 온다.
+            self._subtitle.setGeometry(0, 0, self.width(), h)
             self._subtitle.raise_()
         if self._bar is not None:
             self._bar.setGeometry(0, h - self._BAR_H, self.width(), self._BAR_H)
@@ -765,8 +764,7 @@ class _PipWindow(QWidget):
 
     def _layout_children(self) -> None:
         bh = _ControlBar._HEIGHT
-        sub_h = max(48, int(self.height() * 0.28))
-        self.subtitle.setGeometry(0, self.height() - bh - sub_h, self.width(), sub_h)
+        self.subtitle.setGeometry(0, 0, self.width(), self.height())
         self.subtitle.raise_()
         self.subtitle.show()
         self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
@@ -854,8 +852,7 @@ class _FullscreenWindow(QWidget):
 
     def _position_bar(self) -> None:
         bh = _ControlBar._HEIGHT
-        sub_h = max(72, int(self.height() * 0.24))
-        self.subtitle.setGeometry(0, self.height() - bh - sub_h, self.width(), sub_h)
+        self.subtitle.setGeometry(0, 0, self.width(), self.height())
         self.subtitle.raise_()
         self.subtitle.show()
         self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
@@ -864,8 +861,7 @@ class _FullscreenWindow(QWidget):
 
     def resizeEvent(self, event) -> None:
         bh = _ControlBar._HEIGHT
-        sub_h = max(72, int(self.height() * 0.24))
-        self.subtitle.setGeometry(0, self.height() - bh - sub_h, self.width(), sub_h)
+        self.subtitle.setGeometry(0, 0, self.width(), self.height())
         self.subtitle.raise_()
         self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
         self.bar.raise_()

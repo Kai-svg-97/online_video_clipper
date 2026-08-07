@@ -151,7 +151,9 @@ class LyricsOverlay(QWidget):
     """
 
     _MIN_FONT_PX = 13
-    _FONT_RATIO = 0.055          # 위젯 높이 대비 원문 글자 크기
+    # 영역(비디오 전체) 높이 대비 원문 글자 크기. 예전 0.055 는 높이 28% 띠에
+    # 적용돼 실질 1.5% 였다 — 오버레이가 영역 전체를 덮게 되면서 기준이 바뀌었다.
+    _BASE_FONT_RATIO = 0.045
     _TRANSLATION_RATIO = 0.85    # 원문 대비 번역 글자 크기
     _OUTLINE_RATIO = 0.14        # 글자 크기 대비 외곽선 두께
     _LINE_GAP = 4                # 원문/번역 줄 간격(px)
@@ -165,6 +167,9 @@ class LyricsOverlay(QWidget):
         self._original = ""
         self._translation = ""
         self._visible_text = True
+        # 사용자 조절값(Task 4에서 setter 로 노출). 비율이라 창 크기와 무관하게 일정.
+        self._font_scale: float = 1.0
+        self._bottom_ratio: float = 0.10
 
     # ── 상태 ──────────────────────────────────────────────────────
     def set_cue(self, cue: LyricsCue | None) -> None:
@@ -190,8 +195,15 @@ class LyricsOverlay(QWidget):
         return self._original, self._translation
 
     # ── 렌더 ──────────────────────────────────────────────────────
+    def _bottom_px(self) -> int:
+        """아래에서 띄울 픽셀 수 — 비율이라 창 크기가 변해도 비중이 같다."""
+        return int(self.height() * self._bottom_ratio)
+
     def _fonts(self) -> tuple[QFont, QFont]:
-        px = max(self._MIN_FONT_PX, int(self.height() * self._FONT_RATIO))
+        px = max(
+            self._MIN_FONT_PX,
+            int(self.height() * self._BASE_FONT_RATIO * self._font_scale),
+        )
         family = subtitle_font_family()
         main = QFont(family, weight=QFont.Weight.Bold)
         main.setPixelSize(px)
@@ -260,7 +272,8 @@ class LyricsOverlay(QWidget):
 
         total_h = sum(h for *_, h in rows) + self._LINE_GAP * (len(rows) - 1)
         # 아래에서부터 쌓아 올린다 — 자막은 하단 정렬이 자연스럽다.
-        y = self.height() - total_h
+        y = self.height() - self._bottom_px() - total_h
+        y = max(0, y)   # 글자가 커도 위로 잘려 나가지 않게
         for text, font, color, height in rows:
             baseline = int(y + QFontMetrics(font).ascent())
             self._draw_line(painter, text, font, color, baseline)
