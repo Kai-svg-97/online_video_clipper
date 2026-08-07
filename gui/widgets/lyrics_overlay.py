@@ -159,6 +159,12 @@ class LyricsOverlay(QWidget):
     _LINE_GAP = 4                # 원문/번역 줄 간격(px)
     _SIDE_MARGIN = 24            # 좌우 여백(px)
 
+    # 사용자 조절 범위 — InlinePlayer 와 테스트가 참조하므로 공개 상수로 둔다.
+    FONT_SCALE_DEFAULT = 1.0
+    FONT_SCALE_MIN, FONT_SCALE_MAX = 0.5, 3.0
+    BOTTOM_RATIO_DEFAULT = 0.10
+    BOTTOM_RATIO_MIN, BOTTOM_RATIO_MAX = 0.0, 0.6
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -168,8 +174,8 @@ class LyricsOverlay(QWidget):
         self._translation = ""
         self._visible_text = True
         # 사용자 조절값(Task 4에서 setter 로 노출). 비율이라 창 크기와 무관하게 일정.
-        self._font_scale: float = 1.0
-        self._bottom_ratio: float = 0.10
+        self._font_scale: float = self.FONT_SCALE_DEFAULT
+        self._bottom_ratio: float = self.BOTTOM_RATIO_DEFAULT
 
     # ── 상태 ──────────────────────────────────────────────────────
     def set_cue(self, cue: LyricsCue | None) -> None:
@@ -188,6 +194,30 @@ class LyricsOverlay(QWidget):
             return
         self._visible_text = on
         self.update()
+
+    def set_font_scale(self, scale: float) -> None:
+        """글자 크기 배율. 범위 밖 값은 잘라낸다(설정 파일이 깨져도 안전하게)."""
+        v = min(self.FONT_SCALE_MAX, max(self.FONT_SCALE_MIN, float(scale)))
+        if v == self._font_scale:
+            return
+        self._font_scale = v
+        self.update()
+
+    def set_bottom_ratio(self, ratio: float) -> None:
+        """아래에서 띄우는 비율. 값이 커지면 자막이 위로 올라간다."""
+        v = min(self.BOTTOM_RATIO_MAX, max(self.BOTTOM_RATIO_MIN, float(ratio)))
+        if v == self._bottom_ratio:
+            return
+        self._bottom_ratio = v
+        self.update()
+
+    @property
+    def font_scale(self) -> float:
+        return self._font_scale
+
+    @property
+    def bottom_ratio(self) -> float:
+        return self._bottom_ratio
 
     @property
     def current_text(self) -> tuple[str, str]:
