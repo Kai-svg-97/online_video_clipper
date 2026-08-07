@@ -8,7 +8,12 @@ from uuid import UUID
 
 from domain.library.aggregates import VideoAggregate
 from domain.library.entities import Category, Tag, Video
-from domain.library.repositories import MATCH_FIELD_KEYS, IVideoRepository, SearchQuery
+from domain.library.repositories import (
+    MATCH_FIELD_KEYS,
+    MUSIC_ROOT_CATEGORY_NAMES,
+    IVideoRepository,
+    SearchQuery,
+)
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl, normalize_video_url
 from infrastructure.persistence.database import Database
 
@@ -501,21 +506,51 @@ class SqliteVideoRepository(IVideoRepository):
     # 검색 일치 속성
     # ------------------------------------------------------------------
 
+    def _music_category_ids(self, conn) -> list[str]:
+        """최상위 조상 카테고리 이름이 음악인 카테고리 id 전체(중첩 포함).
+
+        depth 가드는 선택이 아니라 필수다 — categories 에 순환을 막는 제약이
+        UNIQUE(name, parent_id) 뿐이라, 데이터가 순환하면 재귀 CTE 가 끝나지 않고
+        앱이 멈춘다. 32단계면 실제 카테고리 깊이를 한참 넘는다.
+        """
+        names = sorted(MUSIC_ROOT_CATEGORY_NAMES)
+        ph = ",".join("?" * len(names))
+        sql = f"""
+            WITH RECURSIVE tree(id, root_name, depth) AS (
+                SELECT id, name, 0 FROM categories WHERE parent_id IS NULL
+                UNION ALL
+                SELECT c.id, t.root_name, t.depth + 1
+                  FROM categories c JOIN tree t ON c.parent_id = t.id
+                 WHERE t.depth < 32
+            )
+            SELECT id FROM tree WHERE lower(trim(root_name)) IN ({ph})
+        """
+        return [r[0] for r in conn.execute(sql, names).fetchall()]
+
     def _lyrics_match_ids(self, text: str) -> list[str]:
         """가사(원문·번역)에 검색어가 든 video_id 목록을 반환한다.
 
-        lyrics_json 에 SQL LIKE 를 쓰면 검색어 'o'·'t' 가 JSON 키에 걸려 모든 노래를
-        오탐하므로 파싱해서 값만 비교한다.
+        최상위 카테고리가 음악인 영상만 대상으로 한다. lyrics_json 에 SQL LIKE 를
+        쓰면 검색어 'o'·'t' 가 JSON 키에 걸려 모든 노래를 오탐하므로 파싱해서
+        값만 비교한다.
         """
         needle = text.lower()
-        sql = "SELECT video_id, lyrics_json FROM song_info WHERE lyrics_json <> '[]'"
-        params: list = []
-        if _lyrics_prefilter_safe(text):
-            # 후보를 SQL 로 먼저 좁힌다 — 전체 가사를 매 검색마다 JSON 파싱하면
-            # 검색어를 한 글자 칠 때마다 라이브러리 전체를 파싱하게 된다.
-            sql += " AND lyrics_json LIKE ? ESCAPE '\\'"
-            params.append(_like_pattern(text))
         with self._db.connection() as conn:
+            music_ids = self._music_category_ids(conn)
+            if not music_ids:
+                return []
+            cat_ph = ",".join("?" * len(music_ids))
+            sql = (
+                "SELECT s.video_id, s.lyrics_json FROM song_info s "
+                "JOIN videos v ON v.id = s.video_id "
+                f"WHERE s.lyrics_json <> '[]' AND v.category_id IN ({cat_ph})"
+            )
+            params: list = list(music_ids)
+            if _lyrics_prefilter_safe(text):
+                # 후보를 SQL 로 먼저 좁힌다 — 전체 가사를 매 검색마다 JSON 파싱하면
+                # 검색어를 한 글자 칠 때마다 라이브러리 전체를 파싱하게 된다.
+                sql += " AND s.lyrics_json LIKE ? ESCAPE '\\'"
+                params.append(_like_pattern(text))
             rows = conn.execute(sql, params).fetchall()
         return [
             r["video_id"]
@@ -573,12 +608,19 @@ class SqliteVideoRepository(IVideoRepository):
                 for row in conn.execute(sql, [*ids, *([like] * n_like)]).fetchall():
                     found[row[0]].add(key)
 
-            # 가사는 파싱해서 비교한다(JSON 키 오탐 방지).
+            # 가사는 파싱해서 비교한다(JSON 키 오탐 방지). 음악 카테고리만 대상.
             needle = text.lower()
-            lyric_rows = conn.execute(
-                f"SELECT video_id, lyrics_json FROM song_info WHERE video_id IN ({ph})",
-                ids,
-            ).fetchall()
+            music_ids = self._music_category_ids(conn)
+            if music_ids:
+                cat_ph = ",".join("?" * len(music_ids))
+                lyric_rows = conn.execute(
+                    "SELECT s.video_id, s.lyrics_json FROM song_info s "
+                    "JOIN videos v ON v.id = s.video_id "
+                    f"WHERE s.video_id IN ({ph}) AND v.category_id IN ({cat_ph})",
+                    [*ids, *music_ids],
+                ).fetchall()
+            else:
+                lyric_rows = []
 
         for row in lyric_rows:
             if needle in _lyrics_text(row["lyrics_json"]).lower():
