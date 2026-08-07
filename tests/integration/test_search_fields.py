@@ -114,7 +114,8 @@ class TestLyricsJsonFalsePositive:
     """가사를 SQL LIKE 로 다루면 안 되는 이유를 고정한다."""
 
     def test_json_key_does_not_match(self, repo, songs):
-        a = _add(repo, "https://youtu.be/j1", "무제")
+        music = _music_category(repo)
+        a = _add(repo, "https://youtu.be/j1", "무제", category_id=music)
         s = SongInfoAggregate.create(a.id)
         s.apply_fetched(lyrics_lines=[LyricsLine("Sunshine", "햇살")], mark_song=True)
         songs.save(s)
