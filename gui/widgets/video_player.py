@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 )
 
 from application.library.dtos import DownloadInfoDTO
+from config import settings
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
 from gui.themes.manager import ThemeManager
 from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
@@ -906,6 +907,8 @@ class InlinePlayer(QWidget):
     _HIDE_MS = 2_000   # 2초 비활성 후 숨김
     _SHOW_MS = 1_000   # 마우스 감지 1초 후 표시
     _OFFSET_STEP_MS = 250   # [ / ] 한 번에 움직이는 폭
+    _FONT_SCALE_STEP = 0.1      # Ctrl + 휠/방향키 한 번에 움직이는 배율
+    _BOTTOM_RATIO_STEP = 0.02   # Ctrl+Shift + 휠/방향키 한 번에 움직이는 위치 비율
     _last_quality_fmt: str = _DEFAULT_QUALITY_FMT  # 세션 내 품질 선택 공유
     _last_quality_merge: bool = _DEFAULT_QUALITY_MERGE
     _last_quality_short: str = _QUALITY_OPTIONS[0][2]  # "자동"
@@ -939,6 +942,9 @@ class InlinePlayer(QWidget):
         self._temp_stream_path: str = ""      # 고화질 병합 임시 파일(재생 후 정리)
         self._track: LyricsTrack | None = None
         self._subtitle_on = True
+        # 자막 표시 설정은 전역이라 생성 시 설정값을 읽어 시작한다.
+        self._subtitle_font_scale: float = settings.SUBTITLE_FONT_SCALE
+        self._subtitle_bottom_ratio: float = settings.SUBTITLE_BOTTOM_RATIO
         self._current_line_index = -1
         self._setup()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -999,6 +1005,11 @@ class InlinePlayer(QWidget):
         self._status_lbl.setFixedHeight(18)
         self._status_lbl.hide()
         outer.addWidget(self._status_lbl)
+
+        self._transient_timer = QTimer(self)
+        self._transient_timer.setSingleShot(True)
+        self._transient_timer.timeout.connect(self._clear_transient)
+        self._transient_text = ""
 
         # Wire control bar signals → player
         self._bar.play_toggled.connect(self._toggle_play)
@@ -1181,6 +1192,43 @@ class InlinePlayer(QWidget):
             overlays.append(self._pip_win.subtitle)
         return overlays
 
+    def _apply_subtitle_prefs(self) -> None:
+        """현재 크기·위치를 3창 오버레이 전부에 반영한다."""
+        for overlay in self._all_subtitles():
+            overlay.set_font_scale(self._subtitle_font_scale)
+            overlay.set_bottom_ratio(self._subtitle_bottom_ratio)
+
+    def _show_transient(self, text: str, ms: int = 1000) -> None:
+        """조절 중 현재 값을 잠깐 보여준다.
+
+        가사 줄이 안 나오는 구간에서 조절하면 화면에 아무 변화가 없어 먹었는지
+        알 수 없다. 그래서 값 표시는 있으나 마나 한 장식이 아니라 필수다.
+        """
+        self._transient_text = text
+        self._status_lbl.setText(text)
+        self._status_lbl.show()
+        self._transient_timer.start(ms)
+
+    def _clear_transient(self) -> None:
+        # 그 사이 스트림 안내 문구로 바뀌었다면 건드리지 않는다.
+        if self._status_lbl.text() == self._transient_text:
+            self._status_lbl.hide()
+        self._transient_text = ""
+
+    def _nudge_subtitle_scale(self, delta: float) -> None:
+        ov = self._subtitle
+        ov.set_font_scale(self._subtitle_font_scale + delta)
+        self._subtitle_font_scale = ov.font_scale       # clamp 된 실제 값을 되받는다
+        self._apply_subtitle_prefs()
+        self._show_transient(f"자막 크기 {round(self._subtitle_font_scale * 100)}%")
+
+    def _nudge_subtitle_bottom(self, delta: float) -> None:
+        ov = self._subtitle
+        ov.set_bottom_ratio(self._subtitle_bottom_ratio + delta)
+        self._subtitle_bottom_ratio = ov.bottom_ratio
+        self._apply_subtitle_prefs()
+        self._show_transient(f"자막 위치 {round(self._subtitle_bottom_ratio * 100)}%")
+
     def _apply_subtitle_position(self, pos_ms: int) -> None:
         """재생 위치에 맞춰 자막을 갱신한다. **줄이 바뀔 때만** 다시 그린다."""
         if self._track is None:
@@ -1345,6 +1393,18 @@ class InlinePlayer(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         key = event.key()
+        mods = event.modifiers()
+        if (
+            mods & Qt.KeyboardModifier.ControlModifier
+            and key in (Qt.Key.Key_Up, Qt.Key.Key_Down)
+        ):
+            sign = 1 if key == Qt.Key.Key_Up else -1
+            # Ctrl+Shift 도 Ctrl 비트가 켜져 있으므로 Shift 를 먼저 판정한다.
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                self._nudge_subtitle_bottom(sign * self._BOTTOM_RATIO_STEP)
+            else:
+                self._nudge_subtitle_scale(sign * self._FONT_SCALE_STEP)
+            return
         if key in (Qt.Key.Key_Space, Qt.Key.Key_K):
             self._toggle_play()
         elif key == Qt.Key.Key_J:
@@ -1469,6 +1529,7 @@ class InlinePlayer(QWidget):
         bar.set_available_heights(_HEIGHT_CACHE.get(self._video_url))
         has = self._track is not None
         bar.set_has_subtitle(has)
+        self._apply_subtitle_prefs()
         bar.set_subtitle_on(self._subtitle_on)
         bar.set_subtitle_offset_ms(self._track.offset_ms if has else 0)
         bar.subtitle_toggled.connect(self.set_subtitle_enabled)
@@ -1550,6 +1611,7 @@ class InlinePlayer(QWidget):
         bar.set_available_heights(_HEIGHT_CACHE.get(self._video_url))
         has = self._track is not None
         bar.set_has_subtitle(has)
+        self._apply_subtitle_prefs()
         bar.set_subtitle_on(self._subtitle_on)
         bar.set_subtitle_offset_ms(self._track.offset_ms if has else 0)
         bar.subtitle_toggled.connect(self.set_subtitle_enabled)

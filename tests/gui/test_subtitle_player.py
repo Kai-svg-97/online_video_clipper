@@ -390,3 +390,45 @@ class TestShortcutReachability:
         QTest.keyClick(edit, Qt.Key.Key_BracketRight)
         assert seen == []
         assert edit.text() == "]"
+
+
+def _key_mod(player, key: int, mods) -> None:
+    player.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, key, mods))
+
+
+class TestSubtitleScaleAndPosition:
+    def test_ctrl_위아래가_크기를_바꾼다(self, player):
+        player.set_lyrics(_track())
+        before = player._subtitle.font_scale
+        _key_mod(player, Qt.Key.Key_Up, Qt.KeyboardModifier.ControlModifier)
+        assert player._subtitle.font_scale == pytest.approx(before + 0.1)
+        _key_mod(player, Qt.Key.Key_Down, Qt.KeyboardModifier.ControlModifier)
+        assert player._subtitle.font_scale == pytest.approx(before)
+
+    def test_맨_위아래는_여전히_볼륨이다(self, player):
+        """회귀: 수정키 분기를 넣다가 볼륨 단축키를 깨뜨리기 쉽다."""
+        player.set_lyrics(_track())
+        before_scale = player._subtitle.font_scale
+        vol_before = player._audio.volume()
+        _key_mod(player, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier)
+        assert player._subtitle.font_scale == before_scale
+        assert player._audio.volume() != pytest.approx(vol_before)
+
+    def test_ctrl_shift_위아래가_위치를_바꾼다(self, player):
+        """회귀: Ctrl+Shift 도 Ctrl 비트가 켜져 있어 분기 순서가 틀리면 크기가 바뀐다."""
+        player.set_lyrics(_track())
+        scale_before = player._subtitle.font_scale
+        pos_before = player._subtitle.bottom_ratio
+        mods = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+        _key_mod(player, Qt.Key.Key_Up, mods)
+        assert player._subtitle.bottom_ratio == pytest.approx(pos_before + 0.02)
+        assert player._subtitle.font_scale == scale_before
+
+    def test_분리창에도_현재값이_반영된다(self, player):
+        player.set_lyrics(_track())
+        _key_mod(player, Qt.Key.Key_Up, Qt.KeyboardModifier.ControlModifier)
+        player._enter_fullscreen()
+        assert player._fs_win.subtitle.font_scale == pytest.approx(
+            player._subtitle.font_scale
+        )
+        player._exit_fullscreen()
