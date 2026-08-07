@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QLineEdit, QVBoxLayout, QWidget
 
 from gui.widgets.lyrics_overlay import LyricsCue, LyricsTrack
 from gui.widgets.video_player import InlinePlayer
@@ -320,3 +322,71 @@ class TestFullscreenSubtitleWiring:
         player._exit_fullscreen()
         assert player._fs_win is None
         assert player._subtitle.current_text == ("one", "하나")
+
+
+class TestShortcutReachability:
+    """단축키가 **실제 키 입력**으로 핸들러까지 도달하는지 본다.
+
+    이 파일의 다른 테스트는 `player.keyPressEvent(...)`를 직접 호출하므로 "핸들러가
+    올바른가"만 검증한다. 그것만으로는 포커스 배선이 끊겨도(=사용자가 아무리 눌러도
+    안 먹어도) 통과한다. `_VideoView`와 컨트롤바는 일부러 포커스를 안 잡고
+    (`NoFocus`/`TabFocus`) InlinePlayer(`StrongFocus`)가 대신 받는 구조라, 이 위임이
+    깨지면 자막 단축키 C/[/]/\\ 가 전부 죽는다. 그래서 도달성 자체를 고정한다.
+    """
+
+    @pytest.fixture
+    def host(self, qapp_instance):
+        # 상세화면처럼 플레이어 밖에도 포커스 대상이 있는 창을 만든다.
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        edit = QLineEdit()
+        p = InlinePlayer()
+        p.setMinimumSize(640, 360)
+        lay.addWidget(edit)
+        lay.addWidget(p)
+        w.resize(700, 500)
+        w.show()
+        QTest.qWaitForWindowExposed(w)
+        yield p, edit
+        p.stop()
+        w.hide()
+        w.deleteLater()
+
+    def _nudges(self, player) -> list[int]:
+        seen: list[int] = []
+        player.subtitle_offset_changed.connect(seen.append)
+        return seen
+
+    def test_영상_클릭_후_괄호키가_오프셋을_바꾼다(self, host):
+        player, edit = host
+        player.set_lyrics(_track())
+        seen = self._nudges(player)
+        edit.setFocus()
+        QTest.mouseClick(
+            player._video_view.viewport(), Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier, QPoint(200, 100),
+        )
+        assert QApplication.focusWidget() is player
+        QTest.keyClick(player, Qt.Key.Key_BracketRight)
+        assert seen == [250]
+
+    def test_컨트롤바_버튼_클릭_후에도_괄호키가_동작한다(self, host):
+        # 버튼은 TabFocus라 자신은 포커스를 안 갖지만, 클릭이 InlinePlayer로 올라가야 한다.
+        player, edit = host
+        player.set_lyrics(_track())
+        seen = self._nudges(player)
+        edit.setFocus()
+        QTest.mouseClick(player._bar._btn_play, Qt.MouseButton.LeftButton)
+        assert QApplication.focusWidget() is player
+        QTest.keyClick(player, Qt.Key.Key_BracketRight)
+        assert seen == [250]
+
+    def test_플레이어_밖에_포커스가_있으면_도달하지_않는다(self, host):
+        # 경계 확인: 검색창 등에 포커스가 있으면 ']'는 그 위젯의 입력이다.
+        player, edit = host
+        player.set_lyrics(_track())
+        seen = self._nudges(player)
+        edit.setFocus()
+        QTest.keyClick(edit, Qt.Key.Key_BracketRight)
+        assert seen == []
+        assert edit.text() == "]"
