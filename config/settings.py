@@ -119,6 +119,13 @@ def _load_bool(key: str, default: bool) -> bool:
     return bool(v)
 
 
+def _load_float(key: str, default: float) -> float:
+    try:
+        return float(_load_config().get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
 MAX_CONCURRENT_DOWNLOADS: int = _load_int("max_concurrent_downloads", 3)
 MAX_CONCURRENT_FEED_WORKERS: int = _load_int("max_concurrent_feed_workers", 4)
 CLIPBOARD_MONITORING: bool = _load_bool("clipboard_monitoring", True)
@@ -127,6 +134,10 @@ DEFAULT_FORMAT: str = _resolve_str("default_format", "mp4")
 AUTO_UPDATE_CHECK: bool = _load_bool("auto_update_check", True)
 # 단건 등록 직후 요약(비노래)·가사(노래) 자동 보강. 일괄 임포트는 대상이 아니다.
 AUTO_ENRICH_ON_ADD: bool = _load_bool("auto_enrich_on_add", True)
+# 자막 표시 설정 — 전역(영상과 무관한 보기 설정). 비율이라 인라인·전체화면·PiP
+# 어디서나 같은 비중으로 보인다. 값 범위 clamp 는 LyricsOverlay 가 담당한다.
+SUBTITLE_FONT_SCALE: float = _load_float("subtitle_font_scale", 1.0)
+SUBTITLE_BOTTOM_RATIO: float = _load_float("subtitle_bottom_ratio", 0.10)
 LAST_UPDATE_CHECK: float = float(_load_config().get("last_update_check", 0) or 0)
 SNOOZED_UPDATE_VERSION: str = _resolve_str("snoozed_update_version", "")
 
@@ -168,6 +179,8 @@ def save_setting(key: str, value) -> None:
         "theme": "THEME",
         "auto_update_check": "AUTO_UPDATE_CHECK",
         "auto_enrich_on_add": "AUTO_ENRICH_ON_ADD",
+        "subtitle_font_scale": "SUBTITLE_FONT_SCALE",
+        "subtitle_bottom_ratio": "SUBTITLE_BOTTOM_RATIO",
         "last_update_check": "LAST_UPDATE_CHECK",
         "snoozed_update_version": "SNOOZED_UPDATE_VERSION",
         "yt_auth_browser": "YT_AUTH_BROWSER",
