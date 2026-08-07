@@ -469,3 +469,18 @@ class TestSubtitleWheel:
         _wheel(player._video_view.viewport(), True, Qt.KeyboardModifier.ControlModifier)
         assert player._subtitle.font_scale == pytest.approx(before + 0.1)
         player.hide()
+
+    def test_전체화면_영상_위에서_굴린_휠도_도달한다(self, player):
+        """회귀: _FullscreenWindow 는 자체 _VideoView(_vw)를 갖고 있어 InlinePlayer의
+        viewport 필터 분기만으로는 안 걸린다 — _fs_win._vw.viewport() 도 같은 함정에
+        빠진다(Ctrl+휠로 자막 크기를 키우는 게 가장 중요한 화면인데 조용히 죽었었다)."""
+        player.resize(800, 450)
+        player.show()
+        QTest.qWaitForWindowExposed(player)
+        player.set_lyrics(_track())
+        player._enter_fullscreen()
+        before = player._subtitle.font_scale
+        _wheel(player._fs_win._vw.viewport(), True, Qt.KeyboardModifier.ControlModifier)
+        assert player._subtitle.font_scale == pytest.approx(before + 0.1)
+        player._exit_fullscreen()
+        player.hide()

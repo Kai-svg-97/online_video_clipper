@@ -754,6 +754,12 @@ class _PipWindow(QWidget):
 
         self._vw = _VideoView(self)
         # 영상 영역은 마우스 이벤트를 투명 처리 → 창 드래그가 영상 위에서도 동작
+        # 부수효과: 이 투명 처리 덕분에 휠 이벤트의 히트테스트가 _vw(viewport)를
+        # 건너뛰고 이 창(_PipWindow) 자체로 떨어져 wheelEvent()가 정상 호출된다
+        # (viewport가 히트테스트 대상이면 QAbstractScrollArea가 viewportEvent()로
+        # 가로채 InlinePlayer까지 못 온다 — _FullscreenWindow가 그 문제를 겪었던
+        # 이유). 즉 PiP의 Ctrl+휠은 이 투명 속성에 우연히 의존한다 — 나중에 드래그
+        # 방식을 바꾸며 이 줄을 지우면 PiP 휠도 조용히 죽으니 주의할 것.
         self._vw.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._vw.viewport().setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
@@ -1069,13 +1075,12 @@ class InlinePlayer(QWidget):
         self._video_area.installEventFilter(self)
         self._visual_stack.installEventFilter(self)
         self._video_view.installEventFilter(self)
-        # QGraphicsView의 실제 입력 수신부는 self가 아니라 viewport()다.
-        # _VideoView.wheelEvent(event.ignore())만으로는 실제 OS 휠 이벤트의
-        # 창 레벨 부모 전파(QWidgetWindow)에 의존하게 되는데, 영상 위젯이
-        # 재생 전(썸네일 표시 중)이라 숨겨져 있으면 그 전파 경로 자체가
-        # 동작하지 않아 단축키가 조용히 죽는다. viewport에 필터를 직접 걸어
-        # 뷰의 가시성과 무관하게 결정적으로 InlinePlayer.wheelEvent로 넘긴다.
-        self._video_view.viewport().installEventFilter(self)
+        # _video_view.viewport()에는 별도로 installEventFilter를 걸지 않는다 —
+        # showEvent()가 앱 전역 필터(app.installEventFilter(self))를 이미 설치하고,
+        # 전역 필터는 애플리케이션의 모든 객체로 가는 이벤트를 개별 설치보다 먼저
+        # 받으므로 eventFilter()의 Wheel 분기가 그 경로로도 정상 도달한다(실측
+        # 확인 — per-object 설치를 빼고도 동작함). 왜 Wheel 분기가 필요한지는
+        # eventFilter() 주석 참조.
 
     # ── Mouse-activity tracking ────────────────────────────────────
 
@@ -1108,7 +1113,7 @@ class InlinePlayer(QWidget):
                 except RuntimeError:
                     pass
             self._filter_on = False
-        for w in (self._video_area, self._visual_stack, self._video_view, self._video_view.viewport()):
+        for w in (self._video_area, self._visual_stack, self._video_view):
             try:
                 w.removeEventFilter(self)
             except RuntimeError:
@@ -1124,12 +1129,24 @@ class InlinePlayer(QWidget):
             va_local = self._video_area.mapFromGlobal(gpos)
             if self._video_area.rect().contains(va_local):
                 self._on_mouse_activity()
-        elif event.type() == QEvent.Type.Wheel and obj is self._video_view.viewport():
-            # QGraphicsView(viewport)가 삼키기 전에 가로챈다 — 회귀: 영상이 재생 전
-            # (썸네일 표시 중)이라 뷰가 숨겨져 있으면 QWidgetWindow의 부모 전파 경로가
-            # 동작하지 않아 event.ignore()만으로는 InlinePlayer까지 오지 못한다.
-            self.wheelEvent(event)
-            return event.isAccepted()
+        elif event.type() == QEvent.Type.Wheel:
+            # _VideoView(QGraphicsView)의 실제 입력 수신부는 viewport()다. 이 viewport로
+            # 온 Wheel 이벤트는 QAbstractScrollArea가 내부적으로 viewportEvent()를 거쳐
+            # wheelEvent()로 바로 넘기는데, 이 경로는 QApplication::notify()의 "무시된
+            # 이벤트는 부모 위젯으로 전파한다" 처리를 거치지 않는다 — _VideoView.wheelEvent
+            # 의 event.ignore()가 상위(InlinePlayer/_FullscreenWindow)까지 자동으로
+            # 전달되지 않는다는 뜻이다(가시성과는 무관 — 재생 중이라 뷰가 화면에 보이는
+            # 상태에서도 동일하게 막힌다). 그래서 각 _VideoView를 담고 있는 창마다
+            # viewport를 직접 가로채 InlinePlayer.wheelEvent로 넘긴다. InlinePlayer 본체는
+            # self._video_view.viewport()가 대상이고, 전체화면은 self._fs_win._vw.viewport()
+            # 가 대상이다(PiP는 드래그용 WA_TransparentForMouseEvents 덕분에 히트테스트가
+            # viewport를 건너뛰어 이 분기 없이도 동작한다 — _PipWindow 생성자 주석 참조).
+            fs_viewport = self._fs_win._vw.viewport() if self._fs_win else None
+            if obj is self._video_view.viewport() or (
+                fs_viewport is not None and obj is fs_viewport
+            ):
+                self.wheelEvent(event)
+                return event.isAccepted()
         return False
 
     def _on_mouse_activity(self) -> None:
