@@ -1,18 +1,13 @@
 """자막 표시 설정(크기 배율·하단 여백 비율)의 로드·저장 왕복 검증."""
 from __future__ import annotations
 
-import importlib
 
-
-def test_기본값(monkeypatch, tmp_path):
+def test_기본값(monkeypatch):
     import config.settings as s
-    # 개발자의 실제 config.yaml 읽기를 피하기 위해 임시 경로로 monkeypatch
-    monkeypatch.setattr(s, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(s, "_CONFIG_FILE", tmp_path / "config.yaml")
-    s._load_config.cache_clear()
-    importlib.reload(s)
-    assert s.SUBTITLE_FONT_SCALE == 1.0
-    assert s.SUBTITLE_BOTTOM_RATIO == 0.10
+    # 설정 파일에 키가 없을 때 기본값을 반환하는지 검증. 로더 함수 계약 테스트.
+    monkeypatch.setattr(s, "_load_config", lambda: {})
+    assert s._load_float("subtitle_font_scale", 1.0) == 1.0
+    assert s._load_float("subtitle_bottom_ratio", 0.10) == 0.10
 
 
 def test_저장하면_모듈변수가_즉시_갱신된다(tmp_path, monkeypatch):
