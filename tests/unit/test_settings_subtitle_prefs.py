@@ -6,6 +6,10 @@ import importlib
 
 def test_기본값(monkeypatch, tmp_path):
     import config.settings as s
+    # 개발자의 실제 config.yaml 읽기를 피하기 위해 임시 경로로 monkeypatch
+    monkeypatch.setattr(s, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(s, "_CONFIG_FILE", tmp_path / "config.yaml")
+    s._load_config.cache_clear()
     importlib.reload(s)
     assert s.SUBTITLE_FONT_SCALE == 1.0
     assert s.SUBTITLE_BOTTOM_RATIO == 0.10
@@ -15,6 +19,9 @@ def test_저장하면_모듈변수가_즉시_갱신된다(tmp_path, monkeypatch)
     import config.settings as s
     monkeypatch.setattr(s, "DATA_DIR", tmp_path)
     monkeypatch.setattr(s, "_CONFIG_FILE", tmp_path / "config.yaml")
+    # save_setting이 모듈 변수를 직접 변경하므로, monkeypatch로 설정해 자동 복원되게 한다
+    monkeypatch.setattr(s, "SUBTITLE_FONT_SCALE", 1.0, raising=False)
+    monkeypatch.setattr(s, "SUBTITLE_BOTTOM_RATIO", 0.10, raising=False)
     s._load_config.cache_clear()
     s.save_setting("subtitle_font_scale", 1.6)
     s.save_setting("subtitle_bottom_ratio", 0.24)
