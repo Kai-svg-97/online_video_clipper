@@ -687,6 +687,11 @@ class _VideoView(QGraphicsView):
     def video_item(self) -> QGraphicsVideoItem:
         return self._item
 
+    def wheelEvent(self, event) -> None:
+        # QGraphicsView 는 휠을 스크롤로 소비한다. 스크롤바를 꺼 둔 뷰라 쓸모가 없고,
+        # 삼키면 상위 플레이어의 자막 크기·위치 단축키가 조용히 죽는다.
+        event.ignore()
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self.setSceneRect(0, 0, self.width(), self.height())
@@ -727,7 +732,13 @@ class _PipWindow(QWidget):
     _DEFAULT_W = 480
     _DEFAULT_H = 270
 
-    def __init__(self, player: QMediaPlayer, audio: QAudioOutput, key_handler=None) -> None:
+    def __init__(
+        self,
+        player: QMediaPlayer,
+        audio: QAudioOutput,
+        key_handler=None,
+        wheel_handler=None,
+    ) -> None:
         super().__init__(
             None,
             Qt.WindowType.Window
@@ -738,6 +749,7 @@ class _PipWindow(QWidget):
         self.setWindowTitle("화면 속 화면")
         self._player = player
         self._key_handler = key_handler
+        self._wheel_handler = wheel_handler
         self._drag_offset: QPoint | None = None
 
         self._vw = _VideoView(self)
@@ -785,6 +797,13 @@ class _PipWindow(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def wheelEvent(self, event) -> None:
+        # 자막 크기·위치 조절이 분리 창에서도 동작하도록 InlinePlayer 로 넘긴다.
+        if self._wheel_handler:
+            self._wheel_handler(event)
+        else:
+            super().wheelEvent(event)
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_offset = (
@@ -828,6 +847,7 @@ class _FullscreenWindow(QWidget):
         player: QMediaPlayer,
         audio: QAudioOutput,
         key_handler=None,
+        wheel_handler=None,
     ) -> None:
         super().__init__(
             None,
@@ -836,6 +856,7 @@ class _FullscreenWindow(QWidget):
         self.setStyleSheet("background:#000;")
         self._player = player
         self._key_handler = key_handler
+        self._wheel_handler = wheel_handler
 
         self._vw = _VideoView(self)
         self.subtitle = LyricsOverlay(self)
@@ -877,6 +898,13 @@ class _FullscreenWindow(QWidget):
                 self.exit_requested.emit()
             else:
                 super().keyPressEvent(event)
+
+    def wheelEvent(self, event) -> None:
+        # 자막 크기·위치 조절이 분리 창에서도 동작하도록 InlinePlayer 로 넘긴다.
+        if self._wheel_handler:
+            self._wheel_handler(event)
+        else:
+            super().wheelEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
         self.exit_requested.emit()
@@ -1041,6 +1069,13 @@ class InlinePlayer(QWidget):
         self._video_area.installEventFilter(self)
         self._visual_stack.installEventFilter(self)
         self._video_view.installEventFilter(self)
+        # QGraphicsView의 실제 입력 수신부는 self가 아니라 viewport()다.
+        # _VideoView.wheelEvent(event.ignore())만으로는 실제 OS 휠 이벤트의
+        # 창 레벨 부모 전파(QWidgetWindow)에 의존하게 되는데, 영상 위젯이
+        # 재생 전(썸네일 표시 중)이라 숨겨져 있으면 그 전파 경로 자체가
+        # 동작하지 않아 단축키가 조용히 죽는다. viewport에 필터를 직접 걸어
+        # 뷰의 가시성과 무관하게 결정적으로 InlinePlayer.wheelEvent로 넘긴다.
+        self._video_view.viewport().installEventFilter(self)
 
     # ── Mouse-activity tracking ────────────────────────────────────
 
@@ -1073,7 +1108,7 @@ class InlinePlayer(QWidget):
                 except RuntimeError:
                     pass
             self._filter_on = False
-        for w in (self._video_area, self._visual_stack, self._video_view):
+        for w in (self._video_area, self._visual_stack, self._video_view, self._video_view.viewport()):
             try:
                 w.removeEventFilter(self)
             except RuntimeError:
@@ -1089,6 +1124,12 @@ class InlinePlayer(QWidget):
             va_local = self._video_area.mapFromGlobal(gpos)
             if self._video_area.rect().contains(va_local):
                 self._on_mouse_activity()
+        elif event.type() == QEvent.Type.Wheel and obj is self._video_view.viewport():
+            # QGraphicsView(viewport)가 삼키기 전에 가로챈다 — 회귀: 영상이 재생 전
+            # (썸네일 표시 중)이라 뷰가 숨겨져 있으면 QWidgetWindow의 부모 전파 경로가
+            # 동작하지 않아 event.ignore()만으로는 InlinePlayer까지 오지 못한다.
+            self.wheelEvent(event)
+            return event.isAccepted()
         return False
 
     def _on_mouse_activity(self) -> None:
@@ -1449,6 +1490,20 @@ class InlinePlayer(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def wheelEvent(self, event) -> None:
+        mods = event.modifiers()
+        if mods & Qt.KeyboardModifier.ControlModifier:
+            # angleDelta().y() > 0 이면 위로 굴린 것 — 값이 커진다.
+            sign = 1 if event.angleDelta().y() > 0 else -1
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                self._nudge_subtitle_bottom(sign * self._BOTTOM_RATIO_STEP)
+            else:
+                self._nudge_subtitle_scale(sign * self._FONT_SCALE_STEP)
+            event.accept()
+            return
+        # 수정키 없는 휠은 건드리지 않는다(기존 동작 유지).
+        super().wheelEvent(event)
+
     # ── Internals ──────────────────────────────────────────────────
 
     def _toggle_play(self) -> None:
@@ -1500,7 +1555,10 @@ class InlinePlayer(QWidget):
         screen = QApplication.screenAt(center) or QApplication.primaryScreen()
 
         self._fs_win = _FullscreenWindow(
-            self._player, self._audio, key_handler=self.keyPressEvent
+            self._player,
+            self._audio,
+            key_handler=self.keyPressEvent,
+            wheel_handler=self.wheelEvent,
         )
         bar = self._fs_win.bar
         # 전체화면 바 → 플레이어 (인라인 바와 동일한 핸들러 재사용)
@@ -1583,7 +1641,10 @@ class InlinePlayer(QWidget):
             self._exit_fullscreen()
 
         self._pip_win = _PipWindow(
-            self._player, self._audio, key_handler=self.keyPressEvent
+            self._player,
+            self._audio,
+            key_handler=self.keyPressEvent,
+            wheel_handler=self.wheelEvent,
         )
         bar = self._pip_win.bar
         # PiP 바 → 플레이어 (인라인 바와 동일한 핸들러 재사용)

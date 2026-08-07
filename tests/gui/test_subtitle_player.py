@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import pytest
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtGui import QKeyEvent, QWheelEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLineEdit, QVBoxLayout, QWidget
 
@@ -432,3 +432,40 @@ class TestSubtitleScaleAndPosition:
             player._subtitle.font_scale
         )
         player._exit_fullscreen()
+
+
+def _wheel(widget, up: bool, mods) -> None:
+    """실제 QWheelEvent 를 위젯에 보낸다(핸들러 직접 호출이 아니다)."""
+    # PyQt6 시그니처는 globalPos 도 QPointF 를 요구한다(mapToGlobal 은 QPoint 를 반환).
+    ev = QWheelEvent(
+        QPointF(10, 10), QPointF(widget.mapToGlobal(QPoint(10, 10))),
+        QPoint(0, 0), QPoint(0, 120 if up else -120),
+        Qt.MouseButton.NoButton, mods, Qt.ScrollPhase.NoScrollPhase, False,
+    )
+    QApplication.sendEvent(widget, ev)
+
+
+class TestSubtitleWheel:
+    def test_ctrl_휠이_크기를_바꾼다(self, player):
+        player.set_lyrics(_track())
+        before = player._subtitle.font_scale
+        _wheel(player, True, Qt.KeyboardModifier.ControlModifier)
+        assert player._subtitle.font_scale == pytest.approx(before + 0.1)
+
+    def test_ctrl_shift_휠이_위치를_바꾼다(self, player):
+        player.set_lyrics(_track())
+        before = player._subtitle.bottom_ratio
+        mods = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+        _wheel(player, True, mods)
+        assert player._subtitle.bottom_ratio == pytest.approx(before + 0.02)
+
+    def test_영상_위에서_굴린_휠이_플레이어까지_도달한다(self, player):
+        """회귀: QGraphicsView 가 휠을 삼키면 핸들러가 멀쩡해도 조용히 죽는다."""
+        player.resize(800, 450)
+        player.show()
+        QTest.qWaitForWindowExposed(player)
+        player.set_lyrics(_track())
+        before = player._subtitle.font_scale
+        _wheel(player._video_view.viewport(), True, Qt.KeyboardModifier.ControlModifier)
+        assert player._subtitle.font_scale == pytest.approx(before + 0.1)
+        player.hide()
