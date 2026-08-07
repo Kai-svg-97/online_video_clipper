@@ -158,6 +158,9 @@ class LyricsOverlay(QWidget):
     _OUTLINE_RATIO = 0.14        # 글자 크기 대비 외곽선 두께
     _LINE_GAP = 4                # 원문/번역 줄 간격(px)
     _SIDE_MARGIN = 24            # 좌우 여백(px)
+    # 조절 피드백 문구("자막 크기 130%")용. 자막과 겹치지 않게 **위쪽**에 그린다.
+    _NOTICE_RATIO = 0.032        # 영역 높이 대비 문구 글자 크기
+    _NOTICE_TOP_RATIO = 0.06     # 위에서 띄우는 비율
 
     # 사용자 조절 범위 — InlinePlayer 와 테스트가 참조하므로 공개 상수로 둔다.
     FONT_SCALE_DEFAULT = 1.0
@@ -172,6 +175,7 @@ class LyricsOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._original = ""
         self._translation = ""
+        self._notice = ""
         self._visible_text = True
         # 사용자 조절값(Task 4에서 setter 로 노출). 비율이라 창 크기와 무관하게 일정.
         self._font_scale: float = self.FONT_SCALE_DEFAULT
@@ -194,6 +198,25 @@ class LyricsOverlay(QWidget):
             return
         self._visible_text = on
         self.update()
+
+    def set_notice(self, text: str) -> None:
+        """조절 피드백 문구를 잠깐 띄운다(빈 문자열이면 지운다).
+
+        전체화면·PiP 는 별개의 창이라 ``InlinePlayer`` 의 상태 라벨이 보이지 않는다.
+        세 창이 모두 갖고 있고 이미 영상 위에 얹혀 있는 이 오버레이가 문구를 직접
+        그려야 어느 창에서 조절해도 값이 보인다(설계 §3.8 — 피드백은 필수).
+        표시 시간은 문구를 넣고 빼는 쪽(``InlinePlayer``)이 타이머로 관리한다.
+        """
+        text = text or ""
+        if text == self._notice:
+            return
+        self._notice = text
+        self.update()
+
+    @property
+    def notice_text(self) -> str:
+        """현재 표시 중인 피드백 문구(없으면 빈 문자열)."""
+        return self._notice
 
     def set_font_scale(self, scale: float) -> None:
         """글자 크기 배율. 범위 밖 값은 잘라낸다(설정 파일이 깨져도 안전하게)."""
@@ -277,12 +300,28 @@ class LyricsOverlay(QWidget):
         painter.setBrush(color)
         painter.drawPath(path)          # 그 위에 글자 채움
 
+    def _draw_notice(self, painter: QPainter) -> None:
+        """피드백 문구를 위쪽 가운데에 그린다(자막은 아래에 있어 겹치지 않는다)."""
+        px = max(self._MIN_FONT_PX, int(self.height() * self._NOTICE_RATIO))
+        font = QFont(subtitle_font_family(), weight=QFont.Weight.Bold)
+        font.setPixelSize(px)
+        baseline = int(self.height() * self._NOTICE_TOP_RATIO) + QFontMetrics(font).ascent()
+        self._draw_line(painter, self._notice, font, _TEXT_COLOR, baseline)
+
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 시그니처)
-        if not self._visible_text or not (self._original or self._translation):
+        # 자막이 꺼져 있거나 표시할 줄이 없어도 **피드백 문구는 그린다** — 조절이
+        # 먹었는지 알려 주는 유일한 신호라 자막 상태와 무관해야 한다.
+        has_cue = bool(self._visible_text and (self._original or self._translation))
+        if not has_cue and not self._notice:
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        if self._notice:
+            self._draw_notice(painter)
+        if not has_cue:
+            painter.end()
+            return
 
         main_font, sub_font = self._fonts()
         max_w = max(50, self.width() - self._SIDE_MARGIN * 2)

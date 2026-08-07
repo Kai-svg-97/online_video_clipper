@@ -345,6 +345,7 @@ class _ControlBar(QWidget):
         self._has_subtitle = False
         self._subtitle_on = True
         self._subtitle_offset_ms = 0
+        self._subtitle_prefs_dirty = False
         ThemeManager.instance().theme_changed.connect(
             lambda _: self.setStyleSheet(_bar_style())
         )
@@ -463,11 +464,33 @@ class _ControlBar(QWidget):
     def set_has_subtitle(self, has: bool) -> None:
         """싱크 가사 유무 — 없으면 버튼을 비활성하고 이유를 툴팁으로 알린다."""
         self._has_subtitle = has
-        self._btn_cc.setEnabled(has)
-        self._btn_cc.setToolTip(
-            "가사 자막  (C)" if has else "시간 정보가 있는 가사가 없습니다"
-        )
+        self._refresh_cc_enabled()
         self._update_cc_look()
+
+    def set_subtitle_prefs_dirty(self, dirty: bool) -> None:
+        """자막 크기·위치가 기본값에서 벗어나 있는지.
+
+        조절 단축키(Ctrl+휠/방향키)에는 가사 유무 조건이 없어서 **아무 영상에서나**
+        값을 바꿀 수 있는데, 초기화 메뉴는 💬 버튼에 달려 있고 그 버튼은 싱크 가사가
+        있을 때만 활성이었다. 그래서 비(非)노래 영상에서 키운 값을 되돌릴 방법이
+        없었다. 값이 기본값이 아니면 가사가 없어도 버튼을 열어 둔다(초기화 항목만).
+        """
+        dirty = bool(dirty)
+        if dirty == self._subtitle_prefs_dirty:
+            return
+        self._subtitle_prefs_dirty = dirty
+        self._refresh_cc_enabled()
+
+    def _refresh_cc_enabled(self) -> None:
+        enabled = self._has_subtitle or self._subtitle_prefs_dirty
+        self._btn_cc.setEnabled(enabled)
+        if self._has_subtitle:
+            tip = "가사 자막  (C)"
+        elif enabled:
+            tip = "시간 정보가 있는 가사가 없습니다 — 우클릭: 자막 크기·위치 초기화"
+        else:
+            tip = "시간 정보가 있는 가사가 없습니다"
+        self._btn_cc.setToolTip(tip)
 
     def set_subtitle_on(self, on: bool) -> None:
         self._subtitle_on = on
@@ -488,19 +511,32 @@ class _ControlBar(QWidget):
         self._update_cc_look()
         self.subtitle_toggled.emit(self._subtitle_on)
 
-    def _show_subtitle_menu(self) -> None:
-        if not self._has_subtitle:
-            return
+    def _build_subtitle_menu(self) -> "QMenu | None":
+        """💬 우클릭 메뉴를 만든다. 열 이유가 없으면 None.
+
+        싱크 오프셋 항목들은 트랙이 있어야 의미가 있으므로 가사가 있을 때만 넣고,
+        크기·위치 초기화는 값이 기본값에서 벗어나 있으면 가사가 없어도 넣는다.
+        (``exec``와 분리해 둔 것은 모달 루프 없이 구성만 테스트하기 위해서다.)
+        """
+        if not self._has_subtitle and not self._subtitle_prefs_dirty:
+            return None
         menu = QMenu(self)
-        sec = self._subtitle_offset_ms / 1000.0
-        menu.addAction(f"싱크: {sec:+.2f}초").setEnabled(False)
-        menu.addSeparator()
-        menu.addAction("−0.25초  ( [ )", lambda: self.subtitle_offset_nudged.emit(-250))
-        menu.addAction("+0.25초  ( ] )", lambda: self.subtitle_offset_nudged.emit(250))
-        menu.addAction("현재 위치를 이 줄에 맞춤  ( \\ )", self.subtitle_sync_here.emit)
-        menu.addSeparator()
-        menu.addAction("초기화", self.subtitle_offset_reset.emit)
+        if self._has_subtitle:
+            sec = self._subtitle_offset_ms / 1000.0
+            menu.addAction(f"싱크: {sec:+.2f}초").setEnabled(False)
+            menu.addSeparator()
+            menu.addAction("−0.25초  ( [ )", lambda: self.subtitle_offset_nudged.emit(-250))
+            menu.addAction("+0.25초  ( ] )", lambda: self.subtitle_offset_nudged.emit(250))
+            menu.addAction("현재 위치를 이 줄에 맞춤  ( \\ )", self.subtitle_sync_here.emit)
+            menu.addSeparator()
+            menu.addAction("초기화", self.subtitle_offset_reset.emit)
         menu.addAction("자막 크기·위치 초기화", self.subtitle_prefs_reset.emit)
+        return menu
+
+    def _show_subtitle_menu(self) -> None:
+        menu = self._build_subtitle_menu()
+        if menu is None:
+            return
         menu.exec(self._btn_cc.mapToGlobal(self._btn_cc.rect().bottomLeft()))
 
     def _on_seek_released(self) -> None:
@@ -755,13 +791,11 @@ class _PipWindow(QWidget):
         self._drag_offset: QPoint | None = None
 
         self._vw = _VideoView(self)
-        # 영상 영역은 마우스 이벤트를 투명 처리 → 창 드래그가 영상 위에서도 동작
-        # 부수효과: 이 투명 처리 덕분에 휠 이벤트의 히트테스트가 _vw(viewport)를
-        # 건너뛰고 이 창(_PipWindow) 자체로 떨어져 wheelEvent()가 정상 호출된다
-        # (viewport가 히트테스트 대상이면 QAbstractScrollArea가 viewportEvent()로
-        # 가로채 InlinePlayer까지 못 온다 — _FullscreenWindow가 그 문제를 겪었던
-        # 이유). 즉 PiP의 Ctrl+휠은 이 투명 속성에 우연히 의존한다 — 나중에 드래그
-        # 방식을 바꾸며 이 줄을 지우면 PiP 휠도 조용히 죽으니 주의할 것.
+        # 영상 영역은 마우스 이벤트를 투명 처리 → 창 드래그가 영상 위에서도 동작.
+        # 부수효과로 휠 이벤트의 히트테스트가 _vw(viewport)를 건너뛰고 이 창으로
+        # 떨어져 wheelEvent()가 호출되지만, **거기에 의존하지는 않는다** —
+        # InlinePlayer.eventFilter 의 Wheel 분기가 이 창의 viewport 도 명시적으로
+        # 가로채므로(전체화면과 동일) 이 속성을 빼도 Ctrl+휠은 살아 있다.
         self._vw.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self._vw.viewport().setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
@@ -1046,6 +1080,8 @@ class InlinePlayer(QWidget):
         self._transient_timer.setSingleShot(True)
         self._transient_timer.timeout.connect(self._clear_transient)
         self._transient_text = ""
+        # 임시 문구가 덮어쓴 직전 상태(문구, 표시 여부) — 만료 후 되돌린다.
+        self._status_before_transient: tuple[str, bool] = ("", False)
 
         # 휠은 이벤트가 연속으로 쏟아지므로 자막 오프셋과 같은 500ms 디바운스로
         # 마지막 값만 한 번 기록한다.
@@ -1091,6 +1127,11 @@ class InlinePlayer(QWidget):
         # 받으므로 eventFilter()의 Wheel 분기가 그 경로로도 정상 도달한다(실측
         # 확인 — per-object 설치를 빼고도 동작함). 왜 Wheel 분기가 필요한지는
         # eventFilter() 주석 참조.
+
+        # 저장된 크기·위치를 오버레이에 실제로 밀어 넣는다. 생성자가 설정값을 필드에
+        # 담기만 하고 여기서 반영하지 않으면, config 에 2.0 이 저장돼 있어도 화면
+        # 자막은 1.0 크기로 뜨고 첫 Ctrl+휠에서 1.0 → 2.1 로 튄다.
+        self._apply_subtitle_prefs()
 
     # ── Mouse-activity tracking ────────────────────────────────────
 
@@ -1149,14 +1190,19 @@ class InlinePlayer(QWidget):
             # 이벤트는 부모 위젯으로 전파한다" 처리를 거치지 않는다 — _VideoView.wheelEvent
             # 의 event.ignore()가 상위(InlinePlayer/_FullscreenWindow)까지 자동으로
             # 전달되지 않는다는 뜻이다(가시성과는 무관 — 재생 중이라 뷰가 화면에 보이는
-            # 상태에서도 동일하게 막힌다). 그래서 각 _VideoView를 담고 있는 창마다
-            # viewport를 직접 가로채 InlinePlayer.wheelEvent로 넘긴다. InlinePlayer 본체는
-            # self._video_view.viewport()가 대상이고, 전체화면은 self._fs_win._vw.viewport()
-            # 가 대상이다(PiP는 드래그용 WA_TransparentForMouseEvents 덕분에 히트테스트가
-            # viewport를 건너뛰어 이 분기 없이도 동작한다 — _PipWindow 생성자 주석 참조).
+            # 상태에서도 동일하게 막힌다). 그래서 _VideoView를 담고 있는 **세 창 모두**
+            # viewport를 직접 가로채 InlinePlayer.wheelEvent로 넘긴다: 인라인
+            # self._video_view.viewport(), 전체화면 self._fs_win._vw.viewport(),
+            # PiP self._pip_win._vw.viewport(). PiP는 드래그용
+            # WA_TransparentForMouseEvents 덕분에 히트테스트가 viewport를 건너뛰어
+            # 지금까지 '우연히' 동작했지만, viewport로 직접 온 휠에는 폴백이 없어
+            # 드래그 구현을 바꾸면 전체화면과 같은 방식으로 조용히 죽는다.
             fs_viewport = self._fs_win._vw.viewport() if self._fs_win else None
-            if obj is self._video_view.viewport() or (
-                fs_viewport is not None and obj is fs_viewport
+            pip_viewport = self._pip_win._vw.viewport() if self._pip_win else None
+            if (
+                obj is self._video_view.viewport()
+                or (fs_viewport is not None and obj is fs_viewport)
+                or (pip_viewport is not None and obj is pip_viewport)
             ):
                 self.wheelEvent(event)
                 return event.isAccepted()
@@ -1263,41 +1309,71 @@ class InlinePlayer(QWidget):
             overlays.append(self._pip_win.subtitle)
         return overlays
 
+    def _subtitle_prefs_dirty(self) -> bool:
+        """크기·위치가 기본값에서 벗어나 있는지(초기화 메뉴 노출 조건)."""
+        return (
+            self._subtitle_font_scale != LyricsOverlay.FONT_SCALE_DEFAULT
+            or self._subtitle_bottom_ratio != LyricsOverlay.BOTTOM_RATIO_DEFAULT
+        )
+
     def _apply_subtitle_prefs(self) -> None:
         """현재 크기·위치를 3창 오버레이 전부에 반영한다."""
         for overlay in self._all_subtitles():
             overlay.set_font_scale(self._subtitle_font_scale)
             overlay.set_bottom_ratio(self._subtitle_bottom_ratio)
+        # 값이 기본값이 아니면 가사가 없어도 💬 우클릭으로 초기화에 닿을 수 있어야 한다.
+        dirty = self._subtitle_prefs_dirty()
+        for bar in self._all_bars():
+            bar.set_subtitle_prefs_dirty(dirty)
 
     def _show_transient(self, text: str, ms: int = 1000) -> None:
         """조절 중 현재 값을 잠깐 보여준다.
 
         가사 줄이 안 나오는 구간에서 조절하면 화면에 아무 변화가 없어 먹었는지
         알 수 없다. 그래서 값 표시는 있으나 마나 한 장식이 아니라 필수다.
+
+        상태 라벨(`_status_lbl`)은 **인라인 위젯의 자식**이라 전체화면에서는 가려지고
+        PiP 는 아예 다른 창이다. 그래서 같은 문구를 3창 오버레이에도 그린다 —
+        오버레이는 세 창이 모두 갖고 있고 이미 영상 위에 얹혀 있다.
         """
+        if not self._transient_text:
+            # 진행 중이던 안내(예: "스트림 URL 가져오는 중…")를 덮어쓰므로 되돌릴 수
+            # 있게 보관한다. 이미 임시 문구 중이면 처음 보관한 원본을 유지한다.
+            self._status_before_transient = (
+                self._status_lbl.text(), not self._status_lbl.isHidden()
+            )
         self._transient_text = text
         self._status_lbl.setText(text)
         self._status_lbl.show()
+        for overlay in self._all_subtitles():
+            overlay.set_notice(text)
         self._transient_timer.start(ms)
 
     def _clear_transient(self) -> None:
         # 그 사이 스트림 안내 문구로 바뀌었다면 건드리지 않는다.
         if self._status_lbl.text() == self._transient_text:
-            self._status_lbl.hide()
+            prev_text, prev_visible = self._status_before_transient
+            self._status_lbl.setText(prev_text)
+            self._status_lbl.setVisible(prev_visible)
         self._transient_text = ""
+        self._status_before_transient = ("", False)
+        for overlay in self._all_subtitles():
+            overlay.set_notice("")
 
     def _nudge_subtitle_scale(self, delta: float) -> None:
         ov = self._subtitle
-        ov.set_font_scale(self._subtitle_font_scale + delta)
-        self._subtitle_font_scale = ov.font_scale       # clamp 된 실제 값을 되받는다
+        # 0.1 씩 더하면 부동소수 찌꺼기(1.9700000000000002)가 쌓여 그대로 저장된다.
+        # 스텝이 소수 둘째 자리까지라 매번 반올림해 누적 자체를 막는다.
+        ov.set_font_scale(round(self._subtitle_font_scale + delta, 2))
+        self._subtitle_font_scale = round(ov.font_scale, 2)   # clamp 된 실제 값을 되받는다
         self._apply_subtitle_prefs()
         self._show_transient(f"자막 크기 {round(self._subtitle_font_scale * 100)}%")
         self._queue_subtitle_prefs_save()
 
     def _nudge_subtitle_bottom(self, delta: float) -> None:
         ov = self._subtitle
-        ov.set_bottom_ratio(self._subtitle_bottom_ratio + delta)
-        self._subtitle_bottom_ratio = ov.bottom_ratio
+        ov.set_bottom_ratio(round(self._subtitle_bottom_ratio + delta, 2))
+        self._subtitle_bottom_ratio = round(ov.bottom_ratio, 2)
         self._apply_subtitle_prefs()
         self._show_transient(f"자막 위치 {round(self._subtitle_bottom_ratio * 100)}%")
         self._queue_subtitle_prefs_save()
@@ -1307,8 +1383,10 @@ class InlinePlayer(QWidget):
 
     def _flush_subtitle_prefs(self) -> None:
         try:
-            settings.save_setting("subtitle_font_scale", self._subtitle_font_scale)
-            settings.save_setting("subtitle_bottom_ratio", self._subtitle_bottom_ratio)
+            # 설정 파일에 1.9700000000000002 같은 값이 박히지 않게 저장 직전에도 자른다
+            # (설정 파일을 손으로 고쳐 들어온 값에도 적용된다).
+            settings.save_setting("subtitle_font_scale", round(self._subtitle_font_scale, 2))
+            settings.save_setting("subtitle_bottom_ratio", round(self._subtitle_bottom_ratio, 2))
         except OSError:
             logger.exception("자막 표시 설정 저장 실패")
 

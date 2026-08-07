@@ -14,12 +14,34 @@ from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
 from gui.widgets.video_player import InlinePlayer
 
 
+@pytest.fixture(autouse=True)
+def isolated_subtitle_settings(monkeypatch):
+    """이 모듈의 어떤 테스트도 실사용 ``data/config.yaml`` 을 건드리지 않게 한다.
+
+    `_nudge_*` 는 500ms 디바운스 타이머를 걸고, 타이머가 살아남아 만료되면
+    `settings.save_setting` 이 **실제 설정 파일**에 값을 쓴다. 실제로 연속 실행마다
+    `subtitle_font_scale` 이 1.77 → 1.87 → 1.97 로 누적됐고, 오염된 값을 다음 실행이
+    시작값으로 읽어 5건이 깨졌다. 저장을 무력화하고 시작값도 기본값으로 고정한다
+    (설정 파일의 실제 상태와 무관하게 결정적으로 돌도록).
+    """
+    import config.settings as settings
+
+    monkeypatch.setattr(settings, "save_setting", lambda *_a, **_k: None)
+    monkeypatch.setattr(settings, "SUBTITLE_FONT_SCALE", LyricsOverlay.FONT_SCALE_DEFAULT)
+    monkeypatch.setattr(settings, "SUBTITLE_BOTTOM_RATIO", LyricsOverlay.BOTTOM_RATIO_DEFAULT)
+
+
 @pytest.fixture
-def player(qapp_instance):
+def player(qapp_instance, isolated_subtitle_settings):
+    # isolated_subtitle_settings 를 명시적으로 요구한다 — InlinePlayer 는 생성 시점에
+    # 설정값을 읽으므로 픽스처 순서가 뒤바뀌면 격리가 무의미해진다.
     p = InlinePlayer()
     p.resize(800, 450)
     yield p
     p.stop()
+    # 남은 타이머가 테스트 종료 후(다른 모듈의 이벤트 루프에서) 발화하지 않게 정리한다.
+    p._prefs_save_timer.stop()
+    p._transient_timer.stop()
     p.deleteLater()
 
 
@@ -485,6 +507,21 @@ class TestSubtitleWheel:
         player._exit_fullscreen()
         player.hide()
 
+    def test_pip_영상_위에서_굴린_휠도_도달한다(self, player):
+        """회귀: PiP 는 `_vw` 의 WA_TransparentForMouseEvents(창 드래그용) 덕분에
+        히트테스트가 viewport 를 건너뛰어 '우연히' 동작했다. viewport 로 곧장 온 휠에는
+        폴백이 없어(델타 0.0) 드래그 구현을 바꾸면 전체화면과 똑같이 조용히 죽는다."""
+        player.resize(800, 450)
+        player.show()
+        QTest.qWaitForWindowExposed(player)
+        player.set_lyrics(_track())
+        player._enter_pip()
+        before = player._subtitle.font_scale
+        _wheel(player._pip_win._vw.viewport(), True, Qt.KeyboardModifier.ControlModifier)
+        assert player._subtitle.font_scale == pytest.approx(before + 0.1)
+        player._exit_pip()
+        player.hide()
+
 
 class TestSubtitlePrefsPersistence:
     def test_연속_조절이_한_번만_저장된다(self, player, monkeypatch):
@@ -510,3 +547,134 @@ class TestSubtitlePrefsPersistence:
         player._reset_subtitle_prefs()
         assert player._subtitle.font_scale == LyricsOverlay.FONT_SCALE_DEFAULT
         assert player._subtitle.bottom_ratio == LyricsOverlay.BOTTOM_RATIO_DEFAULT
+
+    def test_저장값은_소수점_둘째_자리로_자른다(self, player, monkeypatch):
+        """회귀: 0.1 누적으로 생긴 1.9700000000000002 가 config.yaml 에 그대로 박혔다."""
+        import config.settings as settings
+
+        saved: dict = {}
+        monkeypatch.setattr(settings, "save_setting", lambda k, v: saved.__setitem__(k, v))
+        player._subtitle_font_scale = 1.9700000000000002
+        player._subtitle_bottom_ratio = 0.30000000000000004
+        player._flush_subtitle_prefs()
+        assert saved["subtitle_font_scale"] == 1.97
+        assert saved["subtitle_bottom_ratio"] == 0.3
+
+    def test_반복_조절이_부동소수_찌꺼기를_남기지_않는다(self, player):
+        for _ in range(3):
+            player._nudge_subtitle_scale(0.1)
+        assert player._subtitle_font_scale == 1.3
+        for _ in range(3):
+            player._nudge_subtitle_bottom(0.02)
+        assert player._subtitle_bottom_ratio == 0.16
+
+
+class TestSavedPrefsAtStartup:
+    """C1 회귀: 생성자가 설정값을 필드에만 담고 오버레이에 밀어 넣지 않았다.
+
+    그래서 config 에 2.0 이 저장돼 있어도 화면 자막은 1.0 크기로 뜨고, 첫 Ctrl+휠에서
+    보이는 크기가 1.0 → 2.1 로 튀었다.
+    """
+
+    def test_저장된_크기_위치가_인라인_오버레이에_반영된다(
+        self, qapp_instance, isolated_subtitle_settings, monkeypatch
+    ):
+        import config.settings as settings
+
+        monkeypatch.setattr(settings, "SUBTITLE_FONT_SCALE", 2.0)
+        monkeypatch.setattr(settings, "SUBTITLE_BOTTOM_RATIO", 0.30)
+        p = InlinePlayer()
+        try:
+            assert p._subtitle.font_scale == pytest.approx(2.0)
+            assert p._subtitle.bottom_ratio == pytest.approx(0.30)
+        finally:
+            p.stop()
+            p._prefs_save_timer.stop()
+            p._transient_timer.stop()
+            p.deleteLater()
+
+    def test_기본값이면_그대로_기본값이다(self, player):
+        assert player._subtitle.font_scale == LyricsOverlay.FONT_SCALE_DEFAULT
+        assert player._subtitle.bottom_ratio == LyricsOverlay.BOTTOM_RATIO_DEFAULT
+
+
+class TestAdjustFeedback:
+    """I2 회귀: 조절 피드백이 인라인 상태 라벨에만 있어 전체화면·PiP 에서는 보이지 않았다.
+
+    가사 줄이 안 뜨는 구간에서 조절하면 화면에 아무 변화가 없어(설계 §3.8) 먹었는지
+    알 수 없다 — 그래서 세 창이 모두 갖고 있는 오버레이가 문구를 직접 그린다.
+    """
+
+    def test_전체화면_오버레이에_문구가_뜬다(self, player):
+        player.set_lyrics(_track())
+        player._enter_fullscreen()
+        player._nudge_subtitle_scale(0.1)
+        assert player._fs_win.subtitle.notice_text == "자막 크기 110%"
+        player._exit_fullscreen()
+
+    def test_pip_오버레이에_문구가_뜬다(self, player):
+        player.set_lyrics(_track())
+        player._enter_pip()
+        player._nudge_subtitle_bottom(0.02)
+        assert player._pip_win.subtitle.notice_text == "자막 위치 12%"
+        player._exit_pip()
+
+    def test_인라인_오버레이에도_문구가_뜬다(self, player):
+        player._nudge_subtitle_scale(0.1)
+        assert player._subtitle.notice_text == "자막 크기 110%"
+
+    def test_문구는_시간이_지나면_사라진다(self, player):
+        player._show_transient("자막 크기 110%", ms=10)
+        QTest.qWait(150)
+        assert player._subtitle.notice_text == ""
+        assert player._status_lbl.isHidden() is True
+
+    def test_진행_중이던_안내_문구를_복원한다(self, player):
+        """M3 회귀: 임시 문구가 '스트림 URL 가져오는 중…'을 덮고 지워 버렸다."""
+        player._status_lbl.setText("스트림 URL 가져오는 중…")
+        player._status_lbl.show()
+        player._show_transient("자막 크기 110%", ms=10)
+        assert player._status_lbl.text() == "자막 크기 110%"
+        QTest.qWait(150)
+        assert player._status_lbl.text() == "스트림 URL 가져오는 중…"
+        assert player._status_lbl.isHidden() is False
+
+
+class TestResetMenuReachability:
+    """I3 회귀: 조절은 아무 영상에서나 되는데 초기화 메뉴는 싱크 가사가 있을 때만 열렸다.
+
+    비(非)노래 영상에서 크기를 3.0 까지 올리면 그 값이 전역으로 저장되는데, 되돌릴
+    방법이 없었다. 값이 기본값이 아니면 가사가 없어도 메뉴를 연다(초기화 항목만).
+    """
+
+    def test_가사가_없어도_값이_바뀌었으면_메뉴가_열린다(self, player):
+        player._nudge_subtitle_scale(0.5)      # 가사 없는 영상에서 조절
+        assert player._bar._btn_cc.isEnabled() is True
+        menu = player._bar._build_subtitle_menu()
+        assert menu is not None
+        assert [a.text() for a in menu.actions()] == ["자막 크기·위치 초기화"]
+        menu.deleteLater()
+
+    def test_기본값이고_가사도_없으면_메뉴가_안_열린다(self, player):
+        assert player._bar._btn_cc.isEnabled() is False
+        assert player._bar._build_subtitle_menu() is None
+
+    def test_가사가_있으면_오프셋_항목도_함께_나온다(self, player):
+        player.set_lyrics(_track())
+        menu = player._bar._build_subtitle_menu()
+        labels = [a.text() for a in menu.actions()]
+        assert "자막 크기·위치 초기화" in labels
+        assert any("0.25초" in t for t in labels)
+        menu.deleteLater()
+
+    def test_초기화하면_다시_비활성으로_돌아간다(self, player):
+        player._nudge_subtitle_scale(0.5)
+        player._reset_subtitle_prefs()
+        assert player._bar._btn_cc.isEnabled() is False
+
+    def test_분리창_바에도_같은_조건이_전달된다(self, player):
+        player._nudge_subtitle_scale(0.5)
+        player._enter_fullscreen()
+        assert player._fs_win.bar._btn_cc.isEnabled() is True
+        assert player._fs_win.bar._build_subtitle_menu() is not None
+        player._exit_fullscreen()
