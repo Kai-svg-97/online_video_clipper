@@ -10,7 +10,7 @@ from PyQt6.QtGui import QKeyEvent, QWheelEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLineEdit, QVBoxLayout, QWidget
 
-from gui.widgets.lyrics_overlay import LyricsCue, LyricsTrack
+from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
 from gui.widgets.video_player import InlinePlayer
 
 
@@ -484,3 +484,29 @@ class TestSubtitleWheel:
         assert player._subtitle.font_scale == pytest.approx(before + 0.1)
         player._exit_fullscreen()
         player.hide()
+
+
+class TestSubtitlePrefsPersistence:
+    def test_연속_조절이_한_번만_저장된다(self, player, monkeypatch):
+        """휠은 이벤트가 쏟아지므로 500ms 디바운스 후 1회만 기록한다."""
+        from PyQt6.QtTest import QTest
+        import config.settings as settings
+
+        saved: list[tuple] = []
+        monkeypatch.setattr(settings, "save_setting", lambda k, v: saved.append((k, v)))
+
+        player.set_lyrics(_track())
+        for _ in range(5):
+            player._nudge_subtitle_scale(0.1)
+        assert saved == []                 # 아직 디바운스 중
+        QTest.qWait(700)
+        keys = [k for k, _ in saved]
+        assert keys.count("subtitle_font_scale") == 1
+
+    def test_초기화가_기본값으로_되돌린다(self, player):
+        player.set_lyrics(_track())
+        player._nudge_subtitle_scale(0.5)
+        player._nudge_subtitle_bottom(0.1)
+        player._reset_subtitle_prefs()
+        assert player._subtitle.font_scale == LyricsOverlay.FONT_SCALE_DEFAULT
+        assert player._subtitle.bottom_ratio == LyricsOverlay.BOTTOM_RATIO_DEFAULT

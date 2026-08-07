@@ -332,6 +332,7 @@ class _ControlBar(QWidget):
     subtitle_offset_nudged = pyqtSignal(int)   # ±ms
     subtitle_sync_here     = pyqtSignal()      # 현재 재생 위치를 현재 줄에 맞춤
     subtitle_offset_reset  = pyqtSignal()
+    subtitle_prefs_reset   = pyqtSignal()      # 자막 크기·위치를 기본값으로 초기화
 
     _HEIGHT = 72
 
@@ -499,6 +500,7 @@ class _ControlBar(QWidget):
         menu.addAction("현재 위치를 이 줄에 맞춤  ( \\ )", self.subtitle_sync_here.emit)
         menu.addSeparator()
         menu.addAction("초기화", self.subtitle_offset_reset.emit)
+        menu.addAction("자막 크기·위치 초기화", self.subtitle_prefs_reset.emit)
         menu.exec(self._btn_cc.mapToGlobal(self._btn_cc.rect().bottomLeft()))
 
     def _on_seek_released(self) -> None:
@@ -1045,6 +1047,13 @@ class InlinePlayer(QWidget):
         self._transient_timer.timeout.connect(self._clear_transient)
         self._transient_text = ""
 
+        # 휠은 이벤트가 연속으로 쏟아지므로 자막 오프셋과 같은 500ms 디바운스로
+        # 마지막 값만 한 번 기록한다.
+        self._prefs_save_timer = QTimer(self)
+        self._prefs_save_timer.setSingleShot(True)
+        self._prefs_save_timer.setInterval(500)
+        self._prefs_save_timer.timeout.connect(self._flush_subtitle_prefs)
+
         # Wire control bar signals → player
         self._bar.play_toggled.connect(self._toggle_play)
         self._bar.seek_relative.connect(self._seek_relative)
@@ -1062,6 +1071,7 @@ class InlinePlayer(QWidget):
             lambda: self._sync_subtitle_here(self._player.position())
         )
         self._bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
+        self._bar.subtitle_prefs_reset.connect(self._reset_subtitle_prefs)
 
         # Wire player signals → control bar
         self._player.positionChanged.connect(self._on_position)
@@ -1097,6 +1107,9 @@ class InlinePlayer(QWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:
+        if self._prefs_save_timer.isActive():
+            self._prefs_save_timer.stop()
+            self._flush_subtitle_prefs()
         if self._pip_win:
             self._exit_pip()
         if self._fs_win:
@@ -1279,6 +1292,7 @@ class InlinePlayer(QWidget):
         self._subtitle_font_scale = ov.font_scale       # clamp 된 실제 값을 되받는다
         self._apply_subtitle_prefs()
         self._show_transient(f"자막 크기 {round(self._subtitle_font_scale * 100)}%")
+        self._queue_subtitle_prefs_save()
 
     def _nudge_subtitle_bottom(self, delta: float) -> None:
         ov = self._subtitle
@@ -1286,6 +1300,24 @@ class InlinePlayer(QWidget):
         self._subtitle_bottom_ratio = ov.bottom_ratio
         self._apply_subtitle_prefs()
         self._show_transient(f"자막 위치 {round(self._subtitle_bottom_ratio * 100)}%")
+        self._queue_subtitle_prefs_save()
+
+    def _queue_subtitle_prefs_save(self) -> None:
+        self._prefs_save_timer.start()
+
+    def _flush_subtitle_prefs(self) -> None:
+        try:
+            settings.save_setting("subtitle_font_scale", self._subtitle_font_scale)
+            settings.save_setting("subtitle_bottom_ratio", self._subtitle_bottom_ratio)
+        except OSError:
+            logger.exception("자막 표시 설정 저장 실패")
+
+    def _reset_subtitle_prefs(self) -> None:
+        self._subtitle_font_scale = LyricsOverlay.FONT_SCALE_DEFAULT
+        self._subtitle_bottom_ratio = LyricsOverlay.BOTTOM_RATIO_DEFAULT
+        self._apply_subtitle_prefs()
+        self._show_transient("자막 크기·위치 초기화")
+        self._queue_subtitle_prefs_save()
 
     def _apply_subtitle_position(self, pos_ms: int) -> None:
         """재생 위치에 맞춰 자막을 갱신한다. **줄이 바뀔 때만** 다시 그린다."""
@@ -1613,6 +1645,7 @@ class InlinePlayer(QWidget):
             lambda: self._sync_subtitle_here(self._player.position())
         )
         bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
+        bar.subtitle_prefs_reset.connect(self._reset_subtitle_prefs)
         self._fs_win.subtitle.set_text_visible(self._subtitle_on)
         # 현재 줄을 새 창에도 1회 반영
         self._current_line_index = -2
@@ -1698,6 +1731,7 @@ class InlinePlayer(QWidget):
             lambda: self._sync_subtitle_here(self._player.position())
         )
         bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
+        bar.subtitle_prefs_reset.connect(self._reset_subtitle_prefs)
         self._pip_win.subtitle.set_text_visible(self._subtitle_on)
         # 현재 줄을 새 창에도 1회 반영
         self._current_line_index = -2
