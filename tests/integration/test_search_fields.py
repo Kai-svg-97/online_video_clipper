@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from domain.library.aggregates import VideoAggregate
+from domain.library.entities import Category
 from domain.library.repositories import MATCH_FIELD_KEYS, SearchQuery
 from domain.library.value_objects import VideoUrl
 from domain.song.aggregates import SongInfoAggregate
@@ -35,12 +36,22 @@ def songs(db):
     return SqliteSongRepository(db)
 
 
-def _add(repo, url, title, **meta):
+def _add(repo, url, title, category_id=None, **meta):
     agg = VideoAggregate.create(VideoUrl(url), title)
     if meta:
         agg.update_metadata(**meta)
+    if category_id is not None:
+        agg.assign_category(category_id)
     repo.save(agg)
     return agg
+
+
+def _music_category(repo):
+    """가사 검색 게이트(TestLyricsSearchScope) 도입 이후, 가사 매칭을 검증하는
+    기존 테스트들도 최상위 카테고리가 음악이어야 게이트를 통과한다."""
+    music = Category.create("Music")
+    repo.save_category(music)
+    return music.id
 
 
 def _ids(results):
@@ -86,7 +97,8 @@ class TestFieldCoverage:
         assert _ids(repo.search(SearchQuery(text="모리카와"))) == {a.id}
 
     def test_lyrics(self, repo, songs):
-        a = _add(repo, "https://youtu.be/l1", "무제")
+        music = _music_category(repo)
+        a = _add(repo, "https://youtu.be/l1", "무제", category_id=music)
         s = SongInfoAggregate.create(a.id)
         s.apply_fetched(
             lyrics_lines=[LyricsLine("You will be in my heart", "내 마음속에")],
@@ -102,7 +114,8 @@ class TestLyricsJsonFalsePositive:
     """가사를 SQL LIKE 로 다루면 안 되는 이유를 고정한다."""
 
     def test_json_key_does_not_match(self, repo, songs):
-        a = _add(repo, "https://youtu.be/j1", "무제")
+        music = _music_category(repo)
+        a = _add(repo, "https://youtu.be/j1", "무제", category_id=music)
         s = SongInfoAggregate.create(a.id)
         s.apply_fetched(lyrics_lines=[LyricsLine("Sunshine", "햇살")], mark_song=True)
         songs.save(s)
@@ -112,7 +125,8 @@ class TestLyricsJsonFalsePositive:
         assert _ids(repo.search(SearchQuery(text="t"))) == set()
 
     def test_real_lyrics_word_still_matches(self, repo, songs):
-        a = _add(repo, "https://youtu.be/j2", "무제")
+        music = _music_category(repo)
+        a = _add(repo, "https://youtu.be/j2", "무제", category_id=music)
         s = SongInfoAggregate.create(a.id)
         s.apply_fetched(lyrics_lines=[LyricsLine("Sunshine", "햇살")], mark_song=True)
         songs.save(s)
@@ -127,8 +141,8 @@ class TestLyricsPrefilter:
     되돌아가야 하며, 아래 테스트가 그 폴백을 고정한다.
     """
 
-    def _song(self, repo, songs, url, original, translation=""):
-        a = _add(repo, url, "무제")
+    def _song(self, repo, songs, url, original, translation="", category_id=None):
+        a = _add(repo, url, "무제", category_id=category_id)
         s = SongInfoAggregate.create(a.id)
         s.apply_fetched(
             lyrics_lines=[LyricsLine(original, translation)], mark_song=True
@@ -137,22 +151,38 @@ class TestLyricsPrefilter:
         return a
 
     def test_quote_in_lyrics_is_found(self, repo, songs):
+        music = _music_category(repo)
         # JSON 직렬화가 큰따옴표를 이스케이프하므로 LIKE 프리필터로는 못 찾는다.
-        a = self._song(repo, songs, "https://youtu.be/q1", 'He said "hello" softly')
+        a = self._song(
+            repo, songs, "https://youtu.be/q1", 'He said "hello" softly',
+            category_id=music,
+        )
         assert _ids(repo.search(SearchQuery(text='said "hello"'))) == {a.id}
 
     def test_backslash_in_lyrics_is_found(self, repo, songs):
-        a = self._song(repo, songs, "https://youtu.be/q2", "back\\slash line")
+        music = _music_category(repo)
+        a = self._song(
+            repo, songs, "https://youtu.be/q2", "back\\slash line",
+            category_id=music,
+        )
         assert _ids(repo.search(SearchQuery(text="back\\slash"))) == {a.id}
 
     def test_non_ascii_case_insensitive(self, repo, songs):
+        music = _music_category(repo)
         # SQLite LIKE 는 비ASCII 대소문자를 무시하지 않으므로 전체 스캔으로 찾아야 한다.
-        a = self._song(repo, songs, "https://youtu.be/q3", "CAFÉ au lait")
+        a = self._song(
+            repo, songs, "https://youtu.be/q3", "CAFÉ au lait", category_id=music
+        )
         assert _ids(repo.search(SearchQuery(text="café"))) == {a.id}
 
     def test_prefiltered_path_still_matches(self, repo, songs):
-        a = self._song(repo, songs, "https://youtu.be/q4", "Sunshine", "햇살")
-        self._song(repo, songs, "https://youtu.be/q5", "Moonlight", "달빛")
+        music = _music_category(repo)
+        a = self._song(
+            repo, songs, "https://youtu.be/q4", "Sunshine", "햇살", category_id=music
+        )
+        self._song(
+            repo, songs, "https://youtu.be/q5", "Moonlight", "달빛", category_id=music
+        )
         assert _ids(repo.search(SearchQuery(text="햇살"))) == {a.id}
 
     def test_prefilter_safety_predicate(self):
@@ -206,7 +236,8 @@ class TestMatchFieldsFor:
         assert set(result[a.id]) == {"title", "notes"}
 
     def test_reports_lyrics_field(self, repo, songs):
-        a = _add(repo, "https://youtu.be/f3", "무제")
+        music = _music_category(repo)
+        a = _add(repo, "https://youtu.be/f3", "무제", category_id=music)
         s = SongInfoAggregate.create(a.id)
         s.apply_fetched(lyrics_lines=[LyricsLine("Moonlight", "달빛")], mark_song=True)
         songs.save(s)
@@ -240,3 +271,72 @@ class TestMatchFieldsFor:
 
         assert set(got) == {"title", "notes", "summary"}
         assert list(got) == [k for k in MATCH_FIELD_KEYS if k in set(got)]
+
+
+class TestLyricsSearchScope:
+    """가사 검색은 최상위 카테고리가 음악인 영상에서만 동작한다."""
+
+    def _song(self, repo, songs, url, title, lyric, category_id=None):
+        agg = VideoAggregate.create(VideoUrl(url), title)
+        if category_id is not None:
+            agg.assign_category(category_id)
+        repo.save(agg)
+        s = SongInfoAggregate.create(agg.id)
+        s.set_song_flag(True)
+        s.edit_lyrics([LyricsLine(original=lyric)])
+        songs.save(s)
+        return agg
+
+    def test_music_루트_직속은_가사로_검색된다(self, repo, songs):
+        music = Category.create("Music")
+        repo.save_category(music)
+        a = self._song(repo, songs, "https://youtu.be/s1", "곡1", "청춘의 노랫말", music.id)
+        assert _ids(repo.search(SearchQuery(text="노랫말"))) == {a.id}
+
+    def test_중첩_하위도_검색된다(self, repo, songs):
+        music = Category.create("Music")
+        repo.save_category(music)
+        kpop = Category.create("K-Pop", parent_id=music.id)
+        repo.save_category(kpop)
+        a = self._song(repo, songs, "https://youtu.be/s2", "곡2", "청춘의 노랫말", kpop.id)
+        assert _ids(repo.search(SearchQuery(text="노랫말"))) == {a.id}
+
+    def test_비음악_카테고리는_가사로_안_걸린다(self, repo, songs):
+        movies = Category.create("Movies")
+        repo.save_category(movies)
+        self._song(repo, songs, "https://youtu.be/s3", "곡3", "청춘의 노랫말", movies.id)
+        assert _ids(repo.search(SearchQuery(text="노랫말"))) == set()
+
+    def test_미분류는_가사로_안_걸린다(self, repo, songs):
+        self._song(repo, songs, "https://youtu.be/s4", "곡4", "청춘의 노랫말", None)
+        assert _ids(repo.search(SearchQuery(text="노랫말"))) == set()
+
+    def test_한글이름과_대소문자_공백_변형도_인정된다(self, repo, songs):
+        for i, name in enumerate((" MUSIC ", "음악", "노래")):
+            c = Category.create(name)
+            repo.save_category(c)
+            self._song(repo, songs, f"https://youtu.be/v{i}", f"곡{i}", "청춘의 노랫말", c.id)
+        assert len(repo.search(SearchQuery(text="노랫말"))) == 3
+
+    def test_배지와_검색결과가_일치한다(self, repo, songs):
+        music = Category.create("Music")
+        repo.save_category(music)
+        movies = Category.create("Movies")
+        repo.save_category(movies)
+        a = self._song(repo, songs, "https://youtu.be/m1", "곡A", "청춘의 노랫말", music.id)
+        b = self._song(repo, songs, "https://youtu.be/m2", "곡B", "청춘의 노랫말", movies.id)
+        fields = repo.match_fields_for([a.id, b.id], "노랫말")
+        assert "lyrics" in fields.get(a.id, ())
+        assert "lyrics" not in fields.get(b.id, ())
+
+    def test_카테고리_부모가_순환해도_멈추지_않는다(self, repo, songs, db):
+        # 앱 UI로는 못 만들지만 데이터가 깨지면 재귀 CTE 가 무한 루프에 빠진다.
+        a = Category.create("A")
+        b = Category.create("B")
+        repo.save_category(a)
+        repo.save_category(b)
+        with db.connection() as conn:
+            conn.execute("UPDATE categories SET parent_id=? WHERE id=?", (str(b.id), str(a.id)))
+            conn.execute("UPDATE categories SET parent_id=? WHERE id=?", (str(a.id), str(b.id)))
+        self._song(repo, songs, "https://youtu.be/c1", "곡C", "청춘의 노랫말", a.id)
+        assert _ids(repo.search(SearchQuery(text="노랫말"))) == set()

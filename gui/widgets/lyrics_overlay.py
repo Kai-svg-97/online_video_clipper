@@ -151,11 +151,22 @@ class LyricsOverlay(QWidget):
     """
 
     _MIN_FONT_PX = 13
-    _FONT_RATIO = 0.055          # 위젯 높이 대비 원문 글자 크기
+    # 영역(비디오 전체) 높이 대비 원문 글자 크기. 예전 0.055 는 높이 28% 띠에
+    # 적용돼 실질 1.5% 였다 — 오버레이가 영역 전체를 덮게 되면서 기준이 바뀌었다.
+    _BASE_FONT_RATIO = 0.045
     _TRANSLATION_RATIO = 0.85    # 원문 대비 번역 글자 크기
     _OUTLINE_RATIO = 0.14        # 글자 크기 대비 외곽선 두께
     _LINE_GAP = 4                # 원문/번역 줄 간격(px)
     _SIDE_MARGIN = 24            # 좌우 여백(px)
+    # 조절 피드백 문구("자막 크기 130%")용. 자막과 겹치지 않게 **위쪽**에 그린다.
+    _NOTICE_RATIO = 0.032        # 영역 높이 대비 문구 글자 크기
+    _NOTICE_TOP_RATIO = 0.06     # 위에서 띄우는 비율
+
+    # 사용자 조절 범위 — InlinePlayer 와 테스트가 참조하므로 공개 상수로 둔다.
+    FONT_SCALE_DEFAULT = 1.0
+    FONT_SCALE_MIN, FONT_SCALE_MAX = 0.5, 3.0
+    BOTTOM_RATIO_DEFAULT = 0.10
+    BOTTOM_RATIO_MIN, BOTTOM_RATIO_MAX = 0.0, 0.6
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -164,7 +175,11 @@ class LyricsOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._original = ""
         self._translation = ""
+        self._notice = ""
         self._visible_text = True
+        # 사용자 조절값(Task 4에서 setter 로 노출). 비율이라 창 크기와 무관하게 일정.
+        self._font_scale: float = self.FONT_SCALE_DEFAULT
+        self._bottom_ratio: float = self.BOTTOM_RATIO_DEFAULT
 
     # ── 상태 ──────────────────────────────────────────────────────
     def set_cue(self, cue: LyricsCue | None) -> None:
@@ -184,14 +199,64 @@ class LyricsOverlay(QWidget):
         self._visible_text = on
         self.update()
 
+    def set_notice(self, text: str) -> None:
+        """조절 피드백 문구를 잠깐 띄운다(빈 문자열이면 지운다).
+
+        전체화면·PiP 는 별개의 창이라 ``InlinePlayer`` 의 상태 라벨이 보이지 않는다.
+        세 창이 모두 갖고 있고 이미 영상 위에 얹혀 있는 이 오버레이가 문구를 직접
+        그려야 어느 창에서 조절해도 값이 보인다(설계 §3.8 — 피드백은 필수).
+        표시 시간은 문구를 넣고 빼는 쪽(``InlinePlayer``)이 타이머로 관리한다.
+        """
+        text = text or ""
+        if text == self._notice:
+            return
+        self._notice = text
+        self.update()
+
+    @property
+    def notice_text(self) -> str:
+        """현재 표시 중인 피드백 문구(없으면 빈 문자열)."""
+        return self._notice
+
+    def set_font_scale(self, scale: float) -> None:
+        """글자 크기 배율. 범위 밖 값은 잘라낸다(설정 파일이 깨져도 안전하게)."""
+        v = min(self.FONT_SCALE_MAX, max(self.FONT_SCALE_MIN, float(scale)))
+        if v == self._font_scale:
+            return
+        self._font_scale = v
+        self.update()
+
+    def set_bottom_ratio(self, ratio: float) -> None:
+        """아래에서 띄우는 비율. 값이 커지면 자막이 위로 올라간다."""
+        v = min(self.BOTTOM_RATIO_MAX, max(self.BOTTOM_RATIO_MIN, float(ratio)))
+        if v == self._bottom_ratio:
+            return
+        self._bottom_ratio = v
+        self.update()
+
+    @property
+    def font_scale(self) -> float:
+        return self._font_scale
+
+    @property
+    def bottom_ratio(self) -> float:
+        return self._bottom_ratio
+
     @property
     def current_text(self) -> tuple[str, str]:
         """(원문, 번역) — 테스트가 렌더 결과 대신 상태를 확인할 때 쓴다."""
         return self._original, self._translation
 
     # ── 렌더 ──────────────────────────────────────────────────────
+    def _bottom_px(self) -> int:
+        """아래에서 띄울 픽셀 수 — 비율이라 창 크기가 변해도 비중이 같다."""
+        return int(self.height() * self._bottom_ratio)
+
     def _fonts(self) -> tuple[QFont, QFont]:
-        px = max(self._MIN_FONT_PX, int(self.height() * self._FONT_RATIO))
+        px = max(
+            self._MIN_FONT_PX,
+            int(self.height() * self._BASE_FONT_RATIO * self._font_scale),
+        )
         family = subtitle_font_family()
         main = QFont(family, weight=QFont.Weight.Bold)
         main.setPixelSize(px)
@@ -235,12 +300,28 @@ class LyricsOverlay(QWidget):
         painter.setBrush(color)
         painter.drawPath(path)          # 그 위에 글자 채움
 
+    def _draw_notice(self, painter: QPainter) -> None:
+        """피드백 문구를 위쪽 가운데에 그린다(자막은 아래에 있어 겹치지 않는다)."""
+        px = max(self._MIN_FONT_PX, int(self.height() * self._NOTICE_RATIO))
+        font = QFont(subtitle_font_family(), weight=QFont.Weight.Bold)
+        font.setPixelSize(px)
+        baseline = int(self.height() * self._NOTICE_TOP_RATIO) + QFontMetrics(font).ascent()
+        self._draw_line(painter, self._notice, font, _TEXT_COLOR, baseline)
+
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 시그니처)
-        if not self._visible_text or not (self._original or self._translation):
+        # 자막이 꺼져 있거나 표시할 줄이 없어도 **피드백 문구는 그린다** — 조절이
+        # 먹었는지 알려 주는 유일한 신호라 자막 상태와 무관해야 한다.
+        has_cue = bool(self._visible_text and (self._original or self._translation))
+        if not has_cue and not self._notice:
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        if self._notice:
+            self._draw_notice(painter)
+        if not has_cue:
+            painter.end()
+            return
 
         main_font, sub_font = self._fonts()
         max_w = max(50, self.width() - self._SIDE_MARGIN * 2)
@@ -260,7 +341,8 @@ class LyricsOverlay(QWidget):
 
         total_h = sum(h for *_, h in rows) + self._LINE_GAP * (len(rows) - 1)
         # 아래에서부터 쌓아 올린다 — 자막은 하단 정렬이 자연스럽다.
-        y = self.height() - total_h
+        y = self.height() - self._bottom_px() - total_h
+        y = max(0, y)   # 글자가 커도 위로 잘려 나가지 않게
         for text, font, color, height in rows:
             baseline = int(y + QFontMetrics(font).ascent())
             self._draw_line(painter, text, font, color, baseline)
