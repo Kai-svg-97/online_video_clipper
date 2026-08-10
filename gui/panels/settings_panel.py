@@ -1001,38 +1001,18 @@ class SettingsPanel(QWidget):
         layout.addSpacing(10)
 
         yt_desc = QLabel(
-            "Google Cloud Console에서 YouTube Data API v3 OAuth2 자격증명을 발급 후\n"
-            "아래에 입력하고 인증하세요. 무료 — 일 10,000 유닛 할당.\n"
-            "인증 완료 시 재생목록 동기화(읽기+쓰기) + 구독 채널 가져오기가 활성화됩니다."
+            "Google 계정을 연결하면 YouTube 재생목록 동기화(읽기·쓰기)와\n"
+            "구독 채널 가져오기를 사용할 수 있습니다.\n"
+            "로그인은 기본 브라우저의 Google 페이지에서 안전하게 진행됩니다."
         )
         yt_desc.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         yt_desc.setWordWrap(True)
         layout.addWidget(yt_desc)
         layout.addSpacing(8)
 
-        cid_row = QHBoxLayout()
-        cid_lbl = QLabel("Client ID")
-        cid_lbl.setFixedWidth(100)
-        self._yt_client_id_edit = QLineEdit()
-        self._yt_client_id_edit.setPlaceholderText("xxxx.apps.googleusercontent.com")
-        cid_row.addWidget(cid_lbl)
-        cid_row.addWidget(self._yt_client_id_edit, 1)
-        layout.addLayout(cid_row)
-
-        csec_row = QHBoxLayout()
-        csec_lbl = QLabel("Client Secret")
-        csec_lbl.setFixedWidth(100)
-        self._yt_client_secret_edit = QLineEdit()
-        self._yt_client_secret_edit.setPlaceholderText("GOCSPX-…")
-        self._yt_client_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        csec_row.addWidget(csec_lbl)
-        csec_row.addWidget(self._yt_client_secret_edit, 1)
-        layout.addLayout(csec_row)
-        layout.addSpacing(8)
-
         yt_btn_row = QHBoxLayout()
-        self._yt_auth_btn = QPushButton("OAuth 인증하기")
-        self._yt_auth_btn.setFixedWidth(130)
+        self._yt_auth_btn = QPushButton("Google 계정으로 연결")
+        self._yt_auth_btn.setFixedWidth(160)
         self._yt_auth_btn.clicked.connect(self._on_yt_auth)
         yt_btn_row.addWidget(self._yt_auth_btn)
 
@@ -1283,27 +1263,39 @@ class SettingsPanel(QWidget):
 
     # ── YouTube API OAuth ──────────────────────────────────────────────────
 
+    _YT_BTN_DISCONNECTED = "Google 계정으로 연결"
+    _YT_BTN_WORKING = "연결 중…"
+    _YT_BTN_CONNECTED = "Google 계정 다시 연결"
+
     def _refresh_yt_status(self) -> None:
         if self._yt_oauth is None:
             self._yt_status_lbl.setText("○ YouTube API 미초기화")
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
+            self._yt_auth_btn.setEnabled(False)
             return
+        if not self._yt_oauth.has_client_config():
+            self._yt_status_lbl.setText(
+                "YouTube OAuth 설정이 앱에 포함되지 않았습니다. 배포자에게 문의하세요."
+            )
+            self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('warning')};")
+            self._yt_auth_btn.setEnabled(False)
+            self._yt_auth_btn.setText(self._YT_BTN_DISCONNECTED)
+            return
+        self._yt_auth_btn.setEnabled(True)
         if self._yt_oauth.is_authenticated():
             name = self._yt_oauth.get_channel_name() or "인증됨"
-            self._yt_status_lbl.setText(f"● 연결됨: {name}")
+            self._yt_status_lbl.setText(
+                f"● 연결됨: {name}\n앱을 다시 시작하면 모든 YouTube 연동 기능이 활성화됩니다."
+            )
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('success')};")
+            self._yt_auth_btn.setText(self._YT_BTN_CONNECTED)
         else:
-            self._yt_status_lbl.setText("○ 미연결 — OAuth 인증이 필요합니다")
+            self._yt_status_lbl.setText("○ 미연결 — Google 계정으로 연결하세요")
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('danger')};")
+            self._yt_auth_btn.setText(self._YT_BTN_DISCONNECTED)
 
     def _on_yt_auth(self) -> None:
-        if self._yt_oauth is None:
-            return
-        client_id = self._yt_client_id_edit.text().strip()
-        client_secret = self._yt_client_secret_edit.text().strip()
-        if not client_id or not client_secret:
-            self._yt_status_lbl.setText("Client ID와 Client Secret을 입력하세요.")
-            self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('warning')};")
+        if self._yt_oauth is None or not self._yt_oauth.has_client_config():
             return
 
         from PyQt6.QtCore import QThread, pyqtSignal as _sig  # noqa: PLC0415
@@ -1312,38 +1304,39 @@ class SettingsPanel(QWidget):
             done = _sig(str)   # channel_name or ""
             err  = _sig(str)
 
-            def __init__(self, oauth, cid, csec, parent=None):
+            def __init__(self, oauth, parent=None):
                 super().__init__(parent)
                 self._oauth = oauth
-                self._cid   = cid
-                self._csec  = csec
 
             def run(self):
                 try:
-                    self._oauth.run_auth_flow(self._cid, self._csec)
+                    self._oauth.run_auth_flow()
                     name = self._oauth.get_channel_name() or "인증됨"
                     self.done.emit(name)
                 except Exception as exc:
+                    logger.exception("YouTube OAuth 인증 실패")
                     self.err.emit(str(exc))
 
         self._yt_auth_btn.setEnabled(False)
-        self._yt_auth_btn.setText("인증 중…")
+        self._yt_auth_btn.setText(self._YT_BTN_WORKING)
         self._yt_status_lbl.setText("브라우저에서 Google 계정으로 승인하세요…")
         self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
 
-        worker = _AuthWorker(self._yt_oauth, client_id, client_secret, self)
+        worker = _AuthWorker(self._yt_oauth, self)
 
         def _on_done(name: str) -> None:
             self._yt_auth_btn.setEnabled(True)
-            self._yt_auth_btn.setText("OAuth 인증하기")
-            self._yt_status_lbl.setText(f"● 연결됨: {name}")
+            self._yt_auth_btn.setText(self._YT_BTN_CONNECTED)
+            self._yt_status_lbl.setText(
+                f"● 연결됨: {name}\n앱을 다시 시작하면 모든 YouTube 연동 기능이 활성화됩니다."
+            )
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('success')};")
             self._yt_auth_worker = None
 
         def _on_err(msg: str) -> None:
             self._yt_auth_btn.setEnabled(True)
-            self._yt_auth_btn.setText("OAuth 인증하기")
-            self._yt_status_lbl.setText(f"인증 실패: {msg[:120]}")
+            self._yt_auth_btn.setText(self._YT_BTN_DISCONNECTED)
+            self._yt_status_lbl.setText(f"연결 실패: {msg[:120]}")
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('danger')};")
             self._yt_auth_worker = None
 

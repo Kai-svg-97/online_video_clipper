@@ -469,7 +469,7 @@ git commit -m "feat: inject bundled YouTube OAuth configuration"
 - Keeps: `_yt_auth_btn`, `_yt_disconnect_btn`, `_yt_status_lbl`, and `_yt_auth_worker` lifecycle.
 - Removes: `_yt_client_id_edit` and `_yt_client_secret_edit` completely.
 
-- [ ] **Step 1: Write GUI tests for the new controls**
+- [x] **Step 1: Write GUI tests for the new controls**
 
 ```python
 class FakeOAuth:
@@ -513,13 +513,13 @@ def test_missing_bundled_client_disables_connect(qtbot):
 
 Add a worker test using `qtbot.waitUntil` or `qtbot.waitSignal` that clicks the button, confirms `run_auth_flow()` was called with no credentials, and confirms the connected label includes the restart notice. Add a disconnect test.
 
-- [ ] **Step 2: Run GUI tests and confirm they fail against the current fields**
+- [x] **Step 2: Run GUI tests and confirm they fail against the current fields**
 
 Run: `pytest tests/gui/test_youtube_oauth_settings.py -v`
 
 Expected: failures because the current UI still renders and reads Client ID/Secret.
 
-- [ ] **Step 3: Replace the UI copy and controls**
+- [x] **Step 3: Replace the UI copy and controls**
 
 Use this end-user copy:
 
@@ -538,7 +538,7 @@ Button labels:
 
 Remove all Client ID/Secret labels, placeholders, password echo mode, and empty-field validation.
 
-- [ ] **Step 4: Update the worker and status behavior**
+- [x] **Step 4: Update the worker and status behavior**
 
 The worker must call `self._oauth.run_auth_flow()` with no arguments. On success show:
 
@@ -555,13 +555,13 @@ YouTube OAuth 설정이 앱에 포함되지 않았습니다. 배포자에게 문
 
 Keep errors capped for display, but log the full exception in the worker boundary without credential/token content.
 
-- [ ] **Step 5: Run GUI tests**
+- [x] **Step 5: Run GUI tests**
 
 Run: `pytest tests/gui/test_youtube_oauth_settings.py tests/gui/test_smoke.py -v`
 
 Expected: all pass, no QThread-destroyed warnings.
 
-- [ ] **Step 6: Lint and compile the GUI module**
+- [x] **Step 6: Lint and compile the GUI module**
 
 Run: `ruff check gui/panels/settings_panel.py tests/gui/test_youtube_oauth_settings.py`
 
@@ -569,7 +569,7 @@ Run: `python -m compileall gui/panels/settings_panel.py`
 
 Expected: both exit 0.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```bash
 git add gui/panels/settings_panel.py tests/gui/test_youtube_oauth_settings.py
