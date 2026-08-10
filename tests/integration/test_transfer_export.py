@@ -161,3 +161,18 @@ class TestExportLibrary:
 
         assert result.video_count == 0
         assert result.category_count == 1
+
+    def test_내보내기_완료가_카운트와_함께_로그에_남는다(self, repos, caplog):
+        video_repo, song_repo = repos
+        cat = Category.create("Music")
+        video_repo.save_category(cat)
+        _make_video(video_repo, "https://youtu.be/a", "영상", category_id=cat.id)
+
+        writer = FakePackageWriter()
+        handler = ExportLibraryHandler(video_repo, song_repo, writer)
+        with caplog.at_level("INFO"):
+            handler.handle(ExportLibraryCommand(category_ids=[cat.id], dest_path="out.zip"))
+
+        msg = next(r.message for r in caplog.records if "내보내기 완료" in r.message)
+        assert "영상 1개" in msg
+        assert "out.zip" in msg

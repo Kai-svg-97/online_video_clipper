@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
@@ -40,6 +41,8 @@ from application.transfer.dtos import (
     ImportPreviewDTO,
     ImportResultDTO,
 )
+
+logger = logging.getLogger(__name__)
 
 _FIELD_LABELS = {
     "title": "제목",
@@ -103,6 +106,10 @@ class ExportLibraryHandler:
             "category_count": len(cat_payload),
         }
         self._writer.write(cmd.dest_path, manifest, data)
+        logger.info(
+            "라이브러리 내보내기 완료: 카테고리 %d개, 영상 %d개 → %s",
+            len(cat_payload), len(videos_payload), cmd.dest_path,
+        )
         return ExportResultDTO(
             path=cmd.dest_path, category_count=len(cat_payload), video_count=len(videos_payload),
         )
@@ -216,6 +223,7 @@ class DetectImportConflictsHandler:
 
         conflicts: list[ImportConflictDTO] = []
         new_count = 0
+        identical_count = 0
         for v in data.get("videos", []):
             if selected is not None and v.get("category_id") not in selected:
                 continue
@@ -228,6 +236,13 @@ class DetectImportConflictsHandler:
                 conflicts.append(
                     ImportConflictDTO(url=v["url"], title=v.get("title") or v["url"], fields=tuple(fields))
                 )
+            else:
+                identical_count += 1
+        logger.info(
+            "가져오기 충돌 감지 완료: %s — 새 영상 %d개, 값이 다른 영상 %d개, "
+            "이미 완전히 동일해 조용히 병합될 영상 %d개",
+            cmd.archive_path, new_count, len(conflicts), identical_count,
+        )
         return ImportConflictsDTO(conflicts=tuple(conflicts), new_video_count=new_count)
 
     def _diff_fields(self, existing: VideoAggregate, v: dict, local_cats: dict, pkg_cats: dict) -> list:
@@ -363,6 +378,10 @@ class ImportLibraryHandler:
                     cmd.resolutions.get(v["url"], {}), cmd.archive_path,
                 )
                 merged += 1
+        logger.info(
+            "라이브러리 가져오기 완료: %s — 새 영상 %d개, 병합 %d개, 카테고리 %d개",
+            cmd.archive_path, created, merged, len(pkg_to_local),
+        )
         return ImportResultDTO(
             created_count=created, merged_count=merged, category_count=len(pkg_to_local),
         )

@@ -6,6 +6,7 @@ data/*
 temp/*
 .claude/worktrees/
 logs/*
+*.ovcpkg
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

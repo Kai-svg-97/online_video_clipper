@@ -145,6 +145,23 @@ class TestDetectConflicts:
 
         assert result.conflicts == ()
 
+    def test_완전히_동일해도_결과가_로그에_남는다(self, repos, caplog):
+        """충돌 화면이 안 뜨는 게 오류인지 아닌지 사용자가 로그로 확인할 수 있어야 한다."""
+        video_repo, song_repo = repos
+        agg = VideoAggregate.create(VideoUrl("https://youtu.be/x"), "제목")
+        video_repo.save(agg)
+
+        manifest, data = _pkg(
+            [{"id": "c1", "name": "Music", "parent_id": None}],
+            [_video("https://youtu.be/x", "제목", "c1")],
+        )
+        reader = FakePackageReader(manifest, data)
+        handler = DetectImportConflictsHandler(video_repo, song_repo, reader)
+        with caplog.at_level("INFO"):
+            handler.handle(DetectImportConflictsCommand(archive_path="pkg.zip", category_ids=[]))
+
+        assert any("완전히 동일" in r.message for r in caplog.records)
+
     def test_가사_오프셋_0은_비어있는_것으로_취급된다(self, repos):
         video_repo, song_repo = repos
         agg = VideoAggregate.create(VideoUrl("https://youtu.be/x"), "노래")
@@ -356,3 +373,19 @@ class TestImportLibrary:
 
         assert result.merged_count == 1
         assert result.created_count == 0
+
+    def test_가져오기_완료가_카운트와_함께_로그에_남는다(self, repos, caplog):
+        video_repo, song_repo = repos
+        bus = EventBus()
+        manifest, data = _pkg(
+            [{"id": "c1", "name": "Music", "parent_id": None}],
+            [_video("https://youtu.be/new", "새영상", "c1")],
+        )
+        reader = FakePackageReader(manifest, data)
+        handler = ImportLibraryHandler(video_repo, song_repo, bus, reader)
+        with caplog.at_level("INFO"):
+            handler.handle(ImportLibraryCommand(archive_path="pkg.zip", category_ids=[], resolutions={}))
+
+        msg = next(r.message for r in caplog.records if "가져오기 완료" in r.message)
+        assert "새 영상 1개" in msg
+        assert "pkg.zip" in msg
