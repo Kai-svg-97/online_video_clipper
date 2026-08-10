@@ -225,7 +225,7 @@ git commit -m "feat: resolve bundled YouTube OAuth client"
 - Store serialized credentials under key `youtube.oauth.credentials.v1` via the injected structural `get/set/delete` secret-store methods.
 - Treat SQLite key `yt_api_credentials` as legacy read/migration data only.
 
-- [ ] **Step 1: Write integration tests with a real temporary Database and a fake secret store**
+- [x] **Step 1: Write integration tests with a real temporary Database and a fake secret store**
 
 ```python
 class FakeSecretStore:
@@ -264,7 +264,7 @@ def test_legacy_db_token_migrates_to_secret_store_and_is_deleted(tmp_path):
 
 Also add tests that `save_credentials()` writes only to the secret store, `clear()` removes both new and legacy storage, and malformed secret-store JSON returns `None` with a logged error.
 
-- [ ] **Step 2: Write the OAuth-flow and secure-refresh tests**
+- [x] **Step 2: Write the OAuth-flow and secure-refresh tests**
 
 Monkeypatch `google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file` and assert:
 
@@ -285,13 +285,13 @@ flow.run_local_server.assert_called_once_with(
 
 Add a refresh test that monkeypatches `Credentials.refresh` and verifies it receives a normal `google.auth.transport.requests.Request` instance. Assert the production module contains neither `verify = False` nor `urllib3.disable_warnings`.
 
-- [ ] **Step 3: Run the focused integration tests and confirm the old adapter contract fails**
+- [x] **Step 3: Run the focused integration tests and confirm the old adapter contract fails**
 
 Run: `pytest tests/integration/test_youtube_oauth_adapter.py -v`
 
 Expected: failures for the constructor and `run_auth_flow()` signature/storage expectations.
 
-- [ ] **Step 4: Refactor token serialization and migration**
+- [x] **Step 4: Refactor token serialization and migration**
 
 Implement private helpers with these exact responsibilities:
 
@@ -345,7 +345,7 @@ def _delete_legacy_db_token(self) -> None:
 
 If secret-store persistence cannot be confirmed, leave the SQLite record intact so authentication is not lost.
 
-- [ ] **Step 5: Refactor browser OAuth and TLS refresh**
+- [x] **Step 5: Refactor browser OAuth and TLS refresh**
 
 Use:
 
@@ -366,19 +366,19 @@ creds = flow.run_local_server(
 
 If no config path is available, raise `OAuthClientConfigError("YouTube OAuth 클라이언트 설정이 포함되지 않았습니다.")`. Refresh with `_GReq()` and normal TLS verification. Keep `RefreshError` as a warning and return `None`; log unexpected errors with `logger.exception`.
 
-- [ ] **Step 6: Run adapter tests and adjacent YouTube tests**
+- [x] **Step 6: Run adapter tests and adjacent YouTube tests**
 
 Run: `pytest tests/integration/test_youtube_oauth_adapter.py tests/unit/application/test_enrich_video.py -v`
 
 Expected: all pass.
 
-- [ ] **Step 7: Lint the adapter and tests**
+- [x] **Step 7: Lint the adapter and tests**
 
 Run: `ruff check infrastructure/youtube/oauth_adapter.py tests/integration/test_youtube_oauth_adapter.py`
 
 Expected: exit code 0.
 
-- [ ] **Step 8: Commit Task 2**
+- [x] **Step 8: Commit Task 2**
 
 ```bash
 git add infrastructure/youtube/oauth_adapter.py tests/integration/test_youtube_oauth_adapter.py
