@@ -179,6 +179,11 @@ echo "Output: dist/YouTubeContentManager-x86_64.AppImage"
   파일 경로와 누락 필드명만 담은 예외를 던진다.
 - **주입 범위**: `OVC_YOUTUBE_OAUTH_CONFIG`는 PyInstaller 하위 프로세스에만 설정되고
   빌드 스크립트 종료 시(`finally`) 복원/제거된다.
+- **GitHub Actions(`release.yml`)**: 로컬 `data/OAuth2.json`은 gitignore라 CI 체크아웃에
+  없으므로, 저장소 시크릿 `YOUTUBE_OAUTH_CLIENT_JSON`(그 파일 내용 그대로)을 읽어
+  `$RUNNER_TEMP/OAuth2.json`으로 복원 후 `OVC_YOUTUBE_OAUTH_CONFIG`로 넘긴다("Write
+  YouTube OAuth client config from secret" 스텝). 시크릿이 없으면 빌드가 즉시 실패한다
+  (`gh secret set YOUTUBE_OAUTH_CLIENT_JSON --repo <owner>/<repo> < data/OAuth2.json`로 등록).
 - **패키징**: `packaging/online_video_clipper.spec`이 검증된 경로를 `datas`에
   `(_oauth_src, "config")`로 추가해 번들 내 `config/OAuth2.json` 한 개로 고정한다.
   환경변수가 없거나 파일이 없으면 spec이 `SystemExit`로 빌드를 즉시 중단한다.

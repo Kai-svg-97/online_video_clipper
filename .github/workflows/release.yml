@@ -44,6 +44,21 @@ jobs:
             exit 1
           }
 
+      - name: Write YouTube OAuth client config from secret
+        shell: pwsh
+        env:
+          YT_OAUTH_JSON: ${{ secrets.YOUTUBE_OAUTH_CLIENT_JSON }}
+        run: |
+          # data/OAuth2.json(로컬 전용, gitignore)을 CI에는 저장소 시크릿으로 주입한다.
+          # 값은 어떤 스텝에서도 출력하지 않는다 — 파일 경로만 다음 스텝에 전달.
+          if (-not $env:YT_OAUTH_JSON) {
+            Write-Error "YOUTUBE_OAUTH_CLIENT_JSON 시크릿이 설정되어 있지 않습니다. 저장소 Settings > Secrets and variables > Actions에 data/OAuth2.json(OAuth.json 아님) 내용을 등록하세요."
+            exit 1
+          }
+          $path = Join-Path $env:RUNNER_TEMP "OAuth2.json"
+          [System.IO.File]::WriteAllText($path, $env:YT_OAUTH_JSON, [System.Text.Encoding]::UTF8)
+          "OVC_YOUTUBE_OAUTH_CONFIG=$path" >> $env:GITHUB_ENV
+
       - name: Download ffmpeg + run PyInstaller
         shell: pwsh
         run: |
