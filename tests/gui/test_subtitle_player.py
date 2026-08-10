@@ -174,6 +174,34 @@ class TestOffsetShortcuts:
         player._nudge_subtitle_offset(2000)   # 자막을 2초 늦춤
         assert player._subtitle.current_text == ("", "")
 
+    def test_쉼표_마침표_키도_대괄호와_동일하게_동작한다(self, player):
+        """`,`/`.`는 `[`/`]`의 별칭 — 편집 프로그램에서 익숙한 키 배치를 추가로 지원."""
+        player.set_lyrics(_track())
+        _key(player, Qt.Key.Key_Period)
+        assert player._track.offset_ms == 250
+        _key(player, Qt.Key.Key_Comma)
+        _key(player, Qt.Key.Key_Comma)
+        assert player._track.offset_ms == -250
+
+    def test_가사가_없으면_쉼표_마침표_키도_무시된다(self, player):
+        seen: list[int] = []
+        player.subtitle_offset_changed.connect(seen.append)
+        _key(player, Qt.Key.Key_Period)
+        _key(player, Qt.Key.Key_Comma)
+        assert seen == []
+
+    def test_공개_setter로_절대값을_지정할_수_있다(self, player):
+        """노래 탭 등 플레이어 밖에서 절대 오프셋을 지정하는 공개 API."""
+        player.set_lyrics(_track())
+        seen: list[int] = []
+        player.subtitle_offset_changed.connect(seen.append)
+        player.set_subtitle_offset_ms(1500)
+        assert player._track.offset_ms == 1500
+        assert seen == [1500]
+
+    def test_트랙이_없으면_공개_setter는_아무일도_하지_않는다(self, player):
+        player.set_subtitle_offset_ms(1500)   # 예외 없이 무시
+
 
 class TestSyncHere:
     def test_현재_위치를_현재_줄에_맞춘다(self, player):
@@ -412,6 +440,19 @@ class TestShortcutReachability:
         QTest.keyClick(edit, Qt.Key.Key_BracketRight)
         assert seen == []
         assert edit.text() == "]"
+
+    def test_영상_클릭_후_마침표키도_오프셋을_바꾼다(self, host):
+        player, edit = host
+        player.set_lyrics(_track())
+        seen = self._nudges(player)
+        edit.setFocus()
+        QTest.mouseClick(
+            player._video_view.viewport(), Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier, QPoint(200, 100),
+        )
+        assert QApplication.focusWidget() is player
+        QTest.keyClick(player, Qt.Key.Key_Period)
+        assert seen == [250]
 
 
 def _key_mod(player, key: int, mods) -> None:

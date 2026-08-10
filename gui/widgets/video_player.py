@@ -525,8 +525,8 @@ class _ControlBar(QWidget):
             sec = self._subtitle_offset_ms / 1000.0
             menu.addAction(f"싱크: {sec:+.2f}초").setEnabled(False)
             menu.addSeparator()
-            menu.addAction("−0.25초  ( [ )", lambda: self.subtitle_offset_nudged.emit(-250))
-            menu.addAction("+0.25초  ( ] )", lambda: self.subtitle_offset_nudged.emit(250))
+            menu.addAction("−0.25초  ( [ / , )", lambda: self.subtitle_offset_nudged.emit(-250))
+            menu.addAction("+0.25초  ( ] / . )", lambda: self.subtitle_offset_nudged.emit(250))
             menu.addAction("현재 위치를 이 줄에 맞춤  ( \\ )", self.subtitle_sync_here.emit)
             menu.addSeparator()
             menu.addAction("초기화", self.subtitle_offset_reset.emit)
@@ -1292,6 +1292,14 @@ class InlinePlayer(QWidget):
     def subtitle_offset_ms(self) -> int:
         return self._track.offset_ms if self._track else 0
 
+    def set_subtitle_offset_ms(self, ms: int) -> None:
+        """외부(상세화면 노래 탭 등)에서 절대 오프셋 값을 지정한다.
+
+        `[`/`]` 단축키·우클릭 메뉴가 쓰는 내부 조정과 동일한 경로를 타므로 바·오버레이
+        갱신과 `subtitle_offset_changed` 발행(→디바운스 저장)이 그대로 따라온다.
+        """
+        self._set_subtitle_offset(int(ms))
+
     def _all_bars(self) -> list:
         """인라인 + 분리 창의 컨트롤바 — 상태를 팬아웃할 대상."""
         bars = [self._bar]
@@ -1590,9 +1598,9 @@ class InlinePlayer(QWidget):
         elif key == Qt.Key.Key_C:
             if self._track is not None:
                 self.set_subtitle_enabled(not self._subtitle_on)
-        elif key == Qt.Key.Key_BracketLeft:
+        elif key in (Qt.Key.Key_BracketLeft, Qt.Key.Key_Comma):
             self._nudge_subtitle_offset(-self._OFFSET_STEP_MS)
-        elif key == Qt.Key.Key_BracketRight:
+        elif key in (Qt.Key.Key_BracketRight, Qt.Key.Key_Period):
             self._nudge_subtitle_offset(self._OFFSET_STEP_MS)
         elif key == Qt.Key.Key_Backslash:
             self._sync_subtitle_here(self._player.position())

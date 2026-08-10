@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
+
 from application.song.dtos import LyricsLineDTO, SongInfoDTO
 from gui.view_models.song_vm import SongViewModel
 
@@ -187,6 +189,47 @@ class TestOffsetDebounceRace:
         widget._flush_offset()
 
         assert seen == []
+        widget.deleteLater()
+
+
+class TestSongTabOffsetWiring:
+    """노래 탭의 오프셋 입력이 플레이어(→ 단축키·메뉴와 동일한 저장 경로)로 이어지는지."""
+
+    def _widget_with_track(self, qapp_instance):
+        from gui.panels.video_detail_panel import VideoDetailWidget
+
+        widget = VideoDetailWidget()
+        dto = SongInfoDTO(
+            video_id=uuid4(), is_song=True,
+            lyrics_lines=(
+                LyricsLineDTO(original="a", start_ms=1000),
+                LyricsLineDTO(original="b", start_ms=5000),
+            ),
+            lyrics_offset_ms=0,
+        )
+        widget.set_song_info(dto)
+        widget._detail = SimpleNamespace(id=dto.video_id)
+        return widget
+
+    def test_탭에서_값을_바꾸면_플레이어_트랙에_반영된다(self, qapp_instance):
+        widget = self._widget_with_track(qapp_instance)
+        widget._song_tab.offset_changed.emit(1250)
+        assert widget._player._track.offset_ms == 1250
+        widget.deleteLater()
+
+    def test_탭_변경이_디바운스_저장_경로까지_이어진다(self, qapp_instance):
+        widget = self._widget_with_track(qapp_instance)
+        seen: list[tuple] = []
+        widget.song_offset_saved.connect(lambda vid, ms: seen.append((vid, ms)))
+        widget._song_tab.offset_changed.emit(1250)
+        widget._flush_offset()
+        assert seen == [(widget._detail.id, 1250)]
+        widget.deleteLater()
+
+    def test_플레이어_단축키로_바뀐_값이_탭_표시에도_반영된다(self, qapp_instance):
+        widget = self._widget_with_track(qapp_instance)
+        widget._on_subtitle_offset_changed(750)
+        assert widget._song_tab._offset_spin.value() == pytest.approx(0.75)
         widget.deleteLater()
 
 

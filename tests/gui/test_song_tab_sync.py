@@ -160,3 +160,58 @@ class TestAutoScrollSuppression:
 
     def test_기본값은_자동_스크롤_허용(self, tab):
         assert tab._autoscroll_suppressed() is False
+
+
+class TestOffsetControl:
+    """노래 탭 자체에서 가사 시작 시각(오프셋)을 조정하는 입력 필드.
+
+    ⏱(싱크 가사 찾기)와 상호 배타적으로 노출된다 — 시간 정보가 없으면 조정할
+    대상이 없으므로 검색 버튼을, 있으면 오프셋 컨트롤을 보여준다.
+    """
+
+    def _dto_with_offset(self, ms: int) -> SongInfoDTO:
+        return SongInfoDTO(
+            video_id=uuid4(), is_song=True,
+            lyrics_lines=(
+                LyricsLineDTO(original="one", start_ms=1000),
+                LyricsLineDTO(original="two", start_ms=5000),
+            ),
+            lyrics_offset_ms=ms,
+        )
+
+    def test_싱크_가사가_없으면_숨긴다(self, tab):
+        tab.set_info(_plain_dto())
+        assert tab._offset_spin.isVisibleTo(tab) is False
+
+    def test_싱크_가사가_있으면_노출된다(self, tab):
+        tab.set_info(_synced_dto())
+        assert tab._offset_spin.isVisibleTo(tab) is True
+
+    def test_기존_오프셋_값이_초_단위로_표시된다(self, tab):
+        tab.set_info(self._dto_with_offset(1500))
+        assert tab._offset_spin.value() == pytest.approx(1.5)
+
+    def test_음수_오프셋도_표시된다(self, tab):
+        tab.set_info(self._dto_with_offset(-750))
+        assert tab._offset_spin.value() == pytest.approx(-0.75)
+
+    def test_값을_바꾸면_ms_단위로_신호가_나간다(self, tab):
+        tab.set_info(self._dto_with_offset(0))
+        seen: list[int] = []
+        tab.offset_changed.connect(seen.append)
+        tab._offset_spin.setValue(0.5)
+        assert seen == [500]
+
+    def test_set_offset_ms로_갱신하면_신호가_다시_나가지_않는다(self, tab):
+        """플레이어 쪽에서 바뀐 값을 반영할 때 되돌아오는 신호로 루프가 생기면 안 된다."""
+        tab.set_info(self._dto_with_offset(0))
+        seen: list[int] = []
+        tab.offset_changed.connect(seen.append)
+        tab.set_offset_ms(1000)
+        assert seen == []
+        assert tab._offset_spin.value() == pytest.approx(1.0)
+
+    def test_스트리밍은_비활성(self, tab):
+        tab.set_editable(False)
+        tab.set_info(self._dto_with_offset(0))
+        assert tab._offset_spin.isEnabled() is False

@@ -39,6 +39,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDoubleSpinBox,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -62,6 +63,7 @@ from PyQt6.QtWidgets import (
 )
 
 from application.song.dtos import SongInfoDTO
+from domain.song.aggregates import MAX_LYRICS_OFFSET_MS
 from domain.song.value_objects import LyricsLine
 
 from application.library.dtos import FailedDownloadInfoDTO, VideoDetailDTO
@@ -775,6 +777,7 @@ class _SongTab(QWidget):
     filter_requested = pyqtSignal(str, str)  # (field_key, value) — 같은 가수/앨범 필터
     synced_requested = pyqtSignal()          # 싱크(시간 정보) 가사 찾기
     lyrics_seek_requested = pyqtSignal(int)  # 가사 줄 클릭 → 그 줄 시작 ms
+    offset_changed = pyqtSignal(int)         # 사용자가 싱크 보정값을 바꿈(절대 ms)
 
     _FIELDS = (
         ("artist", "가수"),
@@ -864,6 +867,21 @@ class _SongTab(QWidget):
         self._synced_btn.clicked.connect(self.synced_requested.emit)
         self._synced_btn.setVisible(False)
         lyr_header.addWidget(self._synced_btn)
+        # 싱크 보정 — 시간 정보가 있는 가사일 때만 노출(⏱과 상호 배타적).
+        # 영상 위 자막(💬)의 [ / ] · , / . 단축키·우클릭 메뉴와 같은 값을 다룬다.
+        self._offset_spin = QDoubleSpinBox()
+        self._offset_spin.setRange(-MAX_LYRICS_OFFSET_MS / 1000, MAX_LYRICS_OFFSET_MS / 1000)
+        self._offset_spin.setDecimals(2)
+        self._offset_spin.setSingleStep(0.25)
+        self._offset_spin.setSuffix(" s")
+        self._offset_spin.setFixedWidth(76)
+        self._offset_spin.setToolTip(
+            "가사 시작 시각 보정 — 양수면 자막이 늦게, 음수면 빠르게 뜹니다.\n"
+            "영상 위 자막(💬) 단축키 [ / ] 또는 , / . 로도 조절할 수 있습니다."
+        )
+        self._offset_spin.valueChanged.connect(self._on_offset_spin_changed)
+        self._offset_spin.setVisible(False)
+        lyr_header.addWidget(self._offset_spin)
         self._src_lbl = QLabel("")
         self._src_lbl.setStyleSheet(f"font-size:8pt; color:{_t().text_secondary};")
         self._src_lbl.setOpenExternalLinks(True)
@@ -915,8 +933,22 @@ class _SongTab(QWidget):
         self._lyrics_refresh_btn.setEnabled(editable)
         self._translate_btn.setEnabled(editable)
         self._synced_btn.setEnabled(editable)
+        self._offset_spin.setEnabled(editable)
         for f in self._fields.values():
             f.set_editable(editable)
+
+    def _on_offset_spin_changed(self, value: float) -> None:
+        self.offset_changed.emit(int(round(value * 1000)))
+
+    def set_offset_ms(self, ms: int) -> None:
+        """외부(플레이어 단축키·메뉴)에서 바뀐 오프셋을 표시에만 반영한다.
+
+        `blockSignals`로 감싸지 않으면 이 갱신이 `offset_changed`를 다시 쏘아
+        플레이어→탭→플레이어로 되돌아가는 무의미한 루프가 생긴다.
+        """
+        self._offset_spin.blockSignals(True)
+        self._offset_spin.setValue(ms / 1000.0)
+        self._offset_spin.blockSignals(False)
 
     def _on_lyrics_search_clicked(self) -> None:
         """가사 검색 — 이미 가사가 있으면 '다음 출처'에서 순환 검색, 없으면 처음부터."""
@@ -947,6 +979,10 @@ class _SongTab(QWidget):
         # 싱크 가사가 이미 있으면 찾을 이유가 없다.
         self._synced_btn.setVisible(has_lyrics and not is_synced and self._editable)
         self._synced_btn.setEnabled(self._editable)
+        # 오프셋 조정은 시간 정보가 있어야 의미가 있다 — ⏱과 상호 배타적으로 노출.
+        self._offset_spin.setVisible(is_synced)
+        self._offset_spin.setEnabled(self._editable)
+        self.set_offset_ms(dto.lyrics_offset_ms if dto else 0)
         is_song = bool(dto and dto.is_song)
         self._flag_chk.blockSignals(True)
         self._flag_chk.setChecked(is_song)
@@ -1380,6 +1416,10 @@ class VideoDetailWidget(QWidget):
         self._song_tab.filter_requested.connect(self.song_filter_requested.emit)
         self._song_tab.synced_requested.connect(self._on_song_synced)
         self._song_tab.lyrics_seek_requested.connect(self._on_lyrics_seek)
+        # 노래 탭 입력 필드 → 플레이어(단축키·메뉴와 동일 경로) → subtitle_offset_changed
+        # → _on_subtitle_offset_changed(디바운스 저장). 탭이 직접 저장하지 않는 이유는
+        # 위 경로 하나로 바·오버레이 갱신과 DB 저장 디바운스를 동시에 재사용하기 위해서다.
+        self._song_tab.offset_changed.connect(self._player.set_subtitle_offset_ms)
         self._tabs.addTab(_wrap(self._song_tab), "노래")
 
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -2292,6 +2332,7 @@ class VideoDetailWidget(QWidget):
         # 읽으면 A에서 조정한 값이 B에 저장되는 사고가 난다. load()/load_stream()에서
         # 타이머를 멈추는 방식(대안)은 사용자가 방금 조정한 값을 버리게 되므로 채택하지
         # 않았다 — A에서 조정한 값은 화면이 넘어갔어도 A에 저장돼야 한다는 것이 결론이다.
+        self._song_tab.set_offset_ms(offset_ms)
         if self._detail is None or self._streaming:
             return
         self._pending_offset = (self._detail.id, offset_ms)
