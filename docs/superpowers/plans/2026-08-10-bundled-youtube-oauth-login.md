@@ -594,17 +594,17 @@ git commit -m "feat: add one-click Google account connection"
 - Packaged resource destination: `config/OAuth2.json`.
 - Runtime resolution: `get_resource_path("config/OAuth2.json")` from Task 1.
 
-- [ ] **Step 1: Add non-secret build preflight validation to Windows**
+- [x] **Step 1: Add non-secret build preflight validation to Windows**
 
 Before invoking PyInstaller, resolve `$env:OVC_YOUTUBE_OAUTH_CONFIG` if supplied; otherwise use `Join-Path $Root "data\OAuth2.json"`. Parse it with `ConvertFrom-Json` and require non-empty `installed.client_id`, `installed.client_secret`, and localhost redirect. On failure, throw a message containing only the file path and missing field name.
 
 Set `OVC_YOUTUBE_OAUTH_CONFIG` only for the PyInstaller process and restore/remove it in `finally`. Never echo the JSON or its values.
 
-- [ ] **Step 2: Add equivalent Linux validation**
+- [x] **Step 2: Add equivalent Linux validation**
 
 Use a short Python JSON-validation command or existing Python runtime, then invoke PyInstaller with `OVC_YOUTUBE_OAUTH_CONFIG="$oauth_config"`. Print only the selected file path.
 
-- [ ] **Step 3: Update the shared PyInstaller spec**
+- [x] **Step 3: Update the shared PyInstaller spec**
 
 At spec evaluation, require the environment variable and add exactly:
 
@@ -624,13 +624,13 @@ datas=[
 
 Import `os` and `Path`. Do not add `../data`, the database, or a glob.
 
-- [ ] **Step 4: Validate the Windows build input without exposing it**
+- [x] **Step 4: Validate the Windows build input without exposing it**
 
 Run: `powershell -NoProfile -File scripts/build_windows.ps1`
 
 Expected: PyInstaller succeeds using the local ignored `data/OAuth2.json`.
 
-- [ ] **Step 5: Audit the built artifact contents**
+- [x] **Step 5: Audit the built artifact contents**
 
 Run this read-only PowerShell audit:
 
@@ -647,7 +647,7 @@ $forbidden = Get-ChildItem -LiteralPath $bundle -Recurse -File |
 
 Expected: `OAuthConfigCount = 1`, `ForbiddenFileCount = 0`. Do not output file contents.
 
-- [ ] **Step 6: Commit Task 5**
+- [x] **Step 6: Commit Task 5**
 
 ```bash
 git add packaging/online_video_clipper.spec scripts/build_windows.ps1 scripts/build_linux.sh
