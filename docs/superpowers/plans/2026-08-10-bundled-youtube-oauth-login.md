@@ -402,7 +402,7 @@ git commit -m "feat: secure YouTube OAuth token storage"
 - Produces: `_build_youtube_oauth(db) -> YouTubeOAuthAdapter`, a composition-root helper used by `main()` and the construction test.
 - Produces one application-wide `YouTubeOAuthAdapter` injected into the existing settings/main-window path.
 
-- [ ] **Step 1: Add a construction test for the expected service/fallback contract**
+- [x] **Step 1: Add a construction test for the expected service/fallback contract**
 
 Add `_build_youtube_oauth(db)` to `main.py` with imports kept inside the helper so splash/startup import behavior is preserved. Cover it by monkeypatching `infrastructure.youtube.oauth_client_config.find_youtube_oauth_config`, `infrastructure.sync.keyring_secret_store.KeyringSecretStore`, and `infrastructure.youtube.oauth_adapter.YouTubeOAuthAdapter` before calling the helper. The asserted values are:
 
@@ -414,13 +414,13 @@ client_config_path = find_youtube_oauth_config()
 
 The test must assert that a missing client config produces an adapter with `has_client_config() is False` and does not stop application startup.
 
-- [ ] **Step 2: Run the focused test and confirm the old constructor fails**
+- [x] **Step 2: Run the focused test and confirm the old constructor fails**
 
 Run: `pytest tests/unit/infrastructure/test_youtube_oauth_config.py -v`
 
 Expected: the newly added construction expectation fails until `main.py` is updated.
 
-- [ ] **Step 3: Update `main.py` dependency injection**
+- [x] **Step 3: Update `main.py` dependency injection**
 
 At the composition root, import the resolver and `KeyringSecretStore`, then construct:
 
@@ -438,7 +438,7 @@ yt_oauth = YouTubeOAuthAdapter(
 
 Do not read or parse credential values in `main.py`. Preserve `_yt_creds = yt_oauth.get_credentials()` and the current startup construction of `YouTubeApiAdapter`.
 
-- [ ] **Step 4: Run focused tests and startup import validation**
+- [x] **Step 4: Run focused tests and startup import validation**
 
 Run: `pytest tests/unit/infrastructure/test_youtube_oauth_config.py tests/gui/test_smoke.py -v`
 
@@ -446,7 +446,7 @@ Run: `python -m compileall main.py infrastructure/youtube`
 
 Expected: both commands exit 0.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add main.py tests/unit/infrastructure/test_youtube_oauth_config.py

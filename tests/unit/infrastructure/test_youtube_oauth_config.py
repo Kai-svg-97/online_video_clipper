@@ -111,3 +111,91 @@ def test_missing_file_raises_sanitized_error(tmp_path: Path) -> None:
     path = tmp_path / "nope.json"
     with pytest.raises(OAuthClientConfigError):
         validate_youtube_oauth_config(path)
+
+
+# ── main.py 컴포지션 루트 헬퍼 ───────────────────────────────────────────────
+
+
+class _FakeAdapter:
+    def __init__(self, db, secret_store, client_config_path) -> None:
+        self.db = db
+        self.secret_store = secret_store
+        self.client_config_path = client_config_path
+
+    def has_client_config(self) -> bool:
+        return self.client_config_path is not None
+
+
+class _FakeSecretStore:
+    def __init__(self, service: str, fallback_path: Path) -> None:
+        self.service = service
+        self.fallback_path = fallback_path
+
+
+def test_build_youtube_oauth_uses_expected_service_and_fallback_path(tmp_path, monkeypatch) -> None:
+    import main as main_module
+
+    monkeypatch.setattr(
+        "infrastructure.youtube.oauth_client_config.find_youtube_oauth_config",
+        lambda explicit_path=None: None,
+    )
+    monkeypatch.setattr(
+        "infrastructure.sync.keyring_secret_store.KeyringSecretStore",
+        _FakeSecretStore,
+    )
+    monkeypatch.setattr(
+        "infrastructure.youtube.oauth_adapter.YouTubeOAuthAdapter",
+        _FakeAdapter,
+    )
+    monkeypatch.setattr("config.settings.DATA_DIR", tmp_path)
+
+    adapter = main_module._build_youtube_oauth(db=object())
+
+    assert adapter.secret_store.service == "online-video-clipper.youtube-oauth"
+    assert adapter.secret_store.fallback_path == tmp_path / "secrets" / "youtube_oauth.json"
+
+
+def test_build_youtube_oauth_missing_client_config_does_not_stop_startup(tmp_path, monkeypatch) -> None:
+    import main as main_module
+
+    monkeypatch.setattr(
+        "infrastructure.youtube.oauth_client_config.find_youtube_oauth_config",
+        lambda explicit_path=None: None,
+    )
+    monkeypatch.setattr(
+        "infrastructure.sync.keyring_secret_store.KeyringSecretStore",
+        _FakeSecretStore,
+    )
+    monkeypatch.setattr(
+        "infrastructure.youtube.oauth_adapter.YouTubeOAuthAdapter",
+        _FakeAdapter,
+    )
+    monkeypatch.setattr("config.settings.DATA_DIR", tmp_path)
+
+    adapter = main_module._build_youtube_oauth(db=object())
+
+    assert adapter.has_client_config() is False
+
+
+def test_build_youtube_oauth_passes_resolved_client_config_path(tmp_path, monkeypatch) -> None:
+    import main as main_module
+
+    client_path = tmp_path / "OAuth2.json"
+    monkeypatch.setattr(
+        "infrastructure.youtube.oauth_client_config.find_youtube_oauth_config",
+        lambda explicit_path=None: client_path,
+    )
+    monkeypatch.setattr(
+        "infrastructure.sync.keyring_secret_store.KeyringSecretStore",
+        _FakeSecretStore,
+    )
+    monkeypatch.setattr(
+        "infrastructure.youtube.oauth_adapter.YouTubeOAuthAdapter",
+        _FakeAdapter,
+    )
+    monkeypatch.setattr("config.settings.DATA_DIR", tmp_path)
+
+    adapter = main_module._build_youtube_oauth(db=object())
+
+    assert adapter.client_config_path == client_path
+    assert adapter.has_client_config() is True

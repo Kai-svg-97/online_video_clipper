@@ -54,6 +54,29 @@ from utils.logging_config import setup_logging
 from utils.resources import get_resource_path
 
 
+def _build_youtube_oauth(db):
+    """YouTubeOAuthAdapter를 keyring 우선 저장소 + 번들 Desktop 클라이언트로 구성한다.
+
+    클라이언트 설정이 없어도(개발/미배포 빌드) None을 반환하지 않고 예외를
+    던지지 않는다 — `has_client_config() == False`인 어댑터를 돌려줘
+    앱 시작을 막지 않는다(YouTube API 의존 기능만 비활성).
+    """
+    from config.settings import DATA_DIR  # noqa: PLC0415
+    from infrastructure.sync.keyring_secret_store import KeyringSecretStore  # noqa: PLC0415
+    from infrastructure.youtube.oauth_adapter import YouTubeOAuthAdapter  # noqa: PLC0415
+    from infrastructure.youtube.oauth_client_config import find_youtube_oauth_config  # noqa: PLC0415
+
+    yt_secret_store = KeyringSecretStore(
+        "online-video-clipper.youtube-oauth",
+        Path(DATA_DIR) / "secrets" / "youtube_oauth.json",
+    )
+    return YouTubeOAuthAdapter(
+        db,
+        yt_secret_store,
+        client_config_path=find_youtube_oauth_config(),
+    )
+
+
 def _build_splash_pixmap() -> QPixmap:
     W, H = 480, 240
     pix = QPixmap(W, H)
@@ -213,7 +236,6 @@ def main() -> int:
         ReorderPlaylistHandler,
     )
     from application.monitoring.commands import ImportYouTubeSubscriptionsHandler
-    from infrastructure.youtube.oauth_adapter import YouTubeOAuthAdapter
     from infrastructure.youtube.youtube_api_adapter import YouTubeApiAdapter
     from application.library.playlist_queries import (
         GetChannelVideosHandler,
@@ -275,7 +297,7 @@ def main() -> int:
     # 7. Infrastructure services
     event_bus    = EventBus()
     ytdlp        = YtDlpAdapter()
-    yt_oauth     = YouTubeOAuthAdapter(db)
+    yt_oauth     = _build_youtube_oauth(db)
     ffmpeg       = FfmpegAdapter()
     auth_service = YouTubeAuthService()
     lyrics_providers = build_default_providers()
