@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -111,6 +112,50 @@ def test_missing_file_raises_sanitized_error(tmp_path: Path) -> None:
     path = tmp_path / "nope.json"
     with pytest.raises(OAuthClientConfigError):
         validate_youtube_oauth_config(path)
+
+
+# ── UTF-8 BOM 내구성 ──────────────────────────────────────────────────────
+#
+# CI가 시크릿을 파일로 복원할 때(또는 Notepad 등으로 재저장할 때) UTF-8 BOM이
+# 붙는 사고가 실제로 있었다(v1.14.0 릴리즈에서 재현) — google_auth_oauthlib의
+# InstalledAppFlow.from_client_secrets_file()은 open(path, "r")+json.load라
+# BOM을 전혀 허용하지 않으므로, 검증만 통과시키고 파일에 BOM을 남겨두면
+# "설정은 통과했는데 실제 연결 클릭은 여전히 깨지는" 상태가 된다. 그래서
+# find_youtube_oauth_config()는 검증에 성공한 후보의 BOM을 파일에서 직접
+# 제거해(self-heal) 이후 어떤 소비자가 읽어도 문제가 없게 한다.
+
+
+def test_bom_prefixed_config_is_validated_successfully(tmp_path: Path) -> None:
+    path = tmp_path / "client.json"
+    path.write_bytes(b"\xef\xbb\xbf" + VALID.encode("utf-8"))
+    validate_youtube_oauth_config(path)  # 예외 없이 통과해야 한다
+
+
+def test_find_strips_bom_from_file_in_place(tmp_path: Path) -> None:
+    path = tmp_path / "client.json"
+    path.write_bytes(b"\xef\xbb\xbf" + VALID.encode("utf-8"))
+
+    resolved = find_youtube_oauth_config(path)
+
+    assert resolved == path.resolve()
+    raw = path.read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    assert json.loads(raw.decode("utf-8"))["installed"]["client_id"] == (
+        "synthetic.apps.googleusercontent.com"
+    )
+
+
+def test_find_without_bom_leaves_file_byte_identical(tmp_path: Path) -> None:
+    """BOM이 없는 정상 파일은 굳이 다시 쓰지 않는다(불필요한 파일 변경 방지)."""
+    path = tmp_path / "client.json"
+    original = VALID.encode("utf-8")
+    path.write_bytes(original)
+    mtime_before = path.stat().st_mtime_ns
+
+    find_youtube_oauth_config(path)
+
+    assert path.read_bytes() == original
+    assert path.stat().st_mtime_ns == mtime_before
 
 
 # ── main.py 컴포지션 루트 헬퍼 ───────────────────────────────────────────────

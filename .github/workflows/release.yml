@@ -56,7 +56,11 @@ jobs:
             exit 1
           }
           $path = Join-Path $env:RUNNER_TEMP "OAuth2.json"
-          [System.IO.File]::WriteAllText($path, $env:YT_OAUTH_JSON, [System.Text.Encoding]::UTF8)
+          # [System.Text.Encoding]::UTF8 은 BOM을 함께 쓴다 — google_auth_oauthlib의
+          # InstalledAppFlow.from_client_secrets_file()이 open(path,"r")+json.load라
+          # BOM을 전혀 허용하지 않으므로(v1.14.0에서 실제로 재현) BOM 없는 인코딩을 명시한다.
+          $noBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText($path, $env:YT_OAUTH_JSON, $noBom)
           "OVC_YOUTUBE_OAUTH_CONFIG=$path" >> $env:GITHUB_ENV
 
       - name: Download ffmpeg + run PyInstaller
