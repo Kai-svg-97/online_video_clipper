@@ -669,7 +669,7 @@ Do not stage `data/OAuth2.json`.
 
 **Interfaces:** Documentation must match the implemented filenames, button labels, storage key, and restart behavior exactly.
 
-- [ ] **Step 1: Update the PRD**
+- [x] **Step 1: Update the PRD**
 
 Add acceptance criteria:
 
@@ -680,19 +680,19 @@ Add acceptance criteria:
 - Successful first-time connection instructs restart.
 - Disconnect deletes the local user token.
 
-- [ ] **Step 2: Update the packaging plan**
+- [x] **Step 2: Update the packaging plan**
 
 Document `OVC_YOUTUBE_OAUTH_CONFIG`, default `data/OAuth2.json`, packaged `config/OAuth2.json`, and the artifact audit proving that no database/token/cookie files are included.
 
-- [ ] **Step 3: Update `CLAUDE.md` architecture notes**
+- [x] **Step 3: Update `CLAUDE.md` architecture notes**
 
 Change the OAuth adapter description from SQLite persistence to keyring-first persistence with one-time SQLite migration. Change the settings-panel description from user-entered credentials to bundled-client Google connection. Mention normal TLS verification and PKCE.
 
-- [ ] **Step 4: Update README only where necessary**
+- [x] **Step 4: Update README only where necessary** — README에는 BYO OAuth Client ID/Secret 안내가 존재하지 않아(사전 검색 확인) 변경 불필요, `git add`에서 제외
 
 Remove instructions telling end users to create or paste Google Cloud OAuth credentials. Replace them with `설정 → YouTube API 연동 → Google 계정으로 연결` and the one-time unverified-app warning expected for the small acquaintance group.
 
-- [ ] **Step 5: Scan documentation for stale instructions and accidental secrets**
+- [x] **Step 5: Scan documentation for stale instructions and accidental secrets**
 
 Run:
 
@@ -703,7 +703,7 @@ rg -n "GOCSPX-|apps\.googleusercontent\.com" README.md CLAUDE.md planning docs i
 
 Expected: no stale end-user input instructions; no real credential patterns. Synthetic test strings are allowed only in test files and must be visibly synthetic.
 
-- [ ] **Step 6: Commit Task 6**
+- [x] **Step 6: Commit Task 6**
 
 ```bash
 git add planning/youtube_content_manager_prd.md planning/packaging_plan.md CLAUDE.md README.md

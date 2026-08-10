@@ -164,6 +164,51 @@ echo "Output: dist/YouTubeContentManager-x86_64.AppImage"
 
 ---
 
+## YouTube OAuth 클라이언트 주입 (빌드 시 credential injection)
+
+앱은 사용자가 직접 Google Cloud OAuth Client ID/Secret을 입력하지 않는다 — 배포자가
+소유한 **하나의 Desktop(Installed App) OAuth 클라이언트 설정**을 빌드 시 번들해
+`설정 → YouTube API 연동 → Google 계정으로 연결` 버튼만으로 인증이 이루어진다.
+
+- **빌드 입력**: 환경변수 `OVC_YOUTUBE_OAUTH_CONFIG`가 가리키는 JSON 파일. 미지정 시
+  로컬 개발 입력인 `data/OAuth2.json`을 기본값으로 쓴다(`data/OAuth.json`은 Client
+  Secret이 달라 사용하지 않음 — 절대 혼동하지 말 것).
+- **검증**: `scripts/build_windows.ps1`/`scripts/build_linux.sh`가 PyInstaller 실행
+  전에 JSON을 파싱해 `installed.client_id`·`installed.client_secret`·localhost
+  loopback redirect 존재를 확인한다. 값은 어떤 로그에도 출력하지 않고, 실패 시
+  파일 경로와 누락 필드명만 담은 예외를 던진다.
+- **주입 범위**: `OVC_YOUTUBE_OAUTH_CONFIG`는 PyInstaller 하위 프로세스에만 설정되고
+  빌드 스크립트 종료 시(`finally`) 복원/제거된다.
+- **패키징**: `packaging/online_video_clipper.spec`이 검증된 경로를 `datas`에
+  `(_oauth_src, "config")`로 추가해 번들 내 `config/OAuth2.json` 한 개로 고정한다.
+  환경변수가 없거나 파일이 없으면 spec이 `SystemExit`로 빌드를 즉시 중단한다.
+- **런타임 해석**: `infrastructure/youtube/oauth_client_config.py:find_youtube_oauth_config()`가
+  `get_resource_path("config/OAuth2.json")`로 이 파일을 찾는다(개발 환경에서는
+  `data/OAuth2.json` 폴백).
+- **사용자 토큰과의 분리**: 클라이언트 설정(배포자 소유, 빌드 시 1개 고정)과 사용자별
+  OAuth 토큰(설치 후 각자 인증, OS keyring 저장)은 서로 다른 자산이다 — 개발자의
+  액세스/리프레시 토큰이나 `data/library.db`는 어떤 빌드에도 포함되지 않는다.
+
+### 산출물 안전성 검증 (필수)
+
+빌드 후 아래 읽기 전용 점검으로 정확히 OAuth 클라이언트 JSON 1개만 포함되고
+DB·쿠키·시크릿 파일이 0개인지 확인한다:
+
+```powershell
+$bundle = Resolve-Path 'dist/windows/YouTubeContentManager'
+$oauth = Get-ChildItem -LiteralPath $bundle -Recurse -File -Filter 'OAuth2.json'
+$forbidden = Get-ChildItem -LiteralPath $bundle -Recurse -File |
+  Where-Object { $_.Name -match 'library\.db|cookies|secrets\.json' }
+[PSCustomObject]@{
+  OAuthConfigCount = @($oauth).Count
+  ForbiddenFileCount = @($forbidden).Count
+}
+```
+
+기대값: `OAuthConfigCount = 1`, `ForbiddenFileCount = 0`. 파일 내용은 절대 출력하지 않는다.
+
+---
+
 ## Inno Setup 스크립트 (`build/installer.iss`)
 
 ```ini
@@ -231,6 +276,10 @@ ruff>=0.3
 - [ ] `assets/icon.ico` (Windows), `assets/icon.png` (Linux) 존재 확인
 - [ ] `pyinstaller build/online_video_clipper.spec` 로컬 테스트 통과
 - [ ] 번들 실행 파일이 Python 없는 환경에서 실행되는지 검증
+- [ ] `OVC_YOUTUBE_OAUTH_CONFIG`(또는 `data/OAuth2.json`)가 유효한 Desktop OAuth
+      클라이언트 설정인지 확인 — 값은 출력하지 않고 검증만
+- [ ] 산출물에 `config/OAuth2.json` 1개만 있고 `library.db`·쿠키·시크릿 파일이
+      0개인지 안전성 감사 통과
 
 ---
 
