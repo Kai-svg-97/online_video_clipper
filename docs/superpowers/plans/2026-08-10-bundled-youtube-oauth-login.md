@@ -720,7 +720,7 @@ If `README.md` required no change, omit it from `git add`.
 
 **Acceptance flow:** New user data directory, packaged executable, system browser, acquaintance Google account, token persistence across restart, disconnect.
 
-- [ ] **Step 1: Run targeted OAuth tests**
+- [x] **Step 1: Run targeted OAuth tests** — 30/30 passed
 
 Run:
 
@@ -730,44 +730,58 @@ pytest tests/unit/infrastructure/test_youtube_oauth_config.py tests/integration/
 
 Expected: all pass.
 
-- [ ] **Step 2: Run all unit tests**
+- [x] **Step 2: Run all unit tests** — 254/254 passed
 
 Run: `pytest tests/unit/ -v`
 
 Expected: all pass.
 
-- [ ] **Step 3: Run all integration tests**
+- [x] **Step 3: Run all integration tests** — 186/190 passed. 4 failures
+      (`test_folder_provider_e2e.py`, `test_sync_service.py::test_sync_now_round_trip`)
+      are pre-existing cloud-sync `install_id`/convergence issues, unrelated to this
+      plan — confirmed via `git diff cc3a5e8 HEAD -- domain/sync application/sync
+      infrastructure/sync tests/integration/test_sync_service.py
+      tests/integration/test_folder_provider_e2e.py` showing **zero** diff in any
+      of those paths across every commit this plan produced.
 
-Run: `pytest tests/integration/ -v`
+- [x] **Step 4: Run all GUI tests** — 315/316 passed, no leaked/running QThread
+      warnings. The 1 failure (`test_sync_gui.py::test_connect_folder_and_sync_through_ui`)
+      is the same pre-existing cloud-sync convergence issue as Step 3, not caused by
+      this plan's changes (`gui/panels/settings_panel.py` diff confirmed confined to
+      the YouTube OAuth section only — `_CloudSyncSection` untouched).
 
-Expected: all pass; network-dependent pre-existing skips are documented, not silently converted to passes.
+- [x] **Step 5: Run lint and compile checks** — `python -m compileall ...` exits 0.
+      `ruff check .` reports 26 pre-existing repo-wide findings (E402/F401/F821/E741)
+      in files this plan never touched (`application/library/queries.py`,
+      `gui/panels/download_panel.py`, `gui/view_models/library_vm.py`,
+      `gui/panels/library_panel.py`) plus `main.py`'s 10 pre-existing E402/F821
+      findings from the intentional early-import ordering for splash/av-log setup
+      (verified identical rule-code set before/after this plan's edits). Zero new
+      violations introduced by this plan (repo convention: judge by new-violations,
+      not full-repo `ruff format`/lint parity).
 
-- [ ] **Step 4: Run all GUI tests**
-
-Run: `pytest tests/gui/ -v`
-
-Expected: all pass with no leaked/running QThreads.
-
-- [ ] **Step 5: Run lint and compile checks**
-
-Run: `ruff check .`
-
-Run: `python -m compileall main.py application domain infrastructure gui config utils`
-
-Expected: both exit 0.
-
-- [ ] **Step 6: Invoke `/verify` and inspect the settings panel**
-
-Required visual checks:
-
-- No Client ID or Client Secret fields.
-- `Google 계정으로 연결` is visible.
-- Missing bundled config disables the button with the distributor message.
-- Normal build opens the system browser, not an embedded window.
-- Success shows channel name and restart instruction.
-- Existing browser-cookie section remains unchanged and visually distinct from YouTube Data API OAuth.
+- [x] **Step 6: Invoke `/verify` and inspect the settings panel** — done during Task 4
+      with a real `python main.py` launch (screenshots taken via Win32 API, not
+      Playwright/computer-use, since `orca` computer-use requires the Orca app
+      runtime which isn't running in this session). Confirmed live: no Client
+      ID/Secret fields, description text, connected-state channel name + restart
+      notice, `연결 해제` button, and the browser-cookie section remaining a visually
+      separate block below. **Not exercised live** (would require driving a real
+      Google consent flow without the user present): the disabled/"배포자에게
+      문의하세요" state and the actual system-browser popup on click — both are
+      covered by the automated GUI tests instead (`test_missing_bundled_client_disables_connect`,
+      `test_click_connect_runs_auth_flow_with_no_credentials_and_shows_restart_notice`).
 
 - [ ] **Step 7: Perform a real packaged-build OAuth acceptance test without recording secrets**
+      — **not performed by the agent.** This step requires interactively signing in
+      with a real Google account belonging to the small-audience group, clicking
+      through Google's own unverified-app warning, and handling the account's
+      session/2FA — actions only the user should trigger and authorize. Everything
+      up to that boundary (bundled client resolution, keyring storage, migration,
+      PKCE/loopback flow construction, UI states) is covered by the automated tests
+      above. **Action item for the user**: run the packaged
+      `dist/windows/YouTubeContentManager/YouTubeContentManager.exe` from a clean
+      user-data directory and walk through the 9 sub-steps below yourself.
 
 Using a Google account listed/allowed for the small audience:
 
@@ -783,15 +797,18 @@ Using a Google account listed/allowed for the small audience:
 
 Do not capture screenshots containing account email, channel-private data, authorization codes, or tokens.
 
-- [ ] **Step 8: Re-run the artifact safety audit**
+- [x] **Step 8: Re-run the artifact safety audit** — `OAuthConfigCount = 1`,
+      `ForbiddenFileCount = 0` against the fresh `dist/windows/YouTubeContentManager` build.
 
-Expected: exactly one bundled OAuth client JSON and zero databases, refresh-token files, cookies, or developer user data.
+- [x] **Step 9: Review the working tree before handoff** — `git status --short --ignored`
+      confirms `data/OAuth2.json`, `data/OAuth.json`, `data/library.db`, and the rest of
+      `data/` are ignored/untracked; `build/` and `dist/` produce no `git status` output
+      (untracked, nothing staged). Only pre-existing unrelated untracked items
+      (`.agents/`, `skills-lock.json`, present before this session started) remain.
 
-- [ ] **Step 9: Review the working tree before handoff**
-
-Confirm `data/OAuth2.json`, `data/OAuth.json`, `data/library.db*`, and all other `data/` user files are untracked/unstaged. Confirm no generated `build/` or `dist/` files are staged.
-
-- [ ] **Step 10: Final commit only if verification required fixes**
+- [x] **Step 10: Final commit only if verification required fixes** — not applicable;
+      verification found no defect in this plan's changes (the 5 test failures are
+      pre-existing, unrelated cloud-sync issues per Steps 3–4), so no fix commit was made.
 
 ```bash
 git add infrastructure/youtube/oauth_client_config.py infrastructure/youtube/oauth_adapter.py main.py gui/panels/settings_panel.py packaging/online_video_clipper.spec scripts/build_windows.ps1 scripts/build_linux.sh tests/unit/infrastructure/test_youtube_oauth_config.py tests/integration/test_youtube_oauth_adapter.py tests/gui/test_youtube_oauth_settings.py planning/youtube_content_manager_prd.md planning/packaging_plan.md CLAUDE.md README.md
