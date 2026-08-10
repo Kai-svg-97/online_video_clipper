@@ -124,6 +124,39 @@ class IClipExtractor(Protocol):
     ) -> Path: ...
 
 
+class ILibraryPackageWriter(Protocol):
+    """포터블 라이브러리 패키지(zip) 작성 추상화.
+
+    구현체: infrastructure.transfer.portable_package.ZipLibraryPackageWriter
+
+    `manifest`/`data`는 순수 dict(JSON 직렬화 가능)이다. `data["videos"][i]`에
+    `thumbnail_path`(THUMBNAIL_DIR 기준 상대경로)가 있으면 구현체가 실제 파일을
+    찾아 패키지에 포함하고, 패키지 내부 참조용 `thumbnail_rel` 키를 같은 딱셔너리에
+    채워 넣은 뒤 저장한다 — application 레이어는 절대경로/THUMBNAIL_DIR를 몰라도 된다.
+    """
+
+    def write(self, dest_path: str, manifest: dict, data: dict) -> None: ...
+
+
+class ILibraryPackageReader(Protocol):
+    """포터블 라이브러리 패키지(zip) 읽기 추상화.
+
+    구현체: infrastructure.transfer.portable_package.ZipLibraryPackageReader
+    """
+
+    def read(self, src_path: str) -> tuple[dict, dict]:
+        """(manifest, data) — write()가 만든 것과 동일한 순수 dict."""
+        ...
+
+    def import_thumbnail(self, src_path: str, thumbnail_rel: str, video_id: UUID) -> str | None:
+        """패키지 속 썸네일을 로컬 THUMBNAIL_DIR로 복사하고 상대경로를 반환한다.
+
+        `IMediaSource.download_thumbnail`과 동일한 반환 규약(THUMBNAIL_DIR 기준
+        상대경로 또는 실패 시 None)이라 application 레이어의 처리 방식이 같다.
+        """
+        ...
+
+
 class ISummarySource(Protocol):
     """YouTube Gemini AI 요약 추출 추상화.
 

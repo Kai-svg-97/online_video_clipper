@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -638,6 +639,150 @@ class _CloudSyncSection(QWidget):
         self._status_lbl.setText(f"오류: {msg}")
 
 
+class _ImportExportSection(QWidget):
+    """라이브러리 가져오기/내보내기 UI (transfer_vm 주입 시에만 표시).
+
+    내보내기: 카테고리 체크트리(``CategorySelectDialog``) → 저장 위치 선택 → 백그라운드
+    내보내기. 가져오기: 패키지 파일 선택 → 미리보기(카테고리 체크트리) → 충돌 감지 →
+    값이 다른 영상이 있으면 필드별 선택(``ImportConflictResolutionDialog``) → 병합.
+    실제 파일 I/O·병합 로직은 전부 transfer_vm(QThread)이 수행하고, 이 위젯은 다이얼로그
+    순서만 조율한다.
+    """
+
+    def __init__(self, transfer_vm, get_categories_fn, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._vm = transfer_vm
+        self._get_categories_fn = get_categories_fn
+        self._archive_path = ""
+        self._import_category_ids: list[str] = []
+        self._build()
+        transfer_vm.export_finished.connect(self._on_export_finished)
+        transfer_vm.preview_ready.connect(self._on_preview_ready)
+        transfer_vm.conflicts_ready.connect(self._on_conflicts_ready)
+        transfer_vm.import_finished.connect(self._on_import_finished)
+        transfer_vm.error_occurred.connect(self._on_error)
+        transfer_vm.busy_changed.connect(self._on_busy_changed)
+
+    def _build(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(8)
+
+        help_lbl = QLabel(
+            "선택한 카테고리의 영상·태그·노래 정보(가사·싱크 오프셋)를 파일 하나로 내보내\n"
+            "다른 사람에게 전달하거나 백업할 수 있습니다. 가져올 때 같은 이름의 카테고리는\n"
+            "합쳐지고, 이미 있는 영상은 값이 다른 항목만 골라서 반영합니다."
+        )
+        help_lbl.setWordWrap(True)
+        help_lbl.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
+        root.addWidget(help_lbl)
+
+        btn_row = QHBoxLayout()
+        self._export_btn = QPushButton("내보내기…")
+        self._import_btn = QPushButton("가져오기…")
+        self._export_btn.clicked.connect(self._on_export_clicked)
+        self._import_btn.clicked.connect(self._on_import_clicked)
+        btn_row.addWidget(self._export_btn)
+        btn_row.addWidget(self._import_btn)
+        btn_row.addStretch()
+        root.addLayout(btn_row)
+
+        self._status_lbl = QLabel("")
+        self._status_lbl.setWordWrap(True)
+        self._status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
+        root.addWidget(self._status_lbl)
+
+    # ── 내보내기 ──────────────────────────────────────────────────────────
+
+    def _on_export_clicked(self) -> None:
+        from gui.dialogs.library_transfer_dialogs import CategorySelectDialog  # noqa: PLC0415
+
+        categories = self._get_categories_fn() if self._get_categories_fn else []
+        if not categories:
+            self._status_lbl.setText("내보낼 카테고리가 없습니다.")
+            return
+        dlg = CategorySelectDialog(categories, "내보낼 카테고리 선택", self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_category_ids()
+        if not selected:
+            self._status_lbl.setText("내보낼 카테고리를 선택하세요.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "내보내기", "", "라이브러리 패키지 (*.ovcpkg)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".ovcpkg"):
+            path += ".ovcpkg"
+        self._status_lbl.setText("내보내는 중…")
+        self._vm.export_library(selected, path)
+
+    def _on_export_finished(self, result) -> None:
+        self._status_lbl.setText(
+            f"● 내보내기 완료 — 카테고리 {result.category_count}개, "
+            f"영상 {result.video_count}개 → {result.path}"
+        )
+
+    # ── 가져오기 ──────────────────────────────────────────────────────────
+
+    def _on_import_clicked(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "가져오기", "", "라이브러리 패키지 (*.ovcpkg)"
+        )
+        if not path:
+            return
+        self._archive_path = path
+        self._status_lbl.setText("패키지 확인 중…")
+        self._vm.preview_import(path)
+
+    def _on_preview_ready(self, preview) -> None:
+        from gui.dialogs.library_transfer_dialogs import CategorySelectDialog  # noqa: PLC0415
+
+        if not preview.categories:
+            self._status_lbl.setText("패키지에 카테고리가 없습니다.")
+            return
+        dlg = CategorySelectDialog(list(preview.categories), "가져올 카테고리 선택", self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self._status_lbl.setText("")
+            return
+        selected = dlg.selected_category_ids()
+        if not selected:
+            self._status_lbl.setText("가져올 카테고리를 선택하세요.")
+            return
+        self._import_category_ids = selected
+        self._status_lbl.setText("겹치는 영상 확인 중…")
+        self._vm.detect_conflicts(self._archive_path, selected)
+
+    def _on_conflicts_ready(self, conflicts_dto) -> None:
+        from gui.dialogs.library_transfer_dialogs import (  # noqa: PLC0415
+            ImportConflictResolutionDialog,
+        )
+
+        resolutions: dict[str, dict[str, str]] = {}
+        if conflicts_dto.conflicts:
+            dlg = ImportConflictResolutionDialog(conflicts_dto.conflicts, self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                self._status_lbl.setText("가져오기를 취소했습니다.")
+                return
+            resolutions = dlg.resolutions()
+        self._status_lbl.setText("가져오는 중…")
+        self._vm.import_library(self._archive_path, self._import_category_ids, resolutions)
+
+    def _on_import_finished(self, result) -> None:
+        self._status_lbl.setText(
+            f"● 가져오기 완료 — 새 영상 {result.created_count}개, "
+            f"병합 {result.merged_count}개, 카테고리 {result.category_count}개"
+        )
+
+    def _on_error(self, msg: str) -> None:
+        self._status_lbl.setText(f"오류: {msg[:200]}")
+
+    def _on_busy_changed(self, busy: bool) -> None:
+        self._export_btn.setEnabled(not busy)
+        self._import_btn.setEnabled(not busy)
+
+
 class SettingsPanel(QWidget):
     """설정 패널 (인라인, QDialog 아님)."""
 
@@ -652,6 +797,8 @@ class SettingsPanel(QWidget):
         yt_oauth=None,   # YouTubeOAuthAdapter | None
         song_vm=None,    # SongViewModel | None
         sync_vm=None,    # SyncViewModel | None
+        transfer_vm=None,        # LibraryTransferViewModel | None
+        get_categories_fn: Callable | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -659,6 +806,8 @@ class SettingsPanel(QWidget):
         self._yt_oauth = yt_oauth
         self._song_vm = song_vm
         self._sync_vm = sync_vm
+        self._transfer_vm = transfer_vm
+        self._get_categories_fn = get_categories_fn
         self._theme_cards: dict[str, _ThemeCard] = {}
         self._yt_auth_worker = None
         self._pending_dto = None
@@ -989,6 +1138,26 @@ class SettingsPanel(QWidget):
             layout.addSpacing(10)
             self._cloud_sync_section = _CloudSyncSection(self._sync_vm)
             layout.addWidget(self._cloud_sync_section)
+
+        # ── 라이브러리 가져오기/내보내기 섹션 ──
+        if self._transfer_vm is not None:
+            layout.addSpacing(24)
+            sep_transfer = QFrame()
+            sep_transfer.setFrameShape(QFrame.Shape.HLine)
+            sep_transfer.setStyleSheet(f"color: {_t().border};")
+            layout.addWidget(sep_transfer)
+            layout.addSpacing(24)
+            transfer_label = QLabel("라이브러리 가져오기/내보내기")
+            transfer_label.setStyleSheet(
+                "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+                f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
+            )
+            layout.addWidget(transfer_label)
+            layout.addSpacing(10)
+            self._import_export_section = _ImportExportSection(
+                self._transfer_vm, self._get_categories_fn
+            )
+            layout.addWidget(self._import_export_section)
 
         # ── YouTube API 연동 섹션 ──
         layout.addSpacing(20)

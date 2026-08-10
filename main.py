@@ -510,6 +510,27 @@ def main() -> int:
     from gui.view_models.sync_vm import SyncViewModel  # noqa: PLC0415
     sync_vm = SyncViewModel(sync_service)
 
+    # 라이브러리 가져오기/내보내기 뷰모델 (설정 패널)
+    from application.transfer.commands import (  # noqa: PLC0415
+        DetectImportConflictsHandler,
+        ExportLibraryHandler,
+        ImportLibraryHandler,
+        PreviewImportHandler,
+    )
+    from infrastructure.transfer.portable_package import (  # noqa: PLC0415
+        ZipLibraryPackageReader,
+        ZipLibraryPackageWriter,
+    )
+    from gui.view_models.transfer_vm import LibraryTransferViewModel  # noqa: PLC0415
+    _pkg_writer = ZipLibraryPackageWriter()
+    _pkg_reader = ZipLibraryPackageReader()
+    transfer_vm = LibraryTransferViewModel(
+        export_handler=ExportLibraryHandler(video_repo, song_repo, _pkg_writer),
+        preview_handler=PreviewImportHandler(_pkg_reader),
+        conflicts_handler=DetectImportConflictsHandler(video_repo, song_repo, _pkg_reader),
+        import_handler=ImportLibraryHandler(video_repo, song_repo, event_bus, _pkg_reader),
+    )
+
     # 16. Launch GUI
     window = MainWindow(
         library_vm, download_vm, clip_vm, monitoring_vm,
@@ -520,6 +541,7 @@ def main() -> int:
         yt_oauth=yt_oauth,
         song_vm=song_vm,
         sync_vm=sync_vm,
+        transfer_vm=transfer_vm,
     )
 
     # 자동 업데이트 — composition root에서 조립

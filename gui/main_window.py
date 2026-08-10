@@ -437,6 +437,7 @@ class MainWindow(QMainWindow):
         yt_oauth=None,   # YouTubeOAuthAdapter | None
         song_vm=None,    # SongViewModel | None
         sync_vm=None,    # SyncViewModel | None
+        transfer_vm=None,   # LibraryTransferViewModel | None
     ) -> None:
         super().__init__()
         QPixmapCache.setCacheLimit(PIXMAP_CACHE_LIMIT_KB)
@@ -449,6 +450,7 @@ class MainWindow(QMainWindow):
         self._feed_vm = feed_vm
         self._song_vm = song_vm
         self._sync_vm = sync_vm
+        self._transfer_vm = transfer_vm
         self._yt_oauth = yt_oauth
         self._auth_service = auth_service or YouTubeAuthService()
         self._update_controller = None
@@ -520,12 +522,14 @@ class MainWindow(QMainWindow):
         # (구독 피드는 별도 페이지를 두지 않고 라이브러리 좌측 트리의
         #  "구독" 노드로 통합됨 — _LibraryPage에 feed_vm을 주입한다.)
 
-        # 페이지 4: 설정 (library_vm.tags 를 lazy 하게 공급)
+        # 페이지 4: 설정 (library_vm.tags/categories 를 lazy 하게 공급)
         self._settings_panel = SettingsPanel(
             get_tags_fn=lambda: self._library_vm.tags,
             yt_oauth=self._yt_oauth,
             song_vm=self._song_vm,
             sync_vm=self._sync_vm,
+            transfer_vm=self._transfer_vm,
+            get_categories_fn=lambda: self._library_vm.categories,
         )
         self._stack.addWidget(self._settings_panel)                  # 4
 
@@ -745,7 +749,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.
         for vm in (self._download_vm, self._library_vm, self._feed_vm,
-                   self._song_vm, self._sync_vm, self._update_controller):
+                   self._song_vm, self._sync_vm, self._transfer_vm, self._update_controller):
             if vm is None:
                 continue
             shutdown = getattr(vm, "shutdown", None)
