@@ -1234,14 +1234,22 @@ class SettingsPanel(QWidget):
         layout.addWidget(feed_label)
         feed_hint = QLabel(
             "YouTube API는 구독 피드(최신 영상 목록) 엔드포인트를 제공하지 않아\n"
-            "브라우저 쿠키가 필요합니다. Firefox 권장 (Chrome 실행 중 오류 발생).\n"
-            "쿠키 파일을 등록하면 가장 안정적입니다 — 다운로드·데스크톱 폴더를 "
-            "자동으로 검색해 아래에서 바로 선택할 수 있습니다."
+            "브라우저 쿠키가 필요합니다. 아래 '브라우저 열어서 로그인'이 가장 "
+            "간단하고 안정적입니다 — 창이 뜨면 로그인만 하면 됩니다."
         )
         feed_hint.setWordWrap(True)
         feed_hint.setStyleSheet(f"font-size: 8pt; color: {_t().text_secondary};")
         layout.addWidget(feed_hint)
         layout.addSpacing(6)
+
+        self._browser_login_btn = QPushButton("브라우저 열어서 로그인 (권장)")
+        self._browser_login_btn.clicked.connect(self._on_open_auth_dialog)
+        layout.addWidget(self._browser_login_btn)
+        layout.addSpacing(10)
+
+        adv_label = QLabel("고급: 기존 브라우저 프로필 직접 선택")
+        adv_label.setStyleSheet(f"font-size: 8pt; color: {_t().text_muted};")
+        layout.addWidget(adv_label)
 
         browser_row = QHBoxLayout()
         b_lbl = QLabel("브라우저")
@@ -1633,6 +1641,22 @@ class SettingsPanel(QWidget):
         if not path:
             return
         self._feed_cookie_edit.setText(path)
+
+    def _on_open_auth_dialog(self) -> None:
+        """자체 브라우저 창을 띄워 로그인시키고 쿠키를 직접 캡처하는 다이얼로그를 연다.
+
+        기존 브라우저의 쿠키 DB를 복사하지 않아(Chrome 잠금·App-Bound Encryption과
+        무관) 자동 감지가 실패하는 환경에서도 동작한다. "쿠키를 왜 찾아야 하냐,
+        브라우저를 띄워서 로그인시키면 안 되냐"는 사용자 요청으로 연결됨 —
+        `YouTubeAuthDialog`는 이미 구현돼 있었지만 이 버튼이 생기기 전까지는
+        앱 어디에서도 열리지 않는 코드였다.
+        """
+        from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
+        from gui.dialogs.youtube_auth_dialog import YouTubeAuthDialog  # noqa: PLC0415
+
+        dialog = YouTubeAuthDialog(YouTubeAuthService(), self)
+        dialog.auth_changed.connect(self._refresh_feed_auth_ui)
+        dialog.exec()
 
     def _reload_profiles(self, browser: str) -> None:
         from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
