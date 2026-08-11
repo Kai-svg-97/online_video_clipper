@@ -68,6 +68,11 @@ _PAGE_LOAD_TIMEOUT_MS = 20_000
 _ASK_BUTTON_TIMEOUT_MS = 20_000
 _LOGIN_PROBE_TIMEOUT_MS = 8_000
 
+# 쿠키 자동 감지 시 시도할 브라우저 우선순위. Chrome은 v127+ App-Bound Encryption으로
+# 외부 프로세스의 쿠키 복호화가 항상 실패하는 사례가 확인돼 마지막 순위로 둔다
+# (구버전 Chrome이나 예외적으로 동작하는 환경까지 배제하지 않기 위해 완전히 빼진 않음).
+_AUTO_DETECT_BROWSER_ORDER = ("firefox", "edge", "chromium", "chrome")
+
 # 요약 실패 사유 — 상세 화면이 원인별로 다른 안내 문구를 띄우는 데 쓴다.
 # "질문하기 버튼이 없어서" 실패한 경우는 사용자가 손쓸 수 없는 YouTube 측 제약이므로
 # 쿠키·네트워크 문제와 반드시 구분해 알려야 한다.
@@ -539,14 +544,77 @@ class GeminiExtractor:
             logger.debug("쿠키 경로 확인 실패")
         return None
 
-    @staticmethod
-    def _export_browser_cookies() -> str | None:
-        """`YT_AUTH_BROWSER`/`YT_AUTH_PROFILE` 설정으로 yt-dlp를 통해 쿠키를
-        임시 Netscape 파일로 내보낸다.
+    @classmethod
+    def _export_browser_cookies(cls) -> str | None:
+        """yt-dlp를 통해 로그인된 브라우저의 쿠키를 임시 Netscape 파일로 내보낸다.
 
-        Firefox 등 대부분의 브라우저에서 동작한다. Chrome v127+는 App-Bound
-        Encryption(DPAPI)으로 인해 실패하며, 이 경우 예외를 잡아 로그만 남기고
-        None을 반환한다(호출자가 '로그인 필요' 상태로 처리).
+        사용자가 설정에서 브라우저/프로필을 명시적으로 지정했으면 그 값을 먼저
+        시도한다. 실패하거나(브라우저 실행 중 DB 잠금, Chrome App-Bound Encryption
+        등) 아무것도 설정하지 않았으면, 설치된 다른 브라우저의 로그인 프로필을
+        `_AUTO_DETECT_BROWSER_ORDER` 순서로 자동 순회해 쿠키를 찾는다 — 매번 설정
+        화면에서 브라우저/프로필을 다시 골라야 하는 수고를 없애기 위함이다.
+        자동 감지로 성공한 조합은 다음 시도부터 먼저 쓰도록 저장해 반복되는
+        실패-재탐색을 줄인다.
+
+        반환된 경로는 호출자가 사용 후 반드시 삭제해야 하는 임시 파일이다.
+        """
+        import config.settings as _s  # noqa: PLC0415
+
+        explicit_profile = getattr(_s, "YT_AUTH_PROFILE", None)
+        tried: set[tuple[str, str]] = set()
+
+        if explicit_profile:
+            browser = getattr(_s, "YT_AUTH_BROWSER", None) or "firefox"
+            tried.add((browser, explicit_profile))
+            path = cls._try_export(browser, explicit_profile)
+            if path:
+                return path
+            logger.info(
+                "설정된 브라우저(%s) 쿠키 내보내기 실패 — 다른 로그인된 브라우저를 "
+                "자동으로 찾는다",
+                browser,
+            )
+
+        for browser, profile in cls._auto_detected_candidates():
+            if (browser, profile) in tried:
+                continue
+            tried.add((browser, profile))
+            path = cls._try_export(browser, profile)
+            if path:
+                logger.info(
+                    "자동 감지된 브라우저(%s) 쿠키로 요약 추출 성공 — 다음부터 "
+                    "우선 사용하도록 저장",
+                    browser,
+                )
+                try:
+                    _s.save_setting("yt_auth_browser", browser)
+                    _s.save_setting("yt_auth_profile", profile)
+                except Exception:
+                    logger.debug("자동 감지된 브라우저 저장 실패 (무시)")
+                return path
+
+        if not explicit_profile and not tried:
+            logger.info(
+                "로그인된 브라우저를 찾지 못함 — 설정 화면에서 브라우저/프로필을 "
+                "선택하거나 쿠키 파일을 등록하세요"
+            )
+        return None
+
+    @staticmethod
+    def _auto_detected_candidates() -> list[tuple[str, str]]:
+        """설치된 브라우저의 로그인 프로필을 `_AUTO_DETECT_BROWSER_ORDER` 순서로 나열한다."""
+        from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
+
+        service = YouTubeAuthService()
+        candidates: list[tuple[str, str]] = []
+        for browser in _AUTO_DETECT_BROWSER_ORDER:
+            for profile in service.detect_profiles(browser):
+                candidates.append((browser, profile.profile_key))
+        return candidates
+
+    @staticmethod
+    def _try_export(browser: str, profile: str) -> str | None:
+        """지정한 브라우저/프로필의 쿠키를 임시 Netscape 파일로 내보낸다. 실패 시 None.
 
         반환된 경로는 호출자가 사용 후 반드시 삭제해야 하는 임시 파일이다.
         """
@@ -554,12 +622,6 @@ class GeminiExtractor:
         import tempfile  # noqa: PLC0415
 
         import yt_dlp  # noqa: PLC0415
-        import config.settings as _s  # noqa: PLC0415
-
-        profile = getattr(_s, "YT_AUTH_PROFILE", None)
-        if not profile:
-            return None
-        browser = getattr(_s, "YT_AUTH_BROWSER", None) or "firefox"
 
         fd, tmp_path = tempfile.mkstemp(prefix="ovc_gemini_cookies_", suffix=".txt")
         # yt-dlp는 cookiejar 속성 최초 접근 시(close() 시점) cookiefile을 먼저 읽으려
@@ -580,10 +642,10 @@ class GeminiExtractor:
             if Path(tmp_path).stat().st_size > 100:
                 logger.info("브라우저(%s) 쿠키 임시 내보내기 성공: profile=%s", browser, profile)
                 return tmp_path
-            logger.debug("브라우저 쿠키 내보내기 결과 비어있음")
+            logger.debug("브라우저(%s) 쿠키 내보내기 결과 비어있음: profile=%s", browser, profile)
         except Exception:
-            logger.warning(
-                "브라우저 쿠키 내보내기 실패 (%s/%s)",
+            logger.debug(
+                "브라우저(%s) 쿠키 내보내기 실패 (profile=%s) — 다음 후보 시도",
                 browser, profile, exc_info=True,
             )
         Path(tmp_path).unlink(missing_ok=True)

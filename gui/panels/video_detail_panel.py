@@ -162,6 +162,21 @@ _SUMMARY_PLACEHOLDERS: dict[str, str] = {
     ),
 }
 
+# 상태바(_summary_status_lbl)용 한 줄 요약 — 실패 사유와 무관하게 항상 같은 문구
+# ("설정에서 브라우저/프로필을 선택하거나 쿠키 파일을 등록하세요")를 보여주면
+# "no_button"(YouTube가 이 영상에 요약 기능을 제공하지 않음)처럼 설정을 만져도
+# 소용없는 경우까지 설정을 고치라고 안내해 불필요한 시행착오를 유발한다.
+_SUMMARY_STATUS_LABELS: dict[str, str] = {
+    "no_button": "요약 추출 실패 — 이 영상은 YouTube가 요약 기능을 제공하지 않습니다",
+    "not_signed_in": "요약 추출 실패 — 로그인된 브라우저를 찾지 못했습니다",
+    "error": "요약 추출 실패 — 잠시 후 다시 시도하세요",
+}
+
+
+def summary_failure_status_label(reason: str) -> str:
+    """요약 실패 사유에 맞는 한 줄 상태 문구를 반환한다(모르는 값은 error와 동일)."""
+    return _SUMMARY_STATUS_LABELS.get(reason, _SUMMARY_STATUS_LABELS["error"])
+
 
 def summary_placeholder(status: str) -> str:
     """요약 실패 사유에 맞는 안내 문구를 반환한다(모르는 값은 기본 문구)."""
@@ -2406,9 +2421,7 @@ class VideoDetailWidget(QWidget):
             self._summary_stack.setCurrentWidget(self._summary_edit)
             self._summary_status_lbl.setText("")
         else:
-            self._summary_status_lbl.setText(
-                "요약 추출 실패 — 설정에서 브라우저/프로필을 선택하거나 쿠키 파일을 등록하세요"
-            )
+            self._summary_status_lbl.setText(summary_failure_status_label(reason or "error"))
 
     # ── 요약 편집 (더블클릭) ──────────────────────────────────────────
 
