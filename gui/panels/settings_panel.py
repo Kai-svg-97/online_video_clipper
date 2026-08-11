@@ -1234,15 +1234,21 @@ class SettingsPanel(QWidget):
         layout.addWidget(feed_label)
         feed_hint = QLabel(
             "YouTube API는 구독 피드(최신 영상 목록) 엔드포인트를 제공하지 않아\n"
-            "브라우저 쿠키가 필요합니다. 아래 '브라우저 열어서 로그인'이 가장 "
-            "간단하고 안정적입니다 — 창이 뜨면 로그인만 하면 됩니다."
+            "브라우저 쿠키가 필요합니다. 가장 확실한 방법은 아래 '쿠키 파일 등록 "
+            "방법 보기'입니다 — 평소 쓰던 브라우저로 직접 로그인한 뒤 내보내는 "
+            "방식이라 항상 동작합니다."
         )
         feed_hint.setWordWrap(True)
         feed_hint.setStyleSheet(f"font-size: 8pt; color: {_t().text_secondary};")
         layout.addWidget(feed_hint)
         layout.addSpacing(6)
 
-        self._browser_login_btn = QPushButton("브라우저 열어서 로그인 (권장)")
+        self._browser_login_btn = QPushButton("브라우저 열어서 로그인")
+        self._browser_login_btn.setToolTip(
+            "이 앱이 직접 띄운 브라우저 창에서 로그인합니다. Google이 자동화된\n"
+            "브라우저로 판단해 \"로그인할 수 없음\"으로 거부할 수 있습니다 —\n"
+            "그런 경우 아래 '쿠키 파일 등록 방법 보기'를 이용하세요."
+        )
         self._browser_login_btn.clicked.connect(self._on_open_auth_dialog)
         layout.addWidget(self._browser_login_btn)
         layout.addSpacing(10)

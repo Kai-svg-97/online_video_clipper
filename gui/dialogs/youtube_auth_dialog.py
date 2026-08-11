@@ -100,12 +100,23 @@ class _PlaywrightLoginWorker(QThread):
 
         try:
             with sync_playwright() as p:
-                kwargs: dict = {"headless": False}
+                kwargs: dict = {
+                    "headless": False,
+                    # Google은 자동화 도구로 제어되는 브라우저의 로그인을 적극적으로
+                    # 차단한다("로그인할 수 없음 — 브라우저 또는 앱이 안전하지
+                    # 않을 수 있습니다"). navigator.webdriver 노출을 없애면 일부
+                    # 판정을 완화할 수 있다(gemini_extractor.py와 동일한 조치).
+                    "args": ["--disable-blink-features=AutomationControlled"],
+                }
                 if exe:
                     kwargs["executable_path"] = exe
                 browser = p.chromium.launch(**kwargs)
                 try:
                     context = browser.new_context()
+                    context.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', "
+                        "{get: () => undefined});"
+                    )
                     page = context.new_page()
                     page.goto(
                         "https://accounts.google.com/signin/v2/identifier?service=youtube",
