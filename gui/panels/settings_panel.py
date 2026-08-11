@@ -1207,7 +1207,9 @@ class SettingsPanel(QWidget):
         layout.addWidget(feed_label)
         feed_hint = QLabel(
             "YouTube API는 구독 피드(최신 영상 목록) 엔드포인트를 제공하지 않아\n"
-            "브라우저 쿠키가 필요합니다. Firefox 권장 (Chrome 실행 중 오류 발생)."
+            "브라우저 쿠키가 필요합니다. Firefox 권장 (Chrome 실행 중 오류 발생).\n"
+            "쿠키 파일을 등록하면 가장 안정적입니다 — 다운로드·데스크톱 폴더를 "
+            "자동으로 검색해 아래에서 바로 선택할 수 있습니다."
         )
         feed_hint.setWordWrap(True)
         feed_hint.setStyleSheet(f"font-size: 8pt; color: {_t().text_secondary};")
@@ -1236,6 +1238,25 @@ class SettingsPanel(QWidget):
         profile_row.addWidget(p_lbl)
         profile_row.addWidget(self._feed_profile_combo, 1)
         layout.addLayout(profile_row)
+
+        cand_row = QHBoxLayout()
+        cand_lbl = QLabel("감지된 쿠키 파일")
+        cand_lbl.setFixedWidth(100)
+        self._feed_cookie_candidates_combo = QComboBox()
+        self._feed_cookie_candidates_combo.setToolTip(
+            "다운로드·데스크톱 폴더에서 자동으로 찾은 쿠키 파일입니다. 선택하면 "
+            "아래 경로란에 채워집니다."
+        )
+        self._feed_cookie_candidates_combo.currentIndexChanged.connect(
+            self._on_cookie_candidate_selected
+        )
+        cand_refresh = QPushButton("다시 검색")
+        cand_refresh.setFixedWidth(70)
+        cand_refresh.clicked.connect(self._reload_cookie_candidates)
+        cand_row.addWidget(cand_lbl)
+        cand_row.addWidget(self._feed_cookie_candidates_combo, 1)
+        cand_row.addWidget(cand_refresh)
+        layout.addLayout(cand_row)
 
         cookie_row = QHBoxLayout()
         ck_lbl = QLabel("또는 쿠키 파일")
@@ -1539,8 +1560,40 @@ class SettingsPanel(QWidget):
                 f"프로필: {profile}" if profile else
                 (f"쿠키 파일: {cookiefile}" if cookiefile else "미설정")
             )
+            self._reload_cookie_candidates()
         except Exception:
             logger.exception("브라우저 쿠키 설정 UI 반영 실패")
+
+    def _reload_cookie_candidates(self) -> None:
+        """다운로드·데스크톱 폴더에서 쿠키 파일 후보를 다시 스캔해 목록에 채운다."""
+        from infrastructure.auth.youtube_auth import (  # noqa: PLC0415
+            find_cookie_file_candidates,
+        )
+
+        self._feed_cookie_candidates_combo.blockSignals(True)
+        self._feed_cookie_candidates_combo.clear()
+        try:
+            candidates = find_cookie_file_candidates()
+        except Exception:
+            logger.exception("쿠키 파일 후보 탐색 실패")
+            candidates = []
+        if candidates:
+            self._feed_cookie_candidates_combo.addItem("아래에서 선택하세요", None)
+            for path in candidates:
+                self._feed_cookie_candidates_combo.addItem(
+                    f"{path.name}  ({path.parent.name})", str(path)
+                )
+        else:
+            self._feed_cookie_candidates_combo.addItem(
+                "다운로드·데스크톱에서 찾지 못함 — 아래 '찾기…'로 직접 선택", None
+            )
+        self._feed_cookie_candidates_combo.blockSignals(False)
+
+    def _on_cookie_candidate_selected(self, _index: int) -> None:
+        path = self._feed_cookie_candidates_combo.currentData()
+        if not path:
+            return
+        self._feed_cookie_edit.setText(path)
 
     def _reload_profiles(self, browser: str) -> None:
         from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415

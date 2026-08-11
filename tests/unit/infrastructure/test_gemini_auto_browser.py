@@ -13,7 +13,10 @@ import pytest
 import yt_dlp
 
 from infrastructure.auth.youtube_auth import BrowserProfile, YouTubeAuthService
-from infrastructure.browser.gemini_extractor import GeminiExtractor
+from infrastructure.browser.gemini_extractor import (
+    SUMMARY_REASON_NOT_SIGNED_IN,
+    GeminiExtractor,
+)
 
 
 class _FakeYDL:
@@ -166,3 +169,23 @@ class TestAutoDetectFallback:
         path = GeminiExtractor._export_browser_cookies()
 
         assert path is None
+
+
+class TestNoCookieFoundReason:
+    """설정된 브라우저도 자동 감지도 모두 쿠키를 못 찾으면 실패 사유가 남아야 한다.
+
+    과거엔 이 경로가 `out["reason"]`을 채우지 않아 `extract_with_reason`이 항상
+    기본값인 SUMMARY_REASON_ERROR("잠시 후 다시 시도하세요")로 떨어졌다 — 실제로는
+    로그인된 브라우저를 못 찾은 것인데도 원인을 알 수 없는 오류처럼 보여줬다.
+    """
+
+    def test_쿠키를_전혀_찾지_못하면_로그인_필요_사유를_반환한다(self, monkeypatch):
+        monkeypatch.setattr(GeminiExtractor, "_get_cookie_path", staticmethod(lambda: None))
+        monkeypatch.setattr(
+            GeminiExtractor, "_export_browser_cookies", classmethod(lambda cls: None)
+        )
+
+        summary, reason = GeminiExtractor().extract_with_reason("https://youtu.be/x")
+
+        assert summary is None
+        assert reason == SUMMARY_REASON_NOT_SIGNED_IN

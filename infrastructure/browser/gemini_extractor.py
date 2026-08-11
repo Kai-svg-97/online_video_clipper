@@ -143,9 +143,16 @@ class GeminiExtractor:
             cookie_path = temp_cookie_path
 
         if not cookie_path:
+            # 설정된 브라우저 + 자동 감지까지 모두 실패한 경우다. 여기서 reason을
+            # 채우지 않으면 extract_with_reason이 기본값(SUMMARY_REASON_ERROR)으로
+            # 떨어져 "잠시 후 다시 시도하세요"만 보여준다 — 실제로는 로그인된
+            # 브라우저를 못 찾은 것이므로 그 사유를 명시해야 사용자가 쿠키 파일
+            # 등록으로 넘어갈지 판단할 수 있다.
+            if out is not None:
+                out["reason"] = SUMMARY_REASON_NOT_SIGNED_IN
             logger.info(
-                "YouTube 인증 쿠키 없음 — 설정 화면의 '구독 피드 — 브라우저 쿠키'에서 "
-                "브라우저/프로필을 선택하거나 쿠키 파일을 등록하세요"
+                "YouTube 인증 쿠키를 찾지 못함(설정된 브라우저·자동 감지 모두 실패) — "
+                "설정 화면의 '구독 피드 — 브라우저 쿠키'에서 쿠키 파일을 직접 등록하세요"
             )
             return None
 

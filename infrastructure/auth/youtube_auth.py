@@ -217,6 +217,48 @@ class YouTubeAuthService:
         save_setting("yt_auth_account_name", None)
 
 
+# 브라우저 확장(Get cookies.txt 등)이 내보낸 쿠키 파일을 사용자가 두는 흔한 위치.
+# 확장은 파일명을 제각각으로 짓기 때문에(예: "youtube.com_cookies.txt",
+# "cookies.txt") 파일명이 아니라 **내용**으로 판별한다.
+_COOKIE_SCAN_DIR_NAMES = ("Downloads", "Desktop")
+_COOKIE_CONTENT_SCAN_BYTES = 65536
+
+
+def _looks_like_youtube_cookie_file(path: Path) -> bool:
+    """파일이 YouTube 쿠키를 담은 Netscape 포맷 파일처럼 보이는지 판정한다."""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            head = f.read(_COOKIE_CONTENT_SCAN_BYTES)
+    except OSError:
+        return False
+    if "Netscape" not in head or "Cookie File" not in head:
+        return False
+    return "youtube.com" in head
+
+
+def find_cookie_file_candidates() -> list[Path]:
+    """다운로드·데스크톱 폴더에서 YouTube 쿠키로 보이는 파일을 찾는다.
+
+    사용자가 쿠키 파일을 등록해본 적이 없어 어디 두는지 몰라 이 기능을 전혀 쓰지
+    못한다는 신고에 따라, 브라우저 확장이 흔히 저장하는 위치를 미리 스캔해
+    선택만 하면 되도록 한다. 최근 수정된 파일을 먼저 반환한다.
+    """
+    candidates: list[Path] = []
+    home = Path.home()
+    for dirname in _COOKIE_SCAN_DIR_NAMES:
+        base = home / dirname
+        if not base.is_dir():
+            continue
+        try:
+            for path in base.glob("*.txt"):
+                if _looks_like_youtube_cookie_file(path):
+                    candidates.append(path)
+        except OSError:
+            logger.debug("쿠키 후보 탐색 실패: %s", base)
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates
+
+
 def write_netscape_cookies(path: Path, cookies: list[dict]) -> None:
     """Playwright 쿠키 list를 yt-dlp가 읽을 수 있는 Netscape 포맷으로 저장."""
     path.parent.mkdir(parents=True, exist_ok=True)
