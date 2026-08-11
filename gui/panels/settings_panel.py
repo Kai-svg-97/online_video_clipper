@@ -10,8 +10,8 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
+from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -44,6 +44,29 @@ logger = logging.getLogger(__name__)
 
 def _t():
     return ThemeManager.instance().current()
+
+
+def open_folder(path) -> None:
+    """OS 파일 탐색기로 폴더를 연다 — 경로를 직접 찾아 입력할 필요를 없앤다."""
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+
+# 쿠키 파일 등록 방법 안내 — "이건 컴퓨터 전문가용 앱이 아니다"는 사용자 신고에 따라,
+# 브라우저 프로필 자동 감지가 전혀 동작하지 않는 환경(기업 보안 정책, 지원되지 않는
+# 브라우저 등)에서도 일반 사용자가 이해할 수 있는 대체 경로를 안내한다.
+COOKIE_HELP_TEXT = (
+    "브라우저/프로필 자동 감지가 계속 실패한다면, 쿠키 파일을 직접 등록하는 "
+    "방법이 가장 확실합니다.\n\n"
+    "1. 사용 중인 브라우저의 웹 스토어에서 'Get cookies.txt LOCALLY' (또는 "
+    "'cookies.txt') 확장 프로그램을 설치하세요.\n"
+    "2. www.youtube.com 에 접속해 로그인되어 있는지 확인하세요.\n"
+    "3. 확장 프로그램 아이콘을 클릭하고 '내보내기(Export)'를 눌러 쿠키 파일을 "
+    "저장하세요. 특별히 지정하지 않으면 보통 다운로드 폴더에 저장됩니다.\n"
+    "4. 이 설정 화면으로 돌아와 '다시 검색'을 누르면 저장한 파일이 "
+    "'감지된 쿠키 파일' 목록에 나타납니다. 선택하면 끝입니다.\n\n"
+    "문제가 계속되면 아래 '로그 폴더 열기'로 연 폴더의 app.log 파일을 함께 "
+    "보내주세요."
+)
 
 
 class _ThemeCard(QWidget):
@@ -916,8 +939,12 @@ class SettingsPanel(QWidget):
             val.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
+            open_btn = QPushButton("열기")
+            open_btn.setFixedWidth(48)
+            open_btn.clicked.connect(lambda _checked=False, p=path_text: open_folder(p))
             row.addWidget(lbl)
             row.addWidget(val, 1)
+            row.addWidget(open_btn)
             layout.addLayout(row)
             layout.addSpacing(6)
 
@@ -1275,6 +1302,18 @@ class SettingsPanel(QWidget):
         ck_apply.setFixedWidth(110)
         ck_apply.clicked.connect(self._on_apply_cookie_file)
         layout.addWidget(ck_apply)
+
+        help_row = QHBoxLayout()
+        self._cookie_help_btn = QPushButton("쿠키 파일 등록 방법 보기")
+        self._cookie_help_btn.setFixedWidth(160)
+        self._cookie_help_btn.clicked.connect(self._on_show_cookie_help)
+        self._open_log_dir_btn = QPushButton("로그 폴더 열기")
+        self._open_log_dir_btn.setFixedWidth(100)
+        self._open_log_dir_btn.clicked.connect(self._on_open_log_dir)
+        help_row.addWidget(self._cookie_help_btn)
+        help_row.addWidget(self._open_log_dir_btn)
+        help_row.addStretch()
+        layout.addLayout(help_row)
 
         self._feed_status_lbl = QLabel()
         self._feed_status_lbl.setWordWrap(True)
@@ -1649,3 +1688,25 @@ class SettingsPanel(QWidget):
         YouTubeAuthService().save_auth(browser=browser, profile_key=None, cookiefile=cookiefile)
         self._feed_status_lbl.setText("쿠키 파일이 설정되었습니다.")
         self._feed_status_lbl.setStyleSheet(f"font-size: 8pt; color: {sem('success')};")
+
+    def _on_show_cookie_help(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("쿠키 파일 등록 방법")
+        v = QVBoxLayout(dialog)
+        text_lbl = QLabel(COOKIE_HELP_TEXT)
+        text_lbl.setWordWrap(True)
+        v.addWidget(text_lbl)
+        btn_row = QHBoxLayout()
+        dl_btn = QPushButton("다운로드 폴더 열기")
+        dl_btn.clicked.connect(lambda: open_folder(Path.home() / "Downloads"))
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(dialog.accept)
+        btn_row.addWidget(dl_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        v.addLayout(btn_row)
+        dialog.exec()
+
+    def _on_open_log_dir(self) -> None:
+        from config import settings as s  # noqa: PLC0415
+        open_folder(s.LOG_DIR)
