@@ -609,14 +609,29 @@ class GeminiExtractor:
 
     @staticmethod
     def _auto_detected_candidates() -> list[tuple[str, str]]:
-        """설치된 브라우저의 로그인 프로필을 `_AUTO_DETECT_BROWSER_ORDER` 순서로 나열한다."""
+        """설치된 브라우저의 로그인 프로필을 `_AUTO_DETECT_BROWSER_ORDER` 순서로 나열한다.
+
+        브라우저별 탐지 개수를 INFO로 남긴다 — 사용자 실제 로그에서 "자동 감지
+        모두 실패"만 보이고 왜 0개였는지(브라우저 미설치? 프로필 못 읽음?
+        예외?) 전혀 알 수 없었던 문제를 막기 위함이다. `detect_profiles` 자체에도
+        예외 처리가 있지만, 혹시 모를 예상 밖 예외도 후보를 0개로 만들 뿐 조용히
+        사라지지 않도록 이 지점에서도 한 번 더 감싼다.
+        """
         from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
 
         service = YouTubeAuthService()
         candidates: list[tuple[str, str]] = []
+        counts: list[str] = []
         for browser in _AUTO_DETECT_BROWSER_ORDER:
-            for profile in service.detect_profiles(browser):
+            try:
+                profiles = service.detect_profiles(browser)
+            except Exception as exc:
+                logger.info("브라우저(%s) 프로필 감지 중 예외: %s", browser, exc)
+                profiles = []
+            counts.append(f"{browser}={len(profiles)}")
+            for profile in profiles:
                 candidates.append((browser, profile.profile_key))
+        logger.info("자동 감지 브라우저별 프로필 개수: %s", ", ".join(counts))
         return candidates
 
     @staticmethod
@@ -649,11 +664,17 @@ class GeminiExtractor:
             if Path(tmp_path).stat().st_size > 100:
                 logger.info("브라우저(%s) 쿠키 임시 내보내기 성공: profile=%s", browser, profile)
                 return tmp_path
-            logger.debug("브라우저(%s) 쿠키 내보내기 결과 비어있음: profile=%s", browser, profile)
-        except Exception:
-            logger.debug(
-                "브라우저(%s) 쿠키 내보내기 실패 (profile=%s) — 다음 후보 시도",
-                browser, profile, exc_info=True,
+            logger.info("브라우저(%s) 쿠키 내보내기 결과 비어있음: profile=%s", browser, profile)
+        except Exception as exc:
+            # 자동 감지는 설치된 여러 브라우저를 훑으므로 브라우저마다 실패가 흔하다
+            # (미로그인·DB 잠금 등) — 전체 트레이스백을 매번 남기면 로그가 시끄러워지니
+            # 한 줄 원인만 INFO로 남긴다. 예전엔 DEBUG였는데, 운영 로그(INFO)에는
+            # 아무 흔적도 남지 않아 "왜 모든 브라우저가 실패했는지" 진단할 수 없었다
+            # (Chrome 실행 중 잠금으로 쿠키 DB PermissionError가 나는 사례를 실제로
+            # 사용자 로그로 확인한 뒤 추가됨).
+            logger.info(
+                "브라우저(%s) 쿠키 내보내기 실패 (profile=%s): %s — 다음 후보 시도",
+                browser, profile, exc,
             )
         Path(tmp_path).unlink(missing_ok=True)
         return None

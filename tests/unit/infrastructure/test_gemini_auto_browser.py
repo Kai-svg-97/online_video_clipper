@@ -170,6 +170,62 @@ class TestAutoDetectFallback:
 
         assert path is None
 
+    def test_브라우저별_감지_개수가_로그로_남는다(self, monkeypatch, no_persist, caplog):
+        """"자동 감지 모두 실패"만 보이고 브라우저별로 왜 0개였는지 알 수 없던 문제.
+
+        실제 사용자 로그에서 브라우저를 바꿔가며 시도해도 계속 실패했는데, 각
+        브라우저에서 프로필이 몇 개 감지됐는지가 전혀 남지 않아 원인을 좁힐 수
+        없었다.
+        """
+        import config.settings as s
+
+        monkeypatch.setattr(s, "YT_AUTH_BROWSER", None, raising=False)
+        monkeypatch.setattr(s, "YT_AUTH_PROFILE", None, raising=False)
+
+        def fake_detect(self, browser):
+            return [BrowserProfile("p", "p", "p")] if browser == "edge" else []
+
+        monkeypatch.setattr(YouTubeAuthService, "detect_profiles", fake_detect)
+        _FakeYDL.SUCCESS = set()  # edge 후보도 결국 실패
+
+        with caplog.at_level("INFO"):
+            GeminiExtractor._export_browser_cookies()
+
+        msg = next(r.message for r in caplog.records if "브라우저별 프로필 개수" in r.message)
+        assert "firefox=0" in msg
+        assert "edge=1" in msg
+        assert "chrome=0" in msg
+
+
+class TestFailureVisibleAtInfoLevel:
+    """실패 원인이 운영 로그(INFO)에 남아야 한다.
+
+    사용자가 보내온 실제 app.log에는 Chrome 쿠키 DB PermissionError(브라우저 실행 중
+    잠금)가 있었는데, 자동 감지 단계의 개별 실패는 DEBUG로만 남아 운영 로그에서
+    "왜 실패했는지"를 전혀 알 수 없었다.
+    """
+
+    def test_내보내기_실패_사유가_INFO_레벨로_남는다(self, monkeypatch, no_persist, caplog):
+        import config.settings as s
+
+        monkeypatch.setattr(s, "YT_AUTH_BROWSER", "chrome", raising=False)
+        monkeypatch.setattr(s, "YT_AUTH_PROFILE", "Default", raising=False)
+        monkeypatch.setattr(YouTubeAuthService, "detect_profiles", lambda self, browser: [])
+
+        def boom(self):
+            raise PermissionError("Access denied: Cookies")
+
+        monkeypatch.setattr(_FakeYDL, "__enter__", boom)
+
+        with caplog.at_level("INFO"):
+            path = GeminiExtractor._export_browser_cookies()
+
+        assert path is None
+        assert any(
+            "chrome" in r.message and "Default" in r.message and "Access denied" in r.message
+            for r in caplog.records
+        )
+
 
 class TestNoCookieFoundReason:
     """설정된 브라우저도 자동 감지도 모두 쿠키를 못 찾으면 실패 사유가 남아야 한다.
