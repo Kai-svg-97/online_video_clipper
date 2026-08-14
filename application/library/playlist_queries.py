@@ -45,6 +45,24 @@ class GetChannelVideosQuery:
     cookie_opts: dict | None = None
 
 
+@dataclass
+class GetRecommendationsQuery:
+    """현재 보고 있는 목록을 씨앗으로 추천 후보를 조회한다.
+
+    씨앗(제목·채널·태그)은 GUI가 현재 화면의 영상들에서 그대로 넘기고,
+    검색어 파생 규칙은 도메인 순수 함수가 담당한다.
+    """
+
+    seed_titles: tuple[str, ...] = ()
+    seed_channels: tuple[str, ...] = ()
+    seed_tags: tuple[str, ...] = ()
+    limit: int = 24            # 최종 반환 개수 상한
+    per_query: int = 12        # 검색어 1개당 후보 수
+    max_queries: int = 3
+    exclude_urls: frozenset[str] = frozenset()
+    cookie_opts: dict | None = None
+
+
 # ── 핸들러 ──────────────────────────────────────────────────────────────────
 
 class GetPlaylistsHandler:
@@ -346,6 +364,120 @@ class GetChannelVideosHandler:
                 )
             )
         return result
+
+
+class GetRecommendationsHandler:
+    """현재 목록에서 파생한 검색어로 YouTube 추천 후보를 모은다.
+
+    ``search.list(relatedToVideoId=)``가 폐지돼 '관련 영상'을 직접 받을 수 없으므로
+    (자세한 배경은 ``domain/library/recommendation.py``), 목록 대표 검색어 몇 개로
+    yt-dlp 검색을 돌려 후보를 합친다. 검색은 쿠키·API 키가 없어도 동작한다.
+
+    이미 라이브러리에 있는 영상은 **결과에서 제외**한다 — 이 목록의 목적이
+    '아직 없는 영상을 찾아 담기'이기 때문이다. 구독 피드 핸들러들과 같은
+    ``FeedVideoDTO``를 반환해 카드 렌더링을 공유한다.
+    """
+
+    def __init__(
+        self,
+        ytdlp: IMediaSource,
+        video_repo: IVideoRepository,
+        yt_api=None,  # YouTubeApiAdapter | None
+    ) -> None:
+        self._ytdlp = ytdlp
+        self._video_repo = video_repo
+        self._yt_api = yt_api
+
+    def handle(
+        self,
+        query: GetRecommendationsQuery,
+        on_progress=None,  # Optional[Callable[[list[FeedVideoDTO]], None]]
+    ) -> list[FeedVideoDTO]:
+        from domain.library.recommendation import derive_seed_queries  # noqa: PLC0415
+
+        queries = derive_seed_queries(
+            titles=query.seed_titles,
+            channels=query.seed_channels,
+            tags=query.seed_tags,
+            max_queries=query.max_queries,
+        )
+        if not queries:
+            logger.debug("추천 씨앗 검색어가 없어 조회를 건너뛴다")
+            return []
+
+        # ── 후보 수집 (검색어별 실패는 격리) ──
+        entries: list[dict] = []
+        seen_ids: set[str] = set()
+        seen_urls: set[str] = {u for u in query.exclude_urls if u}
+        for q in queries:
+            try:
+                found = self._ytdlp.fetch_search_videos(
+                    query=q, limit=query.per_query, cookie_opts=query.cookie_opts
+                )
+            except Exception:
+                logger.exception("추천 검색 실패 (검색어=%r)", q)
+                continue
+            for e in found:
+                url = e.get("url") or ""
+                vid = e.get("yt_video_id") or e.get("id") or ""
+                if not url or url in seen_urls or (vid and vid in seen_ids):
+                    continue
+                if self._video_repo.exists_by_url(url):
+                    continue   # 이미 라이브러리에 있는 영상은 추천하지 않는다
+                seen_urls.add(url)
+                if vid:
+                    seen_ids.add(vid)
+                entries.append(e)
+            if len(entries) >= query.limit:
+                break
+        entries = entries[: query.limit]
+        if not entries:
+            logger.info("추천 후보 없음 (검색어=%s)", queries)
+            return []
+
+        # Phase 1: 검색 결과만으로 부분 DTO 즉시 방출 (조회수·게시일 없음)
+        if on_progress:
+            on_progress([self._to_dto(e, {}) for e in entries])
+
+        # Phase 2: 플랫 추출이 비워 둔 게시일/조회수를 영상 ID로 API 보강
+        meta_by_vid: dict[str, dict] = {}
+        if self._yt_api is not None:
+            vids = [e.get("yt_video_id") or e.get("id") or "" for e in entries]
+            vids = [v for v in vids if v]
+            if vids:
+                try:
+                    meta_by_vid = self._yt_api.get_videos_channels(vids)
+                except Exception:
+                    logger.exception("추천 영상 메타데이터 조회 실패")
+
+        result = [
+            self._to_dto(e, meta_by_vid.get(e.get("yt_video_id") or e.get("id") or "", {}))
+            for e in entries
+        ]
+        logger.info("추천 %d건 (검색어=%s)", len(result), queries)
+        return result
+
+    @staticmethod
+    def _to_dto(e: dict, meta: dict) -> FeedVideoDTO:
+        view_count = e.get("view_count")
+        if view_count is None:
+            view_count = meta.get("view_count")
+        duration_sec = e.get("duration_sec")
+        if duration_sec is None:
+            duration_sec = meta.get("duration_sec")
+        return FeedVideoDTO(
+            url=e.get("url") or "",
+            title=e.get("title") or "",
+            channel_name=e.get("channel_name") or meta.get("channel_name") or "",
+            channel_id=e.get("channel_id") or meta.get("channel_id") or "",
+            thumbnail_url=e.get("thumbnail") or "",
+            thumbnail_path="",
+            published_at=e.get("published_at") or meta.get("published_at") or "",
+            view_count=view_count,
+            duration_sec=duration_sec,
+            in_library=False,   # 라이브러리에 있는 항목은 위에서 걸러졌다
+            yt_video_id=e.get("yt_video_id") or e.get("id") or "",
+        )
 
 
 @dataclass

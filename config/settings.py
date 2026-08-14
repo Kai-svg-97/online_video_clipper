@@ -134,6 +134,10 @@ DEFAULT_FORMAT: str = _resolve_str("default_format", "mp4")
 AUTO_UPDATE_CHECK: bool = _load_bool("auto_update_check", True)
 # 단건 등록 직후 요약(비노래)·가사(노래) 자동 보강. 일괄 임포트는 대상이 아니다.
 AUTO_ENRICH_ON_ADD: bool = _load_bool("auto_enrich_on_add", True)
+# 라이브러리 목록 아래 추천 영상 스트립 — 접힘 상태와 높이(px)를 기억한다.
+# 접혀 있으면 추천 조회(네트워크)도 하지 않는다.
+RECOMMEND_STRIP_EXPANDED: bool = _load_bool("recommend_strip_expanded", True)
+RECOMMEND_STRIP_HEIGHT: int = _load_int("recommend_strip_height", 250)
 # 자막 표시 설정 — 전역(영상과 무관한 보기 설정). 비율이라 인라인·전체화면·PiP
 # 어디서나 같은 비중으로 보인다. 값 범위 clamp 는 LyricsOverlay 가 담당한다.
 SUBTITLE_FONT_SCALE: float = _load_float("subtitle_font_scale", 1.0)
@@ -179,6 +183,8 @@ def save_setting(key: str, value) -> None:
         "theme": "THEME",
         "auto_update_check": "AUTO_UPDATE_CHECK",
         "auto_enrich_on_add": "AUTO_ENRICH_ON_ADD",
+        "recommend_strip_expanded": "RECOMMEND_STRIP_EXPANDED",
+        "recommend_strip_height": "RECOMMEND_STRIP_HEIGHT",
         "subtitle_font_scale": "SUBTITLE_FONT_SCALE",
         "subtitle_bottom_ratio": "SUBTITLE_BOTTOM_RATIO",
         "last_update_check": "LAST_UPDATE_CHECK",

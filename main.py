@@ -242,6 +242,7 @@ def main() -> int:
         GetPlaylistFoldersHandler,
         GetPlaylistItemsHandler,
         GetPlaylistsHandler,
+        GetRecommendationsHandler,
         GetSubscribedChannelInfosHandler,
         GetSubscriptionFeedHandler,
         GetYouTubePlaylistsHandler,
@@ -264,6 +265,7 @@ def main() -> int:
     from gui.view_models.library_vm import LibraryViewModel
     from gui.view_models.monitoring_vm import MonitoringViewModel
     from gui.view_models.playlist_vm import PlaylistViewModel
+    from gui.view_models.recommend_vm import RecommendViewModel
     from gui.view_models.song_vm import SongViewModel
 
     # 5. Initialize database — DB 열기 전 클라우드 스냅샷 부트스트랩(신규 기기만)
@@ -397,6 +399,7 @@ def main() -> int:
     get_feed_h         = GetSubscriptionFeedHandler(ytdlp, video_repo, channel_repo, _yt_api)
     get_channel_vids_h = GetChannelVideosHandler(ytdlp, video_repo, _yt_api)
     get_ch_infos_h     = GetSubscribedChannelInfosHandler(_yt_api)
+    get_recommend_h    = GetRecommendationsHandler(ytdlp, video_repo, _yt_api)
     add_url_to_pl_h    = AddUrlToPlaylistHandler(add_video, playlist_repo)
 
     rename_playlist_h  = RenamePlaylistHandler(playlist_repo, yt_api=_yt_api)
@@ -471,6 +474,10 @@ def main() -> int:
         channel_infos_handler=get_ch_infos_h,
         auth_service=auth_service,
     )
+    recommend_vm = RecommendViewModel(
+        handler=get_recommend_h,
+        auth_service=auth_service,
+    )
     download_vm = DownloadViewModel(
         start_handler=start_dl,
         cancel_handler=cancel_dl,
@@ -537,6 +544,7 @@ def main() -> int:
         stats_handler,
         playlist_vm=playlist_vm,
         feed_vm=feed_vm,
+        recommend_vm=recommend_vm,
         auth_service=auth_service,
         yt_oauth=yt_oauth,
         song_vm=song_vm,

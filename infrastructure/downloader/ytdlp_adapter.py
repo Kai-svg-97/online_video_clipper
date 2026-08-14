@@ -498,6 +498,66 @@ class YtDlpAdapter:
             )
         return result
 
+    def fetch_search_videos(
+        self,
+        query: str,
+        limit: int = 12,
+        cookie_opts: dict | None = None,
+    ) -> list[dict]:
+        """YouTube 검색 결과 상위 ``limit``건 반환 (추천 영상 후보).
+
+        반환 키 집합은 ``fetch_subscription_feed``·``fetch_channel_videos``와
+        동일해 DTO 매핑을 공유한다.
+
+        ``ytsearch{N}:{query}`` 의사 URL을 쓰기 때문에 **인증이 필요 없다** —
+        YouTube Data API 키/OAuth가 없는 사용자도 추천을 받을 수 있다.
+        (쿠키가 주어지면 개인화된 결과를 위해 그대로 넘긴다.)
+        """
+        import yt_dlp  # noqa: PLC0415
+        query = (query or "").strip()
+        if not query or limit <= 0:
+            return []
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+            "playlistend": limit,
+            **(cookie_opts or {}),
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(f"ytsearch{limit}:{query}", download=False) or {}
+        except Exception as exc:
+            if _is_dpapi_error(exc):
+                raise RuntimeError(_DPAPI_USER_MSG) from exc
+            raise
+        result = []
+        for e in (info.get("entries") or [])[:limit]:
+            yt_id = e.get("id") or ""
+            url_val = e.get("url") or e.get("webpage_url") or (
+                f"https://www.youtube.com/watch?v={yt_id}" if yt_id else ""
+            )
+            if not url_val:
+                continue
+            thumb = e.get("thumbnail") or (
+                f"https://i.ytimg.com/vi/{yt_id}/mqdefault.jpg" if yt_id else ""
+            )
+            result.append(
+                {
+                    "url": url_val,
+                    "yt_video_id": yt_id,
+                    "title": e.get("title") or "",
+                    "channel_name": e.get("uploader") or e.get("channel") or "",
+                    "channel_id": e.get("channel_id") or "",
+                    "thumbnail": thumb,
+                    "published_at": e.get("upload_date") or "",
+                    "view_count": e.get("view_count"),
+                    "duration_sec": e.get("duration"),
+                }
+            )
+        return result
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

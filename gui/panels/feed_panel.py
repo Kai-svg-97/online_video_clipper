@@ -7,11 +7,12 @@ from collections import OrderedDict
 from uuid import UUID
 
 import requests
-from PyQt6.QtCore import Qt, QSize, QThread, QUrl, pyqtSignal
+from PyQt6.QtCore import QMimeData, QPoint, Qt, QSize, QThread, QUrl, pyqtSignal
 from PyQt6.QtGui import (
-    QColor, QDesktopServices, QFont, QImage, QPainter, QPainterPath, QPixmap,
+    QColor, QDesktopServices, QDrag, QFont, QImage, QPainter, QPainterPath, QPixmap,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -21,6 +22,8 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -366,11 +369,21 @@ class _FeedCard(QFrame):
         dto: FeedVideoDTO,
         parent: QWidget | None = None,
         show_channel: bool = True,
+        thumb_size: tuple[int, int] | None = None,
+        draggable: bool = False,
     ) -> None:
         super().__init__(parent)
         self._dto = dto
         self._show_channel = show_channel
         self._loader: _ThumbLoader | None = None
+        if thumb_size is not None:
+            # 인스턴스 속성으로 클래스 기본값(320×180)을 가린다 — 추천 스트립처럼
+            # 세로 공간이 좁은 곳에서 같은 카드를 작게 쓰기 위한 것이다.
+            self._TW, self._TH = thumb_size
+        # 드래그로 카테고리 트리에 바로 담기(추천 스트립·피드 그리드 공용).
+        self._draggable = draggable
+        self._press_pos: QPoint | None = None
+        self._dragged: bool = False
         self.setFixedWidth(self._TW + 16)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -473,13 +486,64 @@ class _FeedCard(QFrame):
         except RuntimeError:
             pass  # 카드가 소멸된 후 콜백 도달 시 무시
 
-    # ── 단일 클릭: 상세화면으로 진입 (수식키 없는 좌클릭) ──
+    # ── 마우스: 단일 클릭 → 상세화면 / 끌기 → URL 드래그 ──
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_pos = event.position().toPoint()
+            self._dragged = False
+            # 명시적으로 수락해 이후 move/release 이벤트가 이 카드로 오게 한다.
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if (
+            not self._draggable
+            or self._press_pos is None
+            or not (event.buttons() & Qt.MouseButton.LeftButton)
+        ):
+            super().mouseMoveEvent(event)
+            return
+        moved = (event.position().toPoint() - self._press_pos).manhattanLength()
+        if moved < QApplication.startDragDistance():
+            super().mouseMoveEvent(event)
+            return
+        self._dragged = True
+        self._start_url_drag()
+
     def mouseReleaseEvent(self, event) -> None:
+        was_drag = self._dragged
+        self._press_pos = None
+        self._dragged = False
+        if was_drag:
+            return   # 드래그로 끝난 조작은 클릭(상세 진입)으로 처리하지 않는다
         if (
             event.button() == Qt.MouseButton.LeftButton
             and event.modifiers() == Qt.KeyboardModifier.NoModifier
         ):
             self.video_clicked.emit(self._dto)
+
+    def _start_url_drag(self) -> None:
+        """영상 URL을 담은 드래그를 시작한다.
+
+        MIME은 ``text/uri-list``+``text/plain``으로, 브라우저에서 URL을 끌어다
+        놓을 때와 **완전히 같은 형태**다 — 카테고리 트리의 기존 URL 드롭 경로를
+        그대로 재사용하므로 받는 쪽에 추천 전용 처리가 필요하지 않다.
+        """
+        url = self._dto.url
+        if not url:
+            return
+        mime = QMimeData()
+        mime.setUrls([QUrl(url)])
+        mime.setText(url)
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        px = self._thumb_lbl._pixmap
+        if px is not None and not px.isNull():
+            preview = px.scaledToWidth(160, Qt.TransformationMode.SmoothTransformation)
+            drag.setPixmap(preview)
+            drag.setHotSpot(QPoint(preview.width() // 2, preview.height() // 2))
+        drag.exec(Qt.DropAction.CopyAction)
 
     # ── 우클릭: 컨텍스트 메뉴 ──
     def contextMenuEvent(self, event) -> None:
@@ -557,7 +621,7 @@ class _FeedGrid(QWidget):
 
         self._cols = self._calc_cols()
         for i, dto in enumerate(items):
-            card = _FeedCard(dto, show_channel=show_channel)
+            card = _FeedCard(dto, show_channel=show_channel, draggable=True)
             card.add_to_category_requested.connect(self.add_to_category_requested)
             card.add_to_playlist_requested.connect(self.add_to_playlist_requested)
             card.download_requested.connect(self.download_requested)
@@ -575,7 +639,7 @@ class _FeedGrid(QWidget):
             self._cols = self._calc_cols()
         start = len(self._cards)
         for i, dto in enumerate(items):
-            card = _FeedCard(dto, show_channel=show_channel)
+            card = _FeedCard(dto, show_channel=show_channel, draggable=True)
             card.add_to_category_requested.connect(self.add_to_category_requested)
             card.add_to_playlist_requested.connect(self.add_to_playlist_requested)
             card.download_requested.connect(self.download_requested)
@@ -597,6 +661,187 @@ class _FeedGrid(QWidget):
         if self._cards and new_cols != self._cols:
             self._cols = new_cols
             self._relayout()
+
+
+# ---------------------------------------------------------------------------
+# 추천 영상 스트립 — 영상 목록 아래 접이식 가로 스크롤 띠
+# ---------------------------------------------------------------------------
+
+class RecommendStrip(QWidget):
+    """현재 목록과 관련 있을 만한 YouTube 영상을 가로로 나열하는 접이식 스트립.
+
+    ``QSplitter``의 아래쪽 자식으로 들어가 핸들을 끌어 높이를 조절하고, 헤더의
+    삼각형 버튼으로 본문만 접는다(헤더는 항상 남아 다시 펼칠 수 있다).
+    카드는 ``_FeedCard``를 작은 썸네일로 재사용하며 **드래그 가능**이라,
+    좌측 카테고리 트리에 바로 끌어다 놓아 라이브러리에 담을 수 있다.
+    """
+
+    refresh_requested         = pyqtSignal()
+    expanded_changed          = pyqtSignal(bool)
+    video_clicked             = pyqtSignal(object)   # FeedVideoDTO
+    download_requested        = pyqtSignal(str, str)
+    add_to_category_requested = pyqtSignal(str)
+    add_to_playlist_requested = pyqtSignal(str)
+
+    # 목록 아래 띠라서 아이콘 그리드 카드(320×180)보다 작게 쓴다.
+    THUMB_SIZE = (192, 108)
+    # 헤더만 남았을 때의 높이 — 스플리터 최소 높이 계산에 쓴다.
+    HEADER_H = 30
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._cards: list[_FeedCard] = []
+        self._expanded = True
+        self._build_ui()
+        self._apply_theme(ThemeManager.instance().current())
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+
+    # ── 구성 ────────────────────────────────────────────────────────────────
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # 헤더 = 접기 바
+        self._bar = QWidget()
+        self._bar.setFixedHeight(self.HEADER_H)
+        bar_row = QHBoxLayout(self._bar)
+        bar_row.setContentsMargins(8, 0, 8, 0)
+        bar_row.setSpacing(6)
+
+        self._toggle_btn = QToolButton()
+        self._toggle_btn.setText("▾")
+        self._toggle_btn.setFixedSize(18, 18)
+        self._toggle_btn.setAutoRaise(True)
+        self._toggle_btn.setToolTip("추천 영상 접기/펼치기")
+        self._toggle_btn.clicked.connect(self.toggle)
+        bar_row.addWidget(self._toggle_btn)
+
+        self._title_lbl = QLabel("추천 영상")
+        f = QFont()
+        f.setPointSize(9)
+        f.setWeight(QFont.Weight.DemiBold)
+        self._title_lbl.setFont(f)
+        bar_row.addWidget(self._title_lbl)
+
+        self._hint_lbl = QLabel("— 카드를 왼쪽 카테고리로 끌어다 놓으면 담깁니다")
+        fh = QFont()
+        fh.setPointSize(8)
+        self._hint_lbl.setFont(fh)
+        bar_row.addWidget(self._hint_lbl)
+
+        bar_row.addStretch(1)
+
+        self._status_lbl = QLabel()
+        self._status_lbl.setFont(fh)
+        bar_row.addWidget(self._status_lbl)
+
+        self._refresh_btn = QToolButton()
+        self._refresh_btn.setText("⟳")
+        self._refresh_btn.setFixedSize(20, 20)
+        self._refresh_btn.setAutoRaise(True)
+        self._refresh_btn.setToolTip("추천 다시 받기")
+        self._refresh_btn.clicked.connect(self.refresh_requested)
+        bar_row.addWidget(self._refresh_btn)
+
+        root.addWidget(self._bar)
+
+        # 본문 = 카드 가로 스크롤
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._row_widget = QWidget()
+        self._row = QHBoxLayout(self._row_widget)
+        self._row.setContentsMargins(8, 6, 8, 6)
+        self._row.setSpacing(10)
+        self._row.addStretch(1)
+        self._scroll.setWidget(self._row_widget)
+        self._scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        root.addWidget(self._scroll, stretch=1)
+
+        self._empty_lbl = QLabel("추천할 영상이 없습니다.")
+        self._empty_lbl.setFont(fh)
+        self._empty_lbl.setContentsMargins(12, 8, 12, 8)
+        self._empty_lbl.hide()
+        root.addWidget(self._empty_lbl)
+
+    def _apply_theme(self, tokens) -> None:
+        self._bar.setStyleSheet(
+            f"background: {tokens.bg_surface};"
+            f"border-top: 1px solid {tokens.border};"
+        )
+        self._title_lbl.setStyleSheet(f"color: {tokens.text_primary}; border: none;")
+        self._hint_lbl.setStyleSheet(f"color: {tokens.text_muted}; border: none;")
+        self._status_lbl.setStyleSheet(f"color: {tokens.text_secondary}; border: none;")
+        self._empty_lbl.setStyleSheet(f"color: {tokens.text_muted};")
+        self._scroll.setStyleSheet(f"background: {tokens.bg_base};")
+
+    # ── 상태 ────────────────────────────────────────────────────────────────
+    @property
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_expanded(self, expanded: bool, notify: bool = True) -> None:
+        self._expanded = expanded
+        self._toggle_btn.setText("▾" if expanded else "▸")
+        self._scroll.setVisible(expanded)
+        self._empty_lbl.setVisible(expanded and not self._cards)
+        if notify:
+            self.expanded_changed.emit(expanded)
+
+    def toggle(self) -> None:
+        self.set_expanded(not self._expanded)
+
+    def set_status(self, text: str) -> None:
+        self._status_lbl.setText(text)
+
+    def set_loading(self, loading: bool) -> None:
+        self._refresh_btn.setEnabled(not loading)
+        if loading:
+            self._status_lbl.setText("추천 받는 중…")
+        elif self._status_lbl.text() == "추천 받는 중…":
+            self._status_lbl.setText("")
+
+    def count(self) -> int:
+        return len(self._cards)
+
+    # ── 카드 ────────────────────────────────────────────────────────────────
+    def clear(self) -> None:
+        for card in self._cards:
+            card.setParent(None)
+            card.deleteLater()
+        self._cards.clear()
+        self._empty_lbl.setVisible(self._expanded)
+
+    def set_items(self, items: list[FeedVideoDTO]) -> None:
+        self.clear()
+        self.append_items(items)
+
+    def append_items(self, items: list[FeedVideoDTO]) -> None:
+        if not items:
+            self._empty_lbl.setVisible(self._expanded and not self._cards)
+            return
+        for dto in items:
+            card = _FeedCard(
+                dto,
+                show_channel=True,
+                thumb_size=self.THUMB_SIZE,
+                draggable=True,
+            )
+            card.video_clicked.connect(self.video_clicked)
+            card.download_requested.connect(self.download_requested)
+            card.add_to_category_requested.connect(self.add_to_category_requested)
+            card.add_to_playlist_requested.connect(self.add_to_playlist_requested)
+            if dto.duration_sec:
+                card._thumb_lbl.set_duration(_fmt_duration(dto.duration_sec))
+            # 마지막 stretch 앞에 삽입해 카드가 왼쪽부터 채워지게 한다.
+            self._row.insertWidget(self._row.count() - 1, card)
+            self._cards.append(card)
+        self._empty_lbl.hide()
 
 
 # ---------------------------------------------------------------------------

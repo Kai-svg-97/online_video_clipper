@@ -81,6 +81,10 @@ class IMediaSource(Protocol):
         self, channel_url: str, limit: int = 30, cookie_opts: dict | None = None
     ) -> list[dict]: ...
 
+    def fetch_search_videos(
+        self, query: str, limit: int = 12, cookie_opts: dict | None = None
+    ) -> list[dict]: ...
+
 
 # 진행률 콜백을 받아 미디어 소스 인스턴스를 생성하는 팩토리.
 # 다운로드는 작업별 진행률 훅이 필요해 인스턴스를 새로 만들어야 하므로,

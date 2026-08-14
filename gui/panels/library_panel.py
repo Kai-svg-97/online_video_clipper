@@ -66,6 +66,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+import config.settings as _settings
 from application.library.dtos import CategoryDTO, VideoDTO
 from config.settings import LRU_THUMBNAIL_MAX, THUMBNAIL_DIR, THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH
 from gui.dialogs.batch_download_dialog import BatchDownloadDialog
@@ -117,6 +118,13 @@ _VIEW_CHANNELS = 5 # 구독 채널 목록(아바타 카드) 그리드
 
 # 검색어 입력 디바운스(ms) — 입력이 멎은 뒤 한 번만 조회한다.
 _SEARCH_DEBOUNCE_MS = 300
+
+# 추천 영상 자동 갱신 디바운스(ms) — 검색보다 훨씬 무거운 네트워크 조회라 길게 둔다.
+_RECOMMEND_DEBOUNCE_MS = 900
+# 추천 씨앗으로 쓸 영상 수 상한 — 현재 페이지 앞쪽만 봐도 목록 성격은 충분히 드러난다.
+_RECOMMEND_SEED_LIMIT = 20
+# 추천 후보 개수 (가로 스트립이라 너무 많으면 스크롤만 길어진다)
+_RECOMMEND_COUNT = 18
 
 
 def _fmt_elapsed(iso: str | None) -> str:
@@ -1553,6 +1561,10 @@ _ITYPE_CATEGORY = "category"
 _ITYPE_CHANNEL  = "channel"    # 구독 채널 노드 (클릭 시 채널 영상 피드)
 _ITYPE_FEED_ALL = "feed_all"   # 전체 구독 피드 노드
 
+# URL 드롭 대상 판정용 sentinel — cat_id는 None("미분류로 등록")이 유효한 값이라
+# 실패를 None으로 표현할 수 없다.
+_NO_URL_TARGET = object()
+
 
 class _TreeRowDelegate(QStyledItemDelegate):
     """트리 행을 직접 그린다 — 둥근 pill 행 + 색상 점 + 우측 개수 뱃지 + ★.
@@ -1695,11 +1707,13 @@ class _PlaylistTree(QTreeWidget):
     favorite_toggle_req           = pyqtSignal(str, str, str)  # (type, id, name)
     video_assign_category_req     = pyqtSignal(object, object) # (video_id UUID, cat_id UUID | None)
     local_playlist_to_category_req = pyqtSignal(object, object) # (playlist_id UUID, parent_cat_id UUID | None)
+    url_dropped                   = pyqtSignal(str, object)    # (url, cat_id UUID | None)
 
     def __init__(self, section: str | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._section = section   # "local" | "youtube" | None (둘 다)
         self._favs: set[tuple[str, str]] = set()   # {("category"|"playlist", id_str)}
+        self._ext_url_drag: bool = False   # 외부 URL 드래그 진행 중 여부
         self.setHeaderHidden(True)
         self.setIndentation(20)
         self.setItemDelegate(_TreeRowDelegate(self))
@@ -2363,11 +2377,16 @@ class _PlaylistTree(QTreeWidget):
 
     def dragEnterEvent(self, event) -> None:
         mime = event.mimeData()
+        self._ext_url_drag = False
         if mime.hasFormat(_MIME_VIDEO_ID):
             event.acceptProposedAction()
         elif mime.hasFormat(_MIME_PLAYLIST_ID):
             event.acceptProposedAction()
         elif event.source() is self:
+            event.acceptProposedAction()
+        elif _mime_may_contain_url(mime):
+            # 외부 URL 드래그(브라우저 주소·추천 스트립 카드) — 내용 검증은 dropEvent에서.
+            self._ext_url_drag = True
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -2378,6 +2397,14 @@ class _PlaylistTree(QTreeWidget):
 
         # 드롭 대상 hover 강조 (QFrame 오버레이)
         self._show_drop_on(target)
+
+        if self._ext_url_drag and not mime.hasFormat(_MIME_VIDEO_ID):
+            if self._url_drop_target(target) is not _NO_URL_TARGET:
+                event.setDropAction(Qt.DropAction.CopyAction)
+                event.accept()
+            else:
+                event.ignore()
+            return
 
         if mime.hasFormat(_MIME_VIDEO_ID):
             # 영상 드롭: 재생목록 또는 카테고리 항목 위에서 허용
@@ -2428,12 +2455,43 @@ class _PlaylistTree(QTreeWidget):
 
     def dragLeaveEvent(self, event) -> None:
         self._hide_drop_ind()
+        self._ext_url_drag = False
         super().dragLeaveEvent(event)
+
+    def _url_drop_target(self, item) -> object:
+        """URL 드롭 가능한 대상이면 대상 카테고리 id(루트는 None)를 돌려준다.
+
+        불가한 대상이면 ``_NO_URL_TARGET``을 반환한다 — ``None``은 '미분류로 등록'
+        이라는 유효한 값이라 실패와 구분해야 한다.
+        """
+        if item is None:
+            return _NO_URL_TARGET
+        item_type = item.data(0, _ITEM_TYPE_ROLE)
+        if item_type == _ITYPE_CATEGORY:
+            return item.data(0, _CAT_ID_ROLE)
+        if item_type == _ITYPE_ROOT:
+            section = item.data(0, _SECTION_ROLE) or self._section_of(item)
+            if section == "local":
+                return None   # 로컬 루트 = 카테고리 없이 등록
+        return _NO_URL_TARGET
 
     def dropEvent(self, event) -> None:
         self._hide_drop_ind()
         mime   = event.mimeData()
         target = self.itemAt(event.position().toPoint())
+
+        # ── 외부 URL 드롭 (브라우저 주소 · 추천 스트립 카드) ───────────────
+        if self._ext_url_drag and not mime.hasFormat(_MIME_VIDEO_ID):
+            self._ext_url_drag = False
+            cat_id = self._url_drop_target(target)
+            url = _url_from_mime(mime)
+            if url and cat_id is not _NO_URL_TARGET:
+                self.url_dropped.emit(url, cat_id)
+                event.setDropAction(Qt.DropAction.CopyAction)
+                event.accept()
+            else:
+                event.ignore()
+            return
 
         # ── 영상 → 재생목록 / 카테고리 드롭 ────────────────────────────────
         if mime.hasFormat(_MIME_VIDEO_ID):
@@ -3069,6 +3127,7 @@ class _PlaylistPanel(QWidget):
     favorite_toggle_req           = pyqtSignal(str, str, str)  # (type, id, name)
     video_assign_category_req      = pyqtSignal(object, object) # (video_id UUID, cat_id UUID | None)
     local_playlist_to_category_req = pyqtSignal(object, object) # (playlist_id UUID, parent_cat_id UUID | None)
+    url_dropped                    = pyqtSignal(str, object)   # (url, cat_id UUID | None)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -3215,6 +3274,7 @@ class _PlaylistPanel(QWidget):
         tree.favorite_toggle_req.connect(self.favorite_toggle_req)
         tree.video_assign_category_req.connect(self.video_assign_category_req)
         tree.local_playlist_to_category_req.connect(self.local_playlist_to_category_req)
+        tree.url_dropped.connect(self.url_dropped)
 
     def _toggle_yt_section(self) -> None:
         """YouTube 구독 트리를 펼치거나 접는다(삼각형 아이콘 상태도 갱신)."""
@@ -3842,6 +3902,7 @@ class LibraryPanel(QWidget):
         feed_vm=None,
         monitoring_vm=None,
         song_vm=None,
+        recommend_vm=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -3852,6 +3913,7 @@ class LibraryPanel(QWidget):
         self._feed_vm = feed_vm
         self._monitoring_vm = monitoring_vm
         self._song_vm = song_vm
+        self._recommend_vm = recommend_vm
         self._all_tags: list = []
         self._active_tag_ids: set[UUID] = set()
         self._current_cat_id: UUID | None = None
@@ -3876,6 +3938,12 @@ class LibraryPanel(QWidget):
         # 표(상세) 뷰가 숨겨진 동안 목록이 바뀌었는지 — 표시될 때 한 번만 채운다.
         self._table_dirty: bool = False
         self._setup_ui()
+        # 추천 스트립 자동 갱신 디바운스 — 목록이 바뀔 때마다 검색을 돌리면
+        # (카테고리 전환·검색 타이핑) yt-dlp 검색이 폭주한다.
+        self._recommend_timer = QTimer(self)
+        self._recommend_timer.setSingleShot(True)
+        self._recommend_timer.setInterval(_RECOMMEND_DEBOUNCE_MS)
+        self._recommend_timer.timeout.connect(self._refresh_recommendations)
         self._connect_signals()
         QTimer.singleShot(0, vm.load)
         if playlist_vm is not None:
@@ -4097,7 +4165,32 @@ class LibraryPanel(QWidget):
         self._channels_view = self._build_channels_view()
         self._view_stack.addWidget(self._channels_view)
 
-        centre_layout.addWidget(self._view_stack, stretch=1)
+        # ── 영상 목록 + 추천 스트립을 수직 스플리터로 묶는다 ──
+        # 스플리터 핸들을 끌어 추천 영역 높이를 조절하고, 스트립 헤더의 삼각형
+        # 버튼으로 본문만 접는다(헤더는 남아 다시 펼칠 수 있다). 스플리터 자식
+        # 자체를 숨기지 않으므로 과거 태그 섹션에서 겪은 레이아웃 thrash가 없다.
+        self._centre_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._centre_splitter.setChildrenCollapsible(False)
+        self._centre_splitter.setHandleWidth(6)
+        from gui.panels.feed_panel import RecommendStrip  # noqa: PLC0415
+        self._centre_splitter.addWidget(self._view_stack)
+        self._recommend_strip = RecommendStrip()
+        self._centre_splitter.addWidget(self._recommend_strip)
+        self._centre_splitter.setStretchFactor(0, 1)
+        self._centre_splitter.setStretchFactor(1, 0)
+        centre_layout.addWidget(self._centre_splitter, stretch=1)
+        # 마지막 상태 복원 (기본: 펼침) — 접혀 있으면 네트워크 조회도 하지 않는다.
+        self._recommend_height: int = max(
+            int(getattr(_settings, "RECOMMEND_STRIP_HEIGHT", 250)),
+            self._recommend_strip.HEADER_H + 40,
+        )
+        self._recommend_strip.set_expanded(
+            bool(getattr(_settings, "RECOMMEND_STRIP_EXPANDED", True)), notify=False
+        )
+        # 실제 높이 배분은 위젯이 크기를 가진 뒤에 적용한다(첫 표시 전 height()==0).
+        QTimer.singleShot(0, lambda: self._sync_recommend_sizes(
+            self._recommend_strip.is_expanded, save=False
+        ))
         self._nav_stack.addWidget(centre_content)
 
         self._detail_widget = VideoDetailWidget(
@@ -4179,6 +4272,7 @@ class LibraryPanel(QWidget):
         self._vm.yt_import_finished.connect(self._on_yt_import_finished)
 
         self._view_group.idClicked.connect(self._switch_view)
+        self._view_stack.currentChanged.connect(self._on_view_stack_changed)
         self._search_box.textChanged.connect(self._on_search_text_changed)
         self._search_box.returnPressed.connect(self._apply_search_text)
         self._sort_combo.currentIndexChanged.connect(self._on_sort_changed)
@@ -4194,6 +4288,23 @@ class LibraryPanel(QWidget):
         self._playlist_panel.favorite_toggle_req.connect(self._toggle_favorite)
         self._playlist_panel.video_assign_category_req.connect(self._on_video_moved)
         self._playlist_panel.local_playlist_to_category_req.connect(self._on_local_playlist_to_category)
+        # 트리에 URL을 끌어다 놓으면 그 카테고리로 등록한다(추천 카드·브라우저 주소 공용)
+        self._playlist_panel.url_dropped.connect(self._on_url_dropped)
+
+        # ── 추천 영상 스트립 ──
+        self._recommend_strip.refresh_requested.connect(self._on_recommend_refresh_clicked)
+        self._recommend_strip.expanded_changed.connect(self._on_recommend_expanded)
+        self._recommend_strip.video_clicked.connect(self._open_stream_detail)
+        self._recommend_strip.download_requested.connect(self._on_feed_card_download)
+        self._recommend_strip.add_to_category_requested.connect(self._on_recommend_to_category)
+        self._recommend_strip.add_to_playlist_requested.connect(self._on_feed_card_to_playlist)
+        if self._recommend_vm is not None:
+            self._recommend_vm.items_changed.connect(self._on_recommend_items)
+            self._recommend_vm.partial_ready.connect(self._on_recommend_partial)
+            self._recommend_vm.loading_changed.connect(self._recommend_strip.set_loading)
+            self._recommend_vm.error_occurred.connect(self._on_recommend_error)
+        else:
+            self._recommend_strip.set_status("추천 기능을 사용할 수 없습니다.")
         self._breadcrumb_bar.segment_clicked.connect(self._on_breadcrumb_nav)
         self._breadcrumb_bar.tag_removed.connect(self._on_active_tag_removed)
         self._vm.metadata_refresh_progress.connect(self._on_refresh_progress)
@@ -4315,6 +4426,101 @@ class LibraryPanel(QWidget):
         else:
             self._table_dirty = True
         self._start_thumb_preload(videos)
+        self._schedule_recommend_refresh()
+
+    # ── 추천 영상 스트립 ───────────────────────────────────────────────
+    # 배경: YouTube Data API v3의 search.list(relatedToVideoId=)가 폐지돼
+    # '관련 영상'을 직접 받을 수 없다. 지금 보고 있는 목록(제목·채널·태그)에서
+    # 대표 검색어를 뽑아 검색으로 후보를 모은다(domain/library/recommendation.py).
+
+    def _recommend_seeds(self) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+        """현재 목록에서 (제목, 채널, 태그) 씨앗을 뽑는다."""
+        videos = self._vm.videos[:_RECOMMEND_SEED_LIMIT]
+        titles = tuple(v.title for v in videos if v.title)
+        channels = tuple(v.channel_name for v in videos if v.channel_name)
+        tags = tuple(t for v in videos for t in (v.tag_names or ()))
+        return titles, channels, tags
+
+    def _schedule_recommend_refresh(self) -> None:
+        """목록 변경 후 추천 갱신을 예약한다(디바운스)."""
+        if self._recommend_vm is None or not self._recommend_strip.is_expanded:
+            return
+        # 카드 그리드 뷰(폴더·피드·채널)는 라이브러리 목록이 아니라 씨앗이 어긋난다.
+        if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS):
+            return
+        self._recommend_timer.start()
+
+    def _refresh_recommendations(self, force: bool = False) -> None:
+        if self._recommend_vm is None or not self._recommend_strip.is_expanded:
+            return
+        titles, channels, tags = self._recommend_seeds()
+        if not titles and not channels and not tags:
+            self._recommend_strip.set_items([])
+            self._recommend_strip.set_status("목록이 비어 있어 추천할 기준이 없습니다.")
+            return
+        self._recommend_strip.set_status("")
+        self._recommend_vm.load(
+            seed_titles=titles,
+            seed_channels=channels,
+            seed_tags=tags,
+            limit=_RECOMMEND_COUNT,
+            force=force,
+        )
+
+    def _on_recommend_refresh_clicked(self) -> None:
+        self._recommend_timer.stop()
+        self._refresh_recommendations(force=True)
+
+    def _sync_recommend_sizes(self, expanded: bool, save: bool = True) -> None:
+        """스플리터 높이 배분을 접힘 상태에 맞춘다.
+
+        ``setChildrenCollapsible(False)``라 본문을 숨겨도 스플리터가 배분한 높이는
+        그대로 남는다(빈 공간). 접을 때 헤더 높이만 남기고, 펼칠 때 직전 높이를
+        복원한다.
+        """
+        sizes = self._centre_splitter.sizes()
+        total = sum(sizes) or self._centre_splitter.height()
+        header = self._recommend_strip.HEADER_H
+        if total <= header:
+            return
+        if expanded:
+            h = min(self._recommend_height, max(total - 120, header))
+        else:
+            if len(sizes) == 2 and sizes[1] > header + 20:
+                self._recommend_height = sizes[1]   # 다음에 펼칠 때 복원할 높이
+                if save:
+                    _settings.save_setting("recommend_strip_height", int(sizes[1]))
+            h = header
+        self._centre_splitter.setSizes([max(total - h, 0), h])
+
+    def _on_recommend_expanded(self, expanded: bool) -> None:
+        _settings.save_setting("recommend_strip_expanded", expanded)
+        self._sync_recommend_sizes(expanded)
+        if expanded and self._recommend_strip.count() == 0:
+            self._refresh_recommendations()
+
+    def _on_recommend_partial(self, items: list) -> None:
+        # 검색 직후의 부분 결과(조회수·게시일 없음)를 먼저 보여준다.
+        self._recommend_strip.set_items(items)
+
+    def _on_recommend_items(self, items: list) -> None:
+        self._recommend_strip.set_items(items)
+        self._recommend_strip.set_status("" if items else "추천할 영상을 찾지 못했습니다.")
+
+    def _on_recommend_error(self, msg: str) -> None:
+        logger.warning("추천 영상 조회 실패: %s", msg)
+        self._recommend_strip.set_status("추천을 받지 못했습니다.")
+
+    def _on_recommend_to_category(self, url: str) -> None:
+        """추천 카드 우클릭 '카테고리에 추가' — 드래그하지 않고도 담을 수 있게."""
+        from gui.panels.feed_panel import _CategoryPickDialog  # noqa: PLC0415
+        cats = self._vm.categories
+        if not cats:
+            self._vm.add_video(url)
+            return
+        dlg = _CategoryPickDialog(cats, self)
+        if dlg.exec() and dlg.selected_id is not None:
+            self._vm.add_video(url, dlg.selected_id)
 
     def _start_thumb_preload(self, videos: list) -> None:
         """현재 뷰 모드에 맞는 크기로 썸네일을 bg에서 프리로드한다."""
@@ -4696,6 +4902,21 @@ class LibraryPanel(QWidget):
         # 숨어 있는 동안 목록이 바뀌었으면 이제 채운다(지연 갱신).
         if view_id == _VIEW_DETAIL and self._table_dirty:
             self._refresh_table()
+
+    def _on_view_stack_changed(self, view_id: int) -> None:
+        """카드 그리드 뷰(폴더·구독 피드·채널)에서는 추천 스트립을 감춘다.
+
+        그 화면들은 라이브러리 목록이 아니라 추천 씨앗이 어긋나고, 이미 카드
+        그리드라 아래에 또 카드 띠를 두면 화면이 산만해진다.
+        """
+        show = view_id not in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS)
+        # isVisible()이 아니라 isHidden()으로 비교한다 — isVisible()은 조상이 아직
+        # 표시되지 않았을 때도 False라, 첫 전환에서 setVisible(False)가 건너뛰어진다.
+        if show == (not self._recommend_strip.isHidden()):
+            return
+        self._recommend_strip.setVisible(show)
+        if show:
+            self._sync_recommend_sizes(self._recommend_strip.is_expanded, save=False)
 
     # ── Category / tag selection ───────────────────────────────────
 

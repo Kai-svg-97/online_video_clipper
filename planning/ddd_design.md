@@ -51,6 +51,14 @@ class IVideoRepository(ABC):
     def delete(self, video_id: UUID) -> None: ...
 ```
 
+**Domain Services:**
+- `DuplicateDetectionService` (`domain/library/services.py`) — URL 중복 검출
+- `derive_seed_queries(titles, channels, tags, max_queries)` (`domain/library/recommendation.py`)
+  — 지금 보고 있는 목록에서 **추천 검색어**를 뽑는 순수 함수. YouTube Data API v3의
+  `search.list(relatedToVideoId=)`가 폐지돼 '관련 영상'을 API로 직접 받을 수 없으므로,
+  제목 대표 키워드(문서빈도 기준)→최다 태그→최다 채널 순으로 최대 N개 검색어를 만든다.
+  I/O가 없어 규칙을 단위 테스트로 고정한다(`tests/unit/domain/test_recommendation.py`).
+
 ---
 
 ### 2. Download Context
@@ -219,6 +227,7 @@ ffmpeg 기반 구간 추출.
 | `DeleteVideoCommand` | 영상 삭제 (파일 삭제 여부 옵션) |
 | `SearchVideosQuery` | FTS5 + 복합 필터 검색 |
 | `GetVideoByIdQuery` | 상세 정보 조회 |
+| `GetRecommendationsQuery` | 현재 목록(제목·채널·태그) 씨앗 → 파생 검색어로 추천 후보 조회 (라이브러리에 이미 있는 영상은 제외) |
 
 ### Download
 | Command/Query | 설명 |
@@ -273,5 +282,7 @@ Infrastructure (SQLite Repositories, yt-dlp, ffmpeg adapters)
 `MediaSourceFactory`(진행률 콜백→`IMediaSource`)는 작업별 진행률 훅이 필요한 다운로드용 팩토리 타입이다.
 
 `IMediaSource`는 `fetch_subscription_feed`(전체 구독 피드)·`fetch_subscribed_channels`(구독 채널 목록, yt-dlp 페이지네이션 적용)에 더해 **`fetch_channel_videos(channel_url, limit, cookie_opts)`** (특정 채널 최신 영상)을 제공한다. 이를 사용하는 application use case는 `application/library/playlist_queries.py`의 **`GetChannelVideosQuery`/`GetChannelVideosHandler`** 이며, 전체 피드 핸들러와 동일하게 `FeedVideoDTO`를 반환해 GUI 카드 렌더링을 공유한다. GUI에서는 라이브러리 좌측 YouTube 트리의 "구독 채널"/"전체 구독 피드" 노드가 `FeedViewModel.load_channel`/`refresh`를 호출해 메인 영역에 피드 카드를 표시한다(별도 구독 피드 메뉴는 제거됨).
+
+또한 `IMediaSource`는 **`fetch_search_videos(query, limit, cookie_opts)`** (YouTube 검색 상위 N건)을 제공한다 — yt-dlp `ytsearchN:` 의사 URL을 쓰므로 쿠키·API 키 없이 동작한다. 이를 사용하는 use case는 `GetRecommendationsQuery`/`GetRecommendationsHandler`이며, 검색어 파생은 위 `derive_seed_queries`(도메인)에 위임하고 핸들러는 후보 수집·중복 제거·라이브러리 제외·API 메타 보강만 담당한다. 반환형은 피드와 동일한 `FeedVideoDTO`라 카드 렌더링을 공유한다. GUI는 `RecommendViewModel`(`gui/view_models/recommend_vm.py`)이 이를 QThread로 감싸고 `RecommendStrip`(영상 목록 아래 접이식 스트립)이 표시한다.
 
 > 예외: `gui/`의 로그인 플로우(`youtube_auth_dialog`, `main_window`)는 `infrastructure.auth`를 직접 참조한다. playwright 구동·쿠키 파일 작성이 본질적으로 인프라라 composition-root 인접의 수용된 경계로 둔다.

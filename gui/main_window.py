@@ -394,6 +394,7 @@ class _LibraryPage(QWidget):
         feed_vm: FeedViewModel | None = None,
         monitoring_vm: MonitoringViewModel | None = None,
         song_vm=None,
+        recommend_vm=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -409,6 +410,7 @@ class _LibraryPage(QWidget):
             feed_vm=feed_vm,
             monitoring_vm=monitoring_vm,
             song_vm=song_vm,
+            recommend_vm=recommend_vm,
         )
         layout.addWidget(self._library_panel, 1)
 
@@ -433,6 +435,7 @@ class MainWindow(QMainWindow):
         stats_handler=None,
         playlist_vm: PlaylistViewModel | None = None,
         feed_vm: FeedViewModel | None = None,
+        recommend_vm=None,   # RecommendViewModel | None
         auth_service: YouTubeAuthService | None = None,
         yt_oauth=None,   # YouTubeOAuthAdapter | None
         song_vm=None,    # SongViewModel | None
@@ -448,6 +451,7 @@ class MainWindow(QMainWindow):
         self._stats_handler = stats_handler
         self._playlist_vm = playlist_vm
         self._feed_vm = feed_vm
+        self._recommend_vm = recommend_vm
         self._song_vm = song_vm
         self._sync_vm = sync_vm
         self._transfer_vm = transfer_vm
@@ -489,6 +493,7 @@ class MainWindow(QMainWindow):
             feed_vm=self._feed_vm,
             monitoring_vm=self._monitoring_vm,
             song_vm=self._song_vm,
+            recommend_vm=self._recommend_vm,
         )
         self._stack.addWidget(self._library_page)                  # 0
 
@@ -749,7 +754,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.
         for vm in (self._download_vm, self._library_vm, self._feed_vm,
-                   self._song_vm, self._sync_vm, self._transfer_vm, self._update_controller):
+                   self._recommend_vm, self._song_vm, self._sync_vm,
+                   self._transfer_vm, self._update_controller):
             if vm is None:
                 continue
             shutdown = getattr(vm, "shutdown", None)
