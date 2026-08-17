@@ -65,9 +65,15 @@ logger = logging.getLogger(__name__)
 # 체감이 컸다.
 _STREAM_CLIENTS: tuple[str | None, ...] = (None, "android", "ios", "tv")
 
-# URL 검증용 요청. **yt-dlp 전용 헤더로 검증하면 안 된다** — 우리는 통과하는데 정작
-# QMediaPlayer는 403을 받는 위양성이 생긴다. 실제 재생 주체와 비슷한 최소 요청으로 본다.
-_PROBE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+# URL 검증 요청은 **실제 재생 주체(Qt Multimedia의 FFmpeg 백엔드)와 똑같이** 보내야 한다.
+#
+# 실측: 같은 googlevideo URL이 `Range: bytes=0-1`(제한 범위)에는 206을, `Range: bytes=0-`
+# (열린 범위 = ffmpeg가 파일을 열 때 보내는 요청)에는 403을 돌려주는 경우가 있다. 예전
+# 검증은 제한 범위를 써서 통과시켰고, 정작 재생은 403으로 실패했다(위양성). 그래서
+# **열린 범위**로 확인한다. 응답 본문은 읽지 않고 바로 닫으므로 대역폭 부담은 없다.
+# yt-dlp 전용 헤더도 쓰지 않는다 — 같은 이유로 위양성을 만든다.
+_PROBE_UA = "Lavf/61.7.100"          # FFmpeg가 보내는 기본 User-Agent
+_PROBE_RANGE = "bytes=0-"            # FFmpeg가 파일을 열 때 쓰는 열린 범위
 _PROBE_TIMEOUT = (5, 8)
 
 # 재생 도중 QMediaPlayer가 오류를 낼 때 스트림을 다시 받아 시도할 횟수.
@@ -105,21 +111,22 @@ def _pick_stream_url(info: dict) -> tuple[str, dict]:
 
 
 def _stream_playable(url: str) -> bool:
-    """URL을 QMediaPlayer에 넘기기 전에 실제로 받아지는지 확인한다.
+    """URL을 QMediaPlayer에 넘기기 전에 **재생기와 같은 방식으로** 받아지는지 확인한다.
 
-    작은 Range 요청 하나로 403·만료를 걸러낸다. 재생 시작 뒤에 실패하면 사용자는
-    깨진 화면만 보게 되므로, 넘기기 전에 확인해 다음 클라이언트로 넘어가는 편이 낫다.
+    재생 시작 뒤에 실패하면 사용자는 깨진 화면만 보게 되므로, 넘기기 전에 걸러 다음
+    클라이언트로 넘어가는 편이 낫다. 요청 형태를 ffmpeg와 맞추는 것이 핵심이다
+    (`_PROBE_RANGE` 주석 참조 — 제한 범위로 확인하면 통과했는데 재생은 403인 일이 있다).
     """
     try:
         import requests  # noqa: PLC0415
 
         resp = requests.get(
             url,
-            headers={"User-Agent": _PROBE_UA, "Range": "bytes=0-1"},
+            headers={"User-Agent": _PROBE_UA, "Accept": "*/*", "Range": _PROBE_RANGE},
             stream=True,
             timeout=_PROBE_TIMEOUT,
         )
-        resp.close()
+        resp.close()   # 본문은 읽지 않는다 — 열린 범위라 그대로 두면 전체가 흘러온다
         return resp.status_code in (200, 206)
     except Exception:
         logger.warning("스트림 URL 확인 실패 — 다음 후보로", exc_info=True)

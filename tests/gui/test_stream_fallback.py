@@ -65,6 +65,50 @@ class TestIsYoutube:
         assert vp._is_youtube("https://vimeo.com/123") is False
 
 
+# ── 검증 요청 형태 (실제 재생기와 같아야 한다) ────────────────────────
+class _FakeResp:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+    def close(self) -> None:
+        pass
+
+
+class TestProbeMatchesPlayer:
+    """검증 요청은 ffmpeg가 파일을 열 때와 **같은 형태**여야 한다.
+
+    실측: 같은 URL이 `bytes=0-1`(제한 범위)에는 206, `bytes=0-`(열린 범위)에는 403을
+    준다. 제한 범위로 확인하면 검증은 통과하는데 재생은 403으로 실패했다(위양성).
+    """
+
+    def _spy(self, monkeypatch, status: int) -> dict:
+        seen: dict = {}
+
+        def fake_get(url, headers=None, stream=None, timeout=None):
+            seen["url"] = url
+            seen.update(headers or {})
+            return _FakeResp(status)
+
+        monkeypatch.setattr("requests.get", fake_get)
+        return seen
+
+    def test_열린_범위로_확인한다(self, monkeypatch):
+        seen = self._spy(monkeypatch, 206)
+        assert vp._stream_playable("http://x") is True
+        assert seen["Range"] == "bytes=0-"
+
+    def test_403이면_재생_불가로_본다(self, monkeypatch):
+        self._spy(monkeypatch, 403)
+        assert vp._stream_playable("http://x") is False
+
+    def test_요청_자체가_실패하면_불가로_본다(self, monkeypatch):
+        def boom(*a, **k):
+            raise OSError("network down")
+
+        monkeypatch.setattr("requests.get", boom)
+        assert vp._stream_playable("http://x") is False
+
+
 # ── 클라이언트 대체 재시도 ───────────────────────────────────────────
 def _info(url: str) -> dict:
     return {"url": url, "height": 360}

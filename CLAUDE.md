@@ -426,9 +426,13 @@ online_video_clipper/
   `QDesktopServices.openUrl`로 브라우저를 열었고 **로그를 전혀 남기지 않아**,
   사용자 로그를 받아도 실패 흔적이 없었다.
   대응: `_StreamWorker._run_stream`이 `_STREAM_CLIENTS`(기본→android→ios→tv)를 돌며
-  URL을 받고, **넘기기 전에 `_stream_playable`(Range 1바이트 GET)로 검증**해 거부되면
-  다음 클라이언트로 간다. 검증은 **yt-dlp 전용 헤더가 아니라 일반 UA**로 한다 —
-  yt-dlp 헤더로 통과시키면 정작 QMediaPlayer가 403을 받는 위양성이 생긴다. 클라이언트
+  URL을 받고, **넘기기 전에 `_stream_playable`로 검증**해 거부되면 다음 클라이언트로 간다.
+  **검증 요청은 실제 재생 주체(Qt Multimedia의 FFmpeg 백엔드)와 똑같아야 한다** — 이걸
+  틀려서 한 번 헛돌았다: 처음엔 `Range: bytes=0-1`(제한 범위)로 확인했는데, 같은 URL이
+  제한 범위에는 206을 주고 **ffmpeg가 파일을 열 때 보내는 `Range: bytes=0-`(열린 범위)
+  에는 403**을 주는 경우가 있어 검증만 통과하고 재생은 실패했다. 그래서 `_PROBE_RANGE`는
+  열린 범위이고 UA도 ffmpeg 기본값(`Lavf/...`)을 쓴다(yt-dlp 전용 헤더로 검증하면 같은
+  이유로 위양성이 난다). 응답 본문은 읽지 않고 즉시 닫는다. 클라이언트
   교체 재시도는 `_is_youtube`일 때만 한다(다른 사이트엔 의미 없는 왕복).
   **검증이 전부 실패해도 URL을 하나라도 얻었으면 그대로 재생을 시도**한다 — 확인 요청이
   막히는 환경(프록시)에서 재생을 통째로 잃지 않기 위한 안전판이며, 최소한 예전 동작과
