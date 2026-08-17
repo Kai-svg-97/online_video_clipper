@@ -88,7 +88,8 @@ class _CandidateSearchWorker(QThread):
     """
 
     started_source = pyqtSignal(str)          # 조회를 시작한 출처 이름
-    found = pyqtSignal(str, object)           # (출처 이름, LyricsCandidateDTO | None)
+    found = pyqtSignal(str, object)           # (출처 이름, LyricsCandidateDTO) — 출처당 여러 번
+    source_done = pyqtSignal(str, int)        # (출처 이름, 그 출처의 후보 수)
     finished_ok = pyqtSignal(int)             # 확보한 후보 수
     failed = pyqtSignal(str)
 
@@ -112,6 +113,7 @@ class _CandidateSearchWorker(QThread):
                 self._cmd,
                 on_start=self.started_source.emit,
                 on_result=self.found.emit,
+                on_source_done=self.source_done.emit,
                 should_cancel=lambda: self._cancelled,
             )
             self.finished_ok.emit(len(found))
@@ -160,7 +162,8 @@ class SongViewModel(QObject):
     error_occurred = pyqtSignal(str)
     # 가사 후보 검색 — 목록을 먼저 띄우고(조회중), 확인되는 대로 한 행씩 채운다.
     candidates_started = pyqtSignal(object, object)       # (video_id, list[출처 이름])
-    candidate_ready = pyqtSignal(object, str, object)     # (video_id, 출처, DTO | None)
+    candidate_ready = pyqtSignal(object, str, object)     # (video_id, 출처, DTO) — 출처당 여러 번
+    candidate_source_done = pyqtSignal(object, str, int)  # (video_id, 출처, 그 출처 후보 수)
     candidates_finished = pyqtSignal(object, int)         # (video_id, 후보 수)
 
     def __init__(
@@ -251,6 +254,9 @@ class SongViewModel(QObject):
         worker.found.connect(
             lambda name, dto, vid=video_id: self.candidate_ready.emit(vid, name, dto)
         )
+        worker.source_done.connect(
+            lambda name, count, vid=video_id: self.candidate_source_done.emit(vid, name, count)
+        )
         worker.finished_ok.connect(
             lambda count, vid=video_id: self.candidates_finished.emit(vid, count)
         )
@@ -270,6 +276,7 @@ class SongViewModel(QObject):
         worker.cancel()
         try:
             worker.found.disconnect()
+            worker.source_done.disconnect()
             worker.finished_ok.disconnect()
             worker.failed.disconnect()
         except TypeError:

@@ -18,7 +18,7 @@ from urllib.parse import quote
 
 import requests
 
-from domain.song.ports import LyricsResult
+from domain.song.ports import DEFAULT_LYRICS_SEARCH_LIMIT, LyricsResult
 from infrastructure.song.lrc import parse_lrc
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,16 @@ def _session() -> requests.Session:
     return s
 
 
+def _dedupe_key(result: LyricsResult) -> tuple:
+    """같은 곡이 두 번 실리는 것을 막는 키 — 가수·제목·가사 첫 줄.
+
+    출처 안에서 정확 조회 결과와 검색 결과가 겹치거나, 가수 포함/제외 검색이 같은 곡을
+    돌려주는 일이 흔하다. 앨범은 재발매판마다 달라 키에 넣지 않는다.
+    """
+    first = next((ln.strip() for ln in result.lines if ln.strip()), "")
+    return (result.artist.strip().lower(), result.title.strip().lower(), first)
+
+
 def _split_lines(text: str) -> list[str]:
     """가사 원문을 줄 목록으로 정규화한다(앞뒤 빈 줄 제거, 내부 빈 줄은 단락 구분 유지)."""
     lines = [ln.rstrip() for ln in (text or "").replace("\r\n", "\n").split("\n")]
@@ -65,33 +75,86 @@ class LrclibProvider:
     key = "lrclib"
 
     def fetch(self, artist: str, title: str, duration_sec: int | None = None) -> LyricsResult | None:
+        # search가 이미 '정확 조회 → 가수+제목 검색 → 제목만 검색' 순서를 밟으므로 그대로
+        # 재사용한다. 따로 구현하면 두 경로의 폴백 범위가 어긋나, 후보 목록엔 뜨는 곡을
+        # 체인 검색(등록 시 자동 보강 등)은 못 찾는 일이 생긴다.
+        results = self.search(artist, title, duration_sec, limit=1)
+        return results[0] if results else None
+
+    def search(
+        self, artist: str, title: str, duration_sec: int | None = None,
+        limit: int = DEFAULT_LYRICS_SEARCH_LIMIT,
+    ) -> list[LyricsResult]:
+        """제목이 같은 여러 곡을 그대로 나열한다(같은 제목·다른 가수 구분용).
+
+        정확 조회 결과가 있으면 맨 앞에 두고, 그 뒤에 검색 결과를 잇는다. 가수를 지정한
+        검색만으로는 '다른 가수의 같은 제목' 곡이 안 나오므로 **제목만으로 한 번 더**
+        검색해 이어 붙인다(중복은 아래 `_dedupe_key`로 제거).
+        """
         if not title:
-            return None
+            return []
         sess = _session()
+        out: list[LyricsResult] = []
+        seen: set[tuple] = set()
+
+        def _add(entry: dict) -> None:
+            result = self._to_result(entry)
+            if result is None:
+                return
+            key = _dedupe_key(result)
+            if key in seen:
+                return
+            seen.add(key)
+            out.append(result)
+
         try:
-            # 1) 정확 조회
-            params = {"artist_name": artist or "", "track_name": title}
-            if duration_sec:
-                params["duration"] = int(duration_sec)
-            resp = sess.get("https://lrclib.net/api/get", params=params, timeout=_TIMEOUT)
-            data = resp.json() if resp.status_code == 200 else None
-            # 2) 실패 시 검색 후 첫 후보
-            if not data or not (data.get("plainLyrics") or data.get("syncedLyrics")):
-                q = f"{artist} {title}".strip()
-                sresp = sess.get(
-                    "https://lrclib.net/api/search", params={"q": q}, timeout=_TIMEOUT
-                )
-                if sresp.status_code == 200:
-                    for cand in sresp.json() or []:
-                        if cand.get("plainLyrics") or cand.get("syncedLyrics"):
-                            data = cand
-                            break
+            exact = self._exact(sess, artist, title, duration_sec)
+            if exact:
+                _add(exact)
+            for entry in self._search_raw(sess, artist, title):
+                if 0 < limit <= len(out):
+                    break
+                _add(entry)
+            # 가수를 함께 넣어 검색했다면, 제목만으로 한 번 더 훑어 다른 가수 곡도 모은다.
+            if artist and (limit <= 0 or len(out) < limit):
+                for entry in self._search_raw(sess, "", title):
+                    if 0 < limit <= len(out):
+                        break
+                    _add(entry)
         except Exception as exc:
             _log_provider_error("LRCLIB", exc)
-            return None
-        if not data:
-            return None
+        return out
 
+    @staticmethod
+    def _exact(sess, artist: str, title: str, duration_sec: int | None) -> dict | None:
+        params = {"artist_name": artist or "", "track_name": title}
+        if duration_sec:
+            params["duration"] = int(duration_sec)
+        resp = sess.get("https://lrclib.net/api/get", params=params, timeout=_TIMEOUT)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if not data or not (data.get("plainLyrics") or data.get("syncedLyrics")):
+            return None
+        return data
+
+    @staticmethod
+    def _search_raw(sess, artist: str, title: str) -> list[dict]:
+        """LRCLIB 검색 결과 중 가사가 실린 항목만 순서대로 돌려준다."""
+        params = {"track_name": title}
+        if artist:
+            params["artist_name"] = artist
+        resp = sess.get("https://lrclib.net/api/search", params=params, timeout=_TIMEOUT)
+        if resp.status_code != 200:
+            return []
+        return [
+            cand
+            for cand in (resp.json() or [])
+            if cand.get("plainLyrics") or cand.get("syncedLyrics")
+        ]
+
+    @staticmethod
+    def _to_result(data: dict) -> LyricsResult | None:
         # 싱크 가사(syncedLyrics)가 있으면 우선 채택한다 — 텍스트 내용은 plainLyrics와
         # 같고 줄별 시각까지 얻을 수 있어, 자막·싱크 기능의 유일한 타이밍 출처다.
         lines: list[str] = []
@@ -130,9 +193,23 @@ class GeniusProvider:
     key = "genius"
 
     def fetch(self, artist: str, title: str, duration_sec: int | None = None) -> LyricsResult | None:
+        results = self.search(artist, title, duration_sec, limit=1)
+        return results[0] if results else None
+
+    def search(
+        self, artist: str, title: str, duration_sec: int | None = None,
+        limit: int = DEFAULT_LYRICS_SEARCH_LIMIT,
+    ) -> list[LyricsResult]:
+        """검색 히트를 순서대로 훑어 가사 페이지를 긁는다(곡마다 요청 1회).
+
+        페이지를 곡 수만큼 받아야 하므로 ``limit``이 곧 요청 수다 — 무제한(0)으로 부르면
+        검색 결과 전부를 긁는다.
+        """
         if not title:
-            return None
+            return []
         sess = _session()
+        out: list[LyricsResult] = []
+        seen: set[tuple] = set()
         try:
             q = f"{artist} {title}".strip()
             resp = sess.get(
@@ -141,39 +218,54 @@ class GeniusProvider:
                 timeout=_TIMEOUT,
             )
             if resp.status_code != 200:
-                return None
-            song_url = self._first_song_url(resp.json())
-            if not song_url:
-                return None
-            page = sess.get(song_url, timeout=_TIMEOUT)
-            if page.status_code != 200:
-                return None
-            lines, r_artist, r_title = self._parse_page(page.text)
+                return []
+            song_urls = self._song_urls(resp.json())
         except Exception as exc:
             _log_provider_error("Genius", exc)
-            return None
-        if not lines:
-            return None
-        return LyricsResult(
-            lines=lines,
-            language="",
-            source_name="Genius",
-            source_url=song_url,
-            artist=r_artist,
-            title=r_title,
-        )
+            return []
+
+        for song_url in song_urls:
+            if 0 < limit <= len(out):
+                break
+            try:
+                page = sess.get(song_url, timeout=_TIMEOUT)
+                if page.status_code != 200:
+                    continue
+                lines, r_artist, r_title = self._parse_page(page.text)
+            except Exception as exc:
+                # 곡 하나가 실패해도 나머지 후보는 계속 모은다.
+                _log_provider_error("Genius", exc)
+                continue
+            if not lines:
+                continue
+            result = LyricsResult(
+                lines=lines,
+                language="",
+                source_name="Genius",
+                source_url=song_url,
+                artist=r_artist,
+                title=r_title,
+            )
+            key = _dedupe_key(result)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(result)
+        return out
 
     @staticmethod
-    def _first_song_url(payload: dict) -> str:
+    def _song_urls(payload: dict) -> list[str]:
+        """검색 응답에서 곡 페이지 URL을 등장 순서대로 모은다(중복 제거)."""
+        urls: list[str] = []
         sections = (payload or {}).get("response", {}).get("sections", [])
         for sec in sections:
             for hit in sec.get("hits", []):
-                if hit.get("type") == "song":
-                    res = hit.get("result", {})
-                    url = res.get("url")
-                    if url:
-                        return url
-        return ""
+                if hit.get("type") != "song":
+                    continue
+                url = (hit.get("result") or {}).get("url")
+                if url and url not in urls:
+                    urls.append(url)
+        return urls
 
     @staticmethod
     def _parse_page(html: str) -> tuple[list[str], str, str]:
@@ -206,33 +298,101 @@ class GeniusProvider:
         return lines, artist, title
 
 
+def _first_id(text: str, patterns: tuple[str, ...]) -> list[str]:
+    """검색 페이지 HTML에서 곡 id를 **등장 순서대로 전부** 뽑는다(중복 제거).
+
+    예전에는 `re.search`로 첫 id 하나만 봤다 — 같은 제목의 다른 가수 곡이 검색 결과에
+    나란히 있어도 항상 맨 위 한 곡만 조회됐다는 뜻이다.
+    """
+    ids: list[str] = []
+    for pattern in patterns:
+        for m in re.finditer(pattern, text):
+            song_id = m.group(1)
+            if song_id not in ids:
+                ids.append(song_id)
+        if ids:
+            break   # 앞선 패턴으로 잡혔으면 폴백 패턴은 쓰지 않는다
+    return ids
+
+
+def _text_of(soup, *selectors: str) -> str:
+    """주어진 셀렉터를 순서대로 시도해 첫 번째로 잡히는 텍스트를 돌려준다."""
+    for sel in selectors:
+        node = soup.select_one(sel)
+        if node is not None:
+            text = node.get_text(" ", strip=True)
+            if text:
+                return text
+    return ""
+
+
 class _KoreanScrapeProvider:
     """멜론/벅스/지니 등 국내 사이트 공통 베이스 — 검색 후 가사 페이지 스크래핑.
 
-    사이트 구조가 자주 바뀌고 봇 차단이 있어 best-effort다. 실패 시 None.
+    사이트 구조가 자주 바뀌고 봇 차단이 있어 best-effort다. 실패 시 빈 결과.
+    검색 결과의 곡을 **여러 건** 훑으므로 상세 페이지 요청이 곡 수만큼 발생한다.
     """
 
     key = ""
     display = ""
 
     def fetch(self, artist: str, title: str, duration_sec: int | None = None) -> LyricsResult | None:
+        results = self.search(artist, title, duration_sec, limit=1)
+        return results[0] if results else None
+
+    def search(
+        self, artist: str, title: str, duration_sec: int | None = None,
+        limit: int = DEFAULT_LYRICS_SEARCH_LIMIT,
+    ) -> list[LyricsResult]:
         if not title:
-            return None
+            return []
+        sess = self._make_session()
         try:
-            lines, url = self._scrape(artist, title)
+            song_ids = self._search_ids(sess, artist, title)
         except Exception as exc:
             _log_provider_error(self.display or self.key, exc)
-            return None
-        if not lines:
-            return None
-        return LyricsResult(
-            lines=lines,
-            language="ko",   # 국내 사이트 가사는 한국어로 가정(번역 생략)
-            source_name=self.display,
-            source_url=url,
-        )
+            return []
 
-    def _scrape(self, artist: str, title: str) -> tuple[list[str], str]:  # pragma: no cover
+        out: list[LyricsResult] = []
+        seen: set[tuple] = set()
+        for song_id in song_ids:
+            if 0 < limit <= len(out):
+                break
+            url = self._detail_url(song_id)
+            try:
+                lines, r_artist, r_title = self._parse_detail(sess, url)
+            except Exception as exc:
+                # 곡 하나가 실패해도 나머지 후보는 계속 모은다.
+                _log_provider_error(self.display or self.key, exc)
+                continue
+            if not lines:
+                continue
+            result = LyricsResult(
+                lines=lines,
+                language="ko",   # 국내 사이트 가사는 한국어로 가정(번역 생략)
+                source_name=self.display,
+                source_url=url,
+                artist=r_artist,
+                title=r_title,
+            )
+            key = _dedupe_key(result)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(result)
+        return out
+
+    def _make_session(self):
+        return _session()
+
+    # ── 사이트별 구현 ────────────────────────────────────────────
+    def _search_ids(self, sess, artist: str, title: str) -> list[str]:  # pragma: no cover
+        raise NotImplementedError
+
+    def _detail_url(self, song_id: str) -> str:  # pragma: no cover
+        raise NotImplementedError
+
+    def _parse_detail(self, sess, url: str) -> tuple[list[str], str, str]:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -240,85 +400,93 @@ class MelonProvider(_KoreanScrapeProvider):
     key = "melon"
     display = "멜론"
 
-    def _scrape(self, artist: str, title: str) -> tuple[list[str], str]:
-        from bs4 import BeautifulSoup  # noqa: PLC0415
-
+    def _make_session(self):
         sess = _session()
         sess.headers["Referer"] = "https://www.melon.com/"
+        return sess
+
+    def _search_ids(self, sess, artist: str, title: str) -> list[str]:
         q = quote(f"{artist} {title}".strip())
         search = sess.get(
             f"https://www.melon.com/search/song/index.htm?q={q}&section=song",
             timeout=_TIMEOUT,
         )
-        m = re.search(r"goSongDetail\('(\d+)'\)", search.text) or re.search(
-            r"songId=(\d+)", search.text
-        )
-        if not m:
-            return [], ""
-        song_id = m.group(1)
-        detail_url = f"https://www.melon.com/song/detail.htm?songId={song_id}"
-        detail = sess.get(detail_url, timeout=_TIMEOUT)
+        return _first_id(search.text, (r"goSongDetail\('(\d+)'\)", r"songId=(\d+)"))
+
+    def _detail_url(self, song_id: str) -> str:
+        return f"https://www.melon.com/song/detail.htm?songId={song_id}"
+
+    def _parse_detail(self, sess, url: str) -> tuple[list[str], str, str]:
+        from bs4 import BeautifulSoup  # noqa: PLC0415
+
+        detail = sess.get(url, timeout=_TIMEOUT)
         soup = BeautifulSoup(detail.text, "html.parser")
         box = soup.select_one("div.lyric")
         if not box:
-            return [], detail_url
+            return [], "", ""
         for br in box.find_all("br"):
             br.replace_with("\n")
-        return _split_lines(box.get_text()), detail_url
+        artist = _text_of(soup, "div.artist a.artist_name", "div.artist")
+        title = _text_of(soup, "div.song_name")
+        # "곡명 <제목>" 형태라 라벨을 떼어낸다.
+        title = re.sub(r"^\s*곡명\s*", "", title).strip()
+        return _split_lines(box.get_text()), artist, title
 
 
 class BugsProvider(_KoreanScrapeProvider):
     key = "bugs"
     display = "벅스"
 
-    def _scrape(self, artist: str, title: str) -> tuple[list[str], str]:
-        from bs4 import BeautifulSoup  # noqa: PLC0415
-
-        sess = _session()
+    def _search_ids(self, sess, artist: str, title: str) -> list[str]:
         q = quote(f"{artist} {title}".strip())
         search = sess.get(
             f"https://music.bugs.co.kr/search/track?q={q}", timeout=_TIMEOUT
         )
-        m = re.search(r"/track/(\d+)", search.text)
-        if not m:
-            return [], ""
-        track_id = m.group(1)
-        detail_url = f"https://music.bugs.co.kr/track/{track_id}"
-        detail = sess.get(detail_url, timeout=_TIMEOUT)
+        return _first_id(search.text, (r"/track/(\d+)",))
+
+    def _detail_url(self, song_id: str) -> str:
+        return f"https://music.bugs.co.kr/track/{song_id}"
+
+    def _parse_detail(self, sess, url: str) -> tuple[list[str], str, str]:
+        from bs4 import BeautifulSoup  # noqa: PLC0415
+
+        detail = sess.get(url, timeout=_TIMEOUT)
         soup = BeautifulSoup(detail.text, "html.parser")
         box = soup.select_one("div.lyricsContainer xmp") or soup.select_one("div.lyricsContainer")
         if not box:
-            return [], detail_url
-        return _split_lines(box.get_text()), detail_url
+            return [], "", ""
+        artist = _text_of(soup, 'table.info a[href*="/artist/"]', "p.artist a")
+        title = _text_of(soup, "header h1", "h1.trackTitle")
+        return _split_lines(box.get_text()), artist, title
 
 
 class GenieProvider(_KoreanScrapeProvider):
     key = "genie"
     display = "지니"
 
-    def _scrape(self, artist: str, title: str) -> tuple[list[str], str]:
-        from bs4 import BeautifulSoup  # noqa: PLC0415
-
-        sess = _session()
+    def _search_ids(self, sess, artist: str, title: str) -> list[str]:
         q = quote(f"{artist} {title}".strip())
         search = sess.get(
             f"https://www.genie.co.kr/search/searchMain?query={q}", timeout=_TIMEOUT
         )
-        m = re.search(r"fnViewSongInfo\('(\d+)'", search.text) or re.search(
-            r"xgnm=(\d+)", search.text
-        )
-        if not m:
-            return [], ""
-        song_id = m.group(1)
-        detail_url = f"https://www.genie.co.kr/detail/songInfo?xgnm={song_id}"
-        detail = sess.get(detail_url, timeout=_TIMEOUT)
+        return _first_id(search.text, (r"fnViewSongInfo\('(\d+)'", r"xgnm=(\d+)"))
+
+    def _detail_url(self, song_id: str) -> str:
+        return f"https://www.genie.co.kr/detail/songInfo?xgnm={song_id}"
+
+    def _parse_detail(self, sess, url: str) -> tuple[list[str], str, str]:
+        from bs4 import BeautifulSoup  # noqa: PLC0415
+
+        detail = sess.get(url, timeout=_TIMEOUT)
         soup = BeautifulSoup(detail.text, "html.parser")
         box = soup.select_one("#pLyrics p") or soup.select_one("pre#pLyrics")
         if not box:
-            return [], detail_url
+            return [], "", ""
         for br in box.find_all("br"):
             br.replace_with("\n")
-        return _split_lines(box.get_text()), detail_url
+        artist = _text_of(soup, ".info-zone .artist", ".info-zone a.artist")
+        title = _text_of(soup, ".info-zone h2.name", ".info-zone .name")
+        return _split_lines(box.get_text()), artist, title
 
 
 def build_default_providers() -> dict[str, object]:

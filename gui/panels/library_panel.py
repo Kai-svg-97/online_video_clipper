@@ -4390,6 +4390,9 @@ class LibraryPanel(QWidget):
             self._song_vm.candidate_ready.connect(
                 self._detail_widget.song_candidate_ready
             )
+            self._song_vm.candidate_source_done.connect(
+                self._detail_widget.song_candidate_source_done
+            )
             self._song_vm.candidates_finished.connect(
                 self._detail_widget.song_candidates_finished
             )

@@ -21,10 +21,10 @@ def clist(qapp_instance):
     return w
 
 
-def _cand(source="LRCLIB", synced=True) -> LyricsCandidateDTO:
+def _cand(source="LRCLIB", synced=True, artist="가수A") -> LyricsCandidateDTO:
     return LyricsCandidateDTO(
         source_name=source,
-        artist="가수A",
+        artist=artist,
         title="제목A",
         first_line="첫 줄입니다",
         is_synced=synced,
@@ -63,7 +63,7 @@ class TestPendingRows:
 class TestIncrementalResults:
     def test_도착한_행만_채우고_나머지는_조회중으로_남는다(self, clist):
         clist.begin(["LRCLIB", "지니"])
-        clist.set_result("LRCLIB", _cand())
+        clist.add_result("LRCLIB", _cand())
 
         assert _col_text(clist, 0, clist._COL_ARTIST) == "가수A"
         assert _col_text(clist, 0, clist._COL_TITLE) == "제목A"
@@ -71,44 +71,69 @@ class TestIncrementalResults:
         assert _col_text(clist, 0, clist._COL_SYNC) == "싱크"
         # 아직 조회 중인 출처는 그대로 남는다.
         assert _col_text(clist, 1, clist._COL_FIRST) == "조회중…"
-        assert "1/2" in clist._status_lbl.text()
+
+    def test_한_출처의_여러_후보를_모두_행으로_보여준다(self, clist):
+        """같은 제목·다른 가수 — 출처당 1행으로 접히면 고를 수가 없다."""
+        clist.begin(["LRCLIB", "지니"])
+        for name in ("가수1", "가수2", "가수3"):
+            clist.add_result("LRCLIB", _cand(artist=name))
+
+        assert clist._table.rowCount() == 4   # LRCLIB 3행 + 지니 조회중 1행
+        assert [_col_text(clist, r, clist._COL_ARTIST) for r in range(3)] == [
+            "가수1", "가수2", "가수3"
+        ]
+        # 행이 늘어도 출처 표기는 유지되고 순서가 섞이지 않는다.
+        assert [_col_text(clist, r, clist._COL_SOURCE) for r in range(4)] == [
+            "LRCLIB", "LRCLIB", "LRCLIB", "지니"
+        ]
+
+    def test_나중_출처_결과가_와도_고른_행이_유지된다(self, clist):
+        clist.begin(["LRCLIB", "지니"])
+        clist.add_result("LRCLIB", _cand(artist="가수1"))
+        clist.add_result("LRCLIB", _cand(artist="가수2"))
+        clist._table.selectRow(1)
+        assert clist.selected_candidate().artist == "가수2"
+
+        clist.add_result("지니", _cand(source="지니", artist="가수9"))
+        assert clist.selected_candidate().artist == "가수2"
 
     def test_첫_유효_후보를_자동_선택해_바로_적용할_수_있다(self, clist):
         clist.begin(["LRCLIB", "지니"])
-        clist.set_result("LRCLIB", _cand())
+        clist.add_result("LRCLIB", _cand())
         assert clist.selected_candidate() is not None
         assert clist._apply_btn.isEnabled() is True
 
-    def test_결과_없는_출처는_선택_불가로_남는다(self, clist):
+    def test_결과_없이_끝난_출처는_선택_불가로_남는다(self, clist):
         clist.begin(["LRCLIB", "지니"])
-        clist.set_result("지니", None)
+        clist.source_done("지니", 0)
         assert _col_text(clist, 1, clist._COL_FIRST) == "결과 없음"
         item = clist._table.item(1, clist._COL_SOURCE)
         assert not (item.flags() & Qt.ItemFlag.ItemIsSelectable)
 
     def test_싱크_없는_후보는_대시로_표기한다(self, clist):
         clist.begin(["지니"])
-        clist.set_result("지니", _cand(source="지니", synced=False))
+        clist.add_result("지니", _cand(source="지니", synced=False))
         assert _col_text(clist, 0, clist._COL_SYNC) == "—"
 
     def test_모르는_출처_결과는_무시한다(self, clist):
         """검색이 취소된 뒤 늦게 도착한 결과가 목록을 망가뜨리지 않아야 한다."""
         clist.begin(["LRCLIB"])
-        clist.set_result("옛날 검색 출처", _cand())
+        clist.add_result("옛날 검색 출처", _cand())
+        assert clist._table.rowCount() == 1
         assert _col_text(clist, 0, clist._COL_FIRST) == "조회중…"
 
 
 class TestFinish:
     def test_끝나면_남은_조회중_행을_정리한다(self, clist):
         clist.begin(["LRCLIB", "지니"])
-        clist.set_result("LRCLIB", _cand())
+        clist.add_result("LRCLIB", _cand())
         clist.finish(1)   # 지니는 결과 통지 없이 끝남(취소·오류)
         assert _col_text(clist, 1, clist._COL_FIRST) == "결과 없음"
         assert "후보 1건" in clist._status_lbl.text()
 
     def test_후보가_없으면_다시_검색을_안내한다(self, clist):
         clist.begin(["LRCLIB"])
-        clist.set_result("LRCLIB", None)
+        clist.source_done("LRCLIB", 0)
         clist.finish(0)
         assert "찾지 못했습니다" in clist._status_lbl.text()
 
@@ -118,7 +143,7 @@ class TestChoose:
         seen = []
         clist.chosen.connect(seen.append)
         clist.begin(["LRCLIB"])
-        clist.set_result("LRCLIB", _cand())
+        clist.add_result("LRCLIB", _cand())
         clist._apply_btn.click()
         assert len(seen) == 1
         assert seen[0].source_name == "LRCLIB"
@@ -156,7 +181,7 @@ class TestSongTabIntegration:
         seen = []
         tab.candidate_chosen.connect(seen.append)
         tab.begin_candidates(["LRCLIB"])
-        tab.set_candidate_result("LRCLIB", _cand())
+        tab.add_candidate_result("LRCLIB", _cand())
         tab._candidates._apply_btn.click()
 
         assert len(seen) == 1
@@ -187,13 +212,21 @@ class TestViewModelToWidgetChain:
         from gui.view_models.song_vm import SongViewModel
 
         class _P:
+            """같은 제목의 두 가수 곡을 돌려주는 제공자."""
+
             key = "p"
 
-            def fetch(self, artist, title, duration_sec=None):
-                return LyricsResult(
-                    lines=["첫 줄", "둘째"], timings=[0, 2000], language="ko",
-                    source_url="http://x", artist="가수A", title="제목A",
-                )
+            def search(self, artist, title, duration_sec=None, limit=10):
+                return [
+                    LyricsResult(
+                        lines=["첫 줄", "둘째"], timings=[0, 2000], language="ko",
+                        source_url="http://x", artist="가수A", title="제목A",
+                    ),
+                    LyricsResult(
+                        lines=["다른 첫 줄"], language="ko",
+                        source_url="http://y", artist="가수B", title="제목A",
+                    ),
+                ]
 
         song_repo = MagicMock()
         song_repo.list_lyrics_sources.return_value = [
@@ -233,6 +266,7 @@ class TestViewModelToWidgetChain:
         widget.song_candidates_requested.connect(vm.search_lyrics_candidates)
         vm.candidates_started.connect(widget.song_candidates_started)
         vm.candidate_ready.connect(widget.song_candidate_ready)
+        vm.candidate_source_done.connect(widget.song_candidate_source_done)
         vm.candidates_finished.connect(widget.song_candidates_finished)
         return vm, widget
 
@@ -258,10 +292,13 @@ class TestViewModelToWidgetChain:
         qapp_instance.processEvents()
 
         assert done, "후보 검색이 끝나지 않았다"
-        assert table.item(0, 1).text() == "가수A"
+        # 같은 제목의 두 가수 곡이 각각 한 행으로 올라온다.
+        assert table.rowCount() == 2
+        assert [table.item(r, 1).text() for r in range(2)] == ["가수A", "가수B"]
         assert table.item(0, 2).text() == "제목A"
         assert "첫 줄" in table.item(0, 3).text()
         assert table.item(0, 4).text() == "싱크"
+        assert table.item(1, 4).text() == "—"
         vm.shutdown()
         widget.deleteLater()
 

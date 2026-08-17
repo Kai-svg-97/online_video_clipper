@@ -10,7 +10,12 @@ from domain.library.repositories import IVideoRepository
 from domain.shared.ports import IEventBus, IMediaSource
 from domain.song.aggregates import SongInfoAggregate
 from domain.song.entities import LyricsSource
-from domain.song.ports import ILyricsProvider, ITranslator, LyricsResult
+from domain.song.ports import (
+    DEFAULT_LYRICS_SEARCH_LIMIT,
+    ILyricsProvider,
+    ITranslator,
+    LyricsResult,
+)
 from domain.song.repositories import ISongRepository
 from domain.song.value_objects import LyricsLine, SongSourceRef
 
@@ -215,8 +220,13 @@ class SearchLyricsCandidatesCommand:
 
     체인 검색(`FetchSongInfoCommand`)이 첫 성공 출처를 곧바로 채택하는 것과 달리,
     사용자가 |출처|가수|제목|가사 첫째 줄|싱크| 목록에서 직접 고르게 하기 위한 조회다.
+
+    per_source_limit: 출처 하나가 돌려줄 후보 수 상한(0 이하 = 무제한). 같은 제목의 다른
+        가수 곡이 흔하므로 출처당 여러 건을 받는다. 무제한은 스크래핑 출처에서 곡마다
+        상세 페이지를 긁어 매우 느려지므로 기본값은 유한하다.
     """
     video_id: UUID
+    per_source_limit: int = DEFAULT_LYRICS_SEARCH_LIMIT
 
 
 @dataclass
@@ -511,8 +521,16 @@ class SearchLyricsCandidatesHandler:
         cmd: SearchLyricsCandidatesCommand,
         on_start=None,
         on_result=None,
+        on_source_done=None,
         should_cancel=None,
     ) -> list[LyricsCandidateDTO]:
+        """활성 출처를 순회하며 후보를 모은다.
+
+        콜백은 세 단계다 — ``on_start(출처)``: 조회 시작, ``on_result(출처, DTO)``:
+        후보 **한 건**(출처당 여러 번 불릴 수 있다), ``on_source_done(출처, 건수)``:
+        그 출처 종료. GUI가 '조회중 → 후보 N행 / 결과 없음'을 구분하려면 종료 통지가
+        따로 필요하다(후보가 0건인 출처는 on_result가 한 번도 안 불리기 때문).
+        """
         video_agg = self._videos.get_by_id(cmd.video_id)
         if video_agg is None:
             return []
@@ -533,18 +551,24 @@ class SearchLyricsCandidatesHandler:
                 break
             if on_start is not None:
                 on_start(src.name)
-            result = self._fetch_one(
-                self._providers[src.provider_key], artist_candidates, title, duration
+            results = self._search_one(
+                self._providers[src.provider_key],
+                artist_candidates,
+                title,
+                duration,
+                cmd.per_source_limit,
             )
-            dto = (
-                _to_candidate(src, result, artist, title)
-                if result is not None and result.lines
-                else None
-            )
-            if dto is not None:
+            count = 0
+            for result in results:
+                if not result.lines:
+                    continue
+                dto = _to_candidate(src, result, artist, title)
                 found.append(dto)
-            if on_result is not None:
-                on_result(src.name, dto)
+                count += 1
+                if on_result is not None:
+                    on_result(src.name, dto)
+            if on_source_done is not None:
+                on_source_done(src.name, count)
         logger.info(
             "가사 후보 검색 완료: video=%s artist=%r title=%r 후보=%d건",
             cmd.video_id, artist, title, len(found),
@@ -552,21 +576,31 @@ class SearchLyricsCandidatesHandler:
         return found
 
     @staticmethod
-    def _fetch_one(
+    def _search_one(
         provider: ILyricsProvider,
         artist_candidates: list[str],
         title: str,
         duration: int | None,
-    ) -> LyricsResult | None:
+        limit: int,
+    ) -> list[LyricsResult]:
+        """한 출처에서 후보를 모은다 — ``search``가 있으면 다건, 없으면 ``fetch`` 1건.
+
+        아티스트 후보(전체 → 주 아티스트)는 결과가 나올 때까지 순서대로 시도한다.
+        """
+        search = getattr(provider, "search", None)
         for cand_artist in artist_candidates:
             try:
-                result = provider.fetch(cand_artist, title, duration)
+                if callable(search):
+                    results = search(cand_artist, title, duration, limit) or []
+                else:
+                    one = provider.fetch(cand_artist, title, duration)
+                    results = [one] if one is not None else []
             except Exception:
                 logger.exception("가사 후보 조회 실패: provider=%s", getattr(provider, "key", "?"))
-                result = None
-            if result is not None:
-                return result
-        return None
+                results = []
+            if results:
+                return list(results)
+        return []
 
 
 def _to_candidate(

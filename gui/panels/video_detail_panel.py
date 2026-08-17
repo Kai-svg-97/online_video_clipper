@@ -796,9 +796,13 @@ class _LyricsCandidateList(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._rows: dict[str, int] = {}   # 출처 이름 → 행 인덱스
-        self._done = 0
-        self._total = 0
+        # 표는 아래 상태로부터 매번 다시 그린다(_rebuild). 출처마다 후보 수가 달라 행이
+        # 늘었다 줄었다 하므로, 행 인덱스를 직접 관리하면 삽입 때마다 어긋난다.
+        self._order: list[str] = []                  # 출처 표시 순서
+        self._results: dict[str, list] = {}          # 출처 → 후보 DTO 목록
+        self._pending: set[str] = set()              # 아직 조회 중인 출처
+        self._selected = None                        # 선택 유지용(재구성 후 되찾는다)
+        self._rows: list[tuple[str, object]] = []    # 화면 행 → (출처, DTO | None)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -848,65 +852,100 @@ class _LyricsCandidateList(QWidget):
     # ── 채우기 ────────────────────────────────────────────────────
     def begin(self, source_names: list[str]) -> None:
         """조회 시작 — 출처마다 '조회중…' 행을 미리 만든다."""
-        self._table.clearContents()
-        self._rows = {}
-        self._done = 0
-        self._total = len(source_names)
-        self._table.setRowCount(self._total)
-        self._apply_btn.setEnabled(False)
-        for row, name in enumerate(source_names):
-            self._rows[name] = row
-            self._set_row_text(row, name, "", "", "조회중…", "")
-            self._set_row_selectable(row, False)
-            self._table.item(row, self._COL_FIRST).setForeground(QColor(_t().text_secondary))
-        self._update_status()
+        self._order = list(source_names)
+        self._results = {name: [] for name in self._order}
+        self._pending = set(self._order)
+        self._selected = None
+        self._rebuild()
         if not source_names:
             self._status_lbl.setText("조회할 가사 출처가 없습니다 (설정에서 출처를 켜세요)")
 
-    def set_result(self, source_name: str, dto: object | None) -> None:
-        """출처 하나의 결과를 반영한다(``dto``가 None이면 '없음')."""
-        row = self._rows.get(source_name)
-        if row is None:
+    def add_result(self, source_name: str, dto: object) -> None:
+        """후보 **한 건**을 목록에 더한다(한 출처가 여러 번 부를 수 있다).
+
+        같은 제목이라도 가수가 다른 곡이 흔해 출처마다 여러 곡이 올라온다. 먼저 도착한
+        후보를 자동 선택해 두어, 원하는 곡이 맨 위면 바로 적용할 수 있게 한다.
+        """
+        if dto is None or source_name not in self._results:
+            return   # 취소된 이전 검색의 늦은 결과
+        self._results[source_name].append(dto)
+        if self._selected is None:
+            self._selected = dto
+        self._rebuild()
+
+    def source_done(self, source_name: str, count: int) -> None:
+        """출처 하나의 조회가 끝났음을 반영한다(0건이면 '결과 없음'으로 굳는다)."""
+        if source_name not in self._results:
             return
-        self._done += 1
-        if dto is None:
-            self._set_row_text(row, source_name, "", "", "결과 없음", "")
-            self._set_row_selectable(row, False)
-            self._table.item(row, self._COL_FIRST).setForeground(QColor(_t().text_secondary))
-        else:
-            first = dto.first_line or "(빈 가사)"
-            if dto.line_count:
-                first = f"{first}   ({dto.line_count}줄)"
-            self._set_row_text(
-                row, source_name, dto.artist, dto.title, first, "싱크" if dto.is_synced else "—"
-            )
-            self._set_row_selectable(row, True)
-            self._table.item(row, self._COL_SOURCE).setData(self._DTO_ROLE, dto)
-            if dto.is_synced:
-                # 자막 표시가 가능한 후보라 의미상 강조한다(성공 의미 색).
-                self._table.item(row, self._COL_SYNC).setForeground(QColor(sem("success")))
-            # 첫 유효 후보를 자동 선택해, 바로 '이 가사 사용'을 누를 수 있게 한다.
-            if not self._table.selectedItems():
-                self._table.selectRow(row)
-        self._update_status()
+        self._pending.discard(source_name)
+        self._rebuild()
 
     def finish(self, found: int) -> None:
-        # 취소·오류로 조회가 끊긴 행이 '조회중…'으로 남지 않게 정리한다.
-        for name, row in self._rows.items():
-            item = self._table.item(row, self._COL_FIRST)
-            if item is not None and item.text() == "조회중…":
-                self._set_row_text(row, name, "", "", "결과 없음", "")
-                self._set_row_selectable(row, False)
-        self._done = self._total
+        # 취소·오류로 통지 없이 끝난 출처가 '조회중…'으로 남지 않게 정리한다.
+        self._pending.clear()
+        self._rebuild()
         self._status_lbl.setText(
             f"후보 {found}건 — 원하는 가사를 고르고 '이 가사 사용'을 누르세요"
             if found
             else "가사를 찾지 못했습니다 (가수·제목을 고쳐서 다시 검색해 보세요)"
         )
 
+    def _rebuild(self) -> None:
+        """상태(_order/_results/_pending)로부터 표 전체를 다시 그린다."""
+        rows: list[tuple[str, object]] = []
+        for name in self._order:
+            found = self._results.get(name) or []
+            if found:
+                rows.extend((name, dto) for dto in found)
+            else:
+                rows.append((name, None))   # 조회중 또는 결과 없음
+        self._rows = rows
+
+        self._table.blockSignals(True)
+        self._table.clearContents()
+        self._table.setRowCount(len(rows))
+        select_row = -1
+        for row, (name, dto) in enumerate(rows):
+            if dto is None:
+                placeholder = "조회중…" if name in self._pending else "결과 없음"
+                self._set_row_text(row, name, "", "", placeholder, "")
+                self._set_row_selectable(row, False)
+                self._table.item(row, self._COL_FIRST).setForeground(
+                    QColor(_t().text_secondary)
+                )
+                continue
+            first = dto.first_line or "(빈 가사)"
+            if dto.line_count:
+                first = f"{first}   ({dto.line_count}줄)"
+            self._set_row_text(
+                row, name, dto.artist, dto.title, first, "싱크" if dto.is_synced else "—"
+            )
+            self._set_row_selectable(row, True)
+            self._table.item(row, self._COL_SOURCE).setData(self._DTO_ROLE, dto)
+            if dto.is_synced:
+                # 자막 표시가 가능한 후보라 의미상 강조한다(성공 의미 색).
+                self._table.item(row, self._COL_SYNC).setForeground(QColor(sem("success")))
+            if dto is self._selected:
+                select_row = row
+        self._table.blockSignals(False)
+
+        if select_row >= 0:
+            self._table.selectRow(select_row)
+        else:
+            self._selected = None
+            self._table.clearSelection()
+        self._apply_btn.setEnabled(self._selected is not None)
+        self._update_status()
+
     def _update_status(self) -> None:
-        if self._total:
-            self._status_lbl.setText(f"조회중… {self._done}/{self._total} 출처")
+        if not self._order:
+            return
+        done = len(self._order) - len(self._pending)
+        count = sum(len(v) for v in self._results.values())
+        if self._pending:
+            self._status_lbl.setText(
+                f"조회중… {done}/{len(self._order)} 출처 · 후보 {count}건"
+            )
 
     def _set_row_text(self, row: int, *values: str) -> None:
         for col, text in enumerate(values):
@@ -936,7 +975,10 @@ class _LyricsCandidateList(QWidget):
         return item.data(self._DTO_ROLE) if item is not None else None
 
     def _on_selection_changed(self) -> None:
-        self._apply_btn.setEnabled(self.selected_candidate() is not None)
+        # 사용자가 고른 행은 재구성(_rebuild) 후에도 유지해야 한다 — 다른 출처의 결과가
+        # 뒤늦게 도착할 때마다 선택이 풀리면 고르는 도중에 놓친다.
+        self._selected = self.selected_candidate()
+        self._apply_btn.setEnabled(self._selected is not None)
 
     def _emit_chosen(self) -> None:
         dto = self.selected_candidate()
@@ -1161,8 +1203,12 @@ class _SongTab(QWidget):
         self._lyrics_stack.setCurrentIndex(self._STACK_CANDIDATES)
         self._lyrics_refresh_btn.start_spin()
 
-    def set_candidate_result(self, source_name: str, dto: object | None) -> None:
-        self._candidates.set_result(source_name, dto)
+    def add_candidate_result(self, source_name: str, dto: object) -> None:
+        """후보 한 건 추가 — 출처당 여러 번 불릴 수 있다."""
+        self._candidates.add_result(source_name, dto)
+
+    def candidate_source_done(self, source_name: str, count: int) -> None:
+        self._candidates.source_done(source_name, count)
 
     def finish_candidates(self, found: int) -> None:
         self._candidates.finish(found)
@@ -2542,7 +2588,11 @@ class VideoDetailWidget(QWidget):
 
     def song_candidate_ready(self, video_id: object, source_name: str, dto: object) -> None:
         if self._is_current_song(video_id):
-            self._song_tab.set_candidate_result(source_name, dto)
+            self._song_tab.add_candidate_result(source_name, dto)
+
+    def song_candidate_source_done(self, video_id: object, source_name: str, count: int) -> None:
+        if self._is_current_song(video_id):
+            self._song_tab.candidate_source_done(source_name, int(count))
 
     def song_candidates_finished(self, video_id: object, found: int) -> None:
         if self._is_current_song(video_id):

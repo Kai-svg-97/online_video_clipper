@@ -24,7 +24,7 @@ from domain.song.value_objects import LyricsLine
 
 
 class _StubProvider:
-    """지정한 결과를 그대로 돌려주는 가짜 제공자(None이면 '결과 없음')."""
+    """``fetch``만 있는 구식 제공자 — 후보 검색은 1건으로 폴백해야 한다."""
 
     def __init__(self, key: str, result: LyricsResult | None, boom: bool = False) -> None:
         self.key = key
@@ -37,6 +37,19 @@ class _StubProvider:
         if self._boom:
             raise RuntimeError("provider down")
         return self._result
+
+
+class _MultiProvider:
+    """``search``로 여러 후보를 돌려주는 제공자(같은 제목·다른 가수)."""
+
+    def __init__(self, key: str, results: list[LyricsResult]) -> None:
+        self.key = key
+        self._results = results
+        self.calls: list[tuple[str, str, int]] = []
+
+    def search(self, artist, title, duration_sec=None, limit=10):
+        self.calls.append((artist, title, limit))
+        return list(self._results)[:limit] if limit > 0 else list(self._results)
 
 
 def _video(title="Artist - Song", channel="Chan"):
@@ -113,17 +126,68 @@ class TestSearchCandidates:
         )
         started: list[str] = []
         results: list[tuple[str, object]] = []
+        done: list[tuple[str, int]] = []
         found = h.handle(
             SearchLyricsCandidatesCommand(uuid4()),
             on_start=started.append,
             on_result=lambda name, dto: results.append((name, dto)),
+            on_source_done=lambda name, count: done.append((name, count)),
         )
 
         # 첫 출처에서 멈추지 않는다(체인 검색과의 결정적 차이).
         assert started == ["A", "B", "C"]
-        assert [name for name, _ in results] == ["A", "B", "C"]
-        assert results[1][1] is None            # 결과 없는 출처도 통지한다
+        # 후보가 없는 출처는 on_result가 아니라 on_source_done(0)으로 알린다.
+        assert [name for name, _ in results] == ["A", "C"]
+        assert done == [("A", 1), ("B", 0), ("C", 1)]
         assert [c.source_name for c in found] == ["A", "C"]
+
+    def test_한_출처가_여러_후보를_돌려줄_수_있다(self):
+        """같은 제목·다른 가수 — 출처당 1건으로 잘리면 엉뚱한 곡이 걸린다."""
+        others = [
+            LyricsResult(lines=[f"{name}의 가사"], language="ko", artist=name, title="같은제목")
+            for name in ("가수1", "가수2", "가수3")
+        ]
+        h = _handler(
+            {"m": _MultiProvider("m", others)},
+            [SimpleNamespace(provider_key="m", enabled=True, name="멀티")],
+        )
+        results: list[tuple[str, object]] = []
+        done: list[tuple[str, int]] = []
+        found = h.handle(
+            SearchLyricsCandidatesCommand(uuid4()),
+            on_result=lambda name, dto: results.append((name, dto)),
+            on_source_done=lambda name, count: done.append((name, count)),
+        )
+
+        assert [c.artist for c in found] == ["가수1", "가수2", "가수3"]
+        assert [name for name, _ in results] == ["멀티"] * 3
+        assert done == [("멀티", 3)]
+
+    def test_출처당_상한을_넘겨_전달한다(self):
+        provider = _MultiProvider(
+            "m", [LyricsResult(lines=["a"], artist=f"가수{i}") for i in range(5)]
+        )
+        h = _handler(
+            {"m": provider},
+            [SimpleNamespace(provider_key="m", enabled=True, name="멀티")],
+        )
+        found = h.handle(SearchLyricsCandidatesCommand(uuid4(), per_source_limit=2))
+
+        assert provider.calls[0][2] == 2
+        assert len(found) == 2
+
+    def test_상한_0은_무제한으로_넘어간다(self):
+        provider = _MultiProvider(
+            "m", [LyricsResult(lines=["a"], artist=f"가수{i}") for i in range(5)]
+        )
+        h = _handler(
+            {"m": provider},
+            [SimpleNamespace(provider_key="m", enabled=True, name="멀티")],
+        )
+        found = h.handle(SearchLyricsCandidatesCommand(uuid4(), per_source_limit=0))
+
+        assert provider.calls[0][2] == 0
+        assert len(found) == 5
 
     def test_후보_필드를_목록_표시용으로_채운다(self):
         h = _handler(

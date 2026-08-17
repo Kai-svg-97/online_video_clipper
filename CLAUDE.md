@@ -140,7 +140,7 @@ online_video_clipper/
 │       ├── entities.py              # SongInfo(가수·앨범·제목·발매년도·가사·is_song·manual_fields·`lyrics_offset_ms`(자막 싱크 보정)·`is_synced` 프로퍼티(시각 있는 줄 존재 여부)) + LyricsSource(출처 레지스트리)
 │       ├── aggregates.py            # SongInfoAggregate — apply_fetched(수동편집 보존)·edit_field·edit_lyrics(줄 수 같으면 기존 타이밍 유지)·set_lyrics_offset(±30초 clamp, 공개 상수 `MAX_LYRICS_OFFSET_MS`)
 │       ├── repositories.py          # ISongRepository (+ 가사 출처 CRUD)
-│       ├── ports.py                 # ILyricsProvider·ITranslator(Protocol) + LyricsResult
+│       ├── ports.py                 # ILyricsProvider(`fetch` 1건)·**ILyricsSearchProvider**(`search` 다건 — 후보 목록용 선택 확장)·ITranslator(Protocol) + LyricsResult + `DEFAULT_LYRICS_SEARCH_LIMIT`(출처당 후보 상한, 0=무제한)
 │       └── events.py                # SongInfoUpdated
 │   │
 │   └── sync/                        # [Bounded Context] 클라우드 동기화 (레코드 단위 oplog CRDT) — 구현 중
@@ -194,7 +194,7 @@ online_video_clipper/
 │   │   ├── oauth_client_config.py   # 번들/로컬 Desktop OAuth 클라이언트 JSON 탐색·검증(`find_youtube_oauth_config`) — 값은 절대 반환/로그하지 않음
 │   │   └── youtube_api_adapter.py   # YouTube Data API v3 래퍼 (requests.Session)
 │   ├── song/
-│   │   ├── lyrics_providers.py      # LRCLIB(무키)·Genius·멜론·벅스·지니 가사 제공자 + build_default_providers (QThread에서만 호출). 네트워크 오류(타임아웃·연결실패)는 트레이스백 없이 WARNING으로만 남기고 None 반환→다음 출처로(`_log_provider_error`); 타임아웃 (connect 5s, read 8s)로 짧게 잡아 느린 출처를 빨리 건너뜀
+│   │   ├── lyrics_providers.py      # LRCLIB(무키)·Genius·멜론·벅스·지니 가사 제공자 + build_default_providers (QThread에서만 호출). **모든 제공자가 `search()`(다건)를 구현**하고 `fetch()`는 `search(limit=1)` 위임이다 — 두 경로의 폴백 범위가 어긋나 "후보 목록엔 뜨는데 체인 검색은 못 찾는" 일이 없게. LRCLIB은 `/api/get`(정확)→`/api/search`(가수+제목)→`/api/search`(제목만) 순으로 훑어 **다른 가수의 같은 제목 곡**까지 모으고, Genius·국내 3사는 검색 페이지에서 곡 id를 `_first_id`로 **전부** 뽑아(예전엔 `re.search`로 첫 개만) 곡마다 상세 페이지를 긁는다(요청 수 = limit이라 상한이 성능을 좌우). 국내 3사 상세 파서는 가사뿐 아니라 **가수·제목도 뽑는다** — 안 뽑으면 후보 행이 전부 같은 값으로 보여 고를 수가 없다. 곡 하나가 실패해도 나머지 후보는 계속 모으고, 중복은 `_dedupe_key`(가수·제목·첫 줄)로 제거한다. 네트워크 오류(타임아웃·연결실패)는 트레이스백 없이 WARNING으로만 남기고 None 반환→다음 출처로(`_log_provider_error`); 타임아웃 (connect 5s, read 8s)로 짧게 잡아 느린 출처를 빨리 건너뜀
 │   │   ├── translator.py            # deep-translator 래퍼(ITranslator) — 미설치/실패 시 원문 그대로(graceful)
 │   │   └── lrc.py                   # LRC(가사 타이밍) 파서 — `parse_lrc(text) -> [(시작ms|None, 가사)]`. 다중 타임스탬프 전개·`[offset:]` 반영·메타 태그 제거. 순수 함수라 단위 테스트로 규칙을 고정
 │   ├── event_bus.py                 # In-process event dispatcher
@@ -276,12 +276,25 @@ online_video_clipper/
   (`SearchLyricsCandidatesHandler`)이며 **DB에 쓰지 않는다** — 채택은
   `ApplyLyricsCandidateHandler`가 맡아 "조회"와 "반영"을 분리한다(체인 검색은 등록 시
   자동 보강·싱크 가사 찾기 경로에서 그대로 쓰이므로 **삭제하지 않았다**).
+  **출처당 후보는 여러 건이다.** 같은 제목의 다른 가수 곡이 흔해 1건만 받으면 엉뚱한
+  곡이 걸리므로, 제공자에 `search()`(다건)를 추가하고 출처마다 최대
+  `per_source_limit`건(기본 `DEFAULT_LYRICS_SEARCH_LIMIT`=10, **0이면 무제한**)을 모은다.
+  무제한을 기본으로 두지 않는 이유는 스크래핑 출처(Genius·멜론·벅스·지니)가 곡마다
+  상세 페이지를 한 번씩 긁어 요청 수 = 후보 수이기 때문이다. `search`가 없는 제공자는
+  `fetch` 1건으로 폴백한다(`_search_one`이 `hasattr`로 판정 — 그래서 포트를
+  `ILyricsSearchProvider`로 분리했다. `ILyricsProvider`에 넣으면 전 구현이 강제된다).
   **결과는 전 출처가 끝나기를 기다리지 않고 도착하는 대로 표시한다** — 느린 출처 하나
-  때문에 이미 확보한 후보를 못 보는 일이 없어야 하므로, 핸들러가 출처마다 `on_start`/
-  `on_result` 콜백을 부르고 GUI는 '조회중…' 행을 먼저 깔아 둔 뒤 그 행을 채운다.
-  `list_source_names()`가 반환하는 목록과 `handle()`이 실제로 순회하는 목록은 **같은
-  조건**(활성 + 제공자 구현 존재)으로 추려야 한다 — 어긋나면 영영 안 채워지는 '조회중…'
-  행이 남는다. 조회가 취소·중단돼도 `finish()`가 남은 행을 '결과 없음'으로 정리한다.
+  때문에 이미 확보한 후보를 못 보는 일이 없어야 하므로, 핸들러가 `on_start(출처)` →
+  `on_result(출처, DTO)`(**출처당 여러 번**) → `on_source_done(출처, 건수)`를 부르고 GUI는
+  '조회중…' 행을 먼저 깔아 둔 뒤 그 자리를 후보 N행으로 펼친다. **종료 통지가 따로 필요한
+  이유**는 후보 0건인 출처는 `on_result`가 한 번도 안 불려 '조회중'과 구분이 안 되기
+  때문이다. 표는 행 인덱스를 직접 만지지 않고 상태(`_order`/`_results`/`_pending`)에서
+  **매번 다시 그린다**(`_rebuild`) — 출처마다 행 수가 달라 삽입 위치를 계산하면 어긋난다.
+  대신 선택은 DTO 동일성으로 되찾아 유지한다(다른 출처 결과가 도착할 때마다 선택이
+  풀리면 고르는 도중에 놓친다). `list_source_names()`가 반환하는 목록과 `handle()`이 실제로
+  순회하는 목록은 **같은 조건**(활성 + 제공자 구현 존재)으로 추려야 한다 — 어긋나면 영영
+  안 채워지는 '조회중…' 행이 남는다. 조회가 취소·중단돼도 `finish()`가 남은 행을
+  '결과 없음'으로 정리한다.
   후보 DTO는 `lines`/`timings`를 **그대로 동봉**한다(고른 뒤 같은 출처를 다시 조회하지
   않기 위해 — 네트워크 절약 + 그새 다른 결과가 오는 사고 방지). 적용은 사용자가 명시적으로
   고른 것이므로 `force_lyrics=True`로 수동편집 가드를 넘어 교체하되, 가수·앨범 등
@@ -294,8 +307,9 @@ online_video_clipper/
   가드 — 닫히면 고르던 후보를 잃는다). 늦게 도착한 결과가 다른 영상의 목록에 섞이지 않도록
   VM은 새 검색 시 이전 워커를 `cancel()`+신호 disconnect하고, `VideoDetailWidget`은
   `video_id`가 현재 상세와 다르면 결과를 버린다. 회귀 테스트:
-  `tests/unit/application/test_lyrics_candidates.py`(전 출처 순회·실패 격리·취소·적용 규칙),
-  `tests/gui/test_lyrics_candidates_ui.py`(조회중 행·부분 결과 선택·VM→위젯 전 구간).
+  `tests/unit/application/test_lyrics_candidates.py`(전 출처 순회·다건·상한·실패 격리·취소·적용 규칙),
+  `tests/unit/infrastructure/test_lyrics_provider_search.py`(LRCLIB 제목만 재검색·중복 제거·Genius 상한·id 전수 추출),
+  `tests/gui/test_lyrics_candidates_ui.py`(조회중 행·출처당 다행·선택 유지·VM→위젯 전 구간).
 - **가사 자막 표시 · 싱크 조정** — 노래 영상 재생 중 가사를 영상 위 자막으로 표시한다.
   **타이밍의 유일한 출처는 LRCLIB의 `syncedLyrics`(LRC)** — 지니·벅스·Genius·멜론은
   시간 정보를 주지 않는다. 예전에는 syncedLyrics의 타임스탬프를 버리고 텍스트만 썼으나,

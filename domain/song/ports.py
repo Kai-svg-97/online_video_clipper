@@ -33,6 +33,15 @@ class LyricsResult:
     release_year: str = ""
 
 
+# 출처 하나가 돌려줄 후보 수의 기본 상한. 0 이하면 무제한.
+#
+# 같은 제목의 다른 가수 곡이 흔하므로 1건만 받으면 엉뚱한 곡이 걸린다. 그렇다고 무제한을
+# 기본값으로 두면 곡마다 상세 페이지를 한 번씩 긁는 스크래핑 출처(Genius·멜론·벅스·지니)가
+# 검색 한 번에 수십 번 요청하게 되어 몇 분씩 걸린다 — 그래서 넉넉하되 유한한 값을 기본으로
+# 하고, 필요하면 호출부가 늘리거나 0(무제한)으로 풀 수 있게 인자로 노출한다.
+DEFAULT_LYRICS_SEARCH_LIMIT = 10
+
+
 class ILyricsProvider(Protocol):
     """단일 가사·메타데이터 출처. 구현체는 infrastructure/song/lyrics_providers.py."""
 
@@ -42,6 +51,28 @@ class ILyricsProvider(Protocol):
         self, artist: str, title: str, duration_sec: int | None = None
     ) -> LyricsResult | None:
         """가사를 조회한다. 실패/없음이면 None을 반환(예외를 던지지 않는다)."""
+        ...
+
+
+class ILyricsSearchProvider(Protocol):
+    """여러 후보를 돌려주는 확장 출처 — 후보 목록 검색이 쓴다.
+
+    ``fetch``가 "가장 그럴듯한 한 곡"을 고르는 것과 달리, ``search``는 **같은 제목의
+    다른 가수 곡까지** 그대로 나열한다. 구현이 없는 출처도 있을 수 있으므로 호출부는
+    ``hasattr(provider, "search")``로 확인하고 없으면 ``fetch`` 1건으로 폴백한다
+    (그래서 별도 Protocol로 뺐다 — ``ILyricsProvider``에 넣으면 모든 구현이 강제된다).
+    """
+
+    key: str
+
+    def search(
+        self,
+        artist: str,
+        title: str,
+        duration_sec: int | None = None,
+        limit: int = DEFAULT_LYRICS_SEARCH_LIMIT,
+    ) -> list[LyricsResult]:
+        """후보를 최대 ``limit``건 반환한다(0 이하면 무제한). 실패/없음이면 빈 리스트."""
         ...
 
 
