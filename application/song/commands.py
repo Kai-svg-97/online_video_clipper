@@ -551,12 +551,14 @@ class SearchLyricsCandidatesHandler:
                 break
             if on_start is not None:
                 on_start(src.name)
-            results = self._search_one(
-                self._providers[src.provider_key],
-                artist_candidates,
-                title,
-                duration,
-                cmd.per_source_limit,
+            results = _rank_results(
+                self._search_one(
+                    self._providers[src.provider_key],
+                    artist_candidates,
+                    title,
+                    duration,
+                    cmd.per_source_limit,
+                )
             )
             count = 0
             for result in results:
@@ -603,6 +605,21 @@ class SearchLyricsCandidatesHandler:
         return []
 
 
+def _rank_results(results: list[LyricsResult]) -> list[LyricsResult]:
+    """인기 지표가 있는 출처의 결과만 조회수 내림차순으로 재정렬한다.
+
+    지표가 하나도 없으면(전부 0) **출처가 준 순서를 그대로 둔다** — 국내 사이트 검색
+    결과처럼 순서 자체가 그 사이트의 랭킹인 경우가 있어, 무조건 재정렬하면 오히려
+    정보를 버리게 된다. 안정 정렬이라 같은 조회수끼리도 원래 순서가 유지된다.
+
+    제공자가 이미 자기 기준으로 정렬해 왔더라도(예: Genius는 페이지를 긁기 **전에**
+    조회수로 정렬해야 상한 안에 인기 곡이 들어온다) 결과는 같으므로 안전하다.
+    """
+    if not any(r.popularity for r in results):
+        return results
+    return sorted(results, key=lambda r: r.popularity, reverse=True)
+
+
 def _to_candidate(
     src: LyricsSource, result: LyricsResult, fallback_artist: str, fallback_title: str
 ) -> LyricsCandidateDTO:
@@ -617,6 +634,8 @@ def _to_candidate(
         first_line=next((ln.strip() for ln in lines if ln.strip()), ""),
         is_synced=any(t is not None for t in result.timings),
         line_count=sum(1 for ln in lines if ln.strip()),
+        popularity=result.popularity,
+        duration_sec=result.duration_sec,
         source_url=result.source_url,
         lines=tuple(lines),
         timings=tuple(result.timings),

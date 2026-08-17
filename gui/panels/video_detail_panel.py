@@ -778,6 +778,19 @@ class _LyricRow(QWidget):
         super().mousePressEvent(event)
 
 
+def _candidate_tooltip(dto) -> str:
+    """후보 행 툴팁 — 목록 정렬의 근거(조회수·곡 길이)를 사람이 읽을 수 있게 보여준다."""
+    parts = [f"{dto.source_name} · {dto.artist} - {dto.title}".strip(" ·-")]
+    if dto.popularity:
+        parts.append(f"조회수 {dto.popularity:,}")
+    if dto.duration_sec:
+        parts.append(f"길이 {dto.duration_sec // 60}:{dto.duration_sec % 60:02d}")
+    if dto.line_count:
+        parts.append(f"{dto.line_count}줄")
+    parts.append("시간 정보 있음(자막 가능)" if dto.is_synced else "시간 정보 없음")
+    return "\n".join(parts)
+
+
 class _LyricsCandidateList(QWidget):
     """가사 검색 후보 목록 — |출처|가수|제목|가사 첫째 줄|싱크|.
 
@@ -918,7 +931,8 @@ class _LyricsCandidateList(QWidget):
             if dto.line_count:
                 first = f"{first}   ({dto.line_count}줄)"
             self._set_row_text(
-                row, name, dto.artist, dto.title, first, "싱크" if dto.is_synced else "—"
+                row, name, dto.artist, dto.title, first, "싱크" if dto.is_synced else "—",
+                tooltip=_candidate_tooltip(dto),
             )
             self._set_row_selectable(row, True)
             self._table.item(row, self._COL_SOURCE).setData(self._DTO_ROLE, dto)
@@ -947,10 +961,12 @@ class _LyricsCandidateList(QWidget):
                 f"조회중… {done}/{len(self._order)} 출처 · 후보 {count}건"
             )
 
-    def _set_row_text(self, row: int, *values: str) -> None:
+    def _set_row_text(self, row: int, *values: str, tooltip: str = "") -> None:
         for col, text in enumerate(values):
             item = QTableWidgetItem(text)
-            item.setToolTip(text)
+            # 정렬 근거(조회수·곡 길이)는 열로 빼지 않고 툴팁에 담는다 — 요청받은 다섯 열을
+            # 유지하면서도 "왜 이 순서인가"를 확인할 수 있게 한다.
+            item.setToolTip(tooltip or text)
             if col == self._COL_SYNC:
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, col, item)

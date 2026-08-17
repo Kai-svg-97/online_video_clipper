@@ -44,21 +44,22 @@ class _LrclibSession:
         return _FakeResponse(self._by_title)
 
 
-def _entry(artist, title="같은제목", lyrics="첫 줄\n둘째 줄", synced=""):
+def _entry(artist, title="같은제목", lyrics="첫 줄\n둘째 줄", synced="", duration=None):
     return {
         "artistName": artist,
         "trackName": title,
         "albumName": "",
         "plainLyrics": lyrics,
         "syncedLyrics": synced,
+        "duration": duration,
     }
 
 
-def _search_lrclib(session, artist="가수1", title="같은제목", limit=10):
+def _search_lrclib(session, artist="가수1", title="같은제목", limit=10, duration=None):
     with patch(
         "infrastructure.song.lyrics_providers._session", return_value=session
     ):
-        return LrclibProvider().search(artist, title, None, limit)
+        return LrclibProvider().search(artist, title, duration, limit)
 
 
 class TestLrclibSearch:
@@ -104,6 +105,44 @@ class TestLrclibSearch:
         )
         assert [r.artist for r in _search_lrclib(session)] == ["가수2"]
 
+    def test_영상_길이에_가까운_곡을_앞으로_올린다(self):
+        """LRCLIB은 조회수를 주지 않아 곡 길이가 유일한 판별 신호다."""
+        session = _LrclibSession(
+            by_title=[
+                _entry("먼가수", duration=300),
+                _entry("가까운가수", duration=205),
+                _entry("중간가수", duration=240),
+            ]
+        )
+        results = _search_lrclib(session, duration=200)
+        assert [r.artist for r in results] == ["가까운가수", "중간가수", "먼가수"]
+
+    def test_길이_미상_후보는_뒤로_보내되_버리지_않는다(self):
+        session = _LrclibSession(
+            by_title=[_entry("길이없음"), _entry("길이있음", duration=201)]
+        )
+        results = _search_lrclib(session, duration=200)
+        assert [r.artist for r in results] == ["길이있음", "길이없음"]
+
+    def test_영상_길이를_모르면_출처_순서를_지킨다(self):
+        session = _LrclibSession(
+            by_title=[_entry("첫째", duration=300), _entry("둘째", duration=200)]
+        )
+        results = _search_lrclib(session, duration=None)
+        assert [r.artist for r in results] == ["첫째", "둘째"]
+
+    def test_정렬한_뒤에_상한을_적용한다(self):
+        """먼저 자르면 뒤쪽에 있던 정답(길이가 맞는 곡)이 날아간다."""
+        session = _LrclibSession(
+            by_title=[
+                _entry("먼가수1", duration=400),
+                _entry("먼가수2", duration=500),
+                _entry("정답", duration=200),
+            ]
+        )
+        results = _search_lrclib(session, duration=200, limit=1)
+        assert [r.artist for r in results] == ["정답"]
+
     def test_fetch는_여전히_한_건만_돌려준다(self):
         """체인 검색(등록 시 자동 보강·싱크 가사 찾기)이 쓰는 계약은 그대로다."""
         session = _LrclibSession(by_title=[_entry("가수1"), _entry("가수2")])
@@ -121,8 +160,10 @@ _GENIUS_PAGE = """
 
 
 class _GeniusSession:
+    """``urls``는 URL 문자열 또는 (URL, 조회수) 튜플."""
+
     def __init__(self, urls, fail_urls=()):
-        self._urls = urls
+        self._urls = [u if isinstance(u, tuple) else (u, 0) for u in urls]
         self._fail = set(fail_urls)
         self.headers = {}
         self.fetched: list[str] = []
@@ -133,7 +174,15 @@ class _GeniusSession:
                 {
                     "response": {
                         "sections": [
-                            {"hits": [{"type": "song", "result": {"url": u}} for u in self._urls]}
+                            {
+                                "hits": [
+                                    {
+                                        "type": "song",
+                                        "result": {"url": u, "stats": {"pageviews": v}},
+                                    }
+                                    for u, v in self._urls
+                                ]
+                            }
                         ]
                     }
                 }
@@ -170,6 +219,27 @@ class TestGeniusSearch:
             ["https://g/가수1", "https://g/가수2"], fail_urls=["https://g/가수1"]
         )
         assert [r.artist for r in _search_genius(session)] == ["가수2"]
+
+    def test_조회수_내림차순으로_정렬한다(self):
+        session = _GeniusSession(
+            [("https://g/보통", 5_000), ("https://g/인기", 900_000), ("https://g/비인기", 12)]
+        )
+        results = _search_genius(session)
+        assert [r.artist for r in results] == ["인기", "보통", "비인기"]
+        assert [r.popularity for r in results] == [900_000, 5_000, 12]
+
+    def test_상한이_있어도_인기곡을_먼저_긁는다(self):
+        """정렬을 페이지 요청 뒤에 하면 인기 곡이 상한 밖으로 밀려 조회조차 안 된다."""
+        session = _GeniusSession(
+            [("https://g/비인기", 1), ("https://g/보통", 100), ("https://g/인기", 999_999)]
+        )
+        results = _search_genius(session, limit=1)
+        assert [r.artist for r in results] == ["인기"]
+        assert session.fetched == ["https://g/인기"]
+
+    def test_조회수가_없으면_원래_순서를_지킨다(self):
+        session = _GeniusSession(["https://g/첫째", "https://g/둘째"])
+        assert [r.artist for r in _search_genius(session)] == ["첫째", "둘째"]
 
 
 class TestSearchIdExtraction:

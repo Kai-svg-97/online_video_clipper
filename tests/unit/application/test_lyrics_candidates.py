@@ -176,6 +176,50 @@ class TestSearchCandidates:
         assert provider.calls[0][2] == 2
         assert len(found) == 2
 
+    def test_인기_지표가_있으면_내림차순으로_정렬한다(self):
+        h = _handler(
+            {
+                "m": _MultiProvider(
+                    "m",
+                    [
+                        LyricsResult(lines=["a"], artist="보통", popularity=500),
+                        LyricsResult(lines=["a"], artist="인기", popularity=90_000),
+                        LyricsResult(lines=["a"], artist="비인기", popularity=3),
+                    ],
+                )
+            },
+            [SimpleNamespace(provider_key="m", enabled=True, name="멀티")],
+        )
+        found = h.handle(SearchLyricsCandidatesCommand(uuid4()))
+        assert [c.artist for c in found] == ["인기", "보통", "비인기"]
+        assert found[0].popularity == 90_000
+
+    def test_지표가_없으면_출처_순서를_그대로_둔다(self):
+        """국내 사이트는 검색 결과 순서 자체가 그 사이트의 랭킹이라 건드리면 안 된다."""
+        h = _handler(
+            {
+                "m": _MultiProvider(
+                    "m",
+                    [
+                        LyricsResult(lines=["a"], artist="첫째"),
+                        LyricsResult(lines=["a"], artist="둘째"),
+                        LyricsResult(lines=["a"], artist="셋째"),
+                    ],
+                )
+            },
+            [SimpleNamespace(provider_key="m", enabled=True, name="멀티")],
+        )
+        found = h.handle(SearchLyricsCandidatesCommand(uuid4()))
+        assert [c.artist for c in found] == ["첫째", "둘째", "셋째"]
+
+    def test_곡_길이도_후보에_실어_보낸다(self):
+        h = _handler(
+            {"m": _MultiProvider("m", [LyricsResult(lines=["a"], duration_sec=213)])},
+            [SimpleNamespace(provider_key="m", enabled=True, name="멀티")],
+        )
+        found = h.handle(SearchLyricsCandidatesCommand(uuid4()))
+        assert found[0].duration_sec == 213
+
     def test_상한_0은_무제한으로_넘어간다(self):
         provider = _MultiProvider(
             "m", [LyricsResult(lines=["a"], artist=f"가수{i}") for i in range(5)]

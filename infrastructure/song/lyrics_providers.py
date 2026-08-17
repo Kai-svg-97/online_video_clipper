@@ -58,6 +58,23 @@ def _dedupe_key(result: LyricsResult) -> tuple:
     return (result.artist.strip().lower(), result.title.strip().lower(), first)
 
 
+def _sort_by_duration_match(
+    results: list[LyricsResult], duration_sec: int | None
+) -> list[LyricsResult]:
+    """영상 길이에 가까운 곡을 앞으로 올린다(인기 지표가 없는 출처의 차선책).
+
+    길이를 모르는 후보는 뒤로 보내되 버리지는 않는다. 파이썬 정렬은 안정적이라
+    길이 차가 같은 후보끼리는 출처가 준 원래 순서(= 그 사이트의 관련도 랭킹)를 지킨다.
+    """
+    if not duration_sec:
+        return results
+    unknown = 10 ** 6   # 길이 미상은 항상 뒤로
+    return sorted(
+        results,
+        key=lambda r: abs(r.duration_sec - duration_sec) if r.duration_sec else unknown,
+    )
+
+
 def _split_lines(text: str) -> list[str]:
     """가사 원문을 줄 목록으로 정규화한다(앞뒤 빈 줄 제거, 내부 빈 줄은 단락 구분 유지)."""
     lines = [ln.rstrip() for ln in (text or "").replace("\r\n", "\n").split("\n")]
@@ -85,11 +102,16 @@ class LrclibProvider:
         self, artist: str, title: str, duration_sec: int | None = None,
         limit: int = DEFAULT_LYRICS_SEARCH_LIMIT,
     ) -> list[LyricsResult]:
-        """제목이 같은 여러 곡을 그대로 나열한다(같은 제목·다른 가수 구분용).
+        """제목이 같은 여러 곡을 나열한다(같은 제목·다른 가수 구분용).
 
         정확 조회 결과가 있으면 맨 앞에 두고, 그 뒤에 검색 결과를 잇는다. 가수를 지정한
         검색만으로는 '다른 가수의 같은 제목' 곡이 안 나오므로 **제목만으로 한 번 더**
-        검색해 이어 붙인다(중복은 아래 `_dedupe_key`로 제거).
+        검색해 이어 붙인다(중복은 `_dedupe_key`로 제거).
+
+        LRCLIB은 조회수 같은 인기 지표를 주지 않는다. 대신 곡 길이를 주므로,
+        **영상 길이와 가까운 순**으로 정렬해 같은 녹음일 가능성이 높은 후보를 위로
+        올린다. 자르기는 정렬 **뒤에** 한다 — 먼저 자르면 뒤쪽에 있던 정답이 날아간다.
+        (목록 API라 후보를 다 모아도 추가 요청이 없어 이 순서가 공짜다.)
         """
         if not title:
             return []
@@ -112,18 +134,16 @@ class LrclibProvider:
             if exact:
                 _add(exact)
             for entry in self._search_raw(sess, artist, title):
-                if 0 < limit <= len(out):
-                    break
                 _add(entry)
             # 가수를 함께 넣어 검색했다면, 제목만으로 한 번 더 훑어 다른 가수 곡도 모은다.
-            if artist and (limit <= 0 or len(out) < limit):
+            if artist:
                 for entry in self._search_raw(sess, "", title):
-                    if 0 < limit <= len(out):
-                        break
                     _add(entry)
         except Exception as exc:
             _log_provider_error("LRCLIB", exc)
-        return out
+
+        out = _sort_by_duration_match(out, duration_sec)
+        return out[:limit] if limit > 0 else out
 
     @staticmethod
     def _exact(sess, artist: str, title: str, duration_sec: int | None) -> dict | None:
@@ -175,6 +195,7 @@ class LrclibProvider:
             timings = []
         if not lines:
             return None
+        raw_duration = data.get("duration")
         return LyricsResult(
             lines=lines,
             timings=timings,
@@ -184,6 +205,7 @@ class LrclibProvider:
             artist=data.get("artistName") or "",
             album=data.get("albumName") or "",
             title=data.get("trackName") or "",
+            duration_sec=int(raw_duration) if raw_duration else None,
         )
 
 
@@ -200,10 +222,12 @@ class GeniusProvider:
         self, artist: str, title: str, duration_sec: int | None = None,
         limit: int = DEFAULT_LYRICS_SEARCH_LIMIT,
     ) -> list[LyricsResult]:
-        """검색 히트를 순서대로 훑어 가사 페이지를 긁는다(곡마다 요청 1회).
+        """검색 히트를 **조회수 내림차순**으로 훑어 가사 페이지를 긁는다(곡마다 요청 1회).
 
-        페이지를 곡 수만큼 받아야 하므로 ``limit``이 곧 요청 수다 — 무제한(0)으로 부르면
-        검색 결과 전부를 긁는다.
+        Genius 검색 응답은 곡마다 ``stats.pageviews``(페이지 조회수)를 준다 — 이 출처에서
+        얻을 수 있는 유일한 인기 지표라 이것으로 정렬한다. **정렬을 페이지 요청 전에**
+        해야 하는 이유는 ``limit``이 곧 요청 수이기 때문이다: 나중에 정렬하면 인기 곡이
+        상한 밖으로 밀려 아예 조회되지 않는다.
         """
         if not title:
             return []
@@ -219,12 +243,12 @@ class GeniusProvider:
             )
             if resp.status_code != 200:
                 return []
-            song_urls = self._song_urls(resp.json())
+            hits = self._song_hits(resp.json())
         except Exception as exc:
             _log_provider_error("Genius", exc)
             return []
 
-        for song_url in song_urls:
+        for song_url, pageviews in hits:
             if 0 < limit <= len(out):
                 break
             try:
@@ -245,6 +269,7 @@ class GeniusProvider:
                 source_url=song_url,
                 artist=r_artist,
                 title=r_title,
+                popularity=pageviews,
             )
             key = _dedupe_key(result)
             if key in seen:
@@ -254,18 +279,28 @@ class GeniusProvider:
         return out
 
     @staticmethod
-    def _song_urls(payload: dict) -> list[str]:
-        """검색 응답에서 곡 페이지 URL을 등장 순서대로 모은다(중복 제거)."""
-        urls: list[str] = []
+    def _song_hits(payload: dict) -> list[tuple[str, int]]:
+        """검색 응답에서 (곡 URL, 조회수)를 모아 조회수 내림차순으로 돌려준다.
+
+        조회수가 없는 히트는 0으로 두며, 안정 정렬이라 같은 값끼리는 Genius가 준 원래
+        순서(관련도)를 유지한다.
+        """
+        hits: list[tuple[str, int]] = []
+        urls: set[str] = set()
         sections = (payload or {}).get("response", {}).get("sections", [])
         for sec in sections:
             for hit in sec.get("hits", []):
                 if hit.get("type") != "song":
                     continue
-                url = (hit.get("result") or {}).get("url")
-                if url and url not in urls:
-                    urls.append(url)
-        return urls
+                res = hit.get("result") or {}
+                url = res.get("url")
+                if not url or url in urls:
+                    continue
+                urls.add(url)
+                views = (res.get("stats") or {}).get("pageviews") or 0
+                hits.append((url, int(views)))
+        hits.sort(key=lambda pair: pair[1], reverse=True)
+        return hits
 
     @staticmethod
     def _parse_page(html: str) -> tuple[list[str], str, str]:
@@ -331,6 +366,11 @@ class _KoreanScrapeProvider:
 
     사이트 구조가 자주 바뀌고 봇 차단이 있어 best-effort다. 실패 시 빈 결과.
     검색 결과의 곡을 **여러 건** 훑으므로 상세 페이지 요청이 곡 수만큼 발생한다.
+
+    이 사이트들은 API가 없어 조회수 같은 인기 지표를 얻을 수 없다. 다만 **검색 결과
+    페이지의 순서 자체가 그 사이트의 인기·정확도 랭킹**이므로 그 순서를 그대로 지킨다
+    (재정렬하면 오히려 랭킹 정보를 버리는 셈이다). 그래서 `popularity`는 0으로 둔다 —
+    호출부의 정렬은 지표가 하나라도 있을 때만 개입한다.
     """
 
     key = ""

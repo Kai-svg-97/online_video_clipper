@@ -59,6 +59,8 @@ class LyricsCandidateDTO:
     first_line: str = ""        # 목록에 미리보기로 띄우는 가사 첫째 줄
     is_synced: bool = False     # 시간 정보(LRC 타이밍)가 있는지 — 자막 표시 가능 여부
     line_count: int = 0
+    popularity: int = 0         # 출처가 준 인기 지표(조회수 등). 0 = 지표 없음
+    duration_sec: int | None = None   # 곡 길이(초) — 영상 길이와 비교해 정렬·판별에 쓴다
     source_url: str = ""
     lines: tuple[str, ...] = ()
     timings: tuple[int | None, ...] = ()

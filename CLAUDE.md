@@ -140,7 +140,7 @@ online_video_clipper/
 │       ├── entities.py              # SongInfo(가수·앨범·제목·발매년도·가사·is_song·manual_fields·`lyrics_offset_ms`(자막 싱크 보정)·`is_synced` 프로퍼티(시각 있는 줄 존재 여부)) + LyricsSource(출처 레지스트리)
 │       ├── aggregates.py            # SongInfoAggregate — apply_fetched(수동편집 보존)·edit_field·edit_lyrics(줄 수 같으면 기존 타이밍 유지)·set_lyrics_offset(±30초 clamp, 공개 상수 `MAX_LYRICS_OFFSET_MS`)
 │       ├── repositories.py          # ISongRepository (+ 가사 출처 CRUD)
-│       ├── ports.py                 # ILyricsProvider(`fetch` 1건)·**ILyricsSearchProvider**(`search` 다건 — 후보 목록용 선택 확장)·ITranslator(Protocol) + LyricsResult + `DEFAULT_LYRICS_SEARCH_LIMIT`(출처당 후보 상한, 0=무제한)
+│       ├── ports.py                 # ILyricsProvider(`fetch` 1건)·**ILyricsSearchProvider**(`search` 다건 — 후보 목록용 선택 확장)·ITranslator(Protocol) + LyricsResult(`popularity`=출처 조회수 0이면 지표 없음, `duration_sec`=곡 길이) + `DEFAULT_LYRICS_SEARCH_LIMIT`(출처당 후보 상한, 0=무제한)
 │       └── events.py                # SongInfoUpdated
 │   │
 │   └── sync/                        # [Bounded Context] 클라우드 동기화 (레코드 단위 oplog CRDT) — 구현 중
@@ -194,7 +194,7 @@ online_video_clipper/
 │   │   ├── oauth_client_config.py   # 번들/로컬 Desktop OAuth 클라이언트 JSON 탐색·검증(`find_youtube_oauth_config`) — 값은 절대 반환/로그하지 않음
 │   │   └── youtube_api_adapter.py   # YouTube Data API v3 래퍼 (requests.Session)
 │   ├── song/
-│   │   ├── lyrics_providers.py      # LRCLIB(무키)·Genius·멜론·벅스·지니 가사 제공자 + build_default_providers (QThread에서만 호출). **모든 제공자가 `search()`(다건)를 구현**하고 `fetch()`는 `search(limit=1)` 위임이다 — 두 경로의 폴백 범위가 어긋나 "후보 목록엔 뜨는데 체인 검색은 못 찾는" 일이 없게. LRCLIB은 `/api/get`(정확)→`/api/search`(가수+제목)→`/api/search`(제목만) 순으로 훑어 **다른 가수의 같은 제목 곡**까지 모으고, Genius·국내 3사는 검색 페이지에서 곡 id를 `_first_id`로 **전부** 뽑아(예전엔 `re.search`로 첫 개만) 곡마다 상세 페이지를 긁는다(요청 수 = limit이라 상한이 성능을 좌우). 국내 3사 상세 파서는 가사뿐 아니라 **가수·제목도 뽑는다** — 안 뽑으면 후보 행이 전부 같은 값으로 보여 고를 수가 없다. 곡 하나가 실패해도 나머지 후보는 계속 모으고, 중복은 `_dedupe_key`(가수·제목·첫 줄)로 제거한다. 네트워크 오류(타임아웃·연결실패)는 트레이스백 없이 WARNING으로만 남기고 None 반환→다음 출처로(`_log_provider_error`); 타임아웃 (connect 5s, read 8s)로 짧게 잡아 느린 출처를 빨리 건너뜀
+│   │   ├── lyrics_providers.py      # LRCLIB(무키)·Genius·멜론·벅스·지니 가사 제공자 + build_default_providers (QThread에서만 호출). **모든 제공자가 `search()`(다건)를 구현**하고 `fetch()`는 `search(limit=1)` 위임이다 — 두 경로의 폴백 범위가 어긋나 "후보 목록엔 뜨는데 체인 검색은 못 찾는" 일이 없게. LRCLIB은 `/api/get`(정확)→`/api/search`(가수+제목)→`/api/search`(제목만) 순으로 훑어 **다른 가수의 같은 제목 곡**까지 모으고, Genius·국내 3사는 검색 페이지에서 곡 id를 `_first_id`로 **전부** 뽑아(예전엔 `re.search`로 첫 개만) 곡마다 상세 페이지를 긁는다(요청 수 = limit이라 상한이 성능을 좌우). 국내 3사 상세 파서는 가사뿐 아니라 **가수·제목도 뽑는다** — 안 뽑으면 후보 행이 전부 같은 값으로 보여 고를 수가 없다. 곡 하나가 실패해도 나머지 후보는 계속 모으고, 중복은 `_dedupe_key`(가수·제목·첫 줄)로 제거한다. **정렬**: Genius는 검색 응답의 `stats.pageviews`로 **조회수 내림차순 정렬을 페이지 요청 *전에*** 한다(limit이 곧 요청 수라, 나중에 정렬하면 인기 곡이 상한 밖으로 밀려 조회조차 안 된다). LRCLIB은 인기 지표가 없어 **영상 길이에 가까운 순**(`_sort_by_duration_match`)으로 정렬하며, 자르기는 정렬 뒤에 한다(먼저 자르면 정답이 날아간다 — 목록 API라 다 모아도 추가 요청이 없어 공짜다). 국내 3사는 **검색 결과 순서 자체가 그 사이트의 랭킹**이므로 재정렬하지 않고 `popularity=0`으로 둔다. 네트워크 오류(타임아웃·연결실패)는 트레이스백 없이 WARNING으로만 남기고 None 반환→다음 출처로(`_log_provider_error`); 타임아웃 (connect 5s, read 8s)로 짧게 잡아 느린 출처를 빨리 건너뜀
 │   │   ├── translator.py            # deep-translator 래퍼(ITranslator) — 미설치/실패 시 원문 그대로(graceful)
 │   │   └── lrc.py                   # LRC(가사 타이밍) 파서 — `parse_lrc(text) -> [(시작ms|None, 가사)]`. 다중 타임스탬프 전개·`[offset:]` 반영·메타 태그 제거. 순수 함수라 단위 테스트로 규칙을 고정
 │   ├── event_bus.py                 # In-process event dispatcher
@@ -283,6 +283,12 @@ online_video_clipper/
   상세 페이지를 한 번씩 긁어 요청 수 = 후보 수이기 때문이다. `search`가 없는 제공자는
   `fetch` 1건으로 폴백한다(`_search_one`이 `hasattr`로 판정 — 그래서 포트를
   `ILyricsSearchProvider`로 분리했다. `ILyricsProvider`에 넣으면 전 구현이 강제된다).
+  **정렬은 출처가 주는 신호에 따라 다르다** — 조회수(Genius `stats.pageviews`)가 있으면
+  내림차순, 없고 곡 길이만 있으면(LRCLIB) 영상 길이에 가까운 순, 둘 다 없으면
+  **출처가 준 순서를 그대로 둔다**(국내 3사는 검색 결과 순서 자체가 그 사이트의 랭킹이라
+  재정렬이 오히려 정보를 버린다). 핸들러의 `_rank_results`는 지표가 하나라도 있을 때만
+  개입하는 **안정 정렬**이라, 제공자가 이미 정렬해 온 결과를 흐트러뜨리지 않는다.
+  정렬 근거(조회수·길이)는 열을 늘리지 않고 행 툴팁(`_candidate_tooltip`)에 담는다.
   **결과는 전 출처가 끝나기를 기다리지 않고 도착하는 대로 표시한다** — 느린 출처 하나
   때문에 이미 확보한 후보를 못 보는 일이 없어야 하므로, 핸들러가 `on_start(출처)` →
   `on_result(출처, DTO)`(**출처당 여러 번**) → `on_source_done(출처, 건수)`를 부르고 GUI는

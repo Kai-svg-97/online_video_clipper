@@ -110,6 +110,20 @@ class TestIncrementalResults:
         item = clist._table.item(1, clist._COL_SOURCE)
         assert not (item.flags() & Qt.ItemFlag.ItemIsSelectable)
 
+    def test_정렬_근거를_툴팁에_담는다(self, clist):
+        """열은 다섯 개로 유지하되, 왜 이 순서인지는 확인할 수 있어야 한다."""
+        clist.begin(["Genius"])
+        clist.add_result(
+            "Genius",
+            LyricsCandidateDTO(
+                source_name="Genius", artist="가수A", title="제목A", first_line="첫 줄",
+                line_count=3, popularity=1234567, duration_sec=213, lines=("첫 줄",),
+            ),
+        )
+        tip = clist._table.item(0, clist._COL_TITLE).toolTip()
+        assert "조회수 1,234,567" in tip
+        assert "길이 3:33" in tip
+
     def test_싱크_없는_후보는_대시로_표기한다(self, clist):
         clist.begin(["지니"])
         clist.add_result("지니", _cand(source="지니", synced=False))
