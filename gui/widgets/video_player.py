@@ -54,6 +54,78 @@ from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
 logger = logging.getLogger(__name__)
 
 
+# ── 스트림 URL 획득 보조 (순수 함수 — 네트워크 없이 테스트 가능) ──────────
+
+# 스트림 URL을 받을 때 순서대로 시도할 YouTube 플레이어 클라이언트(None = yt-dlp 기본).
+#
+# 기본 클라이언트가 돌려준 googlevideo URL이 **간헐적으로 403**을 내는 것을 실측으로
+# 확인했다(같은 영상이 어떤 때는 200, 어떤 때는 403 — PO token/SABR 전환기의 서버측
+# 거부로 보인다). 이때 다른 클라이언트로 다시 받으면 정상 URL이 나온다. 예전에는 첫
+# 시도가 실패하면 그대로 포기하고 브라우저를 열어버려, "앱에서 재생이 안 된다"는
+# 체감이 컸다.
+_STREAM_CLIENTS: tuple[str | None, ...] = (None, "android", "ios", "tv")
+
+# URL 검증용 요청. **yt-dlp 전용 헤더로 검증하면 안 된다** — 우리는 통과하는데 정작
+# QMediaPlayer는 403을 받는 위양성이 생긴다. 실제 재생 주체와 비슷한 최소 요청으로 본다.
+_PROBE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+_PROBE_TIMEOUT = (5, 8)
+
+# 재생 도중 QMediaPlayer가 오류를 낼 때 스트림을 다시 받아 시도할 횟수.
+# 1회로 묶는 이유: 코덱 미지원처럼 다시 받아도 똑같이 실패하는 원인에서 무한 반복을 막는다.
+_MAX_STREAM_RETRIES = 1
+
+
+def _is_youtube(url: str) -> bool:
+    """YouTube URL인지 — 클라이언트 대체 재시도는 YouTube에서만 의미가 있다."""
+    return "youtube.com" in url or "youtu.be" in url
+
+
+def _pick_stream_url(info: dict) -> tuple[str, dict]:
+    """yt-dlp info에서 재생할 단일 URL을 고른다 → (url, format_info).
+
+    **영상+오디오가 모두 있는(muxed) 포맷을 우선**한다. 예전에는 마지막 폴백이 `url`만
+    있으면 무엇이든 집어서, 영상만 있는 포맷을 골라 소리가 없거나 재생이 실패하는
+    경우가 있었다. 무음 재생보다는 다음 후보로 넘어가는 편이 낫다.
+    """
+    if info.get("url"):
+        return info["url"], info
+    formats = info.get("formats") or []
+
+    def _muxed(f: dict) -> bool:
+        return f.get("vcodec") not in (None, "none") and f.get("acodec") not in (None, "none")
+
+    for want_mp4 in (True, False):
+        for f in reversed(formats):
+            if not f.get("url") or not _muxed(f):
+                continue
+            if want_mp4 and f.get("ext") != "mp4":
+                continue
+            return f["url"], f
+    return "", {}
+
+
+def _stream_playable(url: str) -> bool:
+    """URL을 QMediaPlayer에 넘기기 전에 실제로 받아지는지 확인한다.
+
+    작은 Range 요청 하나로 403·만료를 걸러낸다. 재생 시작 뒤에 실패하면 사용자는
+    깨진 화면만 보게 되므로, 넘기기 전에 확인해 다음 클라이언트로 넘어가는 편이 낫다.
+    """
+    try:
+        import requests  # noqa: PLC0415
+
+        resp = requests.get(
+            url,
+            headers={"User-Agent": _PROBE_UA, "Range": "bytes=0-1"},
+            stream=True,
+            timeout=_PROBE_TIMEOUT,
+        )
+        resp.close()
+        return resp.status_code in (200, 206)
+    except Exception:
+        logger.warning("스트림 URL 확인 실패 — 다음 후보로", exc_info=True)
+        return False
+
+
 # ── Background worker: resolve yt-dlp stream URL ──────────────────
 
 class _StreamWorker(QThread):
@@ -86,28 +158,60 @@ class _StreamWorker(QThread):
 
     # ── 즉시 스트리밍: 단일 muxed URL을 그대로 QMediaPlayer에 전달 ──
     def _run_stream(self, yt_dlp) -> None:
+        """URL을 확보해 **검증까지 마친 뒤** 넘긴다. 실패하면 다른 클라이언트로 재시도.
+
+        한 번 실패했다고 곧바로 포기하지 않는 것이 핵심이다 — 기본 클라이언트의 403은
+        간헐적이라 대체 클라이언트로 다시 받으면 대개 살아난다.
+        """
+        clients = _STREAM_CLIENTS if _is_youtube(self._url) else (None,)
+        last_err = ""
+        unverified: tuple[str, str] | None = None   # 검증만 실패한 첫 URL
+        for client in clients:
+            try:
+                stream, label = self._extract_stream(yt_dlp, client)
+            except Exception as exc:
+                last_err = str(exc)
+                logger.warning(
+                    "스트림 추출 실패(client=%s): %s", client or "기본", last_err[:200]
+                )
+                continue
+            if not stream:
+                last_err = "스트림 URL을 가져올 수 없습니다."
+                logger.warning("재생 가능한 포맷 없음(client=%s)", client or "기본")
+                continue
+            if not _stream_playable(stream):
+                last_err = "스트림 URL이 거부되었습니다(재생 서버 403)."
+                logger.warning(
+                    "스트림 URL 거부됨(client=%s) — 다음 클라이언트로 재시도", client or "기본"
+                )
+                if unverified is None:
+                    unverified = (stream, label)
+                continue
+            if client:
+                logger.info("대체 클라이언트로 스트림 확보: client=%s", client)
+            self.stream_ready.emit(stream, label, False)
+            return
+        if unverified is not None:
+            # 확인 요청이 전부 막히는 환경(프록시·방화벽)일 수 있다. 검증에 실패했다는
+            # 이유만으로 재생을 포기하면 그런 환경에서는 영영 못 보므로, URL을 확보한
+            # 이상 플레이어에게 한 번은 맡긴다(예전 동작과 최소한 동일하다).
+            logger.warning("검증은 실패했으나 URL이 있어 그대로 재생 시도: %s", self._url)
+            self.stream_ready.emit(unverified[0], unverified[1], False)
+            return
+        logger.warning("모든 클라이언트에서 스트림 확보 실패: %s", self._url)
+        self.failed.emit(last_err or "스트림 URL을 가져올 수 없습니다.")
+
+    def _extract_stream(self, yt_dlp, client: str | None) -> tuple[str, str]:
+        """지정 클라이언트로 정보를 뽑아 (재생 URL, 화질 라벨)을 돌려준다."""
         opts = {"quiet": True, "no_warnings": True,
                 "format": self._quality_fmt, "noplaylist": True}
+        if client:
+            opts["extractor_args"] = {"youtube": {"player_client": [client]}}
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(self._url, download=False) or {}
-        stream: str = info.get("url", "")
-        fmt_info: dict = {}
-        if not stream:
-            for f in reversed(info.get("formats") or []):
-                if f.get("url") and f.get("ext") == "mp4" and f.get("acodec") not in (None, "none"):
-                    stream, fmt_info = f["url"], f
-                    break
-        if not stream:
-            for f in reversed(info.get("formats") or []):
-                if f.get("url"):
-                    stream, fmt_info = f["url"], f
-                    break
+        stream, fmt_info = _pick_stream_url(info)
         h = fmt_info.get("height") or info.get("height")
-        label = f"{h}p" if h else ""
-        if stream:
-            self.stream_ready.emit(stream, label, False)
-        else:
-            self.failed.emit("스트림 URL을 가져올 수 없습니다.")
+        return stream, (f"{h}p" if h else "")
 
     # ── 고화질: 분리된 영상+오디오를 ffmpeg로 임시 mp4에 병합해 로컬 재생 ──
     def _run_merge(self, yt_dlp) -> None:
@@ -123,29 +227,44 @@ class _StreamWorker(QThread):
             self._run_stream(yt_dlp)
             return
 
-        tmpdir = tempfile.mkdtemp(prefix="ovc_stream_")
-        opts = {
-            "quiet": True, "no_warnings": True, "noplaylist": True,
-            "format": self._quality_fmt,
-            "merge_output_format": "mp4",
-            "outtmpl": os.path.join(tmpdir, "stream.%(ext)s"),
-            "ffmpeg_location": ffmpeg,
-            "progress_hooks": [self._merge_hook],
-        }
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(self._url, download=True) or {}
-        rd = (info.get("requested_downloads") or [{}])[0]
-        path = rd.get("filepath") or info.get("filepath") or ydl.prepare_filename(info)
-        if not path or not os.path.exists(path):
-            # 병합 산출물을 못 찾으면 디렉터리에서 첫 파일을 집는다
-            files = [os.path.join(tmpdir, f) for f in os.listdir(tmpdir)]
-            path = files[0] if files else ""
-        h = rd.get("height") or info.get("height")
-        label = f"{h}p" if h else ""
-        if path and os.path.exists(path):
-            self.stream_ready.emit(path, label, True)
-        else:
-            self.failed.emit("고화질 병합에 실패했습니다.")
+        clients = _STREAM_CLIENTS if _is_youtube(self._url) else (None,)
+        for client in clients:
+            tmpdir = tempfile.mkdtemp(prefix="ovc_stream_")
+            opts = {
+                "quiet": True, "no_warnings": True, "noplaylist": True,
+                "format": self._quality_fmt,
+                "merge_output_format": "mp4",
+                "outtmpl": os.path.join(tmpdir, "stream.%(ext)s"),
+                "ffmpeg_location": ffmpeg,
+                "progress_hooks": [self._merge_hook],
+            }
+            if client:
+                opts["extractor_args"] = {"youtube": {"player_client": [client]}}
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(self._url, download=True) or {}
+                rd = (info.get("requested_downloads") or [{}])[0]
+                path = rd.get("filepath") or info.get("filepath") or ydl.prepare_filename(info)
+                if not path or not os.path.exists(path):
+                    # 병합 산출물을 못 찾으면 디렉터리에서 첫 파일을 집는다
+                    files = [os.path.join(tmpdir, f) for f in os.listdir(tmpdir)]
+                    path = files[0] if files else ""
+            except Exception as exc:
+                logger.warning(
+                    "고화질 병합 실패(client=%s): %s", client or "기본", str(exc)[:200]
+                )
+                continue
+            if path and os.path.exists(path):
+                if client:
+                    logger.info("대체 클라이언트로 고화질 병합 성공: client=%s", client)
+                h = rd.get("height") or info.get("height")
+                self.stream_ready.emit(path, f"{h}p" if h else "", True)
+                return
+        # 고화질을 못 만들었다고 재생 자체를 포기하지 않는다 — 낮은 화질이라도 트는 편이
+        # 브라우저로 튕기는 것보다 낫다(사용자는 '앱에서 재생'을 원해서 누른 것이다).
+        logger.warning("고화질 병합 전부 실패 — 일반 스트리밍으로 폴백: %s", self._url)
+        self._quality_fmt = _DEFAULT_QUALITY_FMT
+        self._run_stream(yt_dlp)
 
     def _merge_hook(self, d: dict) -> None:
         if d.get("status") != "downloading":
@@ -1010,6 +1129,8 @@ class InlinePlayer(QWidget):
         self._resume_ms: int = 0
         self._stream_quality_label: str = ""  # yt-dlp 보고 품질 레이블
         self._temp_stream_path: str = ""      # 고화질 병합 임시 파일(재생 후 정리)
+        self._playing_local: bool = False     # 로컬 파일 재생 중인지(재시도 판단용)
+        self._stream_retries: int = 0         # 재생 오류 후 스트림 재획득 횟수
         self._track: LyricsTrack | None = None
         self._subtitle_on = True
         # 자막 표시 설정은 전역이라 생성 시 설정값을 읽어 시작한다.
@@ -1463,6 +1584,8 @@ class InlinePlayer(QWidget):
         self._video_title = title
         self._downloads   = downloads
         self._resume_ms   = resume_ms
+        self._stream_retries = 0   # 영상이 바뀌면 재시도 예산도 새로 준다
+        self._playing_local  = False
         self._current_quality_fmt   = InlinePlayer._last_quality_fmt
         self._current_merge         = InlinePlayer._last_quality_merge
         self._current_quality_short = InlinePlayer._last_quality_short
@@ -1893,6 +2016,9 @@ class InlinePlayer(QWidget):
         if self._pip_win:
             self._pip_win.bar.set_playing(playing)
         if playing:
+            # 실제로 재생이 시작됐으면 재시도 예산을 되돌린다. 여기서 초기화하지 않고
+            # 스트림을 받을 때마다 초기화하면 오류→재시도가 무한히 반복될 수 있다.
+            self._stream_retries = 0
             self._bar.show()
             self._bar.raise_()
             self._hide_timer.start()
@@ -1928,6 +2054,7 @@ class InlinePlayer(QWidget):
             self._resume_ms = 0
 
     def _start_local(self, path: str) -> None:
+        self._playing_local = True
         self._player.setSource(QUrl.fromLocalFile(path))
         self._visual_stack.setCurrentIndex(1)
         self._bar.show()
@@ -1967,6 +2094,7 @@ class InlinePlayer(QWidget):
 
     def _on_stream_ready(self, src: str, quality: str, is_local: bool) -> None:
         self._status_lbl.hide()
+        self._playing_local = is_local
         self._temp_stream_path = src if is_local else ""
         self._player.setSource(QUrl.fromLocalFile(src) if is_local else QUrl(src))
         self._visual_stack.setCurrentIndex(1)
@@ -1981,9 +2109,42 @@ class InlinePlayer(QWidget):
         self.playback_failed.emit(err)
 
     def _on_error(self, error, error_string: str) -> None:
-        if error != QMediaPlayer.Error.NoError:
-            self.stop()
-            self.playback_failed.emit(error_string)
+        if error == QMediaPlayer.Error.NoError:
+            return
+        # 스트리밍 재생 오류는 URL 만료·일시적 거부가 대부분이라, 새 URL을 받아 한 번은
+        # 조용히 다시 시도한다(사용자에게는 잠깐 버퍼링한 것처럼 보인다). 로컬 파일
+        # 재생 오류는 다시 받아도 같은 파일이라 재시도하지 않는다.
+        if (
+            self._video_url
+            and not self._playing_local
+            and self._stream_retries < _MAX_STREAM_RETRIES
+        ):
+            self._stream_retries += 1
+            logger.warning(
+                "재생 오류 — 스트림을 다시 받아 재시도(%d/%d): %s",
+                self._stream_retries, _MAX_STREAM_RETRIES, error_string,
+            )
+            self._player.stop()
+            self._player.setSource(QUrl())
+            self._fetch_stream()
+            return
+        logger.warning("재생 오류(재시도 소진): %s / url=%s", error_string, self._video_url)
+        self.stop()
+        self.playback_failed.emit(error_string)
+
+    def show_playback_error(self, message: str) -> None:
+        """재생 실패를 영상 자리에 표시한다.
+
+        예전에는 실패하면 곧바로 기본 브라우저를 열었다. 사용자는 **앱에서 보려고**
+        누른 것이므로 창이 튀는 것 자체가 불편하고, 원인도 알 수 없었다. 이제는 이유를
+        보여주고, 브라우저로 갈지는 상단 🌐 버튼으로 직접 고르게 한다.
+        """
+        self._visual_stack.setCurrentIndex(0)
+        text = message.strip().replace("\n", " ")
+        if len(text) > 110:
+            text = text[:110] + "…"
+        self._status_lbl.setText(f"재생 실패: {text} — 🌐 버튼으로 브라우저에서 열 수 있습니다.")
+        self._status_lbl.show()
 
     def _on_quality_changed(self, fmt: str, short: str, merge: bool) -> None:
         self._current_quality_fmt   = fmt

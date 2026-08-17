@@ -2661,8 +2661,14 @@ class VideoDetailWidget(QWidget):
         self.song_offset_saved.emit(video_id, offset_ms)
 
     def _on_play_failed(self, err: str) -> None:
-        if self._current_url:
-            QDesktopServices.openUrl(QUrl(self._current_url))
+        """재생 실패 — 이유를 남기고 화면에 보여준다(브라우저를 임의로 열지 않는다).
+
+        예전에는 원인과 무관하게 곧바로 기본 브라우저를 띄웠다. 사용자는 앱에서 보려고
+        누른 것이라 창이 튀는 것 자체가 불편했고, 로그도 남지 않아 왜 실패했는지
+        추적할 수 없었다(실제로 이 신고가 들어왔을 때 app.log에 흔적이 전혀 없었다).
+        """
+        logger.warning("영상 재생 실패: %s / url=%s", err, self._current_url)
+        self._player.show_playback_error(err)
 
     def stop_player(self) -> None:
         self._player.stop()
