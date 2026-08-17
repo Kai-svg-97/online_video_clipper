@@ -192,9 +192,11 @@ def main() -> int:
     )
     from application.song.commands import (
         AddLyricsSourceHandler,
+        ApplyLyricsCandidateHandler,
         DeleteLyricsSourceHandler,
         FetchSongInfoHandler,
         ReorderLyricsSourcesHandler,
+        SearchLyricsCandidatesHandler,
         SetLyricsOffsetHandler,
         SetSongFlagHandler,
         TranslateSongLyricsHandler,
@@ -502,6 +504,10 @@ def main() -> int:
     song_vm = SongViewModel(
         get_song_info=GetSongInfoHandler(song_repo),
         fetch_song=fetch_song,
+        search_candidates=SearchLyricsCandidatesHandler(
+            song_repo, video_repo, lyrics_providers=lyrics_providers
+        ),
+        apply_candidate=ApplyLyricsCandidateHandler(song_repo, event_bus, translator),
         set_flag=SetSongFlagHandler(song_repo, event_bus),
         update_field=UpdateSongFieldHandler(song_repo, event_bus),
         update_lyrics=UpdateSongLyricsHandler(song_repo, event_bus),

@@ -4376,9 +4376,22 @@ class LibraryPanel(QWidget):
             )
             self._detail_widget.song_field_saved.connect(self._song_vm.save_field)
             self._detail_widget.song_lyrics_saved.connect(self._song_vm.save_lyrics)
-            self._detail_widget.song_refresh_requested.connect(self._song_vm.refresh)
-            self._detail_widget.song_search_next_requested.connect(
-                self._song_vm.search_next_source
+            # 가사 검색 → 후보 목록(출처·가수·제목·첫 줄·싱크). 결과는 도착하는 대로
+            # 상세 위젯에 흘려보내고, 사용자가 고른 후보만 실제로 반영한다.
+            self._detail_widget.song_candidates_requested.connect(
+                self._song_vm.search_lyrics_candidates
+            )
+            self._detail_widget.song_candidate_chosen.connect(
+                self._song_vm.apply_lyrics_candidate
+            )
+            self._song_vm.candidates_started.connect(
+                self._detail_widget.song_candidates_started
+            )
+            self._song_vm.candidate_ready.connect(
+                self._detail_widget.song_candidate_ready
+            )
+            self._song_vm.candidates_finished.connect(
+                self._detail_widget.song_candidates_finished
             )
             self._detail_widget.song_translate_requested.connect(
                 self._song_vm.translate_lyrics

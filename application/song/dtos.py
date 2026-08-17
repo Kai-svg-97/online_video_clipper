@@ -41,6 +41,31 @@ class SongInfoDTO:
 
 
 @dataclass(frozen=True)
+class LyricsCandidateDTO:
+    """가사 검색 후보 한 건 — 출처 하나가 돌려준 결과를 목록에 보여주기 위한 값.
+
+    저장된 노래 정보가 아니라 **아직 채택하지 않은 후보**다. 사용자가 목록에서 고르면
+    ``ApplyLyricsCandidateCommand``로 실제 반영한다. ``lines``/``timings``를 그대로
+    담고 다니는 이유는, 고른 뒤 같은 출처를 다시 조회하지 않기 위해서다(네트워크 절약 +
+    출처가 그새 다른 결과를 주는 일 방지).
+    """
+
+    source_name: str            # 표시용 출처 이름(LyricsSource.name)
+    provider_key: str = ""
+    artist: str = ""
+    title: str = ""
+    album: str = ""
+    release_year: str = ""
+    first_line: str = ""        # 목록에 미리보기로 띄우는 가사 첫째 줄
+    is_synced: bool = False     # 시간 정보(LRC 타이밍)가 있는지 — 자막 표시 가능 여부
+    line_count: int = 0
+    source_url: str = ""
+    lines: tuple[str, ...] = ()
+    timings: tuple[int | None, ...] = ()
+    language: str = ""
+
+
+@dataclass(frozen=True)
 class LyricsSourceDTO:
     id: UUID
     name: str

@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from application.song.dtos import LyricsCandidateDTO
 from domain.library.repositories import IVideoRepository
 from domain.shared.ports import IEventBus, IMediaSource
 from domain.song.aggregates import SongInfoAggregate
@@ -77,6 +78,88 @@ def _primary_artist(artist: str) -> str:
     return parts[0].strip() if parts and parts[0].strip() else (artist or "").strip()
 
 
+def artist_search_candidates(artist: str) -> list[str]:
+    """제공자에 넘길 아티스트 후보 — 전체 문자열 → 주(첫) 아티스트 순.
+
+    체인 검색(`FetchSongInfoHandler`)과 후보 목록 검색(`SearchLyricsCandidatesHandler`)이
+    같은 규칙을 써야 결과가 어긋나지 않으므로 한 곳에 둔다.
+    """
+    out = [artist]
+    primary = _primary_artist(artist)
+    if primary and primary != artist:
+        out.append(primary)
+    return out
+
+
+def resolve_search_basis(
+    info, video_title: str, channel: str, meta: dict | None = None
+) -> tuple[str, str, str, str]:
+    """가사 검색·표시의 기준값 (artist, title, album, year)을 정한다.
+
+    **현재 노래 정보에 입력된 값(수동 편집 포함)이 최우선**이고, 비면 yt-dlp 메타데이터를
+    쓴다. 사용자가 항목을 한 번이라도 고쳤으면(`manual_fields`) 그 입력값만으로 검색하고
+    빈 항목은 채우지 않는다 — 영상 제목을 제목 기본값으로 억지로 넣어 검색이 실패하던
+    문제를 막기 위함이다. 수정한 적이 없을 때만(자동 첫 조회) 영상 제목을 파싱해 보완한다.
+    """
+    meta = meta or {}
+    manual = getattr(info, "manual_fields", frozenset()) if info is not None else frozenset()
+    edited = bool(set(manual) & {"artist", "album", "song_title", "release_year"})
+    artist = (info.artist.strip() if info else "") or (meta.get("artist") or "").strip()
+    title = (info.song_title.strip() if info else "") or (meta.get("track") or "").strip()
+    album = (info.album.strip() if info else "") or (meta.get("album") or "").strip()
+    year = (info.release_year.strip() if info else "") or (meta.get("release_year") or "").strip()
+    if not edited and (not artist or not title):
+        pa, pt = parse_artist_title(
+            meta.get("title") or video_title, meta.get("channel") or channel
+        )
+        artist = artist or pa
+        title = title or pt
+    return artist, title, album, year
+
+
+def build_lyrics_lines(
+    lines: list[str],
+    language: str,
+    timings: list[int | None] | None = None,
+    translator: ITranslator | None = None,
+) -> list[LyricsLine]:
+    """원문 줄 목록을 (필요하면 한글 번역을 붙여) ``LyricsLine``으로 만든다.
+
+    한국어 가사이거나 번역기가 없으면 원문만 담는다. 번역 실패는 격리하고 원문을 쓴다.
+    """
+    if not lines:
+        return []
+    # 타이밍은 lines와 길이가 같을 때만 신뢰한다(길이가 어긋나면 잘못 짝지어진다).
+    stamps: list[int | None] = list(timings or [])
+    if len(stamps) != len(lines):
+        stamps = [None] * len(lines)
+    lang = (language or "").lower()
+    # 언어 미상이면 번역기로 추정 시도
+    if not lang and translator is not None:
+        try:
+            sample = next((ln for ln in lines if ln.strip()), "")
+            lang = (translator.detect_language(sample) or "").lower()
+        except Exception:
+            logger.exception("가사 언어 감지 실패")
+    # 한국어면 번역 없이 원문만
+    if lang == "ko" or translator is None:
+        return [
+            LyricsLine(original=ln, translation="", start_ms=ms)
+            for ln, ms in zip(lines, stamps)
+        ]
+    try:
+        translations = translator.translate(lines, target="ko")
+    except Exception:
+        logger.exception("가사 번역 실패 — 원문만 표시")
+        translations = lines
+    if len(translations) != len(lines):
+        translations = lines
+    return [
+        LyricsLine(original=o, translation=(t if t != o else ""), start_ms=ms)
+        for o, t, ms in zip(lines, translations, stamps)
+    ]
+
+
 def detect_is_song(meta: dict) -> bool:
     """yt-dlp info/prefetch dict로 노래 영상 여부를 추정한다.
 
@@ -124,6 +207,23 @@ class FetchSongInfoCommand:
     fetch_lyrics: bool = True   # False면 감지+메타데이터만(가사 네트워크 조회 생략)
     from_source_name: str | None = None  # 설정 시 이 출처 '다음'부터 검색(순환) — '다음 출처'
     synced_only: bool = False
+
+
+@dataclass
+class SearchLyricsCandidatesCommand:
+    """활성 가사 출처를 **전부** 조회해 후보 목록을 만든다(저장하지 않음).
+
+    체인 검색(`FetchSongInfoCommand`)이 첫 성공 출처를 곧바로 채택하는 것과 달리,
+    사용자가 |출처|가수|제목|가사 첫째 줄|싱크| 목록에서 직접 고르게 하기 위한 조회다.
+    """
+    video_id: UUID
+
+
+@dataclass
+class ApplyLyricsCandidateCommand:
+    """후보 목록에서 고른 가사를 실제로 반영한다(번역 포함)."""
+    video_id: UUID
+    candidate: LyricsCandidateDTO
 
 
 @dataclass
@@ -251,24 +351,13 @@ class FetchSongInfoHandler:
             self._bus.publish_all(agg.pull_events())
             return agg
 
-        # 2) 검색·표시 기준값 — **현재 노래 정보에 입력된 값(수동 편집 포함)을 최우선**으로
-        #    쓰고, 비어 있으면 yt-dlp 메타데이터를 쓴다.
-        existing = agg.info
-        # 사용자가 항목을 한 번이라도 수정했는지 여부. 수정한 적이 있으면 그 입력값만으로
-        # 검색하고, 빈 항목은 채우지 않는다(영상 제목 파싱으로 오염시키지 않음 — 영상 제목이
-        # 기본값이라 검색 실패가 잦던 문제 해결). 수정한 적이 없을 때만(자동 첫 조회) 영상
-        # 제목을 파싱해 부족분을 보완한다.
-        edited = bool(existing.manual_fields & {"artist", "album", "song_title", "release_year"})
-        vid_title = meta.get("title") or video.title
-        channel = meta.get("channel") or (video.channel.name if video.channel else "")
-        artist = existing.artist.strip() or (meta.get("artist") or "").strip()
-        title = existing.song_title.strip() or (meta.get("track") or "").strip()
-        album = existing.album.strip() or (meta.get("album") or "").strip()
-        year = existing.release_year.strip() or (meta.get("release_year") or "").strip()
-        if not edited and (not artist or not title):
-            pa, pt = parse_artist_title(vid_title, channel)
-            artist = artist or pa
-            title = title or pt
+        # 2) 검색·표시 기준값 (규칙은 resolve_search_basis 주석 참조 — 후보 목록 검색과 공유)
+        artist, title, album, year = resolve_search_basis(
+            agg.info,
+            video.title,
+            video.channel.name if video.channel else "",
+            meta,
+        )
         duration = meta.get("duration")
         if duration is None and video.duration is not None:
             duration = video.duration.seconds
@@ -337,10 +426,7 @@ class FetchSongInfoHandler:
         # 검색용 아티스트 후보: 전체 문자열 → 주(첫) 아티스트 순으로 시도한다.
         # 다중 아티스트 표기("NIKI, Phil Collins")로는 제공자 매칭이 실패하므로
         # 주 아티스트("NIKI")로 재시도해 유명곡 가사를 놓치지 않는다.
-        artist_candidates = [out.artist]
-        primary = _primary_artist(out.artist)
-        if primary and primary != out.artist:
-            artist_candidates.append(primary)
+        artist_candidates = artist_search_candidates(out.artist)
 
         for src in sources:
             provider = self._providers.get(src.provider_key)
@@ -381,37 +467,175 @@ class FetchSongInfoHandler:
     def _build_lyrics_lines(
         self, lines: list[str], language: str, timings: list[int | None] | None = None
     ) -> list[LyricsLine]:
-        if not lines:
-            return []
-        # 타이밍은 lines와 길이가 같을 때만 신뢰한다(길이가 어긋나면 잘못 짝지어진다).
-        stamps: list[int | None] = list(timings or [])
-        if len(stamps) != len(lines):
-            stamps = [None] * len(lines)
-        lang = (language or "").lower()
-        # 언어 미상이면 번역기로 추정 시도
-        if not lang and self._translator is not None:
-            try:
-                sample = next((ln for ln in lines if ln.strip()), "")
-                lang = (self._translator.detect_language(sample) or "").lower()
-            except Exception:
-                logger.exception("가사 언어 감지 실패")
-        # 한국어면 번역 없이 원문만
-        if lang == "ko" or self._translator is None:
-            return [
-                LyricsLine(original=ln, translation="", start_ms=ms)
-                for ln, ms in zip(lines, stamps)
-            ]
+        return build_lyrics_lines(lines, language, timings, self._translator)
+
+
+class SearchLyricsCandidatesHandler:
+    """활성 출처를 전부 훑어 가사 후보 목록을 만든다(DB 저장 없음).
+
+    출처 하나를 끝낼 때마다 ``on_result``을 부르므로, 호출부(GUI)는 **전체가 끝나기를
+    기다리지 않고** 확인되는 대로 목록에 채울 수 있다. 개별 출처 실패는 격리해
+    (해당 출처는 결과 없음으로 통지하고) 나머지 출처를 계속 시도한다.
+    """
+
+    def __init__(
+        self,
+        song_repo: ISongRepository,
+        video_repo: IVideoRepository,
+        lyrics_providers: dict[str, ILyricsProvider] | None = None,
+    ) -> None:
+        self._songs = song_repo
+        self._videos = video_repo
+        self._providers = lyrics_providers or {}
+
+    def list_source_names(self) -> list[str]:
+        """조회할 출처 이름 목록 — GUI가 '조회중' 행을 미리 만드는 데 쓴다.
+
+        ``handle``이 실제로 순회하는 목록과 **같은 조건**(활성 + 제공자 구현 존재)으로
+        추려야 목록에 영영 채워지지 않는 행이 남지 않는다.
+        """
+        return [s.name for s in self._active_sources()]
+
+    def _active_sources(self) -> list[LyricsSource]:
         try:
-            translations = self._translator.translate(lines, target="ko")
+            return [
+                s for s in self._songs.list_lyrics_sources()
+                if s.enabled and s.provider_key in self._providers
+            ]
         except Exception:
-            logger.exception("가사 번역 실패 — 원문만 표시")
-            translations = lines
-        if len(translations) != len(lines):
-            translations = lines
-        return [
-            LyricsLine(original=o, translation=(t if t != o else ""), start_ms=ms)
-            for o, t, ms in zip(lines, translations, stamps)
-        ]
+            logger.exception("가사 출처 목록 조회 실패")
+            return []
+
+    def handle(
+        self,
+        cmd: SearchLyricsCandidatesCommand,
+        on_start=None,
+        on_result=None,
+        should_cancel=None,
+    ) -> list[LyricsCandidateDTO]:
+        video_agg = self._videos.get_by_id(cmd.video_id)
+        if video_agg is None:
+            return []
+        video = video_agg.video
+        agg = self._songs.get(cmd.video_id)
+        artist, title, _album, _year = resolve_search_basis(
+            agg.info if agg else None,
+            video.title,
+            video.channel.name if video.channel else "",
+        )
+        duration = video.duration.seconds if video.duration is not None else None
+        artist_candidates = artist_search_candidates(artist)
+
+        found: list[LyricsCandidateDTO] = []
+        for src in self._active_sources():
+            if should_cancel is not None and should_cancel():
+                logger.debug("가사 후보 검색 취소됨: %s", cmd.video_id)
+                break
+            if on_start is not None:
+                on_start(src.name)
+            result = self._fetch_one(
+                self._providers[src.provider_key], artist_candidates, title, duration
+            )
+            dto = (
+                _to_candidate(src, result, artist, title)
+                if result is not None and result.lines
+                else None
+            )
+            if dto is not None:
+                found.append(dto)
+            if on_result is not None:
+                on_result(src.name, dto)
+        logger.info(
+            "가사 후보 검색 완료: video=%s artist=%r title=%r 후보=%d건",
+            cmd.video_id, artist, title, len(found),
+        )
+        return found
+
+    @staticmethod
+    def _fetch_one(
+        provider: ILyricsProvider,
+        artist_candidates: list[str],
+        title: str,
+        duration: int | None,
+    ) -> LyricsResult | None:
+        for cand_artist in artist_candidates:
+            try:
+                result = provider.fetch(cand_artist, title, duration)
+            except Exception:
+                logger.exception("가사 후보 조회 실패: provider=%s", getattr(provider, "key", "?"))
+                result = None
+            if result is not None:
+                return result
+        return None
+
+
+def _to_candidate(
+    src: LyricsSource, result: LyricsResult, fallback_artist: str, fallback_title: str
+) -> LyricsCandidateDTO:
+    lines = list(result.lines)
+    return LyricsCandidateDTO(
+        source_name=src.name,
+        provider_key=src.provider_key,
+        artist=result.artist or fallback_artist,
+        title=result.title or fallback_title,
+        album=result.album,
+        release_year=result.release_year,
+        first_line=next((ln.strip() for ln in lines if ln.strip()), ""),
+        is_synced=any(t is not None for t in result.timings),
+        line_count=sum(1 for ln in lines if ln.strip()),
+        source_url=result.source_url,
+        lines=tuple(lines),
+        timings=tuple(result.timings),
+        language=result.language,
+    )
+
+
+class ApplyLyricsCandidateHandler:
+    """후보 목록에서 고른 가사를 반영한다(필요하면 한글 번역을 붙인다).
+
+    사용자가 명시적으로 고른 것이므로 ``force_lyrics=True``로 수동편집 가드를 넘어
+    교체한다. 가수·제목 등 메타데이터는 ``apply_fetched`` 규칙대로 **비어 있는 항목만**
+    채우고 수동 편집한 항목은 보존한다.
+    """
+
+    def __init__(
+        self,
+        song_repo: ISongRepository,
+        event_bus: IEventBus,
+        translator: ITranslator | None = None,
+    ) -> None:
+        self._songs = song_repo
+        self._bus = event_bus
+        self._translator = translator
+
+    def handle(self, cmd: ApplyLyricsCandidateCommand) -> SongInfoAggregate | None:
+        cand = cmd.candidate
+        if cand is None or not cand.lines:
+            return None
+        agg = self._songs.get(cmd.video_id) or SongInfoAggregate.create(
+            cmd.video_id, is_song=True
+        )
+        lines = build_lyrics_lines(
+            list(cand.lines), cand.language, list(cand.timings), self._translator
+        )
+        agg.apply_fetched(
+            artist=cand.artist or None,
+            album=cand.album or None,
+            song_title=cand.title or None,
+            release_year=cand.release_year or None,
+            lyrics_lines=lines or None,
+            lyrics_language=cand.language or None,
+            source=SongSourceRef(name=cand.source_name, url=cand.source_url),
+            mark_song=True,
+            force_lyrics=True,
+        )
+        self._songs.save(agg)
+        self._bus.publish_all(agg.pull_events())
+        logger.info(
+            "가사 후보 적용: video=%s 출처=%s 줄=%d 싱크=%s",
+            cmd.video_id, cand.source_name, len(lines), cand.is_synced,
+        )
+        return agg
 
 
 class TranslateSongLyricsHandler:

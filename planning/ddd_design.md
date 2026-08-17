@@ -153,6 +153,7 @@ ffmpeg 기반 구간 추출.
 **핵심 규칙:**
 - **노래 판별**: yt-dlp `categories`에 "Music" 또는 `track`/`artist`/`album` 존재 → 자동, "노래로 표시" 토글 → 수동.
 - **조회 체인**: `FetchSongInfoHandler`가 활성 `LyricsSource`를 priority 순으로 순회하며 부족한 항목을 채운다. 새 출처 추가 시 자동 편입.
+- **후보 목록 검색은 별도 유스케이스**: `SearchLyricsCandidatesHandler`는 활성 출처를 **전부** 훑어 후보(`LyricsCandidateDTO`)를 모으기만 하고 **애그리게이트를 건드리지 않는다**(읽기 전용). 반영은 사용자가 고른 뒤 `ApplyLyricsCandidateHandler`가 `SongInfoAggregate.apply_fetched(force_lyrics=True)`로 수행한다 — "조회"와 "상태 변경"을 분리해, 목록을 띄우는 것만으로 저장된 가사가 바뀌지 않게 한다. 검색 기준값·아티스트 폴백·번역 줄 생성은 체인과 같은 모듈 함수를 공유한다.
 - **번역**: 비한국어 가사에 한글 병행. 한국어/번역기 미설치 시 원문만(graceful).
 - **수동 편집 보존**: 사용자가 편집한 필드는 `manual_fields`에 기록돼 갱신 시 덮어쓰지 않는다(`apply_fetched`).
 - **등록 시 메타데이터만, 가사는 상세 진입 시 조회**: 대량 임포트가 네트워크로 막히지 않게 함(`FetchSongInfoCommand.fetch_lyrics`).

@@ -37,6 +37,7 @@ from PyQt6.QtGui import (
     QTransform,
 )
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QDoubleSpinBox,
@@ -44,6 +45,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLayout,
     QLineEdit,
@@ -56,6 +58,8 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QStyle,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QTextBrowser,
     QTimeEdit,
     QVBoxLayout,
@@ -774,6 +778,172 @@ class _LyricRow(QWidget):
         super().mousePressEvent(event)
 
 
+class _LyricsCandidateList(QWidget):
+    """가사 검색 후보 목록 — |출처|가수|제목|가사 첫째 줄|싱크|.
+
+    검색을 시작하면 조회할 출처마다 '조회중…' 행을 **먼저** 만들고, 결과가 도착하는
+    대로 그 행을 채운다(전 출처가 끝나기를 기다리지 않는다 — 느린 출처 하나 때문에
+    이미 확보한 후보를 못 보는 일이 없게). 결과가 없는 출처는 회색 '없음'으로 남고
+    선택할 수 없다.
+    """
+
+    chosen = pyqtSignal(object)   # LyricsCandidateDTO — 사용자가 고른 후보
+    closed = pyqtSignal()
+
+    _HEADERS = ("출처", "가수", "제목", "가사 첫째 줄", "싱크")
+    _COL_SOURCE, _COL_ARTIST, _COL_TITLE, _COL_FIRST, _COL_SYNC = range(5)
+    _DTO_ROLE = Qt.ItemDataRole.UserRole
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._rows: dict[str, int] = {}   # 출처 이름 → 행 인덱스
+        self._done = 0
+        self._total = 0
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.addWidget(QLabel("<b>가사 후보</b>"))
+        self._status_lbl = QLabel("")
+        self._status_lbl.setStyleSheet(f"font-size:9pt; color:{_t().text_secondary};")
+        header.addWidget(self._status_lbl)
+        header.addStretch()
+        self._apply_btn = QPushButton("이 가사 사용")
+        self._apply_btn.setFixedHeight(24)
+        self._apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._apply_btn.setEnabled(False)
+        self._apply_btn.clicked.connect(self._emit_chosen)
+        header.addWidget(self._apply_btn)
+        close_btn = QPushButton("닫기")
+        close_btn.setFixedHeight(24)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(self.closed.emit)
+        header.addWidget(close_btn)
+        root.addLayout(header)
+
+        self._table = QTableWidget(0, len(self._HEADERS))
+        self._table.setHorizontalHeaderLabels(list(self._HEADERS))
+        self._table.verticalHeader().setVisible(False)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.setWordWrap(False)
+        hh = self._table.horizontalHeader()
+        hh.setSectionResizeMode(self._COL_SOURCE, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(self._COL_ARTIST, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(self._COL_TITLE, QHeaderView.ResizeMode.Interactive)
+        hh.setSectionResizeMode(self._COL_FIRST, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(self._COL_SYNC, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.setColumnWidth(self._COL_ARTIST, 130)
+        self._table.setColumnWidth(self._COL_TITLE, 160)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.itemDoubleClicked.connect(lambda _i: self._emit_chosen())
+        root.addWidget(self._table, stretch=1)
+
+    # ── 채우기 ────────────────────────────────────────────────────
+    def begin(self, source_names: list[str]) -> None:
+        """조회 시작 — 출처마다 '조회중…' 행을 미리 만든다."""
+        self._table.clearContents()
+        self._rows = {}
+        self._done = 0
+        self._total = len(source_names)
+        self._table.setRowCount(self._total)
+        self._apply_btn.setEnabled(False)
+        for row, name in enumerate(source_names):
+            self._rows[name] = row
+            self._set_row_text(row, name, "", "", "조회중…", "")
+            self._set_row_selectable(row, False)
+            self._table.item(row, self._COL_FIRST).setForeground(QColor(_t().text_secondary))
+        self._update_status()
+        if not source_names:
+            self._status_lbl.setText("조회할 가사 출처가 없습니다 (설정에서 출처를 켜세요)")
+
+    def set_result(self, source_name: str, dto: object | None) -> None:
+        """출처 하나의 결과를 반영한다(``dto``가 None이면 '없음')."""
+        row = self._rows.get(source_name)
+        if row is None:
+            return
+        self._done += 1
+        if dto is None:
+            self._set_row_text(row, source_name, "", "", "결과 없음", "")
+            self._set_row_selectable(row, False)
+            self._table.item(row, self._COL_FIRST).setForeground(QColor(_t().text_secondary))
+        else:
+            first = dto.first_line or "(빈 가사)"
+            if dto.line_count:
+                first = f"{first}   ({dto.line_count}줄)"
+            self._set_row_text(
+                row, source_name, dto.artist, dto.title, first, "싱크" if dto.is_synced else "—"
+            )
+            self._set_row_selectable(row, True)
+            self._table.item(row, self._COL_SOURCE).setData(self._DTO_ROLE, dto)
+            if dto.is_synced:
+                # 자막 표시가 가능한 후보라 의미상 강조한다(성공 의미 색).
+                self._table.item(row, self._COL_SYNC).setForeground(QColor(sem("success")))
+            # 첫 유효 후보를 자동 선택해, 바로 '이 가사 사용'을 누를 수 있게 한다.
+            if not self._table.selectedItems():
+                self._table.selectRow(row)
+        self._update_status()
+
+    def finish(self, found: int) -> None:
+        # 취소·오류로 조회가 끊긴 행이 '조회중…'으로 남지 않게 정리한다.
+        for name, row in self._rows.items():
+            item = self._table.item(row, self._COL_FIRST)
+            if item is not None and item.text() == "조회중…":
+                self._set_row_text(row, name, "", "", "결과 없음", "")
+                self._set_row_selectable(row, False)
+        self._done = self._total
+        self._status_lbl.setText(
+            f"후보 {found}건 — 원하는 가사를 고르고 '이 가사 사용'을 누르세요"
+            if found
+            else "가사를 찾지 못했습니다 (가수·제목을 고쳐서 다시 검색해 보세요)"
+        )
+
+    def _update_status(self) -> None:
+        if self._total:
+            self._status_lbl.setText(f"조회중… {self._done}/{self._total} 출처")
+
+    def _set_row_text(self, row: int, *values: str) -> None:
+        for col, text in enumerate(values):
+            item = QTableWidgetItem(text)
+            item.setToolTip(text)
+            if col == self._COL_SYNC:
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(row, col, item)
+
+    def _set_row_selectable(self, row: int, on: bool) -> None:
+        flags = (
+            Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+            if on
+            else Qt.ItemFlag.NoItemFlags
+        )
+        for col in range(self._table.columnCount()):
+            item = self._table.item(row, col)
+            if item is not None:
+                item.setFlags(flags)
+
+    # ── 선택 ─────────────────────────────────────────────────────
+    def selected_candidate(self):
+        rows = self._table.selectionModel().selectedRows() if self._table.selectionModel() else []
+        if not rows:
+            return None
+        item = self._table.item(rows[0].row(), self._COL_SOURCE)
+        return item.data(self._DTO_ROLE) if item is not None else None
+
+    def _on_selection_changed(self) -> None:
+        self._apply_btn.setEnabled(self.selected_candidate() is not None)
+
+    def _emit_chosen(self) -> None:
+        dto = self.selected_candidate()
+        if dto is not None:
+            self.chosen.emit(dto)
+
+
 class _SongTab(QWidget):
     """상세화면 '노래' 탭 — 가수/앨범/제목/발매년도 + 가사(원문·한글 병행).
 
@@ -785,14 +955,19 @@ class _SongTab(QWidget):
 
     field_edited = pyqtSignal(str, str)      # (field_key, value)
     lyrics_edited = pyqtSignal(object)       # list[LyricsLine]
-    refresh_requested = pyqtSignal()         # 가사 검색(처음부터) — 가사 없을 때
-    search_next_requested = pyqtSignal()     # 가사 검색(다음 출처, 순환) — 가사 있을 때
+    candidates_requested = pyqtSignal()      # 가사 검색 — 전 출처를 훑어 후보 목록을 띄운다
+    candidate_chosen = pyqtSignal(object)    # 후보 목록에서 고른 LyricsCandidateDTO
     translate_requested = pyqtSignal()       # 현재 가사를 한글로 재번역
     flag_toggled = pyqtSignal(bool)
     filter_requested = pyqtSignal(str, str)  # (field_key, value) — 같은 가수/앨범 필터
     synced_requested = pyqtSignal()          # 싱크(시간 정보) 가사 찾기
     lyrics_seek_requested = pyqtSignal(int)  # 가사 줄 클릭 → 그 줄 시작 ms
     offset_changed = pyqtSignal(int)         # 사용자가 싱크 보정값을 바꿈(절대 ms)
+
+    # 가사 영역 스택 인덱스
+    _STACK_VIEW = 0         # 가사 표시
+    _STACK_EDIT = 1         # 가사 직접 편집
+    _STACK_CANDIDATES = 2   # 가사 검색 후보 목록
 
     _FIELDS = (
         ("artist", "가수"),
@@ -938,6 +1113,11 @@ class _SongTab(QWidget):
         self._lyrics_editor = QPlainTextEdit()
         self._lyrics_editor.setPlaceholderText("가사를 입력하세요 (한 줄당 한 줄)…")
         self._lyrics_stack.addWidget(self._lyrics_editor)     # index 1: 편집
+        # index 2: 가사 검색 후보 목록 — 가사 영역을 그대로 쓰므로 레이아웃이 흔들리지 않는다.
+        self._candidates = _LyricsCandidateList()
+        self._candidates.chosen.connect(self._on_candidate_chosen)
+        self._candidates.closed.connect(self.close_candidates)
+        self._lyrics_stack.addWidget(self._candidates)
         root.addWidget(self._lyrics_stack, stretch=1)
 
     # ── 채우기 ────────────────────────────────────────────────────
@@ -966,11 +1146,39 @@ class _SongTab(QWidget):
         self._offset_spin.blockSignals(False)
 
     def _on_lyrics_search_clicked(self) -> None:
-        """가사 검색 — 이미 가사가 있으면 '다음 출처'에서 순환 검색, 없으면 처음부터."""
-        if self._current_dto is not None and self._current_dto.has_lyrics:
-            self.search_next_requested.emit()
-        else:
-            self.refresh_requested.emit()
+        """가사 검색 — 활성 출처를 전부 훑어 후보 목록을 띄운다.
+
+        예전에는 첫 성공 출처를 곧바로 채택하고(가사가 있으면 '다음 출처'로 순환) 어떤
+        가사인지는 적용된 뒤에야 볼 수 있었다. 이제 |출처|가수|제목|가사 첫째 줄|싱크|를
+        나열해 사용자가 직접 고른다.
+        """
+        self.candidates_requested.emit()
+
+    # ── 가사 후보 목록 (외부=LibraryPanel/SongViewModel이 결과를 밀어 넣는다) ──
+    def begin_candidates(self, source_names: list[str]) -> None:
+        """검색 시작 — 출처별 '조회중…' 행을 만들고 후보 목록으로 전환한다."""
+        self._candidates.begin(list(source_names))
+        self._lyrics_stack.setCurrentIndex(self._STACK_CANDIDATES)
+        self._lyrics_refresh_btn.start_spin()
+
+    def set_candidate_result(self, source_name: str, dto: object | None) -> None:
+        self._candidates.set_result(source_name, dto)
+
+    def finish_candidates(self, found: int) -> None:
+        self._candidates.finish(found)
+        self._lyrics_refresh_btn.stop_spin()
+
+    def close_candidates(self) -> None:
+        """후보 목록을 닫고 가사 표시로 돌아간다."""
+        if self._lyrics_stack.currentIndex() == self._STACK_CANDIDATES:
+            self._lyrics_stack.setCurrentIndex(self._STACK_VIEW)
+        self._lyrics_refresh_btn.stop_spin()
+
+    def _on_candidate_chosen(self, dto: object) -> None:
+        # 적용은 번역까지 포함해 시간이 걸리므로 목록을 먼저 닫아 진행 중임을 보인다
+        # (반영이 끝나면 set_info가 새 가사로 표시를 갱신한다).
+        self.close_candidates()
+        self.candidate_chosen.emit(dto)
 
     def set_busy(self, busy: bool) -> None:
         self._status_lbl.setText("불러오는 중…" if busy else "")
@@ -1022,7 +1230,10 @@ class _SongTab(QWidget):
 
         self._lyrics_lines = list(dto.lyrics_lines) if dto else []
         self._render_lyrics(dto)
-        self._lyrics_stack.setCurrentIndex(0)
+        # 후보 목록을 보고 있는 중이면 유지한다 — 검색 도중 다른 저장(필드 편집 등)이
+        # song_info_changed를 쏘아 목록이 사라지면, 사용자가 고르던 후보를 잃는다.
+        if self._lyrics_stack.currentIndex() != self._STACK_CANDIDATES:
+            self._lyrics_stack.setCurrentIndex(self._STACK_VIEW)
 
     def _render_lyrics(self, dto: SongInfoDTO | None) -> None:
         _clear_layout(self._lyrics_layout)
@@ -1144,17 +1355,17 @@ class _SongTab(QWidget):
             return
         text = "\n".join(ln.original for ln in self._lyrics_lines)
         self._lyrics_editor.setPlainText(text)
-        self._lyrics_stack.setCurrentIndex(1)
+        self._lyrics_stack.setCurrentIndex(self._STACK_EDIT)
         self._lyrics_editor.setFocus()
 
     def lyrics_editor(self):
         return self._lyrics_editor
 
     def commit_lyrics_edit(self) -> None:
-        if self._lyrics_stack.currentIndex() != 1:
+        if self._lyrics_stack.currentIndex() != self._STACK_EDIT:
             return
         text = self._lyrics_editor.toPlainText()
-        self._lyrics_stack.setCurrentIndex(0)
+        self._lyrics_stack.setCurrentIndex(self._STACK_VIEW)
         new_lines = [LyricsLine(original=ln, translation="") for ln in text.split("\n")]
         old_originals = [ln.original for ln in self._lyrics_lines]
         if [ln.original for ln in new_lines] != old_originals:
@@ -1189,8 +1400,8 @@ class VideoDetailWidget(QWidget):
     detail_refresh_requested    = pyqtSignal(object)    # video_id — 제목행 ⟳ 버튼
     song_field_saved            = pyqtSignal(object, str, str)  # (video_id, field, value)
     song_lyrics_saved           = pyqtSignal(object, object)    # (video_id, list[LyricsLine])
-    song_refresh_requested      = pyqtSignal(object)    # video_id — 가사 검색(처음부터)
-    song_search_next_requested  = pyqtSignal(object)    # video_id — 가사 검색(다음 출처)
+    song_candidates_requested   = pyqtSignal(object)    # video_id — 가사 후보 목록 검색
+    song_candidate_chosen       = pyqtSignal(object, object)  # (video_id, LyricsCandidateDTO)
     song_translate_requested    = pyqtSignal(object)    # video_id — 현재 가사 재번역
     song_flag_toggled           = pyqtSignal(object, bool)      # (video_id, is_song)
     song_filter_requested       = pyqtSignal(str, str)   # (field, value) — 같은 가수/앨범 필터
@@ -1424,8 +1635,8 @@ class VideoDetailWidget(QWidget):
         self._song_tab = _SongTab()
         self._song_tab.field_edited.connect(self._on_song_field_edited)
         self._song_tab.lyrics_edited.connect(self._on_song_lyrics_edited)
-        self._song_tab.refresh_requested.connect(self._on_song_refresh)
-        self._song_tab.search_next_requested.connect(self._on_song_search_next)
+        self._song_tab.candidates_requested.connect(self._on_song_candidates)
+        self._song_tab.candidate_chosen.connect(self._on_song_candidate_chosen)
         self._song_tab.translate_requested.connect(self._on_song_translate)
         self._song_tab.flag_toggled.connect(self._on_song_flag_toggled)
         self._song_tab.filter_requested.connect(self.song_filter_requested.emit)
@@ -2314,13 +2525,35 @@ class VideoDetailWidget(QWidget):
         if self._detail is not None and not self._streaming:
             self.song_lyrics_saved.emit(self._detail.id, lines)
 
-    def _on_song_refresh(self) -> None:
+    def _on_song_candidates(self) -> None:
         if self._detail is not None and not self._streaming:
-            self.song_refresh_requested.emit(self._detail.id)
+            self.song_candidates_requested.emit(self._detail.id)
 
-    def _on_song_search_next(self) -> None:
+    def _on_song_candidate_chosen(self, dto: object) -> None:
         if self._detail is not None and not self._streaming:
-            self.song_search_next_requested.emit(self._detail.id)
+            self.song_candidate_chosen.emit(self._detail.id, dto)
+
+    # 후보 검색 결과 주입 — SongViewModel 신호를 LibraryPanel이 그대로 넘겨준다.
+    # video_id를 함께 받아, 검색 중 다른 영상으로 넘어갔으면 무시한다(늦게 도착한 결과가
+    # 지금 보고 있는 영상의 목록에 섞이는 것을 막는다).
+    def song_candidates_started(self, video_id: object, source_names: object) -> None:
+        if self._is_current_song(video_id):
+            self._song_tab.begin_candidates(list(source_names or []))
+
+    def song_candidate_ready(self, video_id: object, source_name: str, dto: object) -> None:
+        if self._is_current_song(video_id):
+            self._song_tab.set_candidate_result(source_name, dto)
+
+    def song_candidates_finished(self, video_id: object, found: int) -> None:
+        if self._is_current_song(video_id):
+            self._song_tab.finish_candidates(int(found))
+
+    def _is_current_song(self, video_id: object) -> bool:
+        return (
+            self._detail is not None
+            and not self._streaming
+            and self._detail.id == video_id
+        )
 
     def _on_song_translate(self) -> None:
         if self._detail is not None and not self._streaming:

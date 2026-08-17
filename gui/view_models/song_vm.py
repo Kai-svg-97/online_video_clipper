@@ -8,12 +8,16 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from application.song.commands import (
     AddLyricsSourceCommand,
     AddLyricsSourceHandler,
+    ApplyLyricsCandidateCommand,
+    ApplyLyricsCandidateHandler,
     DeleteLyricsSourceCommand,
     DeleteLyricsSourceHandler,
     FetchSongInfoCommand,
     FetchSongInfoHandler,
     ReorderLyricsSourcesCommand,
     ReorderLyricsSourcesHandler,
+    SearchLyricsCandidatesCommand,
+    SearchLyricsCandidatesHandler,
     SetLyricsOffsetCommand,
     SetLyricsOffsetHandler,
     SetSongFlagCommand,
@@ -27,7 +31,7 @@ from application.song.commands import (
     UpdateSongLyricsCommand,
     UpdateSongLyricsHandler,
 )
-from application.song.dtos import LyricsSourceDTO, SongInfoDTO
+from application.song.dtos import LyricsCandidateDTO, LyricsSourceDTO, SongInfoDTO
 from application.song.queries import GetSongInfoHandler, ListLyricsSourcesHandler
 from domain.song.value_objects import LyricsLine
 
@@ -75,6 +79,72 @@ class _TranslateWorker(QThread):
             self.failed.emit(self._cmd.video_id, str(exc))
 
 
+class _CandidateSearchWorker(QThread):
+    """활성 가사 출처를 전부 훑어 후보를 모은다 — 결과를 **도착하는 대로** 방출한다.
+
+    한 출처가 느려도 앞선 출처의 결과는 이미 화면에 떠 있으므로, 사용자는 기다리는
+    동안에도 고를 수 있다. ``cancel()``은 협조적 취소다(진행 중인 HTTP 요청 하나가
+    끝난 뒤 멈춘다 — 제공자 타임아웃이 짧아 충분하다).
+    """
+
+    started_source = pyqtSignal(str)          # 조회를 시작한 출처 이름
+    found = pyqtSignal(str, object)           # (출처 이름, LyricsCandidateDTO | None)
+    finished_ok = pyqtSignal(int)             # 확보한 후보 수
+    failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        handler: SearchLyricsCandidatesHandler,
+        cmd: SearchLyricsCandidatesCommand,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._handler = handler
+        self._cmd = cmd
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        try:
+            found = self._handler.handle(
+                self._cmd,
+                on_start=self.started_source.emit,
+                on_result=self.found.emit,
+                should_cancel=lambda: self._cancelled,
+            )
+            self.finished_ok.emit(len(found))
+        except Exception as exc:
+            logger.exception("가사 후보 검색 실패: %s", self._cmd.video_id)
+            self.failed.emit(str(exc))
+
+
+class _ApplyCandidateWorker(QThread):
+    """고른 후보를 반영한다 — 번역이 네트워크 호출이라 백그라운드로 돌린다."""
+
+    done = pyqtSignal(object, bool)   # (video_id, ok)
+    failed = pyqtSignal(object, str)  # (video_id, error)
+
+    def __init__(
+        self,
+        handler: ApplyLyricsCandidateHandler,
+        cmd: ApplyLyricsCandidateCommand,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._handler = handler
+        self._cmd = cmd
+
+    def run(self) -> None:
+        try:
+            agg = self._handler.handle(self._cmd)
+            self.done.emit(self._cmd.video_id, agg is not None)
+        except Exception as exc:
+            logger.exception("가사 후보 적용 실패: %s", self._cmd.video_id)
+            self.failed.emit(self._cmd.video_id, str(exc))
+
+
 class SongViewModel(QObject):
     """상세화면 '노래' 탭의 상태를 관리한다.
 
@@ -88,12 +158,18 @@ class SongViewModel(QObject):
     busy_changed = pyqtSignal(bool)
     sources_changed = pyqtSignal()
     error_occurred = pyqtSignal(str)
+    # 가사 후보 검색 — 목록을 먼저 띄우고(조회중), 확인되는 대로 한 행씩 채운다.
+    candidates_started = pyqtSignal(object, object)       # (video_id, list[출처 이름])
+    candidate_ready = pyqtSignal(object, str, object)     # (video_id, 출처, DTO | None)
+    candidates_finished = pyqtSignal(object, int)         # (video_id, 후보 수)
 
     def __init__(
         self,
         *,
         get_song_info: GetSongInfoHandler,
         fetch_song: FetchSongInfoHandler,
+        search_candidates: SearchLyricsCandidatesHandler | None = None,
+        apply_candidate: ApplyLyricsCandidateHandler | None = None,
         set_flag: SetSongFlagHandler,
         update_field: UpdateSongFieldHandler,
         update_lyrics: UpdateSongLyricsHandler,
@@ -109,6 +185,8 @@ class SongViewModel(QObject):
         super().__init__(parent)
         self._get = get_song_info
         self._fetch = fetch_song
+        self._search_candidates = search_candidates
+        self._apply_candidate = apply_candidate
         self._set_flag = set_flag
         self._update_field = update_field
         self._update_lyrics = update_lyrics
@@ -120,8 +198,9 @@ class SongViewModel(QObject):
         self._delete_source = delete_source
         self._reorder_sources = reorder_sources
         self._current: UUID | None = None
-        self._workers: list[_SongFetchWorker] = []
+        self._workers: list[QThread] = []
         self._in_flight: set[UUID] = set()   # 조회 중인 video_id — 같은 영상 중복 실행 방지
+        self._cand_worker: _CandidateSearchWorker | None = None
 
     # ── 조회 ─────────────────────────────────────────────────────
     def get_song_info(self, video_id: UUID) -> SongInfoDTO | None:
@@ -148,17 +227,78 @@ class SongViewModel(QObject):
             FetchSongInfoCommand(video_id=video_id, force=True, fetch_lyrics=True)
         )
 
-    def search_next_source(self, video_id: UUID) -> None:
-        """'다음 출처' — 현재 가사 출처 다음부터 순환 검색해 가사를 교체한다."""
+    # ── 가사 후보 목록 검색 ───────────────────────────────────────
+    def search_lyrics_candidates(self, video_id: UUID) -> None:
+        """활성 출처를 전부 조회해 후보 목록을 채운다(결과 도착 순서대로 방출).
+
+        핸들러가 주입되지 않았으면(부분 배선·테스트) 기존 체인 검색으로 폴백한다.
+        """
+        if self._search_candidates is None:
+            self.refresh(video_id)
+            return
         self._current = video_id
-        dto = self.get_song_info(video_id)
-        current_src = dto.source_name if dto else ""
-        self._start_fetch(
-            FetchSongInfoCommand(
-                video_id=video_id, force=True, fetch_lyrics=True,
-                from_source_name=current_src or None,
-            )
+        # 이전 검색이 돌고 있으면 취소한다 — 다른 영상의 결과가 뒤늦게 도착해
+        # 지금 열린 목록에 섞이는 것을 막는다(취소된 워커의 신호는 아래에서 끊는다).
+        self._cancel_candidate_search()
+        names = self._search_candidates.list_source_names()
+        self.candidates_started.emit(video_id, list(names))
+        if not names:
+            self.candidates_finished.emit(video_id, 0)
+            return
+        worker = _CandidateSearchWorker(
+            self._search_candidates, SearchLyricsCandidatesCommand(video_id), self
         )
+        worker.found.connect(
+            lambda name, dto, vid=video_id: self.candidate_ready.emit(vid, name, dto)
+        )
+        worker.finished_ok.connect(
+            lambda count, vid=video_id: self.candidates_finished.emit(vid, count)
+        )
+        worker.failed.connect(self._on_candidates_failed)
+        worker.finished.connect(
+            lambda: self._workers.remove(worker) if worker in self._workers else None
+        )
+        self._cand_worker = worker
+        self._workers.append(worker)
+        worker.start()
+
+    def _cancel_candidate_search(self) -> None:
+        worker = self._cand_worker
+        self._cand_worker = None
+        if worker is None:
+            return
+        worker.cancel()
+        try:
+            worker.found.disconnect()
+            worker.finished_ok.disconnect()
+            worker.failed.disconnect()
+        except TypeError:
+            pass   # 이미 끊겨 있으면 무시
+
+    def _on_candidates_failed(self, err: str) -> None:
+        self.error_occurred.emit(err)
+
+    def apply_lyrics_candidate(self, video_id: UUID, candidate: LyricsCandidateDTO) -> None:
+        """후보 목록에서 고른 가사를 반영한다(번역 포함 — 백그라운드)."""
+        if self._apply_candidate is None or candidate is None:
+            return
+        if video_id in self._in_flight:
+            return
+        self._current = video_id
+        self._in_flight.add(video_id)
+        self.busy_changed.emit(True)
+        worker = _ApplyCandidateWorker(
+            self._apply_candidate,
+            ApplyLyricsCandidateCommand(video_id=video_id, candidate=candidate),
+            self,
+        )
+        worker.done.connect(self._on_fetch_done)
+        worker.failed.connect(self._on_fetch_failed)
+        worker.finished.connect(
+            lambda: self._workers.remove(worker) if worker in self._workers else None
+        )
+        self._workers.append(worker)
+        worker.start()
 
     def translate_lyrics(self, video_id: UUID) -> None:
         """'번역' — 현재 등록된 가사를 한글로 (재)번역해 저장한다(조회와 분리)."""
@@ -307,6 +447,7 @@ class SongViewModel(QObject):
 
     # ── 정리 ─────────────────────────────────────────────────────
     def shutdown(self) -> None:
+        self._cancel_candidate_search()
         for worker in list(self._workers):
             try:
                 if worker.isRunning():
