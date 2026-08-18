@@ -43,6 +43,7 @@ _PAGE_DETAIL = 1
 
 from application.download.dtos import DownloadJobDTO
 from gui.themes.manager import ThemeManager
+from gui.workers import retire_thread, track_thread
 from gui.view_models.download_vm import DownloadViewModel
 
 logger = logging.getLogger(__name__)
@@ -625,12 +626,14 @@ class DownloadPanel(QWidget):
 
     def _start_thumb_worker(self) -> None:
         if self._worker and self._worker.isRunning():
-            self._worker.batch_ready.disconnect()
-            self._worker.quit()
+            # 신호만 끊고 끝날 때까지 레지스트리가 붙든다 — quit()은 이벤트 루프만
+            # 끝내므로 디코딩 중인 run()은 계속 돌고, 그 상태로 삭제되면 앱이 죽는다.
+            retire_thread(self._worker, self._worker.batch_ready)
         paths = self._model.thumb_paths()
         if not paths:
             return
-        self._worker = _ThumbWorker(paths, self)
+        # 부모로 매달지 않는다 — 패널이 사라지는 순간 실행 중이면 앱이 죽는다.
+        self._worker = track_thread(_ThumbWorker(paths))
         self._worker.batch_ready.connect(self._model.notify_thumbs_loaded)
         self._worker.start()
 

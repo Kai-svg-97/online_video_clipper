@@ -1,8 +1,8 @@
 """앨범 보기 GUI — 정렬 항목 노출 조건, 그리드/상세 렌더, 재생 배선을 고정한다.
 
 특히 중요한 것:
-* '앨범' 정렬은 **음악 카테고리에서만** 뜬다(다른 카테고리에서 고르면 뜻이 없다).
-* '앨범'은 정렬 컬럼이 아니라 화면 모드다 — 리포지토리 정렬로 새어 나가면 SQL이 깨진다.
+* '앨범' 보기 버튼은 **음악 카테고리에서만** 뜬다(다른 카테고리에서는 뜻이 없다).
+* '앨범'은 정렬이 아니라 보기 유형이다 — 정렬 콤보에 섞이면 SQL 정렬로 새어 나간다.
 * 수록곡 행에는 출처 배지(내 등록/자동 매핑/없음)가 반드시 붙는다.
 * 앨범 재생은 기존 재생목록 컨텍스트(_playlist_ctx)를 그대로 쓴다.
 """
@@ -23,7 +23,7 @@ from application.song.album_dtos import (
     AlbumTrackDTO,
 )
 from gui.panels.album_panel import ORIGIN_LABELS, AlbumDetailPanel, AlbumGrid, _TrackRow
-from gui.panels.library_panel import _VIEW_ALBUMS, LibraryPanel
+from gui.panels.library_panel import _VIEW_ALBUMS, _VIEW_DETAIL, _VIEW_LIST, LibraryPanel
 
 
 def _cat(name, cat_id=None, parent_id=None):
@@ -170,7 +170,7 @@ def panel(qtbot, library_vm, download_vm, clip_vm, album_vm, monkeypatch):
     library_vm.shutdown()
 
 
-class TestSortOptionVisibility:
+class TestAlbumButtonVisibility:
     def _music_tree(self, library_vm):
         music = _cat("Music")
         sub = _cat("K-Pop", parent_id=music.id)
@@ -178,72 +178,98 @@ class TestSortOptionVisibility:
         library_vm._categories = [music, sub, other]
         return music, sub, other
 
-    def test_음악_카테고리에서만_앨범_정렬이_뜬다(self, panel, library_vm):
+    def test_음악_카테고리에서만_앨범_버튼이_뜬다(self, panel, library_vm):
         music, sub, other = self._music_tree(library_vm)
 
         panel._current_cat_id = other.id
-        panel._update_sort_options()
-        assert panel._album_sort_index() < 0
+        panel._update_view_options()
+        assert panel._btn_album.isHidden()
 
         panel._current_cat_id = music.id
-        panel._update_sort_options()
-        assert panel._album_sort_index() >= 0
+        panel._update_view_options()
+        assert not panel._btn_album.isHidden()
 
     def test_하위_카테고리도_최상위가_음악이면_뜬다(self, panel, library_vm):
         _music, sub, _other = self._music_tree(library_vm)
 
         panel._current_cat_id = sub.id
-        panel._update_sort_options()
+        panel._update_view_options()
 
-        assert panel._album_sort_index() >= 0
+        assert not panel._btn_album.isHidden()
 
     def test_뮤직_song_이름도_음악으로_본다(self, panel, library_vm):
         for name in ("뮤직", "Song", "노래", "음악"):
             cat = _cat(name)
             library_vm._categories = [cat]
             panel._current_cat_id = cat.id
-            panel._update_sort_options()
-            assert panel._album_sort_index() >= 0, name
+            panel._update_view_options()
+            assert not panel._btn_album.isHidden(), name
             # 다음 반복을 위해 원상복구
             library_vm._categories = []
             panel._current_cat_id = None
-            panel._update_sort_options()
+            panel._update_view_options()
 
     def test_음악이_아닌_곳으로_옮기면_항목이_사라진다(self, panel, library_vm):
         music, _sub, other = self._music_tree(library_vm)
         panel._current_cat_id = music.id
-        panel._update_sort_options()
+        panel._update_view_options()
 
         panel._current_cat_id = other.id
-        panel._update_sort_options()
+        panel._update_view_options()
 
-        assert panel._album_sort_index() < 0
+        assert panel._btn_album.isHidden()
 
 
 class TestAlbumMode:
-    def test_앨범_정렬은_리포지토리_정렬로_새지_않는다(self, panel, library_vm, monkeypatch):
-        # _SORT_ALBUM은 SQL 정렬 컬럼이 아니다 — 넘어가면 조회가 깨진다.
+    def test_앨범_보기는_정렬을_건드리지_않는다(self, panel, library_vm, monkeypatch):
+        # 앨범은 보기 유형이다 — 정렬 조회가 함께 나가면 목록이 헛돈다.
         sorts: list = []
         monkeypatch.setattr(library_vm, "set_sort", lambda *a: sorts.append(a))
         library_vm._categories = [_cat("Music", cat_id=uuid4())]
         panel._current_cat_id = library_vm._categories[0].id
-        panel._update_sort_options()
+        panel._update_view_options()
 
-        idx = panel._album_sort_index()
-        panel._sort_combo.setCurrentIndex(idx)
+        panel._btn_album.click()
 
         assert sorts == []
         assert panel._album_mode is True
         assert panel._view_stack.currentIndex() == _VIEW_ALBUMS
 
-    def test_다른_정렬로_돌아가면_앨범_모드가_풀린다(self, panel, library_vm, album_vm):
+    def test_다른_보기_버튼을_누르면_앨범_모드가_풀린다(self, panel, library_vm, album_vm):
         library_vm._categories = [_cat("Music", cat_id=uuid4())]
         panel._current_cat_id = library_vm._categories[0].id
-        panel._update_sort_options()
-        panel._sort_combo.setCurrentIndex(panel._album_sort_index())
+        panel._update_view_options()
+        panel._btn_album.click()
 
-        panel._sort_combo.setCurrentIndex(0)
+        panel._btn_list.click()
 
+        assert panel._album_mode is False
+        assert panel._view_stack.currentIndex() == _VIEW_LIST
+
+    def test_앨범에서_나오면_직전_목록_뷰로_돌아간다(self, panel, library_vm):
+        # 보기 그룹에 앨범 버튼이 함께 있어 checkedId()로 되돌리면 다시 앨범이 된다.
+        library_vm._categories = [_cat("Music", cat_id=uuid4())]
+        panel._current_cat_id = library_vm._categories[0].id
+        panel._update_view_options()
+        panel._btn_table.click()          # 표 뷰를 보고 있다가
+        panel._btn_album.click()          # 앨범으로 갔다가
+
+        panel._exit_album_mode()          # 카테고리 이동 등으로 앨범이 풀리면
+
+        assert panel._view_stack.currentIndex() == _VIEW_DETAIL   # 표 뷰로 복귀
+
+    def test_음악이_아닌_카테고리로_옮기면_앨범_모드가_풀린다(self, panel, library_vm):
+        music = _cat("Music")
+        other = _cat("IT")
+        library_vm._categories = [music, other]
+        panel._current_cat_id = music.id
+        panel._update_view_options()
+        panel._btn_album.click()
+
+        panel._current_cat_id = other.id
+        panel._update_view_options()
+
+        assert panel._btn_album.isHidden()
         assert panel._album_mode is False
         assert panel._view_stack.currentIndex() != _VIEW_ALBUMS
 
@@ -298,3 +324,127 @@ class TestAlbumPlayback:
         panel._on_album_track_clicked(detail.tracks[1])   # 자동 매핑된 2번 곡
 
         assert opened and getattr(opened[0], "url", "") == "https://youtu.be/auto1"
+
+
+class TestAlbumNavHistory:
+    """앨범 그리드·상세도 화면 히스토리(뒤로/앞으로)에 편입된다.
+
+    앨범 보기는 같은 카테고리 위의 '다른 화면'이라 스냅샷의 kind만으로는 구분되지
+    않는다 — 모드(album_mode)와 열려 있던 앨범 키를 따로 싣지 않으면, 뒤로 갔을 때
+    앨범 그리드 대신 일반 목록이 뜨거나 앨범 상세가 되살아나지 않는다.
+    """
+
+    def _music_category(self, panel, library_vm):
+        music = _cat("Music")
+        library_vm._categories = [music]
+        panel._current_cat_id = music.id
+        panel._update_view_options()
+        return music
+
+    def _enter_album_mode(self, panel, library_vm):
+        self._music_category(panel, library_vm)
+        panel._btn_album.click()
+
+    def test_스냅샷이_앨범_상태를_담는다(self, panel, library_vm):
+        self._enter_album_mode(panel, library_vm)
+        panel._on_album_clicked("iu\x1fpalette")
+
+        snap = panel._capture_screen()
+
+        assert snap["album_mode"] is True
+        assert snap["album_key"] == "iu\x1fpalette"
+        assert snap["nav_idx"] == 2
+
+    def test_앨범_그리드_진입이_히스토리에_쌓인다(self, panel, library_vm):
+        self._music_category(panel, library_vm)
+        before = len(panel._nav_history)
+
+        panel._btn_album.click()
+
+        assert len(panel._nav_history) == before + 1
+        assert panel._nav_history[-1]["album_mode"] is False   # 진입 직전은 일반 목록
+
+    def test_그리드에서_뒤로가면_일반_목록으로_돌아간다(self, panel, library_vm):
+        self._enter_album_mode(panel, library_vm)
+
+        panel._go_back()
+
+        assert panel._album_mode is False
+        assert panel._view_stack.currentIndex() != _VIEW_ALBUMS
+
+    def test_앨범_상세에서_뒤로가면_그리드로_돌아온다(self, panel, library_vm):
+        self._enter_album_mode(panel, library_vm)
+        panel._on_album_clicked("iu\x1fpalette")
+        assert panel._nav_stack.currentIndex() == 2
+
+        panel._go_back()
+
+        assert panel._nav_stack.currentIndex() == 0
+        assert panel._album_mode is True
+        assert panel._view_stack.currentIndex() == _VIEW_ALBUMS
+
+    def test_앞으로가기로_앨범_상세가_다시_열린다(self, panel, library_vm, album_vm):
+        self._enter_album_mode(panel, library_vm)
+        panel._on_album_clicked("iu\x1fpalette")
+        panel._go_back()
+        album_vm.load_detail.reset_mock()
+
+        panel._go_forward()
+
+        assert panel._nav_stack.currentIndex() == 2
+        assert album_vm.load_detail.call_args.args[0] == "iu\x1fpalette"
+
+    def test_복원_중에는_히스토리를_다시_쌓지_않는다(self, panel, library_vm):
+        self._enter_album_mode(panel, library_vm)
+        panel._on_album_clicked("iu\x1fpalette")
+        depth = len(panel._nav_history)
+
+        panel._go_back()
+
+        # 뒤로가기는 스택에서 하나를 꺼내 쓸 뿐 새로 쌓지 않는다.
+        assert len(panel._nav_history) == depth - 1
+
+    def test_앨범_상세_뒤로가기_버튼도_히스토리를_되짚는다(self, panel, library_vm):
+        self._enter_album_mode(panel, library_vm)
+        panel._on_album_clicked("iu\x1fpalette")
+
+        panel._album_detail.back_requested.emit()
+
+        assert panel._nav_stack.currentIndex() == 0
+        assert panel._album_mode is True
+
+    def test_마우스_뒤로가기가_앨범_화면에서도_동작한다(self, panel, library_vm, monkeypatch):
+        """이벤트 필터가 앨범 위젯에 걸려 있지 않으면 마우스 ‹가 조용히 죽는다."""
+        from PyQt6.QtCore import QPointF, Qt
+        from PyQt6.QtGui import QMouseEvent
+        from PyQt6.QtWidgets import QApplication
+
+        calls: list = []
+        monkeypatch.setattr(panel, "_go_back", lambda: calls.append(1))
+
+        for widget in (panel._album_grid, panel._album_detail):
+            calls.clear()
+            event = QMouseEvent(
+                QMouseEvent.Type.MouseButtonPress, QPointF(5, 5), QPointF(5, 5),
+                Qt.MouseButton.BackButton, Qt.MouseButton.BackButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            QApplication.sendEvent(widget, event)
+            assert calls == [1], widget
+
+    def test_앨범_재생_후_뒤로가면_앨범_상세로_돌아온다(self, panel, library_vm, album_vm,
+                                                    monkeypatch):
+        """재생목록 진입은 push_nav=False라, 앨범 상세를 따로 쌓아 두지 않으면
+        재생 이력을 다 되짚은 뒤 뒤로가기가 앨범 그리드로 건너뛴다."""
+        monkeypatch.setattr(panel, "_open_playlist_payload", lambda payload, autoplay: None)
+        self._enter_album_mode(panel, library_vm)
+        panel._on_album_clicked("iu\x1fpalette")
+        detail = _detail()
+        album_vm.detail = detail
+
+        panel._on_play_album(detail)
+        panel._playlist_ctx = None          # 재생 이력을 모두 되짚은 상태
+        panel._go_back()
+
+        assert panel._nav_stack.currentIndex() == 2      # 앨범 상세로 복귀
+        assert panel._album_mode is True

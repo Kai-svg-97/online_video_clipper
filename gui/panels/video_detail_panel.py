@@ -72,6 +72,7 @@ from domain.song.value_objects import LyricsLine
 
 from application.library.dtos import FailedDownloadInfoDTO, VideoDetailDTO
 from gui.themes.manager import ThemeManager
+from gui.workers import track_thread
 from gui.widgets.lyrics_overlay import LyricsTrack
 from gui.widgets.video_player import InlinePlayer
 from gui.themes.colors import sem
@@ -260,7 +261,10 @@ class _RelatedRow(QFrame):
         중복 다운로드(prefix 불일치로 인한 재다운로드·스레드 경쟁)를 막는다.
         """
         from config.settings import THUMBNAIL_DIR  # noqa: PLC0415
-        from gui.panels.feed_panel import _ThumbLoader, _feed_thumb_cache  # noqa: PLC0415
+        from gui.panels.feed_panel import (  # noqa: PLC0415
+            _feed_thumb_cache,
+            start_thumb_loader,
+        )
 
         # 1) 로컬 영상 — 저장된 썸네일 경로 우선
         if item.thumb_path and Path(item.thumb_path).exists():
@@ -290,12 +294,12 @@ class _RelatedRow(QFrame):
 
         if not item.thumb_url:
             return
-        self._loader = _ThumbLoader(
-            item.thumb_url, vid_id or item.key, prefix="feed",
-            size=(self._TW * 2, self._TH * 2),
+        # 목록을 다시 채우면 행이 지워지는데, 실행 중인 로더가 그때 파괴되면 Qt가
+        # 프로세스를 죽인다 — 시작 헬퍼가 부모 없이 띄우고 끝날 때까지 붙든다.
+        self._loader = start_thumb_loader(
+            item.thumb_url, vid_id or item.key, self._on_remote_thumb,
+            prefix="feed", size=(self._TW * 2, self._TH * 2),
         )
-        self._loader.loaded.connect(self._on_remote_thumb)
-        self._loader.start()
 
     def _on_remote_thumb(self, _id: str, im: QImage) -> None:
         from gui.panels.feed_panel import _feed_thumb_cache  # noqa: PLC0415
@@ -2864,7 +2868,8 @@ class VideoDetailWidget(QWidget):
             return
         self._summary_refresh_btn.setEnabled(False)
         self._summary_status_lbl.setText("추출 중…")
-        worker = _GeminiSummaryWorker(self._detail.url, self._detail.id, self)
+        # 요약 추출은 수십 초 걸린다 — 그 사이 화면이 정리돼도 스레드가 파괴되지 않게.
+        worker = track_thread(_GeminiSummaryWorker(self._detail.url, self._detail.id))
         worker.done.connect(self._on_gemini_done)
         worker.finished.connect(worker.deleteLater)
         worker.start()

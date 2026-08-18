@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
 )
 
 from gui.themes.manager import ThemeManager
+from gui.workers import track_thread
 from gui.themes.tokens import PRESETS, ThemeTokens
 from version import __version__
 from gui.themes.colors import sem
@@ -1565,7 +1566,8 @@ class SettingsPanel(QWidget):
         self._yt_status_lbl.setText("브라우저에서 Google 계정으로 승인하세요…")
         self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
 
-        worker = _AuthWorker(self._yt_oauth, self)
+        # 인증 창이 떠 있는 동안 설정 화면을 떠나도 스레드가 파괴되지 않게 등록한다.
+        worker = track_thread(_AuthWorker(self._yt_oauth))
 
         def _on_done(name: str) -> None:
             self._yt_auth_btn.setEnabled(True)

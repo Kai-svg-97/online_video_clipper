@@ -174,18 +174,20 @@ class _AlbumCard(QFrame):
                         return
         if not self._dto.artwork_url:
             return
-        from gui.panels.feed_panel import _ThumbLoader  # noqa: PLC0415
+        from gui.panels.feed_panel import start_thumb_loader  # noqa: PLC0415
 
-        loader = _ThumbLoader(
+        # 카드는 목록을 다시 채울 때마다 지워진다 — 부모로 매달면 실행 중인 로더가
+        # 함께 파괴돼 앱이 종료된다(gui/workers.py 참고). 슬롯도 바운드 메서드로 준다.
+        self._loader = start_thumb_loader(
             self._dto.artwork_url,
             _album_thumb_id(self._dto.key or self._dto.album_title),
-            self,
+            self._on_art_loaded,
             prefix="album",
             size=(self.JACKET * 2, self.JACKET * 2),
         )
-        loader.loaded.connect(lambda _id, img: self._jacket.set_image(img))
-        self._loader = loader
-        loader.start()
+
+    def _on_art_loaded(self, _id: str, img: QImage) -> None:
+        self._jacket.set_image(img)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
@@ -550,18 +552,18 @@ class AlbumDetailPanel(QWidget):
             if not shown:
                 self._jacket.set_image(None)
             return
-        from gui.panels.feed_panel import _ThumbLoader  # noqa: PLC0415
+        from gui.panels.feed_panel import start_thumb_loader  # noqa: PLC0415
 
-        loader = _ThumbLoader(
+        self._loader = start_thumb_loader(
             detail.artwork_url,
             _album_thumb_id(detail.key or detail.album_title),
-            self,
+            self._on_art_loaded,
             prefix="album",
             size=(self.JACKET * 2, self.JACKET * 2),
         )
-        loader.loaded.connect(lambda _id, img: self._jacket.set_image(img))
-        self._loader = loader
-        loader.start()
+
+    def _on_art_loaded(self, _id: str, img: QImage) -> None:
+        self._jacket.set_image(img)
 
     def _on_play(self) -> None:
         if self._detail is not None:

@@ -28,6 +28,7 @@ from gui.panels.monitoring_panel import MonitoringPanel
 from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
 from gui.panels.stats_panel import StatsPanel
 from gui.themes.manager import ThemeManager
+from gui.workers import wait_all
 from gui.themes.tokens import ThemeTokens
 from gui.view_models.clip_vm import ClipViewModel
 from gui.view_models.download_vm import DownloadViewModel
@@ -757,6 +758,9 @@ class MainWindow(QMainWindow):
             self._return_to_page = None
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        # 위젯이 띄운 워커(썸네일·스트림 등)가 남아 있으면 먼저 기다린다 —
+        # 실행 중인 QThread가 파괴되면 Qt가 프로세스를 죽인다(gui/workers.py).
+        wait_all(3000)
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.
         for vm in (self._download_vm, self._library_vm, self._feed_vm,
                    self._recommend_vm, self._album_vm, self._song_vm, self._sync_vm,

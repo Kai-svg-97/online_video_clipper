@@ -120,9 +120,6 @@ _VIEW_FEED   = 4   # 구독 채널/전체 피드 카드 그리드
 _VIEW_CHANNELS = 5 # 구독 채널 목록(아바타 카드) 그리드
 _VIEW_ALBUMS = 6   # 앨범 자켓 그리드 (정렬 '앨범' 선택 시 — 음악 카테고리 전용)
 
-# 정렬 콤보의 '앨범' 항목 식별자. 실제 SQL 정렬 컬럼이 아니라 **화면 모드 전환**이라
-# 다른 값들과 구분되는 sentinel을 쓴다(리포지토리에 넘기면 안 된다).
-_SORT_ALBUM = "__album__"
 
 # _nav_stack 페이지 — 0=목록 컨테이너, 1=영상 상세, 2=앨범 상세
 _NAV_ALBUM_DETAIL = 2
@@ -3998,6 +3995,9 @@ class LibraryPanel(QWidget):
         self._active_thumb_loaders: list = []  # GC 방지용 강한 참조 보관
         # 표(상세) 뷰가 숨겨진 동안 목록이 바뀌었는지 — 표시될 때 한 번만 채운다.
         self._table_dirty: bool = False
+        # 앨범 보기에서 되돌아갈 목록 뷰(아이콘/리스트/표) — 보기 버튼 그룹에 앨범이
+        # 함께 들어 있어 checkedId()로는 복원할 수 없다.
+        self._last_list_view: int = _VIEW_ICON
         # 상세화면에서 '카테고리에 담기'를 누른 스트리밍 영상의 URL — 등록이 끝나면
         # 그 영상의 로컬 상세로 갈아탄다(요약·가사 잠금 해제).
         self._pending_category_url: str = ""
@@ -4124,7 +4124,12 @@ class LibraryPanel(QWidget):
         self._btn_list.setText("☰")
         self._btn_table = QToolButton()
         self._btn_table.setText("⊟")
-        for btn in (self._btn_icon, self._btn_list, self._btn_table):
+        # 앨범 보기 — 음악 계열 카테고리에서만 나타난다(_update_view_options).
+        self._btn_album = QToolButton()
+        self._btn_album.setText("💿")
+        self._btn_album.setToolTip("앨범 보기 (음악 카테고리)")
+        self._btn_album.hide()
+        for btn in (self._btn_icon, self._btn_list, self._btn_table, self._btn_album):
             btn.setCheckable(True)
             btn.setFixedSize(28, 28)
         self._btn_icon.setChecked(True)
@@ -4132,9 +4137,11 @@ class LibraryPanel(QWidget):
         self._view_group.addButton(self._btn_icon,  _VIEW_ICON)
         self._view_group.addButton(self._btn_list,  _VIEW_LIST)
         self._view_group.addButton(self._btn_table, _VIEW_DETAIL)
+        self._view_group.addButton(self._btn_album, _VIEW_ALBUMS)
         toolbar.addWidget(self._btn_icon)
         toolbar.addWidget(self._btn_list)
         toolbar.addWidget(self._btn_table)
+        toolbar.addWidget(self._btn_album)
         toolbar.addSpacing(12)
 
         self._search_box = QLineEdit()
@@ -4349,7 +4356,7 @@ class LibraryPanel(QWidget):
             QTimer.singleShot(0, self._monitoring_vm.load)
         self._vm.yt_import_finished.connect(self._on_yt_import_finished)
 
-        self._view_group.idClicked.connect(self._switch_view)
+        self._view_group.idClicked.connect(self._on_view_button_clicked)
         self._view_stack.currentChanged.connect(self._on_view_stack_changed)
         self._search_box.textChanged.connect(self._on_search_text_changed)
         self._search_box.returnPressed.connect(self._apply_search_text)
@@ -4509,8 +4516,11 @@ class LibraryPanel(QWidget):
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
         self._feed_grid.video_clicked.connect(self._open_stream_detail)
 
-        # Ctrl+휠 뷰 전환 & 마우스 BackButton 히스토리 이벤트 필터
-        for w in (self._icon_view, self._list_view, self._table):
+        # Ctrl+휠 뷰 전환 & 마우스 BackButton 히스토리 이벤트 필터.
+        # 앨범 그리드·앨범 상세도 포함해야 그 화면에서 마우스 뒤로가기가 동작한다
+        # (영상 상세는 자체 app 레벨 필터로 처리한다).
+        for w in (self._icon_view, self._list_view, self._table,
+                  self._album_grid, self._album_detail):
             viewport = getattr(w, "viewport", None)
             if viewport:
                 viewport().installEventFilter(self)
@@ -5147,6 +5157,9 @@ class LibraryPanel(QWidget):
     # ── View mode ──────────────────────────────────────────────────
 
     def _switch_view(self, view_id: int) -> None:
+        if view_id in (_VIEW_ICON, _VIEW_LIST, _VIEW_DETAIL):
+            # 앨범 보기에서 빠져나올 때 되돌아갈 목록 뷰를 기억한다.
+            self._last_list_view = view_id
         self._view_stack.setCurrentIndex(view_id)
         btn = self._view_group.button(view_id)
         if btn is not None and not btn.isChecked():
@@ -5310,7 +5323,7 @@ class LibraryPanel(QWidget):
         self._current_folder_id = None
         # 폴더 카드 뷰/피드 뷰/채널 뷰에서 카테고리를 고르면 영상 리스트 뷰로 복귀
         if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS):
-            self._switch_view(self._view_group.checkedId())
+            self._switch_view(_VIEW_ALBUMS if self._album_mode else self._last_list_view)
         self._active_tag_ids.clear()
         self._tag_list.blockSignals(True)
         self._tag_list.clearSelection()
@@ -5335,15 +5348,15 @@ class LibraryPanel(QWidget):
             self._model.set_reorder_mode(False)
             self.path_changed.emit("라이브러리")
         self._refresh_breadcrumb()
-        # 음악 카테고리에서만 정렬 '앨범'을 노출한다(카테고리마다 달라진다).
-        self._update_sort_options()
+        # 음악 카테고리에서만 보기 유형에 '앨범'을 노출한다(카테고리마다 달라진다).
+        self._update_view_options()
         if self._album_mode:
             self._load_albums()
 
     # ── 앨범 보기 (음악 카테고리 전용) ───────────────────────────────
     # 앨범은 저장된 것이 아니라 노래 정보(가수·앨범)에서 파생되는 묶음이다. 그래서
-    # '앨범'은 정렬 항목으로 들어오지만 실제로는 **화면 모드 전환**이고(_SORT_ALBUM),
-    # 리포지토리 정렬 컬럼으로 넘어가지 않는다.
+    # '앨범'은 정렬이 아니라 **보기 유형**(⊞/☰/⊟ 옆의 💿 버튼)이며, 목록을 다시 정렬하는
+    # 대신 화면 자체를 자켓 그리드로 바꾼다 — 리포지토리 정렬로는 표현할 수 없다.
 
     def _is_music_category(self, cat_id) -> bool:
         """이 카테고리의 최상위 조상 이름이 음악 계열인지(Music/Song/음악/노래/뮤직).
@@ -5364,17 +5377,19 @@ class LibraryPanel(QWidget):
             depth += 1
         return False
 
-    def _album_sort_index(self) -> int:
-        """정렬 콤보에서 '앨범' 항목의 위치(없으면 -1).
+    def album_view_available(self) -> bool:
+        """앨범 보기 버튼을 쓸 수 있는 화면인지(음악 계열 카테고리 + 앨범 VM 주입)."""
+        return self._album_vm is not None and self._is_music_category(self._current_cat_id)
 
-        ``QComboBox.findData``는 파이썬 튜플을 QVariant로 감싸 비교하므로 일치하지 않는다
-        — 항목 데이터를 직접 훑어 첫 원소로 판정한다.
-        """
-        for i in range(self._sort_combo.count()):
-            data = self._sort_combo.itemData(i)
-            if isinstance(data, tuple) and data and data[0] == _SORT_ALBUM:
-                return i
-        return -1
+    def _on_view_button_clicked(self, view_id: int) -> None:
+        """보기 유형 버튼 — 앨범만 단순 뷰 전환이 아니라 모드 진입/이탈이 필요하다."""
+        if view_id == _VIEW_ALBUMS:
+            if not self._album_mode:
+                self._enter_album_mode()
+            return
+        if self._album_mode:
+            self._exit_album_mode()
+        self._switch_view(view_id)
 
     def _album_category_ids(self) -> list:
         """앨범 보기 대상 카테고리 — 현재 카테고리 + **모든 하위**.
@@ -5401,22 +5416,24 @@ class LibraryPanel(QWidget):
                 queue.append(child)
         return out
 
-    def _update_sort_options(self) -> None:
-        """음악 카테고리에서만 정렬 콤보에 '앨범'을 넣는다."""
-        idx = self._album_sort_index()
-        want = self._album_vm is not None and self._is_music_category(self._current_cat_id)
-        if want and idx < 0:
-            self._sort_combo.addItem("앨범", (_SORT_ALBUM, True))
-        elif not want and idx >= 0:
-            if self._sort_combo.currentIndex() == idx:
-                # 앨범 보기 중에 음악이 아닌 카테고리로 옮겼다 — 기본 정렬로 되돌린다.
-                self._sort_combo.setCurrentIndex(0)
-            self._sort_combo.removeItem(idx)
+    def _update_view_options(self) -> None:
+        """보기 유형 버튼 중 '앨범'을 음악 카테고리에서만 노출한다.
+
+        앨범은 정렬이 아니라 **보기 방식**이다(같은 목록을 자켓 단위로 묶어 본다).
+        음악이 아닌 카테고리로 옮기면 버튼을 감추고 앨범 모드도 함께 푼다 — 버튼이
+        사라졌는데 화면만 앨범 그리드로 남으면 빠져나갈 방법이 없다.
+        """
+        want = self.album_view_available()
+        self._btn_album.setVisible(want)
+        if not want and self._album_mode:
+            self._exit_album_mode()
 
     def _enter_album_mode(self) -> None:
         if self._album_vm is None:
             return
+        self._push_nav_state()   # 앨범 그리드에서 뒤로 = 직전 목록 화면
         self._album_mode = True
+        self._btn_album.setChecked(True)
         self._leave_detail_if_open()
         self._switch_view(_VIEW_ALBUMS)
         self._album_grid.set_status("앨범을 구성하는 중…")
@@ -5432,9 +5449,11 @@ class LibraryPanel(QWidget):
         if self._album_vm is not None:
             self._album_vm.cancel_fill()
         if self._nav_stack.currentIndex() == _NAV_ALBUM_DETAIL:
-            self._nav_stack.setCurrentIndex(0)
+            self._close_album_detail()
         if self._view_stack.currentIndex() == _VIEW_ALBUMS:
-            self._switch_view(self._view_group.checkedId())
+            # 앨범 버튼도 보기 그룹의 일원이라 checkedId()로 되돌리면 다시 앨범이다 —
+            # 앨범 이전에 보던 목록 뷰로 복귀한다.
+            self._switch_view(self._last_list_view)
 
     def _load_albums(self) -> None:
         if self._album_vm is None:
@@ -5455,6 +5474,7 @@ class LibraryPanel(QWidget):
         """앨범 카드 클릭 — 상세를 연다(수록곡은 외부 조회라 백그라운드)."""
         if self._album_vm is None:
             return
+        self._push_nav_state()   # 앨범 상세에서 뒤로 = 앨범 그리드
         self._current_album_key = album_key
         self._album_detail.set_detail(None, crumb="앨범 정보를 가져오는 중…")
         self._album_detail.set_busy(True)
@@ -5494,11 +5514,19 @@ class LibraryPanel(QWidget):
         self._album_grid.set_status("앨범 정보를 가져오지 못했습니다.")
         self._album_detail.set_busy(False)
 
-    def _on_album_back(self) -> None:
+    def _close_album_detail(self) -> None:
+        """앨범 상세를 닫고 목록 컨테이너로 돌아온다(히스토리는 건드리지 않는다)."""
         self._nav_stack.setCurrentIndex(0)
         self._current_album_key = None
         if self._album_vm is not None:
             self._album_vm.cancel_fill()
+
+    def _on_album_back(self) -> None:
+        """앨범 상세의 ‹ 버튼 — 영상 상세와 같이 화면 히스토리를 되짚는다."""
+        if self._nav_history:
+            self._go_back()
+        else:
+            self._close_album_detail()
 
     def _on_album_unknown_resolved(self, count: int) -> None:
         if count and self._album_mode:
@@ -5601,6 +5629,9 @@ class LibraryPanel(QWidget):
         기존 '가수/앨범 필터' 재생목록과 같은 구조(_playlist_ctx)를 쓰므로 자동 다음곡·
         마우스 뒤로가기 되짚기가 그대로 동작한다.
         """
+        # 재생목록 진입은 `push_nav=False`로 상세를 열기 때문에, 여기서 앨범 상세 화면을
+        # 직접 쌓아 둬야 재생 이력을 다 되짚은 뒤 뒤로가기가 앨범 상세로 돌아온다.
+        self._push_nav_state()
         self._playlist_ctx = {
             "items": items,
             "header": f"앨범: {detail.album_title}",
@@ -5991,11 +6022,6 @@ class LibraryPanel(QWidget):
             # 항목 제거 등으로 인덱스가 -1이 되면 데이터가 없다 — 아무것도 하지 않는다.
             return
         sort_by, sort_asc = data
-        if sort_by == _SORT_ALBUM:
-            self._enter_album_mode()
-            return
-        if self._album_mode:
-            self._exit_album_mode()
         self._vm.set_sort(sort_by, sort_asc)
 
     # ── Smart Folders ──────────────────────────────────────────────
@@ -6157,6 +6183,10 @@ class LibraryPanel(QWidget):
             "channel_url": self._current_channel_url,
             "nav_idx": self._nav_stack.currentIndex(),
             "detail_payload": self._current_detail_payload,
+            # 앨범 보기는 같은 카테고리 위의 '다른 화면'이라 kind로는 구분되지 않는다 —
+            # 모드와 열려 있던 앨범 키를 따로 싣는다(nav_idx가 앨범 상세를 가리킨다).
+            "album_mode": self._album_mode,
+            "album_key": self._current_album_key,
             "tag_ids": frozenset(self._active_tag_ids),
         }
 
@@ -6212,8 +6242,39 @@ class LibraryPanel(QWidget):
             return view_idx == _VIEW_FOLDER and self._current_folder_id == snap.get("folder_id")
         if kind == "playlist":
             return view_idx in list_views and self._current_playlist_id == snap.get("playlist_id")
+        if snap.get("album_mode"):
+            # 앨범 상세 아래에는 앨범 그리드가 깔려 있다(일반 목록 뷰가 아니다).
+            list_views = (*list_views, _VIEW_ALBUMS)
         return (view_idx in list_views and self._current_playlist_id is None
                 and self._current_cat_id == snap.get("cat_id"))
+
+    def _close_overlay_screens(self) -> None:
+        """목록 위에 덮여 있는 화면(영상 상세·앨범 상세)을 닫고 목록 컨테이너로 돌아온다."""
+        idx = self._nav_stack.currentIndex()
+        if idx == 1:
+            self._on_back_from_detail()
+        elif idx == _NAV_ALBUM_DETAIL:
+            self._close_album_detail()
+
+    def _restore_album_mode(self, snap: dict) -> None:
+        """스냅샷의 앨범 보기 모드를 복원한다(정렬 콤보를 통해 기존 경로를 그대로 탄다).
+
+        모드 전환을 직접 수행하지 않고 콤보 선택을 바꾸는 이유는, 진입/이탈에 따라오는
+        일들(뷰 전환·목록 조회·앨범 추정)이 모두 그 경로에 걸려 있기 때문이다.
+        """
+        want = bool(snap.get("album_mode"))
+        if want == self._album_mode:
+            if want and self._view_stack.currentIndex() != _VIEW_ALBUMS:
+                # 목록 복원이 일반 뷰로 되돌렸을 수 있다 — 앨범 그리드를 다시 띄운다.
+                self._switch_view(_VIEW_ALBUMS)
+            return
+        self._update_view_options()
+        if want:
+            if not self.album_view_available():
+                return   # 앨범을 열 수 없는 카테고리 — 일반 목록으로 둔다
+            self._enter_album_mode()
+        else:
+            self._exit_album_mode()
 
     def _restore_screen(self, snap: dict) -> None:
         """스냅샷에 따라 직전 화면을 정확히 복원한다."""
@@ -6221,26 +6282,35 @@ class LibraryPanel(QWidget):
         try:
             target_detail = (snap.get("nav_idx") == 1
                              and snap.get("detail_payload") is not None)
+            target_album = (snap.get("nav_idx") == _NAV_ALBUM_DETAIL
+                            and bool(snap.get("album_key")))
+            overlay_open = self._nav_stack.currentIndex() in (1, _NAV_ALBUM_DETAIL)
 
-            # 상세 아래에 그대로 깔려 있던 직전 목록으로 복귀 — 재로딩 없이 빠르게
-            if (not target_detail and self._nav_stack.currentIndex() == 1
+            # 상세(영상·앨범) 아래에 그대로 깔려 있던 직전 목록으로 복귀 —
+            # 재로딩 없이 덮개만 걷는다.
+            if (not target_detail and not target_album and overlay_open
+                    and bool(snap.get("album_mode")) == self._album_mode
                     and self._screen_matches(snap)):
-                self._on_back_from_detail()
+                self._close_overlay_screens()
                 self._restore_tags(snap)
                 self._playlist_panel.select_snapshot(snap)
                 return
 
             # 그 외엔 목록 화면을 실제로 재구성한다
-            if self._nav_stack.currentIndex() == 1:
-                self._on_back_from_detail()
+            self._close_overlay_screens()
             self._restore_list_screen(snap)
             self._restore_tags(snap)
             # 좌측 트리 강조를 복원된 노드에 맞춰 동기화(경로 표현 자연스럽게)
             self._playlist_panel.select_snapshot(snap)
+            # 앨범 그리드/일반 목록 중 어느 화면이었는지 되살린다(상세보다 먼저 — 앨범
+            # 상세는 그 그리드 위에 열린다)
+            self._restore_album_mode(snap)
 
             # 직전이 상세였다면(연관영상 체인) 올바른 목록 위에 상세를 다시 연다
             if target_detail:
                 self._reopen_detail(snap["detail_payload"])
+            elif target_album and self._album_mode:
+                self._on_album_clicked(snap["album_key"])
         finally:
             self._is_restoring = False
 
@@ -7286,7 +7356,7 @@ class LibraryPanel(QWidget):
         self._icon_view.set_playlist_context(playlist_id)
         self._list_view.set_playlist_context(playlist_id)
         if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS):
-            self._switch_view(self._view_group.checkedId())
+            self._switch_view(_VIEW_ALBUMS if self._album_mode else self._last_list_view)
         self._current_playlist_id = playlist_id
         self._current_folder_id = None
         # 재생목록 선택 시에는 태그 섹션을 숨겨 트리가 더 넓게 보이도록 한다
@@ -7345,7 +7415,7 @@ class LibraryPanel(QWidget):
         self._vm.set_playlist_filter(playlist_id)
         self._icon_view.set_playlist_context(playlist_id)
         self._list_view.set_playlist_context(playlist_id)
-        self._switch_view(self._view_group.checkedId())   # 이전 뷰 모드로 복귀
+        self._switch_view(_VIEW_ALBUMS if self._album_mode else self._last_list_view)   # 이전 뷰 모드로 복귀
         self._current_playlist_id = playlist_id
         self._current_folder_id = None
         self._refresh_breadcrumb()

@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 from application.library.dtos import CategoryDTO, ChannelInfoDTO, FeedVideoDTO, PlaylistDTO
 from config.settings import THUMBNAIL_DIR
 from gui.themes.manager import ThemeManager
+from gui.workers import track_thread
 from gui.view_models.feed_vm import FeedViewModel
 
 from typing import TYPE_CHECKING
@@ -128,6 +129,27 @@ def _relative_time(date_str: str | None) -> str:
 # ---------------------------------------------------------------------------
 # 썸네일 비동기 로더 (QImage → 메인 스레드에서 QPixmap 변환)
 # ---------------------------------------------------------------------------
+
+def start_thumb_loader(
+    url: str,
+    vid_id: str,
+    on_loaded,
+    prefix: str = "feed",
+    size: tuple[int, int] = (640, 360),
+) -> "_ThumbLoader":
+    """썸네일 로더를 안전하게 띄운다.
+
+    카드는 목록을 다시 채울 때마다 지워지는데, 그 순간 실행 중인 로더가 파괴되면 Qt가
+    프로세스를 죽인다. 그래서 **부모를 주지 않고** ``track_thread``가 끝날 때까지 붙든다.
+    ``on_loaded``는 반드시 **QObject의 바운드 메서드**여야 한다 — 수신 위젯이 사라지면
+    Qt가 연결을 자동으로 끊어 죽은 위젯을 건드리지 않는다(람다는 그 보호를 못 받는다).
+    """
+    loader = _ThumbLoader(url, vid_id, None, prefix=prefix, size=size)
+    track_thread(loader)
+    loader.loaded.connect(on_loaded)
+    loader.start()
+    return loader
+
 
 class _ThumbLoader(QThread):
     loaded = pyqtSignal(str, QImage)   # id, QImage
@@ -467,11 +489,13 @@ class _FeedCard(QFrame):
         url = self._dto.thumbnail_url
         if not url:
             return
-        self._loader = _ThumbLoader(url, vid_id)
-        self._loader.loaded.connect(lambda vid, im, key=cache_key: self._on_thumb_loaded(vid, im, key))
-        self._loader.start()
+        # 캐시 키는 카드가 알고 있으므로 슬롯에서 다시 만든다 — 람다로 넘기면 카드가
+        # 사라진 뒤에도 호출돼(수신자가 없어 자동 해제되지 않는다) 죽은 위젯을 건드린다.
+        self._thumb_cache_key = cache_key
+        self._loader = start_thumb_loader(url, vid_id, self._on_thumb_loaded)
 
     def _on_thumb_loaded(self, _vid_id: str, img: QImage, cache_key: str = "") -> None:
+        cache_key = cache_key or getattr(self, "_thumb_cache_key", "")
         from PyQt6.QtGui import QPixmap  # noqa: PLC0415
         px = QPixmap.fromImage(img).scaled(
             self._TW, self._TH,
@@ -933,27 +957,25 @@ class _ChannelCard(QFrame):
             return
         if not self._dto.thumbnail_url:
             return
-        self._loader = _ThumbLoader(
-            self._dto.thumbnail_url, self._dto.channel_id,
+        self._avatar_cache_key = cache_key
+        self._loader = start_thumb_loader(
+            self._dto.thumbnail_url, self._dto.channel_id, self._on_avatar_loaded,
             prefix="channel", size=(self._AVATAR, self._AVATAR),
         )
 
-        def _on_loaded(_id: str, img: QImage, key: str = cache_key) -> None:
-            from PyQt6.QtGui import QPixmap  # noqa: PLC0415
-            px = QPixmap.fromImage(img).scaled(
-                self._AVATAR, self._AVATAR,
-                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            _feed_thumb_cache.put(key, px)
-            try:
-                self._avatar._pixmap = px
-                self._avatar.update()
-            except RuntimeError:
-                pass  # 카드가 소멸된 후 콜백 도달 시 무시
-
-        self._loader.loaded.connect(_on_loaded)
-        self._loader.start()
+    def _on_avatar_loaded(self, _id: str, img: QImage) -> None:
+        from PyQt6.QtGui import QPixmap  # noqa: PLC0415
+        px = QPixmap.fromImage(img).scaled(
+            self._AVATAR, self._AVATAR,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        _feed_thumb_cache.put(getattr(self, "_avatar_cache_key", ""), px)
+        try:
+            self._avatar._pixmap = px
+            self._avatar.update()
+        except RuntimeError:
+            logger.debug("카드가 소멸된 뒤 아바타 콜백 도달 — 무시")
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._dto.channel_url:

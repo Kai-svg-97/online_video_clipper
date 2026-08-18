@@ -49,6 +49,7 @@ from application.library.dtos import DownloadInfoDTO
 from config import settings
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
 from gui.themes.manager import ThemeManager
+from gui.workers import retire_thread, track_thread
 from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
 
 logger = logging.getLogger(__name__)
@@ -1642,26 +1643,20 @@ class InlinePlayer(QWidget):
         self._cleanup_temp()
         self._hide_timer.stop()
         if self._worker:
-            # 시그널 먼저 해제 — 스레드가 늦게 결과를 내보내도 무시
-            try:
-                self._worker.stream_ready.disconnect()
-                self._worker.progress.disconnect()
-                self._worker.failed.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            self._worker.quit()
-            # 즉시 참조를 버리지 않고 Qt에 위임 — 스레드 종료 후 안전하게 삭제
-            self._worker.deleteLater()
+            # 시그널을 먼저 끊고(늦게 오는 결과 무시) 스레드가 끝날 때까지 붙든다.
+            # 예전엔 quit()+deleteLater()였는데, quit()은 이벤트 루프만 끝내므로
+            # yt-dlp를 도는 run()은 계속 실행되고, 그 상태로 삭제되면 Qt가 프로세스를
+            # 죽였다(스트림을 받는 도중 뒤로가기 → 앱 종료).
+            retire_thread(
+                self._worker,
+                self._worker.stream_ready, self._worker.progress, self._worker.failed,
+            )
             self._worker = None
         if self._probe:
-            # 화질 조회 결과가 늦게 와도 이미 다른 영상으로 넘어갔을 수 있다
-            try:
-                self._probe.heights_ready.disconnect()
-                self._probe.failed.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            self._probe.quit()
-            self._probe.deleteLater()
+            # 화질 조회 결과가 늦게 와도 이미 다른 영상으로 넘어갔을 수 있다.
+            # 스트림 워커와 같은 이유로 quit()+deleteLater()는 쓰지 않는다 —
+            # yt-dlp를 도는 run()은 quit()으로 멈추지 않는다.
+            retire_thread(self._probe, self._probe.heights_ready, self._probe.failed)
             self._probe = None
         self._bar.set_download_busy(False)
         self._visual_stack.setCurrentIndex(0)
@@ -2079,17 +2074,18 @@ class InlinePlayer(QWidget):
             "고화질 준비 중…" if self._current_merge else "스트림 URL 가져오는 중…"
         )
         self._status_lbl.show()
-        # 이전 워커가 살아 있으면 늦게 도착하는 신호를 무시한다
-        if self._worker is not None:
-            try:
-                self._worker.stream_ready.disconnect()
-                self._worker.progress.disconnect()
-                self._worker.failed.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-        self._worker = _StreamWorker(
-            self._video_url, self._current_quality_fmt, self._current_merge, self
+        # 이전 워커가 살아 있으면 늦게 도착하는 신호를 무시한다.
+        # 참조만 버리면 실행 중인 QThread가 파괴돼 프로세스가 죽는다 — retire_thread가
+        # 신호를 끊고 끝날 때까지 대신 붙들어 준다(gui/workers.py).
+        retire_thread(
+            self._worker,
+            *( (self._worker.stream_ready, self._worker.progress, self._worker.failed)
+               if self._worker is not None else () ),
         )
+        # 부모를 주지 않는다 — 플레이어가 사라져도 스레드가 함께 파괴되지 않게.
+        self._worker = track_thread(_StreamWorker(
+            self._video_url, self._current_quality_fmt, self._current_merge
+        ))
         self._worker.stream_ready.connect(self._on_stream_ready)
         self._worker.progress.connect(self._on_merge_progress)
         self._worker.failed.connect(self._on_stream_failed)
@@ -2220,7 +2216,8 @@ class InlinePlayer(QWidget):
             b.set_available_heights(None)   # 알 수 없으면 전체 목록으로
             b.open_download_menu()
 
-        self._probe = _FormatProbeWorker(url, self)
+        # 조회 중 화면을 벗어나도 스레드가 파괴되지 않도록 부모 없이 만들어 등록한다.
+        self._probe = track_thread(_FormatProbeWorker(url))
         self._probe.heights_ready.connect(_ready)
         self._probe.failed.connect(_failed)
         self._probe.start()
