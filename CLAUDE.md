@@ -225,6 +225,7 @@ online_video_clipper/
 │       └── portable_package.py      # ZipLibraryPackageWriter·ZipLibraryPackageReader — manifest.json+data.json+thumbnails/ zip. 값 해석(THUMBNAIL_DIR 절대경로 결합)은 여기서만 한다
 │
 ├── gui/                             # Presentation layer (PyQt6, MVVM)
+│   ├── smooth_scroll.py             # 휠 스크롤 부드럽게 — 픽셀 스크롤 + 180ms 보간. **수정키 휠은 가로채지 않는다**(Ctrl+휠=뷰 전환, Ctrl+Shift+휠=자막 조절). 세로가 없는 가로 띠는 휠을 가로로 돌린다. `apply_smooth_scroll_tree(panel)`을 화면 조립 뒤 한 번 호출
 │   ├── workers.py                   # 실행 중 QThread 안전 보유/은퇴 — `track_thread`(부모 분리 + 레지스트리 보유)·`retire_thread`(**신호 이름**으로 해제 후 끝까지 보유)·`wait_all`(종료 시 대기). 끝난 워커는 참조만 놓는다(deleteLater 금지 — 들고 있는 쪽에서 RuntimeError). **실행 중인 QThread가 파괴되면 Qt가 프로세스를 죽인다**(실측: exit 0xC0000409)
 │   ├── single_instance.py           # SingleInstanceGuard — QLocalServer 기반 중복 실행 방지(main.py가 DB 열기 전 호출, 두 번째 인스턴스는 기존 창을 앞으로 부르고 종료)
 │   ├── main_window.py               # 루트 윈도우, 사이드바 네비게이션(라이브러리·다운로드·채널 모니터링·통계), 패널 스택 — 구독 피드는 라이브러리 좌측 트리로 통합됨. **통계 채널 섹션 → 카테고리 드릴다운**: `StatsPanel.category_selected` → `_on_stats_category_selected`가 라이브러리로 전환·`navigate_to_category` 후 `_return_to_page=_PAGE_STATS` 예약. 라이브러리 뒤로가기를 소진하면(`LibraryPanel.back_exhausted`) `_on_library_back_exhausted`가 통계로 복귀(라이브러리 자체 히스토리를 먼저 되짚고 소진 시 통계). 다른 페이지로 이동하면 `_on_page_changed`가 예약을 무효화. **등록 후 자동 보강 상태 표시**: `enrich_started`→상태바 "가사 조회 중"/"요약 생성 중"(`_ENRICH_LABEL`), `enrich_finished`→완료(5초)/실패(8초). `kind="skipped"`+ok이면 메시지를 지운다. **사이드바 배경은 `_SideBar.paintEvent`에서 직접 칠한다** — 앱 레벨 QSS의 `QWidget { background-color }`가 위젯 레벨 스타일시트(ID 선택자 포함)를 덮어써 `bg_surface`가 적용되지 않았다(slate에서는 base/surface 차이가 3단위라 미발견). 따라서 사이드바 배경·우측 경계선 색을 바꿀 땐 QSS가 아니라 `paintEvent`를 수정할 것. **상단 ▶ 로고와 계정(인증) 버튼은 제거됨** — 로고는 기능 없는 장식이고, 계정 버튼은 클릭 동작이 바로 아래 기어 버튼과 완전히 동일한 중복이었다(`update_account_status()`도 호출처 없는 죽은 코드여서 함께 삭제, `_SVG_ACCOUNT` 상수도 제거)
@@ -239,6 +240,7 @@ online_video_clipper/
 │   │   │   ├── tag_widgets.py       # 인기 태그 버튼·즐겨찾기 바·태그 목록·활성 태그 바
 │   │   │   ├── cards.py             # 폴더 안 재생목록 카드 그리드(`_FolderContentsView` 등)
 │   │   │   ├── splitter.py          # 좌측 패널 접기 핸들
+│   │   │   ├── overlay.py           # 목록 위 상태 안내판(조회 중·결과 없음) — 레이아웃 자리를 차지하지 않고 클릭을 통과시킨다. 250ms 넘게 걸리는 조회에만 '불러오는 중'을 띄워 캐시 히트에서 깜빡이지 않게 한다
 │   │   │   ├── tree.py              # `_PlaylistTree`·`_PlaylistPanel`·`_BreadcrumbBar` — 좌측 내비 트리(드래그앤드롭·컨텍스트 메뉴·스피너)
 │   │   │   └── mixins/              # LibraryPanel 동작 묶음 — 런타임 클래스는 하나(상태 공유 방식 불변)
 │   │   │       ├── album.py         # 앨범 보기(그리드·상세·담기·재생)
@@ -248,7 +250,8 @@ online_video_clipper/
 │   │   │       ├── sidebar.py       # 좌측 트리 조작(카테고리·재생목록·폴더·즐겨찾기)
 │   │   │       ├── feed.py          # 구독 피드/채널 화면·YouTube 동기화
 │   │   │       ├── video_list.py    # 검색·정렬·뷰 전환·태그 패널·썸네일 프리로드
-│   │   │       └── context_menu.py  # 영상 우클릭 메뉴(단일·다중)·삭제 확인
+│   │   │       ├── context_menu.py  # 영상 우클릭 메뉴(단일·다중)·삭제 확인
+│   │   │       └── shortcuts.py     # 키보드 단축키 — Ctrl+F(검색)·Esc(덮인 화면부터 걷기)·Alt+←/→(히스토리)·F5(새로고침)·Ctrl+1~4(보기 전환). 범위는 `WidgetWithChildrenShortcut`이라 다른 페이지에서는 발동하지 않는다
 │   │   ├── download_panel.py        # 다운로드 큐 + 완료 이력 탭 (영상 파일만 표시·완료/실패 배지). **이 패널의 상세 위젯에는 song_vm이 배선돼 있지 않아** 노래 탭·가사 자막이 동작하지 않는다(기존 상태 — 가사 자막 기능은 라이브러리 패널로 범위가 한정됨)
 │   │   ├── feed_panel.py            # 피드 카드 부품(_FeedGrid·_FeedCard: 썸네일 좌하단 채널 배지·리사이즈 reflow, **단일 클릭→`video_clicked`(FeedVideoDTO) 방출**, 인라인 추가버튼 제거·우클릭 메뉴로 일원화) + 채널 카드 부품(_ChannelGrid·_ChannelCard: 아바타·구독자/영상수에 더해 **"최근 영상 N일 전"** 라벨=`latest_video_published_at`) + 연관영상 행에서 재사용하는 `_RoundedThumbLabel`·`_ThumbLoader` 정의 — library_panel/video_detail_panel이 재사용. `_FeedCard`·`_ChannelCard`는 `_relative_time`(YYYYMMDD·ISO·`Z` 처리)로 등록 시점을 상대시간 표기. **`_FeedCard`는 `thumb_size`(작은 카드)·`draggable`(URL 드래그) 옵션을 받는다** — 드래그는 `text/uri-list`+`text/plain`으로 브라우저 URL 드래그와 **완전히 같은 MIME**을 만들어 카테고리 트리의 기존 URL 드롭 경로를 그대로 재사용한다(받는 쪽에 추천 전용 처리가 없다). 드래그가 시작되면 `_dragged` 플래그로 릴리스 시 클릭(상세 진입)을 억제한다. 카드가 드래그 이벤트를 받으려면 `mousePressEvent`가 `event.accept()`해야 한다(수락하지 않으면 move/release가 부모로 전파돼 드래그가 조용히 죽는다). + **`RecommendStrip`(추천 영상 스트립)**: 헤더 바(▾/▸ 접기 토글 + '추천 영상' + 상태 라벨 + ⟳ 다시 받기)와 가로 스크롤 카드 행. `set_items`/`append_items`/`set_loading`/`set_status`/`set_expanded(notify=False)`/`count()` 제공. 접으면 본문(`_scroll`)만 숨기고 헤더는 남긴다(= 다시 펼칠 수 있는 split bar). library_panel이 수직 `QSplitter`의 아래쪽 자식으로 넣는다. (구버전 FeedPanel 컨테이너는 더 이상 사이드바 메뉴로 노출되지 않음)
 │   │   ├── monitoring_panel.py      # 채널 구독 & 모니터링 규칙 관리
@@ -643,6 +646,21 @@ online_video_clipper/
   마지막 참조가 사라질 때 파이썬이 정리한다. `retire_thread`는 신호를 **이름으로** 받는다 —
   호출부에서 `worker.failed`를 꺼내는 순간 이미 정리된 객체면 거기서 터지기 때문이다.
 - 백그라운드 워커를 만드는 뷰모델은 `shutdown()`을 제공하고 `MainWindow.closeEvent`에서 호출해 종료 시 워커를 정리한다. yt-dlp 다운로드처럼 협조적 취소 훅이 없으면 `terminate()` 후 `wait()`로 종료를 보장한다.
+
+## 입력·움직임 규칙 (mandatory)
+
+- **새 스크롤 영역을 만들면 `apply_smooth_scroll(area)`를 태운다**(패널 단위면
+  `apply_smooth_scroll_tree(self)`). Qt 기본은 항목 단위 스크롤이라 카드 한 장씩 점프한다.
+- **수정키가 붙은 휠은 절대 가로채지 않는다.** Ctrl+휠은 목록 뷰 전환, Ctrl(+Shift)+휠은
+  자막 크기·위치 조절이 이미 쓴다 — 삼키면 그 기능이 **조용히** 죽는다.
+- **단일 키(Space·J·K·L·화살표·C·M·F·P·[·]·\)는 플레이어 것이다.** 화면 단축키는
+  Ctrl/Alt 조합·Esc·F5만 쓴다. 단축키 범위는 `WidgetWithChildrenShortcut`으로 좁혀
+  다른 페이지를 볼 때 발동하지 않게 한다.
+- **툴팁에 적은 단축키는 실제로 동작해야 한다** — 상세 뒤로가기 버튼이 "(Esc)"라고
+  적어 두고 Esc를 처리하지 않던 적이 있다.
+- **상태를 말하지 않는 화면을 만들지 않는다.** 목록이 비면 왜 비었는지(검색·태그·빈
+  카테고리)와 무엇을 하면 되는지를 안내판으로 알린다. 다만 **짧은 조회에서 로딩 표시가
+  깜빡이면 더 산만하므로** 지연(250ms) 뒤에만 띄운다.
 
 ## 색상 규칙 (mandatory)
 
