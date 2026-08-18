@@ -28,6 +28,7 @@ MIGRATION_IDS: tuple[str, ...] = (
     "migrate_video_summary_status",
     "migrate_lyrics_offset",
     "migrate_album_tables",
+    "migrate_album_disc_no",
 )
 
 
@@ -195,6 +196,7 @@ class Database:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS album_track_links ("
                 " album_key TEXT NOT NULL,"
+                " disc_no INTEGER NOT NULL DEFAULT 1,"
                 " track_no INTEGER NOT NULL,"
                 " track_title TEXT NOT NULL DEFAULT '',"
                 " stream_url TEXT NOT NULL DEFAULT '',"
@@ -204,7 +206,7 @@ class Database:
                 " duration_sec INTEGER,"
                 " origin TEXT NOT NULL DEFAULT 'auto',"
                 " created_at TEXT NOT NULL,"
-                " PRIMARY KEY (album_key, track_no))"
+                " PRIMARY KEY (album_key, disc_no, track_no))"
             )
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS album_lookup_state ("
@@ -212,6 +214,37 @@ class Database:
                 " found INTEGER NOT NULL DEFAULT 0,"
                 " tried_at TEXT NOT NULL)"
             )
+
+    def _migrate_album_disc_no(self) -> None:
+        """album_track_links의 키를 (album_key, disc_no, track_no)로 바꾼다.
+
+        트랙 번호는 **디스크 안에서만 유일**해서, 2장짜리 앨범은 disc1·disc2의 같은
+        번호가 서로를 덮어썼다 — 서로 다른 곡이 같은 영상을 가리키는 증상이 실제로
+        나왔다. 기존 행은 어느 디스크의 것인지 알 수 없으므로(그래서 틀린 매핑이
+        섞여 있다) **버리고 다시 만든다** — 자동 매핑은 앨범을 열면 다시 찾는 캐시라
+        잃어도 복구된다.
+        """
+        with self.connection() as conn:
+            conn.execute("DROP TABLE IF EXISTS album_track_links")
+            conn.execute(
+                "CREATE TABLE album_track_links ("
+                " album_key TEXT NOT NULL,"
+                " disc_no INTEGER NOT NULL DEFAULT 1,"
+                " track_no INTEGER NOT NULL,"
+                " track_title TEXT NOT NULL DEFAULT '',"
+                " stream_url TEXT NOT NULL DEFAULT '',"
+                " stream_title TEXT NOT NULL DEFAULT '',"
+                " stream_channel TEXT NOT NULL DEFAULT '',"
+                " stream_yt_id TEXT NOT NULL DEFAULT '',"
+                " duration_sec INTEGER,"
+                " origin TEXT NOT NULL DEFAULT 'auto',"
+                " created_at TEXT NOT NULL,"
+                " PRIMARY KEY (album_key, disc_no, track_no))"
+            )
+            # 앨범 캐시의 수록곡 JSON에도 디스크 번호가 없으므로 함께 비운다
+            # (다음에 앨범을 열 때 외부에서 다시 받아 채운다).
+            conn.execute("DELETE FROM album_cache")
+        logger.info("앨범 자동 매핑 캐시를 디스크 번호 포함 스키마로 재생성했다")
 
     def _migrate_song_tables(self) -> None:
         """노래 정보/가사 출처 테이블 시드 (idempotent).

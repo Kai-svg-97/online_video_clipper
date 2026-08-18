@@ -103,12 +103,18 @@ class ITranslator(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class AlbumTrackInfo:
-    """외부 앨범 정보의 수록곡 1건."""
+    """외부 앨범 정보의 수록곡 1건.
+
+    **트랙 번호는 디스크 안에서만 유일하다** — 2장짜리 앨범은 disc1이 1~14,
+    disc2가 다시 1~18로 매겨진다. 그래서 수록곡의 신원은 항상 (disc_no, track_no)
+    쌍이며, 번호만으로 다루면 서로 다른 곡이 같은 곡으로 뭉개진다(실제로 그랬다).
+    """
 
     track_no: int
     title: str
     artist: str = ""
     duration_sec: int | None = None
+    disc_no: int = 1
 
 
 @dataclass(frozen=True, slots=True)

@@ -35,6 +35,8 @@ class AlbumTrackDTO:
     title: str
     artist: str = ""
     duration_sec: int | None = None
+    # 트랙 번호는 디스크 안에서만 유일하다 — 행의 신원은 (disc_no, track_no) 쌍이다.
+    disc_no: int = 1
     origin: str = TRACK_ORIGIN_MISSING
     video_id: UUID | None = None      # origin=library일 때
     stream_url: str = ""              # origin=auto일 때
@@ -46,6 +48,11 @@ class AlbumTrackDTO:
     @property
     def playable(self) -> bool:
         return self.origin in (TRACK_ORIGIN_LIBRARY, TRACK_ORIGIN_AUTO)
+
+    @property
+    def slot(self) -> tuple[int, int]:
+        """수록곡 자리(디스크, 트랙) — 행 갱신·자동 매핑 저장의 키."""
+        return (self.disc_no, self.track_no)
 
 
 @dataclass(frozen=True, slots=True)

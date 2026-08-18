@@ -340,3 +340,74 @@ class TestResolveUnknownAlbums:
         handler.handle(ResolveUnknownAlbumsCommand(category_id=cat.id))
 
         assert provider.track_calls == 1
+
+
+def _two_disc_meta():
+    """2장짜리 앨범 — 디스크마다 트랙 번호가 1번부터 다시 시작한다(iTunes 실제 형식)."""
+    return AlbumMetadata(
+        album_title="Mercury - Acts 1 & 2",
+        artist="Imagine Dragons",
+        track_count=4,
+        tracks=[
+            AlbumTrackInfo(track_no=1, title="Enemy", artist="Imagine Dragons", disc_no=1),
+            AlbumTrackInfo(track_no=2, title="My Life", artist="Imagine Dragons", disc_no=1),
+            AlbumTrackInfo(track_no=1, title="Bones", artist="Imagine Dragons", disc_no=2),
+            AlbumTrackInfo(track_no=2, title="Symphony", artist="Imagine Dragons", disc_no=2),
+        ],
+        source_name="iTunes",
+    )
+
+
+class TestTwoDiscAlbum:
+    """2장짜리 앨범에서 번호가 겹쳐 서로 다른 곡이 한 곡으로 뭉개지던 회귀.
+
+    실제 증상: 'Mercury - Acts 1 & 2'(32곡)를 열면 같은 제목·같은 영상이 두 줄씩 뜨고,
+    자동 매핑이 disc1/disc2의 같은 번호를 서로 덮어썼다.
+    """
+
+    def _setup(self, repos):
+        videos, songs, albums = repos
+        cat = Category.create("Music")
+        videos.save_category(cat)
+        _add_song(videos, songs, "https://youtu.be/d1t1", "Imagine Dragons - Enemy",
+                  artist="Imagine Dragons", album="Mercury - Acts 1 & 2",
+                  song_title="Enemy", category_id=cat.id)
+        provider = _StubProvider(album=_two_disc_meta())
+        handler = GetAlbumDetailHandler(videos, songs, albums, provider)
+        key = make_album_key("Imagine Dragons", "Mercury - Acts 1 & 2")
+        return cat, handler, key, albums
+
+    def test_같은_번호라도_디스크가_다르면_다른_곡이다(self, repos):
+        cat, handler, key, _albums = self._setup(repos)
+
+        detail = handler.handle(GetAlbumDetailQuery(album_key=key, category_id=cat.id))
+
+        slots = [(t.disc_no, t.track_no) for t in detail.tracks]
+        assert slots == [(1, 1), (1, 2), (2, 1), (2, 2)]
+        assert [t.title for t in detail.tracks] == ["Enemy", "My Life", "Bones", "Symphony"]
+
+    def test_자동_매핑이_디스크별로_따로_저장된다(self, repos):
+        videos, songs, albums = repos
+        cat, handler, key, _ = self._setup(repos)
+        media = _StubMedia([{"url": "https://youtu.be/auto", "title": "auto"}])
+
+        FillAlbumTracksHandler(handler, albums, media).handle(
+            FillAlbumTracksCommand(album_key=key, category_id=cat.id)
+        )
+
+        links = albums.get_track_links(key)
+        # disc1-t2, disc2-t1, disc2-t2 — 번호만 키로 쓰면 2건으로 뭉개진다.
+        assert set(links) == {(1, 2), (2, 1), (2, 2)}
+        assert links[(2, 1)].track_title == "Bones"
+        assert links[(1, 2)].track_title == "My Life"
+
+    def test_검색어도_곡마다_다르다(self, repos):
+        cat, handler, key, albums = self._setup(repos)
+        media = _StubMedia([{"url": "https://youtu.be/auto", "title": "auto"}])
+
+        FillAlbumTracksHandler(handler, albums, media).handle(
+            FillAlbumTracksCommand(album_key=key, category_id=cat.id)
+        )
+
+        assert len(media.queries) == 3
+        assert len(set(media.queries)) == 3   # 같은 검색이 반복되면 같은 곡을 붙인 것

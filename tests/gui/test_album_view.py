@@ -448,3 +448,57 @@ class TestAlbumNavHistory:
 
         assert panel._nav_stack.currentIndex() == 2      # 앨범 상세로 복귀
         assert panel._album_mode is True
+
+
+class TestMultiDiscRows:
+    """2장짜리 앨범 — 번호가 겹쳐도 행이 서로를 덮어쓰지 않아야 한다.
+
+    실제 증상(스크린샷): 자동 매핑이 끝날 때마다 같은 번호의 두 행이 **같은 곡**으로
+    바뀌어, 32곡짜리 앨범이 같은 제목 두 줄씩으로 보였다.
+    """
+
+    def _two_disc_detail(self):
+        return AlbumDetailDTO(
+            key="id\x1fmercury",
+            album_title="Mercury - Acts 1 & 2",
+            artist="Imagine Dragons",
+            tracks=[
+                AlbumTrackDTO(track_no=1, disc_no=1, title="Enemy",
+                              origin=TRACK_ORIGIN_MISSING),
+                AlbumTrackDTO(track_no=2, disc_no=1, title="My Life",
+                              origin=TRACK_ORIGIN_MISSING),
+                AlbumTrackDTO(track_no=1, disc_no=2, title="Bones",
+                              origin=TRACK_ORIGIN_MISSING),
+            ],
+        )
+
+    def test_자동_매핑이_같은_번호의_다른_디스크를_덮지_않는다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_detail(self._two_disc_detail())
+
+        panel.apply_filled_track(AlbumTrackDTO(
+            track_no=1, disc_no=2, title="Bones", origin=TRACK_ORIGIN_AUTO,
+            stream_url="https://youtu.be/bones", stream_yt_id="bones",
+        ))
+
+        titles = [row._track.title for row in panel._rows]
+        origins = [row._track.origin for row in panel._rows]
+        assert titles == ["Enemy", "My Life", "Bones"]      # 제목이 뭉개지지 않는다
+        assert origins == [TRACK_ORIGIN_MISSING, TRACK_ORIGIN_MISSING, TRACK_ORIGIN_AUTO]
+
+    def test_2장이면_번호를_디스크와_함께_보여준다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+
+        panel.set_detail(self._two_disc_detail())
+
+        assert [row._no_lbl.text() for row in panel._rows] == ["1-1", "1-2", "2-1"]
+
+    def test_1장이면_번호만_보여준다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+
+        panel.set_detail(_detail())
+
+        assert [row._no_lbl.text() for row in panel._rows] == ["1", "2", "3"]

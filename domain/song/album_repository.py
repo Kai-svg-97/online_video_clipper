@@ -37,10 +37,15 @@ class AlbumCacheRecord:
 
 @dataclass(slots=True)
 class AlbumTrackLink:
-    """라이브러리에 없는 수록곡에 자동으로 붙인 스트리밍 영상."""
+    """라이브러리에 없는 수록곡에 자동으로 붙인 스트리밍 영상.
+
+    키는 (album_key, disc_no, track_no)다 — 번호만 쓰면 2장짜리 앨범에서 disc1·disc2의
+    같은 번호가 서로를 덮어써 두 곡이 같은 영상을 가리킨다.
+    """
 
     album_key: str
     track_no: int
+    disc_no: int = 1
     track_title: str = ""
     stream_url: str = ""
     stream_title: str = ""
@@ -65,8 +70,8 @@ class IAlbumRepository(ABC):
         ...
 
     @abstractmethod
-    def get_track_links(self, album_key: str) -> dict[int, AlbumTrackLink]:
-        """track_no → 자동 매핑된 스트리밍 영상."""
+    def get_track_links(self, album_key: str) -> dict[tuple[int, int], AlbumTrackLink]:
+        """(disc_no, track_no) → 자동 매핑된 스트리밍 영상."""
         ...
 
     @abstractmethod

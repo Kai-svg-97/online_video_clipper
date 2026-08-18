@@ -276,13 +276,21 @@ class _AlbumGridInner(QWidget):
 
 
 class _TrackRow(QFrame):
-    """수록곡 1행 — 번호 · 제목 · 가수 · 길이 · 출처 배지 (+ 재생 가능하면 클릭)."""
+    """수록곡 1행 — 번호 · 제목 · 가수 · 길이 · 출처 배지 (+ 재생 가능하면 클릭).
+
+    2장짜리 앨범은 디스크마다 1번부터 다시 매겨지므로, 그런 앨범에서는 번호를
+    "1-3"(디스크-트랙)으로 보여 준다 — 안 그러면 같은 번호가 두 번 나와 목록이
+    잘못된 것처럼 보인다.
+    """
 
     clicked = pyqtSignal(object)   # AlbumTrackDTO
 
-    def __init__(self, track: AlbumTrackDTO, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, track: AlbumTrackDTO, show_disc: bool = False, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self._track = track
+        self._show_disc = show_disc
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         if track.playable:
@@ -295,8 +303,11 @@ class _TrackRow(QFrame):
         row = QHBoxLayout(self)
         row.setContentsMargins(8, 4, 8, 4)
         row.setSpacing(8)
-        self._no_lbl = QLabel(str(self._track.track_no))
-        self._no_lbl.setFixedWidth(24)
+        self._no_lbl = QLabel(
+            f"{self._track.disc_no}-{self._track.track_no}" if self._show_disc
+            else str(self._track.track_no)
+        )
+        self._no_lbl.setFixedWidth(36 if self._show_disc else 24)
         self._no_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self._no_lbl)
 
@@ -503,7 +514,9 @@ class AlbumDetailPanel(QWidget):
         """자동 매핑이 끝난 곡 하나를 제자리에서 갱신한다(전체 재조회 없이)."""
         if self._detail is None:
             return
-        tracks = [track if t.track_no == track.track_no else t for t in self._detail.tracks]
+        # **(디스크, 트랙)으로 찾는다** — 번호만 비교하면 2장짜리 앨범에서 disc1·disc2의
+        # 같은 번호 행이 **둘 다** 같은 곡으로 덮어써진다(실제로 그 증상이 나왔다).
+        tracks = [track if t.slot == track.slot else t for t in self._detail.tracks]
         self._detail = AlbumDetailDTO(
             key=self._detail.key,
             album_title=self._detail.album_title,
@@ -532,8 +545,9 @@ class AlbumDetailPanel(QWidget):
             row.setParent(None)
             row.deleteLater()
         self._rows.clear()
+        multi_disc = len({t.disc_no for t in tracks}) > 1
         for i, track in enumerate(tracks):
-            row = _TrackRow(track)
+            row = _TrackRow(track, show_disc=multi_disc)
             row.clicked.connect(self.track_clicked)
             self._tracks_layout.insertWidget(i, row)
             self._rows.append(row)

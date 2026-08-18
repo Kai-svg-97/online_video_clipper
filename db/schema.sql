@@ -274,6 +274,8 @@ CREATE TABLE IF NOT EXISTS album_cache (
 -- 존재 여부와 정확히 일치한다.
 CREATE TABLE IF NOT EXISTS album_track_links (
     album_key     TEXT NOT NULL,
+    -- 트랙 번호는 디스크 안에서만 유일하다(2장짜리 앨범은 disc2가 다시 1번부터).
+    disc_no       INTEGER NOT NULL DEFAULT 1,
     track_no      INTEGER NOT NULL,
     track_title   TEXT NOT NULL DEFAULT '',
     stream_url    TEXT NOT NULL DEFAULT '',
@@ -283,7 +285,7 @@ CREATE TABLE IF NOT EXISTS album_track_links (
     duration_sec  INTEGER,
     origin        TEXT NOT NULL DEFAULT 'auto',  -- auto = 자동 검색으로 붙임
     created_at    TEXT NOT NULL,
-    PRIMARY KEY (album_key, track_no)
+    PRIMARY KEY (album_key, disc_no, track_no)
 );
 
 -- 앨범 미상 노래의 외부 조회 상태 — 실패한 곡을 화면 열 때마다 다시 조회하지 않기 위한 기록.

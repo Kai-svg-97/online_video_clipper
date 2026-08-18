@@ -30,7 +30,11 @@ def _now_iso() -> str:
 
 def _tracks_to_json(tracks: list[AlbumTrackInfo]) -> str:
     return json.dumps(
-        [{"n": t.track_no, "t": t.title, "a": t.artist, "d": t.duration_sec} for t in tracks],
+        [
+            {"n": t.track_no, "t": t.title, "a": t.artist, "d": t.duration_sec,
+             "c": t.disc_no}
+            for t in tracks
+        ],
         ensure_ascii=False,
     )
 
@@ -53,6 +57,7 @@ def _tracks_from_json(raw: str | None) -> list[AlbumTrackInfo]:
                 title=item.get("t", ""),
                 artist=item.get("a", ""),
                 duration_sec=item.get("d"),
+                disc_no=int(item.get("c") or 1),
             )
         )
     return out
@@ -135,18 +140,20 @@ class SqliteAlbumRepository(IAlbumRepository):
         return out
 
     # ── 자동 매핑(스트리밍 영상) ────────────────────────────────────
-    def get_track_links(self, album_key: str) -> dict[int, AlbumTrackLink]:
+    def get_track_links(self, album_key: str) -> dict[tuple[int, int], AlbumTrackLink]:
         if not album_key:
             return {}
         with self._db.connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM album_track_links WHERE album_key=? ORDER BY track_no",
+                "SELECT * FROM album_track_links WHERE album_key=?"
+                " ORDER BY disc_no, track_no",
                 (album_key,),
             ).fetchall()
         return {
-            int(r["track_no"]): AlbumTrackLink(
+            (int(r["disc_no"]), int(r["track_no"])): AlbumTrackLink(
                 album_key=r["album_key"],
                 track_no=int(r["track_no"]),
+                disc_no=int(r["disc_no"]),
                 track_title=r["track_title"],
                 stream_url=r["stream_url"],
                 stream_title=r["stream_title"],
@@ -163,18 +170,19 @@ class SqliteAlbumRepository(IAlbumRepository):
             return
         with self._db.connection() as conn:
             conn.execute(
-                "INSERT INTO album_track_links(album_key, track_no, track_title, stream_url,"
-                " stream_title, stream_channel, stream_yt_id, duration_sec, origin, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)"
-                " ON CONFLICT(album_key, track_no) DO UPDATE SET"
+                "INSERT INTO album_track_links(album_key, disc_no, track_no, track_title,"
+                " stream_url, stream_title, stream_channel, stream_yt_id, duration_sec,"
+                " origin, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(album_key, disc_no, track_no) DO UPDATE SET"
                 "  track_title=excluded.track_title, stream_url=excluded.stream_url,"
                 "  stream_title=excluded.stream_title, stream_channel=excluded.stream_channel,"
                 "  stream_yt_id=excluded.stream_yt_id, duration_sec=excluded.duration_sec,"
                 "  origin=excluded.origin",
                 (
-                    link.album_key, int(link.track_no), link.track_title, link.stream_url,
-                    link.stream_title, link.stream_channel, link.stream_yt_id,
-                    link.duration_sec, link.origin, _now_iso(),
+                    link.album_key, int(link.disc_no), int(link.track_no), link.track_title,
+                    link.stream_url, link.stream_title, link.stream_channel,
+                    link.stream_yt_id, link.duration_sec, link.origin, _now_iso(),
                 ),
             )
 

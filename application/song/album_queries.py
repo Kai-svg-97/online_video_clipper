@@ -290,11 +290,19 @@ class GetAlbumDetailHandler:
             for i, song in enumerate(group.songs)
         ]
 
+    @staticmethod
+    def _next_slot(rows: list[AlbumTrackDTO]) -> tuple[int, int]:
+        """목록 뒤에 덧붙일 자리(마지막 디스크의 다음 번호)."""
+        if not rows:
+            return (1, 1)
+        last = max(rows, key=lambda t: t.slot)
+        return (last.disc_no, last.track_no + 1)
+
     def _tracks_from_external(
         self,
         group: AlbumGroup,
         infos: list[AlbumTrackInfo],
-        links: dict[int, AlbumTrackLink],
+        links: dict[tuple[int, int], AlbumTrackLink],
     ) -> list[AlbumTrackDTO]:
         remaining = list(group.songs)
         out: list[AlbumTrackDTO] = []
@@ -305,6 +313,7 @@ class GetAlbumDetailHandler:
                 out.append(
                     AlbumTrackDTO(
                         track_no=info.track_no or len(out) + 1,
+                        disc_no=info.disc_no or 1,
                         title=info.title or song.effective_title,
                         artist=info.artist or song.artist or group.artist,
                         duration_sec=info.duration_sec or song.duration_sec,
@@ -314,11 +323,14 @@ class GetAlbumDetailHandler:
                     )
                 )
                 continue
-            link = links.get(info.track_no)
+            # 자동 매핑은 (디스크, 트랙)으로 찾는다 — 번호만 쓰면 2장짜리 앨범에서
+            # disc1·disc2의 같은 번호가 같은 영상을 가리킨다.
+            link = links.get((info.disc_no or 1, info.track_no))
             if link and link.stream_url:
                 out.append(
                     AlbumTrackDTO(
                         track_no=info.track_no or len(out) + 1,
+                        disc_no=info.disc_no or 1,
                         title=info.title,
                         artist=info.artist or group.artist,
                         duration_sec=info.duration_sec or link.duration_sec,
@@ -333,6 +345,7 @@ class GetAlbumDetailHandler:
             out.append(
                 AlbumTrackDTO(
                     track_no=info.track_no or len(out) + 1,
+                    disc_no=info.disc_no or 1,
                     title=info.title,
                     artist=info.artist or group.artist,
                     duration_sec=info.duration_sec,
@@ -340,13 +353,13 @@ class GetAlbumDetailHandler:
                 )
             )
         # 외부 목록에 없는 내 곡(보너스 트랙·라이브 버전 등)은 뒤에 붙인다 —
-        # 가진 곡이 화면에서 사라지면 안 된다.
-        next_no = max((t.track_no for t in out), default=0)
+        # 가진 곡이 화면에서 사라지면 안 된다. 자리는 마지막 디스크의 다음 번호부터.
+        disc_no, next_no = self._next_slot(out)
         for song in remaining:
-            next_no += 1
             out.append(
                 AlbumTrackDTO(
                     track_no=next_no,
+                    disc_no=disc_no,
                     title=song.effective_title,
                     artist=song.artist or group.artist,
                     duration_sec=song.duration_sec,
@@ -355,6 +368,7 @@ class GetAlbumDetailHandler:
                     thumbnail_path=song.thumbnail_path,
                 )
             )
+            next_no += 1
         return out
 
 
@@ -405,6 +419,7 @@ class FillAlbumTracksHandler:
             link = AlbumTrackLink(
                 album_key=cmd.album_key,
                 track_no=track.track_no,
+                disc_no=track.disc_no,
                 track_title=track.title,
                 stream_url=entry.get("url", ""),
                 stream_title=entry.get("title", ""),
@@ -418,6 +433,7 @@ class FillAlbumTracksHandler:
                 on_track(
                     AlbumTrackDTO(
                         track_no=track.track_no,
+                        disc_no=track.disc_no,
                         title=track.title,
                         artist=track.artist,
                         duration_sec=track.duration_sec or link.duration_sec,

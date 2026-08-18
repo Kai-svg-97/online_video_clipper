@@ -166,11 +166,14 @@ class ITunesAlbumProvider:
                 duration_sec=(
                     int(r["trackTimeMillis"] // 1000) if r.get("trackTimeMillis") else None
                 ),
+                # 2장짜리 앨범은 디스크마다 1번부터 다시 매겨진다 — 이 값을 빼면
+                # 서로 다른 곡이 같은 번호로 겹쳐 한 곡으로 뭉개진다.
+                disc_no=int(r.get("discNumber") or 1),
             )
             for r in results
             if r.get("wrapperType") == "track" and r.get("trackName")
         ]
-        tracks.sort(key=lambda t: t.track_no or 10_000)
+        tracks.sort(key=lambda t: (t.disc_no or 1, t.track_no or 10_000))
         return AlbumMetadata(
             album_title=collection.get("collectionName", ""),
             artist=collection.get("artistName", ""),
