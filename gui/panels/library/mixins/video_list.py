@@ -499,8 +499,18 @@ class VideoListMixin:
         self._refresh_breadcrumb()
         # 음악 카테고리에서만 보기 유형에 '앨범'을 노출한다(카테고리마다 달라진다).
         self._update_view_options()
-        if self._album_mode:
-            self._load_albums()
+        if self._is_restoring:
+            # 히스토리 복원 중엔 스냅샷이 앨범 여부를 결정한다(_restore_album_mode) —
+            # 여기서 모드를 건드리면 되살리려던 앨범 화면을 도로 닫는다.
+            if self._album_mode:
+                self._load_albums()
+        elif self._album_mode:
+            # 트리에서 카테고리를 고른 것은 "이 카테고리를 보겠다"는 뜻이다 — 보던
+            # 앨범(그리드·상세)에서 빠져나와 그 카테고리의 영상 목록을 보여 준다.
+            # 앨범 화면에 머문 채 대상만 바뀌면, 특히 앨범 상세를 보던 중에는 갇힌
+            # 느낌이 든다. 앨범으로는 💿 버튼으로 다시 들어간다(직전 화면은 위에서
+            # 이미 히스토리에 쌓았으므로 뒤로가기로 앨범에 돌아올 수 있다).
+            self._exit_album_mode()
 
     def _on_view_button_clicked(self, view_id: int) -> None:
         """보기 유형 버튼 — 앨범만 단순 뷰 전환이 아니라 모드 진입/이탈이 필요하다."""
@@ -603,18 +613,29 @@ class VideoListMixin:
     def eventFilter(self, obj, event) -> bool:
         etype = event.type()
         if etype == QEvent.Type.Wheel:
-            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Ctrl+휠 뷰 전환은 **목록 위에서만** 받는다 — 이 필터는 앱 전역에도
+            # 걸려 있어(마우스 ‹/› 처리) 범위를 좁히지 않으면 트리·설정·플레이어의
+            # Ctrl+휠(자막 크기 조절)까지 뷰를 바꿔 버린다.
+            if (event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                    and self._is_list_surface(obj)):
                 delta = event.angleDelta().y()
                 self._cycle_view(1 if delta > 0 else -1)
                 return True
         elif etype == QEvent.Type.MouseButtonPress:
-            if event.button() == Qt.MouseButton.BackButton:
-                self._go_back()
-                return True
-            if event.button() == Qt.MouseButton.ForwardButton:
-                self._go_forward()
+            if self._handle_history_mouse(obj, event):
                 return True
         return super().eventFilter(obj, event)
+
+    def _is_list_surface(self, obj) -> bool:
+        """영상 목록(또는 앨범 화면) 자체인지 — Ctrl+휠 뷰 전환의 적용 범위."""
+        for widget in (self._icon_view, self._list_view, self._table,
+                       self._album_grid, self._album_detail):
+            if obj is widget:
+                return True
+            viewport = getattr(widget, "viewport", None)
+            if viewport is not None and obj is viewport():
+                return True
+        return False
 
     def _cycle_view(self, direction: int) -> None:
         """Ctrl+휠로 뷰 타입을 순환 전환한다. direction=1: 이전, -1: 다음."""

@@ -13,6 +13,7 @@ from uuid import UUID
 from PyQt6.QtCore import (
     Qt,
 )
+from PyQt6.QtWidgets import QApplication, QWidget
 
 
 
@@ -404,6 +405,63 @@ class NavigationMixin:
         self._update_delegate_tags()
         self._icon_view.viewport().update()
         self._list_view.viewport().update()
+
+    # ── 마우스 ‹/› (앱 전역) ───────────────────────────────────────────
+    # 예전에는 목록 뷰·앨범 위젯에만 필터를 걸어, 좌측 트리·피드 카드·태그 패널·빈
+    # 공간처럼 필터가 없는 곳에서는 마우스 뒤로가기가 조용히 죽었다(위젯을 하나 추가할
+    # 때마다 배선을 잊으면 또 죽는다). 화면이 보이는 동안 앱 전역 필터를 걸어 **이 창
+    # 안에서 일어난 클릭이면 어디서든** 히스토리를 움직인다. 필터는 화면이 가려질 때
+    # 떼어 내므로 다른 페이지(다운로드·설정)의 클릭까지 가로채지 않는다.
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        if not getattr(self, "_app_filter_on", False):
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+                self._app_filter_on = True
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        if getattr(self, "_app_filter_on", False):
+            app = QApplication.instance()
+            if app is not None:
+                try:
+                    app.removeEventFilter(self)
+                except RuntimeError:
+                    logger.debug("앱 이벤트 필터가 이미 정리됨 — 무시")
+            self._app_filter_on = False
+        super().hideEvent(event)
+
+    def _handle_history_mouse(self, obj, event) -> bool:
+        """마우스 ‹/›를 히스토리 이동으로 처리했으면 True.
+
+        영상 상세 위에서는 상세 전용 경로(`_on_detail_back_requested`)로 보낸다 —
+        재생목록으로 들어온 경우 재생 이력을 먼저 되짚어야 하기 때문이다. 상세 위젯도
+        자체 앱 필터로 같은 신호를 보내는데, 어느 필터가 먼저 도느냐에 따라 동작이
+        달라지지 않도록 여기서도 같은 곳으로 보낸다(먼저 처리한 쪽이 이벤트를 삼킨다).
+        """
+        button = event.button()
+        if button not in (Qt.MouseButton.BackButton, Qt.MouseButton.ForwardButton):
+            return False
+        if not self._in_history_scope(obj):
+            return False
+        if button == Qt.MouseButton.BackButton:
+            if self._nav_stack.currentIndex() == 1:
+                self._on_detail_back_requested()
+            else:
+                self._go_back()
+        else:
+            self._go_forward()
+        return True
+
+    def _in_history_scope(self, obj) -> bool:
+        """이 클릭을 히스토리 이동으로 받아도 되는 대상인지."""
+        app = QApplication.instance()
+        if app is not None and app.activeModalWidget() is not None:
+            return False        # 모달 대화상자가 떠 있으면 그쪽이 주인이다
+        if not isinstance(obj, QWidget):
+            return False        # QWindow 등 위젯이 아닌 수신자는 건너뛴다
+        return obj.window() is self.window()
 
     def _go_back(self) -> None:
         """히스토리에서 직전 화면을 꺼내 복원한다. 현재 화면은 앞으로가기 스택에 보존."""

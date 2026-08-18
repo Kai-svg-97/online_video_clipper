@@ -797,9 +797,9 @@ class LibraryPanel(
         # 구독 피드/채널 카드 단일 클릭 → 스트리밍 상세
         self._feed_grid.video_clicked.connect(self._open_stream_detail)
 
-        # Ctrl+휠 뷰 전환 & 마우스 BackButton 히스토리 이벤트 필터.
-        # 앨범 그리드·앨범 상세도 포함해야 그 화면에서 마우스 뒤로가기가 동작한다
-        # (영상 상세는 자체 app 레벨 필터로 처리한다).
+        # Ctrl+휠 뷰 전환 필터. 마우스 ‹/›는 화면이 보이는 동안 앱 전역 필터가 받으므로
+        # (NavigationMixin.showEvent) 위젯마다 걸 필요가 없지만, 이 목록·앨범 위젯에는
+        # Ctrl+휠 전환 때문에 그대로 둔다 — 같은 eventFilter가 두 가지를 처리한다.
         for w in (self._icon_view, self._list_view, self._table,
                   self._album_grid, self._album_detail):
             viewport = getattr(w, "viewport", None)
