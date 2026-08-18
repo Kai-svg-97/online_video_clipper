@@ -331,7 +331,17 @@ class _RelatedRow(QFrame):
 
 
 class _RelatedList(QScrollArea):
-    """우측 연관 영상 세로 목록."""
+    """우측 세로 목록 — 위: 연관 영상(재생목록), 아래: 추천 영상.
+
+    두 구역을 **같은 스크롤 안에** 세로로 쌓는다. 추천 영상은 라이브러리 목록 기반
+    후보라 연관 영상과 성격이 달라 헤더로 구분하고, **재생목록에는 넣지 않는다**
+    (자동 다음곡이 라이브러리 밖 영상으로 새어나가지 않게 하려는 의도적 분리 —
+    ``VideoDetailWidget.set_related``만 ``_playlist``를 채운다).
+
+    구역마다 전용 컨테이너(``_rel_box``/``_rec_box``)를 두는 이유는, 예전처럼 한
+    레이아웃에 헤더·행·스트레치를 늘어놓고 인덱스로 지우면 구역이 둘이 되는 순간
+    삽입/삭제 위치가 어긋나기 때문이다.
+    """
 
     item_selected = pyqtSignal(object)   # payload
 
@@ -344,12 +354,34 @@ class _RelatedList(QScrollArea):
         self._layout = QVBoxLayout(self._inner)
         self._layout.setContentsMargins(8, 8, 8, 8)
         self._layout.setSpacing(4)
-        self._header = QLabel("연관 영상")
+
         hf = QFont()
         hf.setPointSize(10)
         hf.setWeight(QFont.Weight.Bold)
+
+        self._header = QLabel("연관 영상")
         self._header.setFont(hf)
         self._layout.addWidget(self._header)
+
+        self._rel_box = QWidget()
+        self._rel_layout = QVBoxLayout(self._rel_box)
+        self._rel_layout.setContentsMargins(0, 0, 0, 0)
+        self._rel_layout.setSpacing(4)
+        self._layout.addWidget(self._rel_box)
+
+        self._rec_header = QLabel("추천 영상")
+        self._rec_header.setFont(hf)
+        self._rec_header.setContentsMargins(0, 10, 0, 0)
+        self._rec_header.hide()
+        self._layout.addWidget(self._rec_header)
+
+        self._rec_box = QWidget()
+        self._rec_layout = QVBoxLayout(self._rec_box)
+        self._rec_layout.setContentsMargins(0, 0, 0, 0)
+        self._rec_layout.setSpacing(4)
+        self._rec_box.hide()
+        self._layout.addWidget(self._rec_box)
+
         self._layout.addStretch()
         self.setWidget(self._inner)
 
@@ -357,20 +389,29 @@ class _RelatedList(QScrollArea):
         self._header.setText(text or "연관 영상")
 
     def set_items(self, items: list[RelatedItem], current_key: str | None = None) -> None:
-        # 헤더(0)·스트레치(끝)는 유지하고 사이 행들만 제거
-        while self._layout.count() > 2:
-            item = self._layout.takeAt(1)
-            if item.widget():
-                item.widget().deleteLater()
+        _clear_layout(self._rel_layout)
         if not items:
             empty = QLabel("표시할 영상이 없습니다.")
             empty.setStyleSheet(f"color:{_t().text_secondary};padding:8px;")
-            self._layout.insertWidget(1, empty)
+            self._rel_layout.addWidget(empty)
             return
-        for i, it in enumerate(items):
+        self._fill(self._rel_layout, items, current_key)
+
+    def set_recommendations(self, items: list[RelatedItem]) -> None:
+        """연관 영상 아래에 추천 영상을 나열한다(없으면 헤더째 감춘다)."""
+        _clear_layout(self._rec_layout)
+        self._rec_header.setVisible(bool(items))
+        self._rec_box.setVisible(bool(items))
+        if items:
+            self._fill(self._rec_layout, items, None)
+
+    def _fill(
+        self, layout, items: list[RelatedItem], current_key: str | None
+    ) -> None:
+        for it in items:
             row = _RelatedRow(it, is_current=(current_key is not None and it.key == current_key))
             row.clicked.connect(self.item_selected.emit)
-            self._layout.insertWidget(1 + i, row)
+            layout.addWidget(row)
 
 
 def _t():
@@ -2302,6 +2343,14 @@ class VideoDetailWidget(QWidget):
         self._playlist = [it.payload for it in items]
         self._related.set_header(header or "연관 영상")
         self._related.set_items(items, current_key=self._current_key or None)
+
+    def set_recommendations(self, items: list[RelatedItem]) -> None:
+        """연관 영상 목록 아래에 추천 영상을 나열한다.
+
+        추천은 재생목록(``_playlist``)에 넣지 않는다 — 자동 다음곡은 연관 영상
+        (라이브러리/피드 목록) 안에서만 이어져야 한다.
+        """
+        self._related.set_recommendations(items)
 
     def _on_playback_finished(self) -> None:
         """현재 곡 재생이 끝나면 재생목록의 다음 항목을 자동재생 요청한다(끝이면 정지)."""

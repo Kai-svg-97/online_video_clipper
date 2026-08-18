@@ -16,6 +16,7 @@ from uuid import UUID
 from PyQt6.QtCore import (
     QAbstractListModel,
     QByteArray,
+    QEasingCurve,
     QEvent,
     QMimeData,
     QModelIndex,
@@ -25,6 +26,7 @@ from PyQt6.QtCore import (
     QThread,
     QTimer,
     QUrl,
+    QVariantAnimation,
     Qt,
     pyqtSignal,
 )
@@ -125,6 +127,12 @@ _RECOMMEND_DEBOUNCE_MS = 900
 _RECOMMEND_SEED_LIMIT = 20
 # 추천 후보 개수 (가로 스트립이라 너무 많으면 스크롤만 길어진다)
 _RECOMMEND_COUNT = 18
+# 추천 스트립이 아래에서 올라오는 연출 시간(ms) — 첫 노출에만 재생한다.
+_RECOMMEND_REVEAL_MS = 280
+# QWIDGETSIZE_MAX — 애니메이션이 끝나면 maximumHeight를 원래대로 되돌린다.
+_QWIDGET_MAX_H = 16_777_215
+# 상세화면 우측 아래에 붙일 추천 영상 수 (세로 목록이라 스트립보다 적게)
+_DETAIL_RECOMMEND_COUNT = 12
 
 
 def _fmt_elapsed(iso: str | None) -> str:
@@ -4184,13 +4192,17 @@ class LibraryPanel(QWidget):
             int(getattr(_settings, "RECOMMEND_STRIP_HEIGHT", 250)),
             self._recommend_strip.HEADER_H + 40,
         )
-        self._recommend_strip.set_expanded(
-            bool(getattr(_settings, "RECOMMEND_STRIP_EXPANDED", True)), notify=False
-        )
-        # 실제 높이 배분은 위젯이 크기를 가진 뒤에 적용한다(첫 표시 전 height()==0).
-        QTimer.singleShot(0, lambda: self._sync_recommend_sizes(
-            self._recommend_strip.is_expanded, save=False
-        ))
+        expanded = bool(getattr(_settings, "RECOMMEND_STRIP_EXPANDED", True))
+        self._recommend_strip.set_expanded(expanded, notify=False)
+        # 추천 목록이 모두 준비되기 전에는 스트립을 감춘다 — 준비되면 아래에서
+        # 부드럽게 올라온다(_reveal_recommend_strip). 접혀 있으면 조회 자체를 하지
+        # 않으므로(네트워크 절약) 헤더 바만 바로 띄워 다시 펼칠 수단을 남긴다.
+        self._recommend_ready: bool = not expanded
+        self._recommend_anim: QVariantAnimation | None = None
+        self._recommend_strip.setVisible(not expanded)
+        if not expanded:
+            # 실제 높이 배분은 위젯이 크기를 가진 뒤에 적용한다(첫 표시 전 height()==0).
+            QTimer.singleShot(0, lambda: self._sync_recommend_sizes(False, save=False))
         self._nav_stack.addWidget(centre_content)
 
         self._detail_widget = VideoDetailWidget(
@@ -4305,6 +4317,9 @@ class LibraryPanel(QWidget):
             self._recommend_vm.error_occurred.connect(self._on_recommend_error)
         else:
             self._recommend_strip.set_status("추천 기능을 사용할 수 없습니다.")
+            # 조회가 아예 없으므로 노출 조건(결과 도착)이 영영 오지 않는다 —
+            # 안내 문구를 보여줘야 하니 헤더 높이만큼 바로 띄운다.
+            self._reveal_recommend_strip(False)
         self._breadcrumb_bar.segment_clicked.connect(self._on_breadcrumb_nav)
         self._breadcrumb_bar.tag_removed.connect(self._on_active_tag_removed)
         self._vm.metadata_refresh_progress.connect(self._on_refresh_progress)
@@ -4473,6 +4488,7 @@ class LibraryPanel(QWidget):
         if not titles and not channels and not tags:
             self._recommend_strip.set_items([])
             self._recommend_strip.set_status("목록이 비어 있어 추천할 기준이 없습니다.")
+            self._reveal_recommend_strip(False)
             return
         self._recommend_strip.set_status("")
         self._recommend_vm.load(
@@ -4522,10 +4538,96 @@ class LibraryPanel(QWidget):
     def _on_recommend_items(self, items: list) -> None:
         self._recommend_strip.set_items(items)
         self._recommend_strip.set_status("" if items else "추천할 영상을 찾지 못했습니다.")
+        self._reveal_recommend_strip(bool(items))
+        # 상세화면이 열려 있으면 우측 목록 아래 추천 구역도 함께 갱신한다.
+        if self._nav_stack.currentIndex() == 1:
+            self._detail_widget.set_recommendations(self._recommend_related_items())
 
     def _on_recommend_error(self, msg: str) -> None:
         logger.warning("추천 영상 조회 실패: %s", msg)
         self._recommend_strip.set_status("추천을 받지 못했습니다.")
+        self._reveal_recommend_strip(False)
+
+    # ── 스트립 등장 연출 ──────────────────────────────────────────────
+    # 조회 중인 빈 띠가 미리 자리를 차지하지 않도록, 목록이 다 준비된 뒤에야
+    # 아래에서 밀려 올라오듯 노출한다. 첫 노출에만 연출하고 이후 갱신에서는
+    # 다시 튀어오르지 않는다(카테고리를 옮길 때마다 화면이 출렁이지 않게).
+
+    def _reveal_recommend_strip(self, has_items: bool) -> None:
+        """조회가 끝난 뒤 스트립을 노출한다.
+
+        결과가 없거나 실패했을 때도 헤더 높이만큼은 띄운다 — 완전히 숨기면
+        ⟳(다시 받기)와 접기 토글에 닿을 방법이 사라진다.
+        """
+        if self._recommend_ready:
+            return
+        self._recommend_ready = True
+        if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS):
+            return   # 이 화면들은 원래 스트립을 감춘다(목록 뷰로 돌아올 때 표시됨)
+        strip = self._recommend_strip
+        target = self._recommend_height if (has_items and strip.is_expanded) else strip.HEADER_H
+        self._animate_recommend_in(target)
+
+    def _animate_recommend_in(self, target: int) -> None:
+        """스트립 높이를 0→target으로 늘려 아래에서 올라오는 것처럼 보이게 한다.
+
+        스플리터는 자식의 ``maximumHeight``를 존중하므로(그리고 그 값이
+        ``qSmartMinSize``의 상한이 되어 최소 높이도 함께 눌린다) ``setSizes``만으로는
+        0에서 시작할 수 없다. 그래서 maximumHeight를 애니메이션하고, 끝나면 원래
+        값(_QWIDGET_MAX_H)으로 되돌려 사용자가 핸들로 다시 조절할 수 있게 한다.
+        """
+        strip = self._recommend_strip
+        splitter = self._centre_splitter
+        target = max(int(target), strip.HEADER_H)
+        total = sum(splitter.sizes()) or splitter.height()
+        if total <= target + 80:
+            # 공간이 부족하면 연출 없이 그냥 편다(찌그러진 애니메이션 방지).
+            strip.setVisible(True)
+            self._sync_recommend_sizes(strip.is_expanded, save=False)
+            return
+        self._stop_recommend_anim()
+        strip.setMaximumHeight(0)
+        strip.setVisible(True)
+
+        def _step(value) -> None:
+            h = int(value)
+            strip.setMaximumHeight(h)
+            splitter.setSizes([max(total - h, 0), h])
+
+        def _done() -> None:
+            strip.setMaximumHeight(_QWIDGET_MAX_H)
+            splitter.setSizes([max(total - target, 0), target])
+            self._recommend_anim = None
+
+        anim = QVariantAnimation(self)
+        anim.setStartValue(0)
+        anim.setEndValue(target)
+        anim.setDuration(_RECOMMEND_REVEAL_MS)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.valueChanged.connect(_step)
+        anim.finished.connect(_done)
+        self._recommend_anim = anim
+        anim.start()
+
+    def _stop_recommend_anim(self) -> None:
+        anim = self._recommend_anim
+        self._recommend_anim = None
+        if anim is not None:
+            anim.stop()
+            self._recommend_strip.setMaximumHeight(_QWIDGET_MAX_H)
+
+    def _recommend_related_items(self) -> list:
+        """현재 추천 결과를 상세화면 우측 목록용 RelatedItem으로 변환한다.
+
+        스트립과 같은 결과를 재사용한다 — 상세를 열 때마다 따로 조회하면 네트워크
+        비용이 배가 되고, 추천 뷰모델이 하나뿐이라 스트립의 목록까지 뒤엎게 된다.
+        """
+        if self._recommend_vm is None:
+            return []
+        return [
+            self._related_from_feed(f)
+            for f in self._recommend_vm.items[:_DETAIL_RECOMMEND_COUNT]
+        ]
 
     def _on_recommend_to_category(self, url: str) -> None:
         """추천 카드 우클릭 '카테고리에 추가' — 드래그하지 않고도 담을 수 있게."""
@@ -4925,11 +5027,15 @@ class LibraryPanel(QWidget):
         그 화면들은 라이브러리 목록이 아니라 추천 씨앗이 어긋나고, 이미 카드
         그리드라 아래에 또 카드 띠를 두면 화면이 산만해진다.
         """
-        show = view_id not in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS)
+        # 추천 목록이 아직 준비되지 않았으면 목록 뷰에서도 감춘 채로 둔다
+        # (준비되면 _reveal_recommend_strip이 올려준다).
+        show = view_id not in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS) and self._recommend_ready
         # isVisible()이 아니라 isHidden()으로 비교한다 — isVisible()은 조상이 아직
         # 표시되지 않았을 때도 False라, 첫 전환에서 setVisible(False)가 건너뛰어진다.
         if show == (not self._recommend_strip.isHidden()):
             return
+        if not show:
+            self._stop_recommend_anim()
         self._recommend_strip.setVisible(show)
         if show:
             self._sync_recommend_sizes(self._recommend_strip.is_expanded, save=False)
@@ -5197,6 +5303,7 @@ class LibraryPanel(QWidget):
         self._detail_widget.load(detail, tag_ids, resume_ms=0, related=related,
                                  category_path=cat_path or None, poster=poster,
                                  autoplay=autoplay, related_header=header)
+        self._detail_widget.set_recommendations(self._recommend_related_items())
         self._current_detail_payload = video_id
         self._nav_stack.setCurrentIndex(1)
         self._vm.request_thumbnail_refresh(video_id, detail.url)
@@ -5220,6 +5327,7 @@ class LibraryPanel(QWidget):
             related = self._feed_related_items(feed_dto)
         self._detail_widget.load_stream(feed_dto, related=related, related_header=header,
                                         poster=None)
+        self._detail_widget.set_recommendations(self._recommend_related_items())
         self._current_detail_payload = feed_dto
         self._nav_stack.setCurrentIndex(1)
 
@@ -5339,26 +5447,27 @@ class LibraryPanel(QWidget):
         # 게시일 내림차순(최신 먼저)으로 정렬 — 피드 원본 순서가 채널별로 뭉쳐
         # 있어 무작위로 보이던 문제 교정. 게시일 없는 항목은 안정 정렬로 뒤에 둔다.
         pool = sorted(pool, key=lambda f: _pub_sort_key(f.published_at), reverse=True)
-        items = []
-        for f in pool[:30]:
-            meta = []
-            if f.view_count:
-                meta.append(f"조회수 {f.view_count:,}회")
-            rel = _relative_time(f.published_at)
-            if rel:
-                meta.append(rel)
-            items.append(RelatedItem(
-                key=f.yt_video_id or f.url,
-                title=f.title,
-                channel=f.channel_name,
-                duration_sec=f.duration_sec,
-                meta_text="  ·  ".join(meta),
-                payload=f,
-                thumb_path=f.thumbnail_path or "",
-                thumb_url=f.thumbnail_url or "",
-                yt_video_id=f.yt_video_id or "",
-            ))
-        return items
+        return [self._related_from_feed(f) for f in pool[:30]]
+
+    def _related_from_feed(self, f) -> RelatedItem:
+        """FeedVideoDTO(구독 피드·추천) → 우측 목록 1행."""
+        meta = []
+        if f.view_count:
+            meta.append(f"조회수 {f.view_count:,}회")
+        rel = _relative_time(f.published_at)
+        if rel:
+            meta.append(rel)
+        return RelatedItem(
+            key=f.yt_video_id or f.url,
+            title=f.title,
+            channel=f.channel_name,
+            duration_sec=f.duration_sec,
+            meta_text="  ·  ".join(meta),
+            payload=f,
+            thumb_path=f.thumbnail_path or "",
+            thumb_url=f.thumbnail_url or "",
+            yt_video_id=f.yt_video_id or "",
+        )
 
     def _on_detail_back_requested(self) -> None:
         """상세 화면 뒤로가기(마우스 뒤로가기·‹ 버튼) — 재생목록 모드면 재생 이력을

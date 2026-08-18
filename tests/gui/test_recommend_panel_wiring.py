@@ -11,9 +11,11 @@ from uuid import uuid4
 
 import pytest
 
-from application.library.dtos import VideoDTO
+from application.library.dtos import FeedVideoDTO, VideoDTO
 from gui.panels.library_panel import (
+    _QWIDGET_MAX_H,
     _RECOMMEND_DEBOUNCE_MS,
+    _RECOMMEND_REVEAL_MS,
     _VIEW_FEED,
     _VIEW_ICON,
     LibraryPanel,
@@ -38,6 +40,22 @@ def _dto(title="파이썬 강의", channel="코딩채널", tags=("개발",)):
         watched=False,
         category_id=None,
         tag_names=tags,
+    )
+
+
+def _feed_dto(title="추천 영상", vid="rec00000001"):
+    return FeedVideoDTO(
+        url=f"https://www.youtube.com/watch?v={vid}",
+        title=title,
+        channel_name="채널",
+        channel_id="UC0",
+        thumbnail_url="",          # 네트워크 로더가 뜨지 않게 빈 값
+        thumbnail_path="",
+        published_at="",
+        view_count=None,
+        duration_sec=100,
+        in_library=False,
+        yt_video_id=vid,
     )
 
 
@@ -129,12 +147,82 @@ class TestAutoRefresh:
 
 
 class TestStripVisibility:
+    """추천 목록이 다 준비되기 전에는 빈 띠가 자리를 차지하지 않아야 한다."""
+
+    def test_hidden_until_results_arrive(self, panel):
+        assert not panel._recommend_strip.isVisibleTo(panel)
+
+        panel._on_recommend_items([_feed_dto()])
+
+        assert panel._recommend_strip.isVisibleTo(panel)
+
+    def test_partial_results_do_not_reveal(self, panel):
+        # 부분 결과는 채워만 두고 노출하지 않는다(조회 중 상태가 보이지 않게).
+        panel._on_recommend_partial([_feed_dto()])
+
+        assert not panel._recommend_strip.isVisibleTo(panel)
+
+    def test_empty_result_reveals_header_so_retry_stays_reachable(self, panel):
+        # 결과가 없어도 완전히 숨기면 ⟳(다시 받기)에 닿을 수 없다.
+        panel._on_recommend_items([])
+
+        assert panel._recommend_strip.isVisibleTo(panel)
+
     def test_hidden_on_card_grid_view_and_restored_after(self, panel):
+        panel._on_recommend_items([_feed_dto()])
+
         panel._view_stack.setCurrentIndex(_VIEW_FEED)
         assert not panel._recommend_strip.isVisibleTo(panel)
 
         panel._view_stack.setCurrentIndex(_VIEW_ICON)
         assert panel._recommend_strip.isVisibleTo(panel)
+
+
+class TestRevealAnimation:
+    """숨어 있던 스트립이 0에서 목표 높이까지 자라며 올라온다."""
+
+    def test_준비되면_높이가_0에서_목표까지_자란다(self, panel, qtbot):
+        panel.resize(1280, 800)
+        panel.show()
+        qtbot.waitExposed(panel)
+
+        panel._on_recommend_items([_feed_dto()])
+
+        # 시작 프레임 — 아직 목표 높이에 한참 못 미친다(= 아래에서 올라오는 중)
+        assert panel._recommend_anim is not None
+        assert panel._recommend_strip.maximumHeight() < panel._recommend_height
+
+        qtbot.wait(_RECOMMEND_REVEAL_MS + 300)
+
+        assert panel._recommend_anim is None
+        assert panel._centre_splitter.sizes()[1] == panel._recommend_height
+        # 끝난 뒤엔 사용자가 스플리터 핸들로 다시 늘릴 수 있어야 한다.
+        assert panel._recommend_strip.maximumHeight() == _QWIDGET_MAX_H
+
+
+class TestDetailRecommendations:
+    """상세화면 우측 '연관 영상' 아래에 같은 추천 결과를 재사용한다."""
+
+    def test_추천_결과를_우측_목록_항목으로_변환한다(self, panel, recommend_vm):
+        dto = _feed_dto("추천1")
+        recommend_vm.items = [dto]
+
+        items = panel._recommend_related_items()
+
+        assert [i.title for i in items] == ["추천1"]
+        assert items[0].payload is dto      # 클릭 시 스트리밍 상세로 재진입
+
+    def test_상세가_열려_있으면_새_추천을_밀어넣는다(self, panel, recommend_vm, monkeypatch):
+        recommend_vm.items = [_feed_dto("추천1")]
+        pushed: list[list] = []
+        monkeypatch.setattr(
+            panel._detail_widget, "set_recommendations", lambda items: pushed.append(items)
+        )
+        panel._nav_stack.setCurrentIndex(1)      # 상세 화면
+
+        panel._on_recommend_items([_feed_dto("추천1")])
+
+        assert [i.title for i in pushed[0]] == ["추천1"]
 
 
 class TestDropWiring:
