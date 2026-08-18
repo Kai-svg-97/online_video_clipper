@@ -73,6 +73,10 @@ def panel(qtbot, library_vm, download_vm, clip_vm, recommend_vm, monkeypatch):
     # 설정 파일에 접힘 상태를 쓰지 않는다(실사용 config.yaml 보호).
     import config.settings as settings
     monkeypatch.setattr(settings, "save_setting", lambda *a, **k: None)
+    # 실사용 설정을 **읽지도 않는다** — 사용자가 스트립을 접어 두면(저장된 값이 False)
+    # 지연 노출 테스트가 그 기계에서만 깨진다. 시작 상태를 기본값으로 고정한다.
+    monkeypatch.setattr(settings, "RECOMMEND_STRIP_EXPANDED", True, raising=False)
+    monkeypatch.setattr(settings, "RECOMMEND_STRIP_HEIGHT", 250, raising=False)
     # 패널 생성 시 예약되는 초기 목록 로드를 막는다 — 그 워커가 끝나면서
     # videos_changed가 다시 나면서 테스트가 심어 둔 목록을 빈 목록으로 덮어쓴다.
     monkeypatch.setattr(library_vm, "load", lambda *a, **k: None)
