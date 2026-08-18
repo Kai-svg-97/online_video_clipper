@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gui.smooth_scroll import apply_smooth_scroll_tree
 from gui.themes.manager import ThemeManager
 from gui.workers import track_thread
 from gui.themes.tokens import PRESETS, ThemeTokens
@@ -144,6 +145,7 @@ class SettingsPanel(QWidget):
         self._flash_timer = None
         self._flash_count = 0
         self._build_ui()
+        apply_smooth_scroll_tree(self)
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
         self._on_theme_changed(ThemeManager.instance().current())
 

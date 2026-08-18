@@ -48,6 +48,7 @@ import config.settings as _settings
 from gui.panels.video_detail_panel import (
     VideoDetailWidget,
 )
+from gui.smooth_scroll import apply_smooth_scroll_tree
 from gui.themes.manager import ThemeManager
 from gui.view_models.library_vm import LibraryViewModel
 
@@ -63,6 +64,7 @@ from gui.panels.library.mixins.sidebar import SidebarTreeMixin
 from gui.panels.library.mixins.feed import FeedViewMixin
 from gui.panels.library.mixins.video_list import VideoListMixin
 from gui.panels.library.mixins.context_menu import VideoContextMenuMixin
+from gui.panels.library.mixins.shortcuts import ShortcutsMixin
 
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
@@ -197,6 +199,7 @@ class LibraryPanel(
     FeedViewMixin,
     VideoListMixin,
     VideoContextMenuMixin,
+    ShortcutsMixin,
     QWidget,
 ):
     video_selected     = pyqtSignal(object)
@@ -267,6 +270,10 @@ class LibraryPanel(
         self._recommend_timer.setInterval(_RECOMMEND_DEBOUNCE_MS)
         self._recommend_timer.timeout.connect(self._refresh_recommendations)
         self._connect_signals()
+        # 목록·트리·카드 그리드의 휠 스크롤을 픽셀 단위 + 보간으로 바꾼다
+        # (기본값은 항목 단위라 카드 한 장씩 뚝뚝 점프한다).
+        apply_smooth_scroll_tree(self)
+        self._setup_shortcuts()
         QTimer.singleShot(0, vm.load)
         if playlist_vm is not None:
             QTimer.singleShot(0, playlist_vm.load)
@@ -403,7 +410,7 @@ class LibraryPanel(
         toolbar.addSpacing(12)
 
         self._search_box = QLineEdit()
-        self._search_box.setPlaceholderText("검색... (Enter: 즉시 검색)")
+        self._search_box.setPlaceholderText("검색  (Ctrl+F, Enter: 즉시 검색, Esc: 지우기)")
         self._search_box.setClearButtonEnabled(True)
         toolbar.addWidget(self._search_box, stretch=1)
         # 입력 디바운스 — 키를 누를 때마다 조회하면(한글 IME는 조합 중에도 방출)

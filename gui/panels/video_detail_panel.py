@@ -45,6 +45,7 @@ from PyQt6.QtWidgets import (
 
 
 from application.library.dtos import VideoDetailDTO
+from gui.smooth_scroll import apply_smooth_scroll_tree
 from gui.widgets.video_player import InlinePlayer
 
 
@@ -218,6 +219,7 @@ class VideoDetailWidget(
             download_vm.queue_changed.connect(self._on_queue_changed)
             download_vm.history_changed.connect(self._on_history_changed)
         self._setup_skeleton()
+        apply_smooth_scroll_tree(self)
 
     # ── Skeleton (built once) ──────────────────────────────────────
 

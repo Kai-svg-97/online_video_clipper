@@ -11,6 +11,7 @@ import logging
 from uuid import UUID
 
 from PyQt6.QtCore import (
+    QTimer,
     QEvent,
     QModelIndex,
     QPoint,
@@ -151,6 +152,9 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistTree,
 )
 
+# 목록 조회가 이보다 오래 걸릴 때만 '불러오는 중'을 띄운다(빠른 조회에서 깜빡임 방지).
+_LOADING_HINT_DELAY_MS = 250
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,9 +174,58 @@ class VideoListMixin:
         self._search_timer.stop()
         self._vm.set_search_text(self._search_box.text())
 
+    # ── 목록 상태 안내판(조회 중·결과 없음) ─────────────────────────
+    # 지금까지 목록은 아무 말도 하지 않았다 — 조회 중에는 이전 목록이 그대로 있다가
+    # 툭 바뀌고, 0건이면 빈 화면이라 '없는 건지 못 불러온 건지' 알 수 없었다.
+
+    def _ensure_overlay(self):
+        """목록 위 안내판을 필요할 때 만든다(레이아웃에 자리를 차지하지 않는다)."""
+        overlay = getattr(self, "_list_overlay", None)
+        if overlay is None:
+            from gui.panels.library.overlay import ListOverlay  # noqa: PLC0415
+
+            overlay = ListOverlay(self._view_stack)
+            self._list_overlay = overlay
+            # 짧은 조회에서 안내판이 깜빡이지 않도록 지연 후에만 띄운다.
+            self._loading_timer = QTimer(self)
+            self._loading_timer.setSingleShot(True)
+            self._loading_timer.setInterval(_LOADING_HINT_DELAY_MS)
+            self._loading_timer.timeout.connect(
+                lambda: self._list_overlay.show_message("불러오는 중…")
+            )
+        return overlay
+
+    def _on_list_loading(self, loading: bool) -> None:
+        """목록 조회 시작/종료 — 조회가 길어질 때만 '불러오는 중'을 띄운다."""
+        self._ensure_overlay()
+        if loading:
+            self._loading_timer.start()
+        else:
+            self._loading_timer.stop()
+            self._refresh_list_overlay()
+
+    def _refresh_list_overlay(self) -> None:
+        """결과가 0건이면 왜 비었는지와 무엇을 하면 되는지 알려 준다."""
+        overlay = self._ensure_overlay()
+        if self._vm.videos:
+            overlay.hide()
+            return
+        if self._search_box.text().strip():
+            overlay.show_message(
+                "검색 결과가 없습니다.\n다른 낱말로 찾거나 Esc로 검색어를 지워 보세요."
+            )
+        elif self._active_tag_ids:
+            overlay.show_message("이 태그에 해당하는 영상이 없습니다.")
+        else:
+            overlay.show_message(
+                "이 목록에는 아직 영상이 없습니다.\n"
+                "브라우저에서 주소를 끌어다 놓거나, 좌측 트리에 URL을 떨어뜨려 담아 보세요."
+            )
+
     def _on_videos_changed(self) -> None:
         videos = self._vm.videos
         self._model.set_videos(videos)
+        self._refresh_list_overlay()
         # 표(상세) 뷰는 행마다 위젯을 만들고 다운로드 여부까지 조회하므로
         # 실제로 보고 있을 때만 채운다. 숨겨져 있으면 표시 시점으로 미룬다.
         if self._view_stack.currentIndex() == _VIEW_DETAIL:

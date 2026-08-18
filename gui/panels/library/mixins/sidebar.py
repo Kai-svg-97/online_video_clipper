@@ -801,6 +801,8 @@ class SidebarTreeMixin:
             self._vm.set_playlist_filter(src_pl_id)
 
     def _on_local_loading_key_changed(self, key: str, loading: bool) -> None:
+        # 트리 스피너와 함께 목록 안내판도 갱신한다(조회가 길면 '불러오는 중').
+        self._on_list_loading(loading)
         """로컬 트리 노드(카테고리/재생목록) 스피너 즉시 전환."""
         item = self._playlist_panel.find_local_item_by_key(key)
         self._playlist_panel.set_local_node_loading(key, item, loading)
