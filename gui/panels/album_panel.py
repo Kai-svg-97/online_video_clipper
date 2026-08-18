@@ -35,6 +35,7 @@ from application.song.album_dtos import (
     AlbumTrackDTO,
 )
 from config.settings import THUMBNAIL_DIR
+from gui.anim import fade_in
 from gui.themes.manager import ThemeManager
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,7 @@ class _AlbumCard(QFrame):
 
     def _on_art_loaded(self, _id: str, img: QImage) -> None:
         self._jacket.set_image(img)
+        fade_in(self._jacket)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
@@ -599,6 +601,7 @@ class AlbumDetailPanel(QWidget):
 
     def _on_art_loaded(self, _id: str, img: QImage) -> None:
         self._jacket.set_image(img)
+        fade_in(self._jacket)
 
     def _on_play(self) -> None:
         if self._detail is not None:

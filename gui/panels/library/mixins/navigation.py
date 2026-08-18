@@ -133,6 +133,8 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistTree,
 )
 
+from gui.anim import fade_switch
+
 logger = logging.getLogger(__name__)
 
 
@@ -257,7 +259,8 @@ class NavigationMixin:
     def _on_back_from_detail(self) -> None:
         self._playlist_ctx = None   # 상세를 완전히 벗어남 — 재생목록 모드 해제
         self._detail_widget.stop_player()
-        self._nav_stack.setCurrentIndex(0)
+        # 목록으로 복귀는 살짝 띄우며 바꾼다(영상 화면으로 갈 때는 즉시 전환).
+        fade_switch(self._nav_stack, 0)
 
     def _capture_screen(self) -> dict:
         """현재 화면을 완전 스냅샷으로 캡처한다(트리 노드 종류 + 뷰 + 태그)."""

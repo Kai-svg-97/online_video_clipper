@@ -35,6 +35,8 @@ from gui.themes.manager import ThemeManager
 
 from gui.panels.detail.widgets import _clear_layout, _t
 
+from gui.anim import fade_in
+
 logger = logging.getLogger(__name__)
 
 
@@ -193,6 +195,7 @@ class _RelatedRow(QFrame):
         )
 
     def _on_remote_thumb(self, _id: str, im: QImage) -> None:
+        fade_in(self._thumb)
         from gui.panels.feed_panel import _feed_thumb_cache  # noqa: PLC0415
         try:
             self._thumb.set_image(im)

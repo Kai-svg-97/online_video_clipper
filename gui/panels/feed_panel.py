@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 
 from application.library.dtos import CategoryDTO, ChannelInfoDTO, FeedVideoDTO, PlaylistDTO
 from config.settings import THUMBNAIL_DIR
+from gui.anim import fade_in
 from gui.themes.manager import ThemeManager
 from gui.workers import track_thread
 from gui.view_models.feed_vm import FeedViewModel
@@ -496,6 +497,8 @@ class _FeedCard(QFrame):
 
     def _on_thumb_loaded(self, _vid_id: str, img: QImage, cache_key: str = "") -> None:
         cache_key = cache_key or getattr(self, "_thumb_cache_key", "")
+        # 원격에서 막 도착한 그림이라 살짝 띄워 준다(캐시 적중은 이 경로를 타지 않는다).
+        fade_in(self._thumb_lbl)
         from PyQt6.QtGui import QPixmap  # noqa: PLC0415
         px = QPixmap.fromImage(img).scaled(
             self._TW, self._TH,
@@ -964,6 +967,7 @@ class _ChannelCard(QFrame):
         )
 
     def _on_avatar_loaded(self, _id: str, img: QImage) -> None:
+        fade_in(self._avatar)
         from PyQt6.QtGui import QPixmap  # noqa: PLC0415
         px = QPixmap.fromImage(img).scaled(
             self._AVATAR, self._AVATAR,

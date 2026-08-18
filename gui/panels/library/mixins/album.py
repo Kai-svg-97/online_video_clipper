@@ -132,6 +132,8 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistTree,
 )
 
+from gui.anim import fade_switch
+
 logger = logging.getLogger(__name__)
 
 
@@ -221,7 +223,7 @@ class AlbumViewMixin:
         self._current_album_key = album_key
         self._album_detail.set_detail(None, crumb="앨범 정보를 가져오는 중…")
         self._album_detail.set_busy(True)
-        self._nav_stack.setCurrentIndex(_NAV_ALBUM_DETAIL)
+        fade_switch(self._nav_stack, _NAV_ALBUM_DETAIL)
         self._album_vm.load_detail(
             album_key, category_id=self._current_cat_id,
             category_ids=self._album_category_ids(),
@@ -259,7 +261,8 @@ class AlbumViewMixin:
 
     def _close_album_detail(self) -> None:
         """앨범 상세를 닫고 목록 컨테이너로 돌아온다(히스토리는 건드리지 않는다)."""
-        self._nav_stack.setCurrentIndex(0)
+        # 목록으로 복귀는 살짝 띄우며 바꾼다(영상 화면으로 갈 때는 즉시 전환).
+        fade_switch(self._nav_stack, 0)
         self._current_album_key = None
         if self._album_vm is not None:
             self._album_vm.cancel_fill()
