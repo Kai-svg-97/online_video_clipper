@@ -169,6 +169,7 @@ def main() -> int:
         CreateCategoryHandler,
         DeleteCategoryHandler,
         DeleteTagHandler,
+        DeleteVideoCommand,
         DeleteVideoHandler,
         EnrichVideoHandler,
         ImportYouTubePlaylistToCategoryHandler,
@@ -329,6 +330,26 @@ def main() -> int:
     add_video           = AddVideoHandler(video_repo, event_bus, ytdlp, song_fetch=fetch_song)
     # 이어보기 — 재생 위치 기록(가벼운 UPDATE 전용 경로를 쓴다).
     update_position     = UpdatePlaybackPositionHandler(video_repo)
+
+    # 라이브러리 정리 — 찾아 주기만 하고 삭제는 사용자가 고른 것만 수행한다.
+    from application.library.maintenance import (  # noqa: PLC0415
+        FindBrokenDownloadsHandler,
+        FindDuplicatesQuery,
+        FindDuplicateVideosHandler,
+    )
+
+    _find_dups_h   = FindDuplicateVideosHandler(video_repo)
+    _find_broken_h = FindBrokenDownloadsHandler(download_repo)
+
+    def _delete_videos_bulk(video_ids) -> None:
+        for vid in video_ids:
+            delete_video.handle(DeleteVideoCommand(video_id=vid))
+
+    cleanup_fns = (
+        lambda: _find_dups_h.handle(FindDuplicatesQuery()),
+        _find_broken_h.handle,
+        _delete_videos_bulk,
+    )
     # 단건 등록 직후 요약(비노래)·가사(노래) 자동 보강 — GUI 워커가 백그라운드에서 호출
     enrich_video        = EnrichVideoHandler(
         video_repo, song_repo,
@@ -592,6 +613,7 @@ def main() -> int:
         song_vm=song_vm,
         sync_vm=sync_vm,
         transfer_vm=transfer_vm,
+        cleanup_fns=cleanup_fns,
     )
 
     # 자동 업데이트 — composition root에서 조립

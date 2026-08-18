@@ -129,6 +129,7 @@ class SettingsPanel(QWidget):
         song_vm=None,    # SongViewModel | None
         sync_vm=None,    # SyncViewModel | None
         transfer_vm=None,        # LibraryTransferViewModel | None
+        cleanup_fns=None,        # (중복찾기, 사라진파일찾기, 삭제) 콜백 3종 | None
         get_categories_fn: Callable | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -138,6 +139,8 @@ class SettingsPanel(QWidget):
         self._song_vm = song_vm
         self._sync_vm = sync_vm
         self._transfer_vm = transfer_vm
+        # 라이브러리 정리 — 조회·삭제를 콜백으로 받는다(설정 화면은 저장소를 모른다).
+        self._cleanup_fns = cleanup_fns
         self._get_categories_fn = get_categories_fn
         self._theme_cards: dict[str, _ThemeCard] = {}
         self._yt_auth_worker = None
@@ -186,6 +189,7 @@ class SettingsPanel(QWidget):
         self._build_lyrics_sources_section(layout)
         self._build_cloud_sync_section(layout)
         self._build_transfer_section(layout)
+        self._build_cleanup_section(layout)
         self._build_youtube_api_section(layout)
         self._build_cookie_section(layout)
         self._build_hidden_tags_section(layout)
@@ -512,6 +516,38 @@ class SettingsPanel(QWidget):
                 self._transfer_vm, self._get_categories_fn
             )
             layout.addWidget(self._import_export_section)
+
+    def _build_cleanup_section(self, layout) -> None:
+        """라이브러리 정리 — 중복 영상·사라진 파일 점검(정리 콜백 주입 시에만 표시).
+
+        찾아 주기만 하고 지우는 것은 사용자가 고른다(되돌릴 수 없는 작업이라 자동으로
+        지우지 않는다).
+        """
+        if self._cleanup_fns is None:
+            return
+        label = QLabel("라이브러리 정리")
+        label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 8px;"
+        )
+        layout.addWidget(label)
+        hint = QLabel(
+            "같은 영상이 두 번 들어왔거나, 다운로드한 파일이 사라진 기록을 찾습니다."
+        )
+        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
+        layout.addWidget(hint)
+        button = QPushButton("라이브러리 정리 열기…")
+        button.clicked.connect(self._open_cleanup_dialog)
+        layout.addWidget(button)
+        layout.addSpacing(24)
+
+    def _open_cleanup_dialog(self) -> None:
+        from gui.dialogs.library_cleanup_dialog import (  # noqa: PLC0415
+            LibraryCleanupDialog,
+        )
+
+        find_duplicates, find_broken, delete_videos = self._cleanup_fns
+        LibraryCleanupDialog(find_duplicates, find_broken, delete_videos, self).exec()
 
     def _build_youtube_api_section(self, layout) -> None:
         """YouTube API 연동(번들 OAuth 로그인)."""

@@ -445,6 +445,7 @@ class MainWindow(QMainWindow):
         song_vm=None,    # SongViewModel | None
         sync_vm=None,    # SyncViewModel | None
         transfer_vm=None,   # LibraryTransferViewModel | None
+        cleanup_fns=None,   # 라이브러리 정리 콜백 3종 | None
     ) -> None:
         super().__init__()
         QPixmapCache.setCacheLimit(PIXMAP_CACHE_LIMIT_KB)
@@ -460,6 +461,8 @@ class MainWindow(QMainWindow):
         self._song_vm = song_vm
         self._sync_vm = sync_vm
         self._transfer_vm = transfer_vm
+        # 라이브러리 정리 콜백(중복찾기·사라진파일찾기·삭제) — composition root가 준다.
+        self._cleanup_fns = cleanup_fns
         self._yt_oauth = yt_oauth
         self._auth_service = auth_service or YouTubeAuthService()
         self._update_controller = None
@@ -540,6 +543,7 @@ class MainWindow(QMainWindow):
             song_vm=self._song_vm,
             sync_vm=self._sync_vm,
             transfer_vm=self._transfer_vm,
+            cleanup_fns=self._cleanup_fns,
             get_categories_fn=lambda: self._library_vm.categories,
         )
         self._stack.addWidget(self._settings_panel)                  # 4
