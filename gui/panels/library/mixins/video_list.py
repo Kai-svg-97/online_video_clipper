@@ -655,6 +655,16 @@ class VideoListMixin:
             self._refresh_dlg.close()
             self._refresh_dlg = None
 
+    def _on_item_activated(self, index: QModelIndex, view: QListView) -> None:
+        """키보드 Enter(또는 더블클릭)로 열기 — 수정키 상태와 무관하게 연다.
+
+        클릭 경로(`_on_item_clicked`)는 Shift 클릭을 다중 선택으로 남겨 둬야 하지만,
+        Enter는 '지금 고른 것을 연다'는 뜻뿐이다.
+        """
+        dto = self._model.data(index, VideoListModel.DtoRole)
+        if dto is not None:
+            self._open_detail(dto.id)
+
     def _on_item_clicked(self, index: QModelIndex, view: QListView) -> None:
         """단일 클릭 → 상세화면 진입.
         Shift 클릭은 다중 선택·드래그용으로 유지."""

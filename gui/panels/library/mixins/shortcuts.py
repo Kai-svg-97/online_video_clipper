@@ -35,6 +35,7 @@ class ShortcutsMixin:
         """패널 조립이 끝난 뒤 한 번 호출한다(위젯이 다 있어야 한다)."""
         binds = [
             ("Ctrl+F", self._shortcut_focus_search),
+            ("Ctrl+K", self._shortcut_quick_open),
             ("Esc", self._shortcut_escape),
             ("Alt+Left", self._shortcut_back),
             ("Alt+Right", self._shortcut_forward),
@@ -56,6 +57,45 @@ class ShortcutsMixin:
         """검색창으로 이동하고 기존 검색어를 통째로 선택한다(바로 덮어쓰기)."""
         self._search_box.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self._search_box.selectAll()
+
+    def _shortcut_quick_open(self) -> None:
+        """Ctrl+K — 카테고리·재생목록·영상을 한 입력창에서 찾아 바로 연다.
+
+        좌측 트리가 깊어질수록 클릭이 늘고, 영상은 어느 카테고리에 넣었는지 기억해야
+        찾을 수 있었다. 여기서는 이름 일부만 치면 어디든 간다.
+        """
+        from gui.dialogs.quick_open_dialog import (  # noqa: PLC0415
+            QuickOpenDialog,
+            build_hits,
+        )
+
+        def search(text: str):
+            playlists = self._playlist_vm.playlists if self._playlist_vm else []
+            return build_hits(
+                text,
+                categories=self._vm.categories,
+                playlists=playlists,
+                videos=self._vm.quick_search_videos(text),
+            )
+
+        dialog = QuickOpenDialog(search, self)
+        dialog.chosen.connect(self._open_quick_hit)
+        dialog.exec()
+
+    def _open_quick_hit(self, hit) -> None:
+        """빠른 이동 결과를 연다 — 장소는 이동, 영상은 상세."""
+        from gui.dialogs.quick_open_dialog import (  # noqa: PLC0415
+            KIND_CATEGORY,
+            KIND_PLAYLIST,
+            KIND_VIDEO,
+        )
+
+        if hit.kind == KIND_CATEGORY:
+            self._on_cat_filter_changed(hit.key)
+        elif hit.kind == KIND_PLAYLIST:
+            self._on_playlist_selected_from_tree(hit.key)
+        elif hit.kind == KIND_VIDEO:
+            self._open_detail(hit.key)
 
     def _shortcut_escape(self) -> None:
         """Esc — 덮여 있는 화면부터 차례로 걷어낸다.

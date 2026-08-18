@@ -58,6 +58,8 @@ class GetVideosQuery:
     sort_asc: bool = False
     min_duration_sec: int | None = None
     max_duration_sec: int | None = None
+    # 이어보기만 — 보던 지점이 남아 있는 영상으로 좁힌다(빠른 이동의 기본 목록).
+    in_progress_only: bool = False
 
 
 @dataclass
@@ -151,6 +153,7 @@ class GetVideosHandler:
                     sort_asc=query.sort_asc,
                     min_duration_sec=query.min_duration_sec,
                     max_duration_sec=query.max_duration_sec,
+                    in_progress_only=getattr(query, "in_progress_only", False),
                 )
             )
         ]

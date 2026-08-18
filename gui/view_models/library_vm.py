@@ -550,6 +550,34 @@ class LibraryViewModel(QObject):
             logger.exception("재생목록 첫 영상 조회 실패")
             return None
 
+    def quick_search_videos(self, text: str, limit: int = 12) -> list:
+        """빠른 이동(Ctrl+K)용 영상 검색 — 현재 필터를 무시하고 라이브러리 전체에서 찾는다.
+
+        메인 스레드에서 바로 부른다: 결과 수가 작고(기본 12건) 조회가 짧아, 워커를
+        띄우는 비용이 더 크다. 검색어가 없으면 최근에 보던 것부터 보여 준다.
+        """
+        if self._search_videos is None or self._get_videos is None:
+            return []
+        try:
+            from application.library.queries import (  # noqa: PLC0415
+                GetVideosQuery,
+                SearchVideosQuery,
+            )
+
+            if text.strip():
+                return self._search_videos.handle(
+                    SearchVideosQuery(text=text.strip(), limit=limit, offset=0)
+                )
+            return self._get_videos.handle(
+                GetVideosQuery(
+                    limit=limit, offset=0,
+                    sort_by="last_played_at", sort_asc=False, in_progress_only=True,
+                )
+            )
+        except Exception:
+            logger.exception("빠른 이동 검색 실패: %r", text)
+            return []
+
     def save_playback_position(self, video_id: UUID, position_ms: int) -> None:
         """이어보기 위치를 기록한다(가벼운 UPDATE라 메인 스레드에서 바로 쓴다).
 

@@ -700,6 +700,14 @@ class LibraryPanel(
         )
         self._icon_view.doubleClicked.connect(self._on_double_click)
         self._list_view.doubleClicked.connect(self._on_double_click)
+        # 키보드만으로도 열 수 있게 — 방향키로 옮기고 Enter로 연다.
+        # (activated는 Enter·더블클릭 모두에서 나므로 클릭 경로와 같은 핸들러를 쓴다.)
+        self._icon_view.activated.connect(
+            lambda idx: self._on_item_activated(idx, self._icon_view)
+        )
+        self._list_view.activated.connect(
+            lambda idx: self._on_item_activated(idx, self._list_view)
+        )
         self._icon_view.empty_clicked.connect(self._on_empty_clicked)
         self._list_view.empty_clicked.connect(self._on_empty_clicked)
         self._icon_view.url_dropped.connect(self._on_list_url_dropped)
