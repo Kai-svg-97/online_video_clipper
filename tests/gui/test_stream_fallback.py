@@ -271,10 +271,13 @@ class TestNoBrowserAutoOpen:
     def test_재생_실패가_브라우저를_열지_않는다(self, qapp_instance, monkeypatch):
         """사용자는 앱에서 보려고 누른 것이다 — 창이 튀면 안 된다."""
         from gui.panels import video_detail_panel as vdp
+        from gui.panels.detail.mixins import info as info_mixin
 
         opened: list = []
+        # 브라우저를 여는 곳은 상단 🌐 버튼(info mixin)뿐이다 — **쓰는 쪽 모듈**을
+        # 패치해야 실제로 열렸는지 알 수 있다(재생 실패 경로는 여기를 부르면 안 된다).
         monkeypatch.setattr(
-            vdp.QDesktopServices, "openUrl", lambda url: opened.append(url)
+            info_mixin.QDesktopServices, "openUrl", lambda url: opened.append(url)
         )
         widget = vdp.VideoDetailWidget()
         widget._current_url = "https://www.youtube.com/watch?v=abc"
