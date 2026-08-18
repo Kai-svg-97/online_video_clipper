@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from uuid import UUID
 
@@ -114,6 +114,15 @@ def _row_to_video(row) -> Video:
         thumbnail_path=row["thumbnail_path"] or "",
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
+        # 이어보기 — 구버전 DB(마이그레이션 전)에도 뜨도록 키 존재를 확인한다.
+        last_position_ms=(
+            row["last_position_ms"] if "last_position_ms" in row.keys() else 0
+        ) or 0,
+        last_played_at=(
+            datetime.fromisoformat(row["last_played_at"])
+            if "last_played_at" in row.keys() and row["last_played_at"]
+            else None
+        ),
     )
 
 
@@ -125,6 +134,25 @@ class SqliteVideoRepository(IVideoRepository):
     # Video CRUD
     # ------------------------------------------------------------------
 
+    def save_playback_position(
+        self, video_id: UUID, position_ms: int, played_at: datetime | None = None
+    ) -> None:
+        """재생 위치만 갱신한다 — 재생 중 몇 초마다 불리므로 가볍게 쓴다.
+
+        아그리게이트 전체를 저장하면 태그 재작성까지 따라와 낭비다. **동기화 캡처
+        대상도 아니다**(기기마다 보던 지점이 다르다) — 그래서 `save`를 타지 않는
+        전용 경로를 둔다.
+        """
+        with self._db.connection() as conn:
+            conn.execute(
+                "UPDATE videos SET last_position_ms=?, last_played_at=? WHERE id=?",
+                (
+                    max(0, int(position_ms)),
+                    _fmt_dt(played_at or datetime.now(timezone.utc)),
+                    str(video_id),
+                ),
+            )
+
     def save(self, aggregate: VideoAggregate) -> None:
         v = aggregate.video
         with self._db.connection() as conn:
@@ -133,8 +161,9 @@ class SqliteVideoRepository(IVideoRepository):
                 INSERT INTO videos
                     (id, url, title, channel_name, channel_url, channel_id,
                      duration_sec, published_at, view_count, favorite, watched,
-                     notes, gemini_summary, thumbnail_path, category_id, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     notes, gemini_summary, thumbnail_path, category_id, created_at, updated_at,
+                     last_position_ms, last_played_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title,
                     channel_name=excluded.channel_name,
@@ -149,7 +178,9 @@ class SqliteVideoRepository(IVideoRepository):
                     gemini_summary=excluded.gemini_summary,
                     thumbnail_path=excluded.thumbnail_path,
                     category_id=excluded.category_id,
-                    updated_at=excluded.updated_at
+                    updated_at=excluded.updated_at,
+                    last_position_ms=excluded.last_position_ms,
+                    last_played_at=excluded.last_played_at
                 """,
                 (
                     str(v.id), str(v.url), v.title,
@@ -163,6 +194,8 @@ class SqliteVideoRepository(IVideoRepository):
                     v.notes, v.gemini_summary, v.thumbnail_path,
                     str(aggregate.category_id) if aggregate.category_id else None,
                     _fmt_dt(v.created_at), _fmt_dt(v.updated_at),
+                    int(v.last_position_ms or 0),
+                    _fmt_dt(v.last_played_at) if v.last_played_at else None,
                 ),
             )
             # description stored separately for lazy loading
@@ -642,6 +675,10 @@ class SqliteVideoRepository(IVideoRepository):
         params: list = []
         joins: list[str] = []
         where: list[str] = []
+
+        if query.in_progress_only:
+            # 이어보기 — 보던 지점이 남아 있는 영상만.
+            where.append("videos.last_position_ms > 0")
 
         if query.text:
             # 부분 일치 — 제목·메모·요약·설명·태그·노래 정보를 UNION 으로 덮는다.

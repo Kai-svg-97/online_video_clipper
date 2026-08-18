@@ -171,6 +171,9 @@ class DetailNavigationMixin:
             _load_thumb(detail.thumbnail_path, _TW_ICON, _TH_ICON)
             if detail.thumbnail_path else None
         )
+        # 이어보기 — 호출부가 위치를 지정하지 않으면 저장된 지점에서 이어 본다.
+        # (재생은 자동으로 시작하지 않는다 — 목록에서 눌렀을 뿐인데 소리가 나면 놀란다.)
+        resume_ms = resume_ms or getattr(detail, "last_position_ms", 0) or 0
         self._detail_widget.load(detail, tag_ids, resume_ms=resume_ms, related=related,
                                  category_path=cat_path or None, poster=poster,
                                  autoplay=autoplay, related_header=header)

@@ -268,6 +268,7 @@ class LibraryViewModel(QObject):
         get_video_id_by_url: GetVideoIdByUrlHandler | None = None,
         refresh_video_metadata: RefreshVideoMetadataHandler | None = None,
         find_song_videos=None,   # FindSongVideoIdsHandler | None — 같은 가수/앨범 필터
+        update_position=None,    # UpdatePlaybackPositionHandler | None — 이어보기
         enrich_video=None,       # EnrichVideoHandler | None — 등록 후 요약/가사 자동 보강
         get_downloaded_formats=None,  # GetDownloadedFormatsHandler | None — 목록 배지 일괄 판정
         parent: QObject | None = None,
@@ -298,6 +299,8 @@ class LibraryViewModel(QObject):
         self._refresh_thumbnail_handler = refresh_thumbnail
         self._refresh_video_meta = refresh_video_metadata
         self._find_song_videos = find_song_videos
+        # 이어보기 위치 저장(선택 주입) — 없으면 위치를 기록하지 않는다.
+        self._update_position = update_position
         self._enrich_video = enrich_video
         # 보강은 동시 1건만 — Gemini가 브라우저를 띄우므로 병렬 실행을 막는다.
         self._enrich_workers: list[_EnrichWorker] = []
@@ -546,6 +549,25 @@ class LibraryViewModel(QObject):
         except Exception:
             logger.exception("재생목록 첫 영상 조회 실패")
             return None
+
+    def save_playback_position(self, video_id: UUID, position_ms: int) -> None:
+        """이어보기 위치를 기록한다(가벼운 UPDATE라 메인 스레드에서 바로 쓴다).
+
+        재생 중 몇 초 간격으로 불리므로 워커를 새로 띄우지 않는다 — 스레드 생성 비용이
+        쿼리보다 크다.
+        """
+        if self._update_position is None:
+            return
+        try:
+            from application.library.commands import (  # noqa: PLC0415
+                UpdatePlaybackPositionCommand,
+            )
+
+            self._update_position.handle(
+                UpdatePlaybackPositionCommand(video_id=video_id, position_ms=position_ms)
+            )
+        except Exception:
+            logger.exception("이어보기 위치 저장 실패: %s", video_id)
 
     def get_video_id_by_url(self, url: str) -> "UUID | None":
         """URL로 라이브러리 영상 ID를 조회한다(없으면 None)."""

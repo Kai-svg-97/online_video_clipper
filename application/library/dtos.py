@@ -36,8 +36,18 @@ class VideoDTO:
     view_count: int | None = None
     tag_names: tuple[str, ...] = ()
     created_at: str | None = None
+    # 이어보기 — 마지막 재생 위치(ms). 0이면 처음부터. 카드에 진행률 바로 보여 준다.
+    last_position_ms: int = 0
+    last_played_at: str | None = None
     # 검색 시 어느 속성이 일치했는지(도메인 MATCH_FIELD_KEYS 순서). 검색어가 없으면 빈 튜플.
     match_fields: tuple[str, ...] = ()
+
+    @property
+    def progress_ratio(self) -> float:
+        """이어보기 진행률(0.0~1.0). 위치나 길이를 모르면 0."""
+        if not self.last_position_ms or not self.duration_sec:
+            return 0.0
+        return min(1.0, self.last_position_ms / (self.duration_sec * 1000))
 
 
 @dataclass(frozen=True)
@@ -165,5 +175,7 @@ class VideoDetailDTO:
     downloads: list[DownloadInfoDTO] = field(default_factory=list)
     failed_downloads: list[FailedDownloadInfoDTO] = field(default_factory=list)
     gemini_summary: str = ""
+    # 이어보기 — 마지막 재생 위치(ms). 상세를 열 때 그 지점으로 seek 한다.
+    last_position_ms: int = 0
     # 요약 실패 사유(SUMMARY_REASON_*) — 상세 화면 안내 문구 분기용. 없으면 빈 문자열.
     summary_status: str = ""

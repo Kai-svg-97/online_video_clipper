@@ -169,7 +169,28 @@ class PlayerControlMixin:
         logger.warning("영상 재생 실패: %s / url=%s", err, self._current_url)
         self._player.show_playback_error(err)
 
+    def _on_playback_state_for_position(self, playing: bool) -> None:
+        """재생 중일 때만 위치를 보고한다(멈춰 있으면 쓸 이유가 없다)."""
+        if playing and self._detail is not None and not self._streaming:
+            self._position_timer.start()
+        else:
+            self._position_timer.stop()
+
+    def _report_position(self) -> None:
+        """지금 재생 위치를 상위에 알린다(저장은 LibraryPanel→ViewModel이 한다).
+
+        스트리밍(라이브러리 밖) 영상은 저장할 곳이 없어 건너뛴다.
+        """
+        if self._detail is None or self._streaming:
+            return
+        position = self.player_position_ms()
+        if position > 0:
+            self.playback_position_changed.emit(self._detail.id, position)
+
     def stop_player(self) -> None:
+        # 떠나기 직전 위치를 한 번 더 남긴다 — 주기 저장만 믿으면 마지막 몇 초가 날아간다.
+        self._report_position()
+        self._position_timer.stop()
         self._player.stop()
 
     def is_playing(self) -> bool:

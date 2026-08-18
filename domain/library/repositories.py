@@ -8,7 +8,9 @@ from domain.library.aggregates import VideoAggregate
 from domain.library.entities import Category, Playlist, PlaylistFolder, Tag
 
 
-_ALLOWED_SORT_COLUMNS = frozenset({"created_at", "title", "channel_name", "duration_sec"})
+_ALLOWED_SORT_COLUMNS = frozenset(
+    {"created_at", "title", "channel_name", "duration_sec", "last_played_at"}
+)
 
 # 검색 일치 속성 식별자 — 표시 순서를 고정한다. 한글 라벨 매핑은 GUI가 갖는다.
 MATCH_FIELD_KEYS: tuple[str, ...] = (
@@ -35,7 +37,9 @@ class SearchQuery:
     watched: bool | None = None        # None = both
     limit: int = 50
     offset: int = 0
-    sort_by: str = "created_at"        # created_at | title | channel_name | duration_sec
+    sort_by: str = "created_at"        # created_at | title | channel_name | duration_sec | last_played_at
+    # 이어보기만 보기 — 재생 위치가 남아 있는 영상으로 좁힌다.
+    in_progress_only: bool = False
     sort_asc: bool = False
     min_duration_sec: int | None = None
     max_duration_sec: int | None = None

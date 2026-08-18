@@ -163,6 +163,7 @@ def main() -> int:
     from domain.download.aggregates import DownloadQueueAggregate
 
     from application.library.commands import (
+    UpdatePlaybackPositionHandler,
         AddVideoHandler,
         AssignCategoryHandler,
         CreateCategoryHandler,
@@ -326,6 +327,8 @@ def main() -> int:
         media_source=ytdlp,
     )
     add_video           = AddVideoHandler(video_repo, event_bus, ytdlp, song_fetch=fetch_song)
+    # 이어보기 — 재생 위치 기록(가벼운 UPDATE 전용 경로를 쓴다).
+    update_position     = UpdatePlaybackPositionHandler(video_repo)
     # 단건 등록 직후 요약(비노래)·가사(노래) 자동 보강 — GUI 워커가 백그라운드에서 호출
     enrich_video        = EnrichVideoHandler(
         video_repo, song_repo,
@@ -450,6 +453,7 @@ def main() -> int:
         get_tags=get_tags,
         add_video=add_video,
         update_video=update_video,
+        update_position=update_position,
         delete_video=delete_video,
         mark_watched=mark_watched,
         create_category=create_category,

@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS videos (
     view_count      INTEGER,
     favorite        INTEGER NOT NULL DEFAULT 0,
     watched         INTEGER NOT NULL DEFAULT 0,
+    -- 이어보기: 마지막 재생 위치(ms)와 시각. 기기마다 다르므로 동기화 대상이 아니다.
+    last_position_ms INTEGER NOT NULL DEFAULT 0,
+    last_played_at  TEXT,
     notes           TEXT    NOT NULL DEFAULT '',
     gemini_summary  TEXT    NOT NULL DEFAULT '',
     thumbnail_path  TEXT    NOT NULL DEFAULT '',

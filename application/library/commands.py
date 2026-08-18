@@ -376,6 +376,42 @@ class EnrichVideoHandler:
             logger.exception("요약 상태 기록 실패(무시): %s", video_id)
 
 
+@dataclass
+class UpdatePlaybackPositionCommand:
+    """재생 위치 기록 — 재생 중 몇 초마다, 그리고 화면을 떠날 때 호출된다."""
+
+    video_id: UUID
+    position_ms: int
+
+
+class UpdatePlaybackPositionHandler:
+    """이어보기 위치를 저장한다.
+
+    저장은 **가벼운 전용 경로**(`save_playback_position`)를 쓴다 — 아그리게이트 전체를
+    저장하면 태그 재작성까지 따라오는데, 이 커맨드는 재생 중 반복 호출되기 때문이다.
+    '거의 다 봤는지' 판정(끝 근처면 위치를 지우고 시청 표시)은 도메인 규칙이라
+    아그리게이트에 맡기고, 그 결과만 기록한다.
+    """
+
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, cmd: UpdatePlaybackPositionCommand) -> None:
+        aggregate = self._repo.get_by_id(cmd.video_id)
+        if aggregate is None:
+            logger.debug("이어보기 위치 저장 대상 없음: %s", cmd.video_id)
+            return
+        aggregate.update_playback_position(cmd.position_ms)
+        video = aggregate.video
+        if video.watched and video.last_position_ms == 0:
+            # 끝까지 본 경우엔 시청 표시까지 남겨야 하므로 전체 저장을 탄다.
+            self._repo.save(aggregate)
+            return
+        self._repo.save_playback_position(
+            cmd.video_id, video.last_position_ms, video.last_played_at
+        )
+
+
 class UpdateVideoHandler:
     def __init__(self, repo: IVideoRepository, event_bus: IEventBus) -> None:
         self._repo = repo

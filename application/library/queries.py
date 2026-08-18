@@ -111,6 +111,11 @@ def _to_dto(
         view_count=v.view_count,
         tag_names=tag_names,
         created_at=created,
+        last_position_ms=getattr(v, "last_position_ms", 0) or 0,
+        last_played_at=(
+            v.last_played_at.strftime("%Y-%m-%d %H:%M")
+            if getattr(v, "last_played_at", None) else None
+        ),
     )
 
 
@@ -256,6 +261,7 @@ class GetVideoDetailHandler:
             failed_downloads=failed_downloads,
             gemini_summary=v.gemini_summary,
             summary_status=self._video_repo.get_summary_status(agg.id),
+            last_position_ms=getattr(v, "last_position_ms", 0) or 0,
         )
 
 

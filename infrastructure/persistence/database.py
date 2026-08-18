@@ -29,6 +29,7 @@ MIGRATION_IDS: tuple[str, ...] = (
     "migrate_lyrics_offset",
     "migrate_album_tables",
     "migrate_album_disc_no",
+    "migrate_playback_position",
 )
 
 
@@ -213,6 +214,25 @@ class Database:
                 " video_id TEXT PRIMARY KEY,"
                 " found INTEGER NOT NULL DEFAULT 0,"
                 " tried_at TEXT NOT NULL)"
+            )
+
+    def _migrate_playback_position(self) -> None:
+        """videos에 이어보기 컬럼(last_position_ms·last_played_at)을 추가한다 (idempotent).
+
+        기기마다 보던 지점이 다르므로 **동기화 캡처 대상이 아니다**(view_count와 같은 취급).
+        """
+        with self.connection() as conn:
+            for ddl in (
+                "ALTER TABLE videos ADD COLUMN last_position_ms INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE videos ADD COLUMN last_played_at TEXT",
+            ):
+                try:
+                    conn.execute(ddl)
+                except Exception:
+                    logger.debug("이어보기 컬럼이 이미 존재 — 건너뜀")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_videos_last_played"
+                " ON videos(last_played_at DESC)"
             )
 
     def _migrate_album_disc_no(self) -> None:

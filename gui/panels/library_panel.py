@@ -431,6 +431,8 @@ class LibraryPanel(
         self._sort_combo.addItem("채널순 ↓", ("channel_name", False))
         self._sort_combo.addItem("길이 길순", ("duration_sec", False))
         self._sort_combo.addItem("길이 짧순", ("duration_sec", True))
+        # 이어보기 흐름 — 최근에 보던 것부터 다시 집어 들 수 있게.
+        self._sort_combo.addItem("최근 재생순", ("last_played_at", False))
         self._sort_combo.setFixedWidth(90)
         toolbar.addWidget(self._sort_combo)
 
@@ -734,6 +736,9 @@ class LibraryPanel(
             self._on_detail_refresh_requested
         )
         self._detail_widget.category_path_clicked.connect(self._on_cat_filter_changed)
+        self._detail_widget.playback_position_changed.connect(
+            self._vm.save_playback_position
+        )
         self._detail_widget.category_assign_requested.connect(
             self._on_detail_category_requested
         )

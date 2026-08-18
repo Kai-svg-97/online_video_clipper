@@ -30,7 +30,41 @@ from gui.panels.library.formatting import _fmt_views, _relative_time, _t, chip_c
 from gui.panels.library.models import VideoListModel
 from gui.panels.library.thumbnails import _load_thumb_async
 
+# 이어보기 진행률 색 — 의미 색이라 테마와 무관하게 고정한다(어떤 썸네일 위에서도
+# '진행'으로 읽혀야 한다).
+_PROGRESS_FG = "#e0322e"
+
 logger = logging.getLogger(__name__)
+
+
+def _progress_of(index) -> float:
+    """모델 항목의 이어보기 진행률(0.0~1.0). DTO가 없거나 위치가 없으면 0."""
+    from gui.panels.library.models import VideoListModel  # noqa: PLC0415
+
+    dto = index.data(VideoListModel.DtoRole)
+    return getattr(dto, "progress_ratio", 0.0) if dto is not None else 0.0
+
+
+def _paint_progress_bar(
+    painter: QPainter, ratio: float, tx: int, ty: int, tw: int, th: int
+) -> None:
+    """썸네일 아래쪽에 이어보기 진행률 띠를 그린다(0이면 그리지 않는다).
+
+    YouTube와 같은 자리(썸네일 바닥)에 같은 의미로 둔다 — 목록만 훑어도 '어디까지
+    봤는지'가 보여야 이어보기가 기능한다. 색은 의미 색(진행)이라 테마와 무관하게
+    빨강 계열을 쓰고, 바닥 띠는 반투명 검정으로 깔아 밝은 썸네일에서도 보이게 한다.
+    """
+    if ratio <= 0:
+        return
+    bar_h = 3
+    by = ty + th - bar_h
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QBrush(QColor(0, 0, 0, 120)))
+    painter.drawRect(tx, by, tw, bar_h)
+    painter.setBrush(QBrush(QColor(_PROGRESS_FG)))
+    painter.drawRect(tx, by, int(tw * min(1.0, max(0.0, ratio))), bar_h)
+    painter.restore()
 
 
 def _paint_duration_badge(painter: QPainter, dur: str, tx: int, ty: int, tw: int, th: int) -> None:
@@ -131,6 +165,8 @@ class _IconDelegate(QStyledItemDelegate):
         painter.restore()
 
         _paint_duration_badge(painter, duration, tx, ty, self._TW, self._TH)
+        # 이어보기 진행률 — 목록만 훑어도 어디까지 봤는지 보이게 한다.
+        _paint_progress_bar(painter, _progress_of(index), tx, ty, self._TW, self._TH)
 
         if fav:
             painter.save()
@@ -272,6 +308,8 @@ class _ListDelegate(QStyledItemDelegate):
         painter.restore()
 
         _paint_duration_badge(painter, duration, tx, ty, self._TW, self._TH)
+        # 이어보기 진행률 — 목록만 훑어도 어디까지 봤는지 보이게 한다.
+        _paint_progress_bar(painter, _progress_of(index), tx, ty, self._TW, self._TH)
 
         # ── Text area ──────────────────────────────────────────────
         text_x = tx + self._TW + 12

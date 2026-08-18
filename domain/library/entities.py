@@ -29,6 +29,10 @@ class Video:
     # description is loaded on demand (GetVideoByIdQuery), not stored here
     description: str = field(default="", repr=False)
     gemini_summary: str = field(default="", repr=False)
+    # 이어보기 — 마지막으로 보던 위치(ms)와 시각. 0이면 처음부터 본다.
+    # 기기마다 보던 지점이 다를 수 있어 **동기화 대상이 아니다**(view_count와 같은 취급).
+    last_position_ms: int = 0
+    last_played_at: datetime | None = None
 
     @classmethod
     def create(

@@ -117,6 +117,9 @@ from gui.panels.detail.text_format import (  # noqa: F401
     summary_placeholder,
 )
 
+# 이어보기 위치를 알리는 주기(ms) — 자주 쓰면 낭비, 드물면 마지막 지점을 잃는다.
+_POSITION_SAVE_MS = 5_000
+
 logger = logging.getLogger(__name__)
 
 
@@ -171,6 +174,9 @@ class VideoDetailWidget(
     # 카테고리 지정 요청 — payload: 로컬이면 video_id(UUID), 스트리밍이면 FeedVideoDTO.
     # 스트리밍이면 라이브러리 등록까지 함께 이뤄져야 요약·가사 잠금이 풀린다.
     category_assign_requested   = pyqtSignal(object)
+    # 이어보기 위치 보고 — (video_id, position_ms). 재생 중 주기적으로, 그리고
+    # 화면을 떠날 때 한 번 더 나간다(마지막 몇 초를 잃지 않게).
+    playback_position_changed   = pyqtSignal(object, int)
 
     # 하단 탭 인덱스
     _TAB_INFO = 0       # 설명(태그~메모)
@@ -218,6 +224,10 @@ class VideoDetailWidget(
         if download_vm is not None:
             download_vm.queue_changed.connect(self._on_queue_changed)
             download_vm.history_changed.connect(self._on_history_changed)
+        # 이어보기 — 재생 중 위치를 주기적으로 보고한다(매 틱 저장은 낭비다).
+        self._position_timer = QTimer(self)
+        self._position_timer.setInterval(_POSITION_SAVE_MS)
+        self._position_timer.timeout.connect(self._report_position)
         self._setup_skeleton()
         apply_smooth_scroll_tree(self)
 
@@ -263,6 +273,7 @@ class VideoDetailWidget(
         self._player.playback_failed.connect(self._on_play_failed)
         self._player.download_requested.connect(self.download_requested.emit)
         self._player.playback_finished.connect(self._on_playback_finished)
+        self._player.playing_changed.connect(self._on_playback_state_for_position)
         self._player.current_line_changed.connect(self._on_current_line_changed)
         self._player.subtitle_offset_changed.connect(self._on_subtitle_offset_changed)
         left_layout.addWidget(self._player)
@@ -528,7 +539,9 @@ class VideoDetailWidget(
         self._player.load(
             detail.url, detail.downloads, thumbnail_pixmap=poster, resume_ms=resume_ms
         )
-        if resume_ms > 0 or autoplay:
+        # 이어보기 위치는 seek만 하고 재생은 시작하지 않는다 — 목록에서 카드를
+        # 눌렀을 뿐인데 갑자기 소리가 나면 놀란다(재생목록 자동 전환은 autoplay로 온다).
+        if autoplay:
             QTimer.singleShot(150, self._player.play)
 
         self._build_info(

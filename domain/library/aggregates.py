@@ -133,6 +133,34 @@ class VideoAggregate:
             self._video.updated_at = _now()
             self._raise(VideoUpdated(video_id=self._video.id, changed_fields=tuple(changed)))
 
+    # 이어보기 위치를 '거의 다 본' 것으로 취급할 비율. 이 뒤는 다음에 열 때
+    # 처음부터 보는 게 자연스럽다(끝나기 직전으로 되돌아가면 오히려 불편하다).
+    _NEAR_END_RATIO = 0.97
+    # 이보다 앞이면 저장하지 않는다 — 잠깐 눌렀다 만 것까지 '보던 영상'이 되면
+    # 이어보기 목록이 금세 쓰레기통이 된다.
+    _MIN_RESUME_MS = 15_000
+
+    def update_playback_position(self, position_ms: int, now: datetime | None = None) -> None:
+        """재생 위치를 기록한다(끝까지 봤으면 위치를 지우고 시청 표시).
+
+        길이를 아는 영상은 끝 근처에서 위치를 0으로 되돌리고 `watched`를 세운다.
+        길이를 모르면(라이브·메타데이터 부족) 위치만 남긴다.
+        """
+        position_ms = max(0, int(position_ms))
+        duration = self._video.duration
+        near_end = False
+        if duration is not None and duration.seconds > 0:
+            near_end = position_ms >= duration.seconds * 1000 * self._NEAR_END_RATIO
+        if near_end:
+            self._video.last_position_ms = 0
+            self._video.watched = True
+        elif position_ms >= self._MIN_RESUME_MS:
+            self._video.last_position_ms = position_ms
+        else:
+            self._video.last_position_ms = 0
+        self._video.last_played_at = now or _now()
+        self._video.updated_at = self._video.last_played_at
+
     def assign_category(self, category_id: UUID | None) -> None:
         if self._category_id != category_id:
             self._category_id = category_id

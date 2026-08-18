@@ -150,6 +150,7 @@ class InlinePlayer(QWidget):
     playback_failed    = pyqtSignal(str)
     download_requested = pyqtSignal(str, str, object)  # (url, title, DownloadSettings)
     playback_finished  = pyqtSignal()   # 미디어 끝까지 재생됨(EndOfMedia) — 재생목록 자동 다음곡용
+    playing_changed    = pyqtSignal(bool)  # 재생/일시정지 전환 — 이어보기 위치 보고 주기 제어
     subtitle_offset_changed = pyqtSignal(int)   # 사용자가 싱크를 바꿈 → 저장 요청
     current_line_changed    = pyqtSignal(int)   # 원본 가사 줄 인덱스(없으면 -1)
 
@@ -1061,6 +1062,7 @@ class InlinePlayer(QWidget):
 
     def _on_playback_state(self, state: QMediaPlayer.PlaybackState) -> None:
         playing = state == QMediaPlayer.PlaybackState.PlayingState
+        self.playing_changed.emit(playing)
         self._bar.set_playing(playing)
         if self._fs_win:
             self._fs_win.bar.set_playing(playing)
