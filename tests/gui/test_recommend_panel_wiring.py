@@ -168,6 +168,23 @@ class TestStripVisibility:
 
         assert panel._recommend_strip.isVisibleTo(panel)
 
+    def test_새_조회가_시작되면_다시_감춘다(self, panel, qtbot, library_vm, recommend_vm):
+        # 카테고리를 바꾸면 씨앗이 통째로 달라져, 걸려 있던 카드는 새 목록과 무관하다.
+        panel._on_recommend_items([_feed_dto()])
+        assert panel._recommend_strip.isVisibleTo(panel)
+
+        library_vm._videos = [_dto()]
+        panel._refresh_recommendations()
+
+        recommend_vm.load.assert_called_once()
+        assert panel._recommend_ready is False
+        qtbot.wait(_RECOMMEND_REVEAL_MS + 300)
+        assert not panel._recommend_strip.isVisibleTo(panel)
+
+        # 새 결과가 도착하면 다시 올라온다.
+        panel._on_recommend_items([_feed_dto("추천2")])
+        assert panel._recommend_strip.isVisibleTo(panel)
+
     def test_hidden_on_card_grid_view_and_restored_after(self, panel):
         panel._on_recommend_items([_feed_dto()])
 
@@ -198,6 +215,27 @@ class TestRevealAnimation:
         assert panel._centre_splitter.sizes()[1] == panel._recommend_height
         # 끝난 뒤엔 사용자가 스플리터 핸들로 다시 늘릴 수 있어야 한다.
         assert panel._recommend_strip.maximumHeight() == _QWIDGET_MAX_H
+
+    def test_새_조회는_아래로_접었다가_다시_올린다(self, panel, qtbot, library_vm):
+        panel.resize(1280, 800)
+        panel.show()
+        qtbot.waitExposed(panel)
+        panel._on_recommend_items([_feed_dto()])
+        qtbot.wait(_RECOMMEND_REVEAL_MS + 300)
+        height_before = panel._centre_splitter.sizes()[1]
+
+        library_vm._videos = [_dto()]
+        panel._refresh_recommendations()          # 카테고리 전환에 해당
+        qtbot.wait(_RECOMMEND_REVEAL_MS + 300)
+
+        assert panel._recommend_strip.isHidden()
+
+        panel._on_recommend_items([_feed_dto("추천2")])
+        qtbot.wait(_RECOMMEND_REVEAL_MS + 300)
+
+        assert not panel._recommend_strip.isHidden()
+        # 접기 전에 쓰던 높이를 그대로 복원한다.
+        assert panel._centre_splitter.sizes()[1] == height_before
 
 
 class TestDetailRecommendations:

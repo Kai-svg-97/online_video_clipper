@@ -4491,6 +4491,9 @@ class LibraryPanel(QWidget):
             self._reveal_recommend_strip(False)
             return
         self._recommend_strip.set_status("")
+        # 새 씨앗으로 조회를 시작한다 — 결과가 올 때까지 다시 감춘다(직전 카테고리의
+        # 추천이 새 목록의 추천인 것처럼 남아 있지 않도록).
+        self._hide_recommend_strip()
         self._recommend_vm.load(
             seed_titles=titles,
             seed_channels=channels,
@@ -4548,10 +4551,10 @@ class LibraryPanel(QWidget):
         self._recommend_strip.set_status("추천을 받지 못했습니다.")
         self._reveal_recommend_strip(False)
 
-    # ── 스트립 등장 연출 ──────────────────────────────────────────────
-    # 조회 중인 빈 띠가 미리 자리를 차지하지 않도록, 목록이 다 준비된 뒤에야
-    # 아래에서 밀려 올라오듯 노출한다. 첫 노출에만 연출하고 이후 갱신에서는
-    # 다시 튀어오르지 않는다(카테고리를 옮길 때마다 화면이 출렁이지 않게).
+    # ── 스트립 등장/퇴장 연출 ─────────────────────────────────────────
+    # 조회 중인 빈 띠(또는 직전 카테고리의 추천)가 자리를 차지하지 않도록, 목록이 다
+    # 준비된 뒤에야 아래에서 밀려 올라오듯 노출한다. 새 조회가 시작되면(카테고리 전환·
+    # 검색·⟳) 다시 아래로 접어 감췄다가 결과가 도착하면 올린다.
 
     def _reveal_recommend_strip(self, has_items: bool) -> None:
         """조회가 끝난 뒤 스트립을 노출한다.
@@ -4568,6 +4571,25 @@ class LibraryPanel(QWidget):
         target = self._recommend_height if (has_items and strip.is_expanded) else strip.HEADER_H
         self._animate_recommend_in(target)
 
+    def _hide_recommend_strip(self) -> None:
+        """새 조회를 시작할 때 다시 감춘다 — 준비되면 아래에서 올라온다.
+
+        카테고리를 바꾸면 씨앗이 통째로 달라져 지금 걸린 카드는 새 목록과 무관하다.
+        조회가 끝날 때까지 남겨 두면 '이미 준비된 추천'처럼 보이므로, 결과가 올 때까지
+        접어 둔다(등장과 같은 연출의 역순).
+        """
+        if not self._recommend_ready:
+            return
+        self._recommend_ready = False
+        strip = self._recommend_strip
+        if strip.isHidden():
+            return
+        # 사용자가 핸들로 맞춰 둔 높이를 기억했다가 다시 올라올 때 그대로 복원한다.
+        sizes = self._centre_splitter.sizes()
+        if len(sizes) == 2 and strip.is_expanded and sizes[1] > strip.HEADER_H + 20:
+            self._recommend_height = sizes[1]
+        self._animate_recommend_out()
+
     def _animate_recommend_in(self, target: int) -> None:
         """스트립 높이를 0→target으로 늘려 아래에서 올라오는 것처럼 보이게 한다.
 
@@ -4579,33 +4601,60 @@ class LibraryPanel(QWidget):
         strip = self._recommend_strip
         splitter = self._centre_splitter
         target = max(int(target), strip.HEADER_H)
+        # 접히는 중이었다면 그 높이에서 이어 올라간다(0으로 튀지 않게).
+        start = 0 if strip.isHidden() else min(max(strip.height(), 0), target)
+        self._stop_recommend_anim()
         total = sum(splitter.sizes()) or splitter.height()
         if total <= target + 80:
             # 공간이 부족하면 연출 없이 그냥 편다(찌그러진 애니메이션 방지).
             strip.setVisible(True)
             self._sync_recommend_sizes(strip.is_expanded, save=False)
             return
-        self._stop_recommend_anim()
-        strip.setMaximumHeight(0)
+        strip.setMaximumHeight(start)
         strip.setVisible(True)
-
-        def _step(value) -> None:
-            h = int(value)
-            strip.setMaximumHeight(h)
-            splitter.setSizes([max(total - h, 0), h])
 
         def _done() -> None:
             strip.setMaximumHeight(_QWIDGET_MAX_H)
             splitter.setSizes([max(total - target, 0), target])
             self._recommend_anim = None
 
+        self._start_recommend_anim(start, target, total, _done)
+
+    def _animate_recommend_out(self) -> None:
+        """스트립을 아래로 접으며 감춘다(등장 연출의 역순)."""
+        strip = self._recommend_strip
+        splitter = self._centre_splitter
+        start = max(strip.height(), 0)
+        self._stop_recommend_anim()
+        total = sum(splitter.sizes()) or splitter.height()
+        if start <= 0 or total <= start:
+            strip.setVisible(False)      # 아직 배치 전 — 연출할 높이가 없다
+            return
+
+        def _done() -> None:
+            strip.setVisible(False)
+            strip.setMaximumHeight(_QWIDGET_MAX_H)
+            self._recommend_anim = None
+
+        self._start_recommend_anim(start, 0, total, _done)
+
+    def _start_recommend_anim(self, start: int, end: int, total: int, on_done) -> None:
+        """스트립 높이(maximumHeight + 스플리터 배분)를 start→end로 움직인다."""
+        strip = self._recommend_strip
+        splitter = self._centre_splitter
+
+        def _step(value) -> None:
+            h = int(value)
+            strip.setMaximumHeight(h)
+            splitter.setSizes([max(total - h, 0), h])
+
         anim = QVariantAnimation(self)
-        anim.setStartValue(0)
-        anim.setEndValue(target)
+        anim.setStartValue(int(start))
+        anim.setEndValue(int(end))
         anim.setDuration(_RECOMMEND_REVEAL_MS)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         anim.valueChanged.connect(_step)
-        anim.finished.connect(_done)
+        anim.finished.connect(on_done)
         self._recommend_anim = anim
         anim.start()
 
