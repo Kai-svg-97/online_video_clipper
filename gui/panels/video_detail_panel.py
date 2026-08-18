@@ -1043,6 +1043,47 @@ class _LyricsCandidateList(QWidget):
             self.chosen.emit(dto)
 
 
+class _LockedNotice(QWidget):
+    """아직 라이브러리에 없는 영상에서 '왜 못 쓰는지 + 어떻게 푸는지'를 보여주는 판.
+
+    요약·가사는 영상별로 DB에 저장되므로 **안정적인 로컬 video_id가 있어야** 한다
+    (스트리밍/추천 영상에는 없다). 예전에는 그래서 두 탭을 통째로 비활성화했는데,
+    비활성 탭은 클릭조차 되지 않아 사용자가 '왜 안 되는지'를 알 방법이 없었다.
+    이제 탭은 열리되 이 안내판이 뜨고, 버튼 한 번으로 카테고리에 담아 잠금을 푼다.
+    """
+
+    action_clicked = pyqtSignal()
+
+    def __init__(
+        self, text: str, button_text: str = "카테고리에 담기",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        col = QVBoxLayout(self)
+        col.setContentsMargins(24, 24, 24, 24)
+        col.setSpacing(12)
+        col.addStretch(1)
+        self._lbl = QLabel(text)
+        self._lbl.setWordWrap(True)
+        self._lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        col.addWidget(self._lbl)
+        self._btn = QPushButton(button_text)
+        self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn.clicked.connect(self.action_clicked.emit)
+        col.addWidget(self._btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        col.addStretch(1)
+        self._apply_theme(ThemeManager.instance().current())
+        ThemeManager.instance().theme_changed.connect(self._apply_theme)
+
+    def _apply_theme(self, tokens) -> None:
+        self._lbl.setStyleSheet(f"color:{tokens.text_secondary}; font-size:10pt;")
+        self._btn.setStyleSheet(
+            f"QPushButton {{ color:{tokens.text_primary}; background:{tokens.bg_elevated};"
+            f" border:1px solid {tokens.border}; border-radius:4px; padding:6px 18px; }}"
+            f" QPushButton:hover {{ background:{tokens.bg_surface}; }}"
+        )
+
+
 class _SongTab(QWidget):
     """상세화면 '노래' 탭 — 가수/앨범/제목/발매년도 + 가사(원문·한글 병행).
 
@@ -1062,11 +1103,13 @@ class _SongTab(QWidget):
     synced_requested = pyqtSignal()          # 싱크(시간 정보) 가사 찾기
     lyrics_seek_requested = pyqtSignal(int)  # 가사 줄 클릭 → 그 줄 시작 ms
     offset_changed = pyqtSignal(int)         # 사용자가 싱크 보정값을 바꿈(절대 ms)
+    category_requested = pyqtSignal()        # 안내판의 '카테고리에 담기' 클릭
 
     # 가사 영역 스택 인덱스
     _STACK_VIEW = 0         # 가사 표시
     _STACK_EDIT = 1         # 가사 직접 편집
     _STACK_CANDIDATES = 2   # 가사 검색 후보 목록
+    _STACK_LOCKED = 3       # 카테고리 미지정 — 안내판
 
     _FIELDS = (
         ("artist", "가수"),
@@ -1217,6 +1260,13 @@ class _SongTab(QWidget):
         self._candidates.chosen.connect(self._on_candidate_chosen)
         self._candidates.closed.connect(self.close_candidates)
         self._lyrics_stack.addWidget(self._candidates)
+        # index 3: 카테고리 미지정 안내 — 가사는 영상별로 저장되므로 로컬 영상이어야 한다.
+        self._locked = _LockedNotice(
+            "이 영상은 아직 라이브러리에 없습니다.\n"
+            "카테고리에 담으면 가사 조회·편집과 자막 싱크를 사용할 수 있습니다."
+        )
+        self._locked.action_clicked.connect(self.category_requested.emit)
+        self._lyrics_stack.addWidget(self._locked)
         root.addWidget(self._lyrics_stack, stretch=1)
 
     # ── 채우기 ────────────────────────────────────────────────────
@@ -1230,6 +1280,13 @@ class _SongTab(QWidget):
         self._offset_spin.setEnabled(editable)
         for f in self._fields.values():
             f.set_editable(editable)
+
+    def set_locked(self, locked: bool) -> None:
+        """카테고리 미지정(라이브러리 밖) 영상 — 가사 영역에 안내판을 띄운다."""
+        if locked:
+            self._lyrics_stack.setCurrentIndex(self._STACK_LOCKED)
+        elif self._lyrics_stack.currentIndex() == self._STACK_LOCKED:
+            self._lyrics_stack.setCurrentIndex(self._STACK_VIEW)
 
     def _on_offset_spin_changed(self, value: float) -> None:
         self.offset_changed.emit(int(round(value * 1000)))
@@ -1335,7 +1392,11 @@ class _SongTab(QWidget):
         self._render_lyrics(dto)
         # 후보 목록을 보고 있는 중이면 유지한다 — 검색 도중 다른 저장(필드 편집 등)이
         # song_info_changed를 쏘아 목록이 사라지면, 사용자가 고르던 후보를 잃는다.
-        if self._lyrics_stack.currentIndex() != self._STACK_CANDIDATES:
+        # 잠금 안내판도 같은 이유로 유지한다(스트리밍 상세에서 빈 가사로 되돌아가면
+        # 왜 못 쓰는지 설명이 사라진다).
+        if self._lyrics_stack.currentIndex() not in (
+            self._STACK_CANDIDATES, self._STACK_LOCKED
+        ):
             self._lyrics_stack.setCurrentIndex(self._STACK_VIEW)
 
     def _render_lyrics(self, dto: SongInfoDTO | None) -> None:
@@ -1511,12 +1572,20 @@ class VideoDetailWidget(QWidget):
     play_next_requested         = pyqtSignal(object)     # 재생목록 다음 항목 payload(자동재생)
     song_synced_requested       = pyqtSignal(object)     # video_id — 싱크 가사 찾기
     song_offset_saved           = pyqtSignal(object, int)  # (video_id, offset_ms)
+    # 카테고리 지정 요청 — payload: 로컬이면 video_id(UUID), 스트리밍이면 FeedVideoDTO.
+    # 스트리밍이면 라이브러리 등록까지 함께 이뤄져야 요약·가사 잠금이 풀린다.
+    category_assign_requested   = pyqtSignal(object)
 
     # 하단 탭 인덱스
     _TAB_INFO = 0       # 설명(태그~메모)
     _TAB_SUMMARY = 1
     _TAB_FILES = 2      # 다운로드 + 클립 병합
     _TAB_SONG = 3       # 노래(가수·앨범·제목·가사)
+
+    # 요약 탭 스택 인덱스
+    _SUMMARY_VIEW = 0
+    _SUMMARY_EDIT = 1
+    _SUMMARY_LOCKED = 2   # 카테고리 미지정 — 안내판
 
     # 요약 렌더링 줄 간격(px) — Gemini 요약은 개행이 촘촘해 단락 여백을 벌려 읽기 편하게 한다.
     _SUMMARY_LINE_GAP = 1
@@ -1530,6 +1599,7 @@ class VideoDetailWidget(QWidget):
         self._clip_source_file: str | None = None
         self._filter_on = False
         self._streaming = False          # 스트리밍(피드/채널) 모드 여부
+        self._stream_dto = None          # 스트리밍 모드의 FeedVideoDTO(카테고리 지정용)
         self._playlist: list = []        # 우측 목록 payload 순서 — 자동재생 다음곡 계산용
         self._current_key = ""           # 현재 재생 항목 키(RelatedItem.key) — 목록 강조용
         self._summary_raw = ""           # 요약 원문(편집 대상) — 렌더 전 텍스트
@@ -1611,6 +1681,12 @@ class VideoDetailWidget(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         title_row.addWidget(self._title_lbl, 1)
+        # 📁 카테고리 지정 — 로컬 영상은 이동, 스트리밍 영상은 등록까지 함께 이뤄진다.
+        self._btn_category = QPushButton("📁")
+        self._btn_category.setFixedSize(28, 28)
+        self._btn_category.setToolTip("카테고리 지정")
+        self._btn_category.clicked.connect(self._on_category_clicked)
+        title_row.addWidget(self._btn_category, 0, Qt.AlignmentFlag.AlignTop)
         self._btn_refresh = QPushButton("⟳")
         self._btn_refresh.setFixedSize(28, 28)
         self._btn_refresh.setToolTip("상세 정보 갱신")
@@ -1719,6 +1795,13 @@ class VideoDetailWidget(QWidget):
         self._summary_editor = QPlainTextEdit()
         self._summary_editor.setPlaceholderText("요약 내용을 입력하세요…")
         self._summary_stack.addWidget(self._summary_editor)    # index 1: 편집
+        # index 2: 카테고리 미지정 안내 — 요약도 영상별로 저장되므로 로컬 영상이어야 한다.
+        self._summary_locked = _LockedNotice(
+            "이 영상은 아직 라이브러리에 없습니다.\n"
+            "카테고리에 담으면 AI 요약을 가져오고 저장할 수 있습니다."
+        )
+        self._summary_locked.action_clicked.connect(self._on_category_clicked)
+        self._summary_stack.addWidget(self._summary_locked)
         summary_layout.addWidget(self._summary_stack)
         self._tabs.addTab(_wrap(summary_tab), "요약")
 
@@ -1749,6 +1832,7 @@ class VideoDetailWidget(QWidget):
         # → _on_subtitle_offset_changed(디바운스 저장). 탭이 직접 저장하지 않는 이유는
         # 위 경로 하나로 바·오버레이 갱신과 DB 저장 디바운스를 동시에 재사용하기 위해서다.
         self._song_tab.offset_changed.connect(self._player.set_subtitle_offset_ms)
+        self._song_tab.category_requested.connect(self._on_category_clicked)
         self._tabs.addTab(_wrap(self._song_tab), "노래")
 
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -1839,6 +1923,7 @@ class VideoDetailWidget(QWidget):
         self._detail = detail
         self._tag_ids = tag_ids
         self._streaming = False
+        self._stream_dto = None
         self._current_url = detail.url
         self._current_key = str(detail.id)
         self._set_crumb_path(category_path)
@@ -1916,6 +2001,7 @@ class VideoDetailWidget(QWidget):
         self._detail = None
         self._tag_ids = {}
         self._streaming = True
+        self._stream_dto = feed          # 📁 카테고리 지정 시 등록에 쓴다
         self._current_url = feed.url
         self._current_key = getattr(feed, "yt_video_id", "") or feed.url
         self._set_crumb_path(None)
@@ -1953,10 +2039,11 @@ class VideoDetailWidget(QWidget):
         self._clip_tab_layout.addStretch()
         self._tabs.setCurrentIndex(self._TAB_FILES)
 
-        # 노래 탭 — 스트리밍은 편집/조회 불가
+        # 노래 탭 — 스트리밍은 편집/조회 불가(카테고리에 담으면 풀린다)
         self._song_tab.set_editable(False)
         self._song_tab.set_busy(False)
         self._song_tab.set_info(None)
+        self._summary_raw = ""
 
         self._btn_refresh.setEnabled(False)  # 스트리밍은 안정적 id 없음
         self.set_related(related or [], header=related_header)
@@ -2329,9 +2416,39 @@ class VideoDetailWidget(QWidget):
         dl_layout.addStretch()
 
     def _set_tabs_enabled(self, local: bool) -> None:
-        """스트리밍 모드면 요약·노래 탭 비활성(안정적 영상 id가 없어 편집 불가)."""
-        self._tabs.setTabEnabled(self._TAB_SUMMARY, local)
-        self._tabs.setTabEnabled(self._TAB_SONG, local)
+        """요약·노래 탭의 잠금 상태를 맞춘다.
+
+        **탭은 항상 열어 둔다.** 예전에는 스트리밍(라이브러리 밖) 영상에서 두 탭을
+        비활성화했는데, 비활성 탭은 클릭조차 되지 않아 '왜 못 쓰는지'와 '어떻게 쓰는지'를
+        전할 방법이 없었다. 이제 탭 안에 `_LockedNotice`가 떠서 카테고리에 담으면
+        풀린다는 것과 담는 버튼을 함께 보여준다(요약·가사는 영상별로 DB에 저장되므로
+        안정적인 로컬 video_id가 반드시 필요하다).
+        """
+        self._tabs.setTabEnabled(self._TAB_SUMMARY, True)
+        self._tabs.setTabEnabled(self._TAB_SONG, True)
+        self._summary_stack.setCurrentIndex(
+            self._SUMMARY_VIEW if local else self._SUMMARY_LOCKED
+        )
+        self._song_tab.set_locked(not local)
+        self._summary_refresh_btn.setEnabled(local)
+        self._btn_category.setToolTip(
+            "카테고리 지정 (다른 카테고리로 옮기기)" if local
+            else "카테고리 지정 (라이브러리에 담아 요약·가사 잠금 해제)"
+        )
+
+    def _on_category_clicked(self) -> None:
+        """📁 버튼·잠금 안내판 — 카테고리 지정을 상위(LibraryPanel)에 요청한다."""
+        payload = self._detail.id if self._detail is not None else self._stream_dto
+        if payload is None:
+            return
+        self.category_assign_requested.emit(payload)
+
+    def player_position_ms(self) -> int:
+        """현재 재생 위치(ms) — 등록 후 로컬 상세로 갈아탈 때 이어보기용."""
+        try:
+            return int(self._player.position_ms())
+        except (RuntimeError, AttributeError, TypeError):
+            return 0
 
     # ── 연관 영상 ──────────────────────────────────────────────────
 

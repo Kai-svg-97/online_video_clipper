@@ -370,11 +370,18 @@ def _url_from_mime(mime: QMimeData) -> str:
             if s.startswith(("http://", "https://")):
                 return s
     # 3. text/uri-list 직접 읽기 (hasUrls()가 False인 경우 대비)
-    for fmt in ("text/uri-list", "text/x-moz-url"):
+    #    + Windows 네이티브 URL 포맷(브라우저에서 끌 때 이것만 실려 오는 경우가 있다).
+    #    …LocatorW는 UTF-16LE라 utf-8로 읽으면 NUL이 섞여 앞부분만 잘린다.
+    for fmt, encoding in (
+        ("text/uri-list", "utf-8"),
+        ("text/x-moz-url", "utf-16-le"),
+        ('application/x-qt-windows-mime;value="UniformResourceLocatorW"', "utf-16-le"),
+        ('application/x-qt-windows-mime;value="UniformResourceLocator"', "utf-8"),
+    ):
         if mime.hasFormat(fmt):
             try:
-                raw = bytes(mime.data(fmt)).decode("utf-8", errors="ignore")
-                for line in raw.splitlines():
+                raw = bytes(mime.data(fmt)).decode(encoding, errors="ignore")
+                for line in raw.replace("\x00", "\n").splitlines():
                     line = line.strip()
                     if line.startswith(("http://", "https://")):
                         return line
@@ -391,9 +398,18 @@ def _mime_may_contain_url(mime: QMimeData) -> bool:
     """
     if _url_from_mime(mime):
         return True
-    # 포맷 존재만 확인 (내용은 dropEvent에서 검증)
+    # 포맷 존재만 확인 (내용은 dropEvent에서 검증).
+    # text/plain과 Windows 네이티브 URL 포맷까지 본다 — 브라우저·사이트에 따라
+    # dragEnter 시점에 uri-list가 없고 텍스트만 실려 오는 경우가 있어, 이 목록이
+    # 좁으면 트리 위에서 드래그 자체가 거부돼 드롭이 조용히 죽는다.
     return mime.hasUrls() or any(
-        mime.hasFormat(f) for f in ("text/uri-list", "text/x-moz-url")
+        mime.hasFormat(f) for f in (
+            "text/uri-list",
+            "text/x-moz-url",
+            "text/plain",
+            'application/x-qt-windows-mime;value="UniformResourceLocator"',
+            'application/x-qt-windows-mime;value="UniformResourceLocatorW"',
+        )
     )
 
 
@@ -1731,6 +1747,9 @@ class _PlaylistTree(QTreeWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setAcceptDrops(True)
+        # 트리는 접힌 상태로 로드되므로(collapseAll), 하위 카테고리에 브라우저 URL을
+        # 끌어다 놓으려면 드래그 중에 부모가 펼쳐져야 한다. Qt 기본값은 -1(비활성).
+        self.setAutoExpandDelay(600)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self.currentItemChanged.connect(self._on_selection_changed)
@@ -2383,6 +2402,18 @@ class _PlaylistTree(QTreeWidget):
 
         drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
 
+    def _is_url_drag(self, mime) -> bool:
+        """이 드래그를 URL 드롭으로 다뤄야 하는지 — MIME만 보고 매번 다시 판단한다.
+
+        ``_ext_url_drag`` 플래그 하나에만 의존하면, dragEnter를 놓치거나 중간에
+        dragLeave가 끼어 플래그가 꺼진 경우(창 경계·스크롤·오버레이) 드롭이 **조용히**
+        무시된다. 내부 드래그(영상·재생목록)와는 MIME으로 확실히 구분되므로
+        매 이벤트에서 다시 계산해도 안전하다.
+        """
+        if mime.hasFormat(_MIME_VIDEO_ID) or mime.hasFormat(_MIME_PLAYLIST_ID):
+            return False
+        return _mime_may_contain_url(mime)
+
     def dragEnterEvent(self, event) -> None:
         mime = event.mimeData()
         self._ext_url_drag = False
@@ -2392,7 +2423,7 @@ class _PlaylistTree(QTreeWidget):
             event.acceptProposedAction()
         elif event.source() is self:
             event.acceptProposedAction()
-        elif _mime_may_contain_url(mime):
+        elif self._is_url_drag(mime):
             # 외부 URL 드래그(브라우저 주소·추천 스트립 카드) — 내용 검증은 dropEvent에서.
             self._ext_url_drag = True
             event.acceptProposedAction()
@@ -2406,7 +2437,8 @@ class _PlaylistTree(QTreeWidget):
         # 드롭 대상 hover 강조 (QFrame 오버레이)
         self._show_drop_on(target)
 
-        if self._ext_url_drag and not mime.hasFormat(_MIME_VIDEO_ID):
+        if self._is_url_drag(mime):
+            self._ext_url_drag = True
             if self._url_drop_target(target) is not _NO_URL_TARGET:
                 event.setDropAction(Qt.DropAction.CopyAction)
                 event.accept()
@@ -2489,7 +2521,7 @@ class _PlaylistTree(QTreeWidget):
         target = self.itemAt(event.position().toPoint())
 
         # ── 외부 URL 드롭 (브라우저 주소 · 추천 스트립 카드) ───────────────
-        if self._ext_url_drag and not mime.hasFormat(_MIME_VIDEO_ID):
+        if self._is_url_drag(mime):
             self._ext_url_drag = False
             cat_id = self._url_drop_target(target)
             url = _url_from_mime(mime)
@@ -2498,6 +2530,13 @@ class _PlaylistTree(QTreeWidget):
                 event.setDropAction(Qt.DropAction.CopyAction)
                 event.accept()
             else:
+                # 무엇 때문에 무시됐는지 남긴다 — 화면에는 아무 일도 일어나지 않아
+                # 사용자가 "드래그가 안 된다"고만 알 수 있다.
+                logger.debug(
+                    "URL 드롭 무시 — url=%r, target=%s, formats=%s",
+                    url, "거부" if cat_id is _NO_URL_TARGET else cat_id,
+                    mime.formats(),
+                )
                 event.ignore()
             return
 
@@ -3945,6 +3984,9 @@ class LibraryPanel(QWidget):
         self._active_thumb_loaders: list = []  # GC 방지용 강한 참조 보관
         # 표(상세) 뷰가 숨겨진 동안 목록이 바뀌었는지 — 표시될 때 한 번만 채운다.
         self._table_dirty: bool = False
+        # 상세화면에서 '카테고리에 담기'를 누른 스트리밍 영상의 URL — 등록이 끝나면
+        # 그 영상의 로컬 상세로 갈아탄다(요약·가사 잠금 해제).
+        self._pending_category_url: str = ""
         self._setup_ui()
         # 추천 스트립 자동 갱신 디바운스 — 목록이 바뀔 때마다 검색을 돌리면
         # (카테고리 전환·검색 타이핑) yt-dlp 검색이 폭주한다.
@@ -4378,6 +4420,11 @@ class LibraryPanel(QWidget):
             self._on_detail_refresh_requested
         )
         self._detail_widget.category_path_clicked.connect(self._on_cat_filter_changed)
+        self._detail_widget.category_assign_requested.connect(
+            self._on_detail_category_requested
+        )
+        # 스트리밍 영상을 카테고리에 담으면 등록 완료 후 로컬 상세로 갈아탄다.
+        self._vm.video_add_finished.connect(self._on_video_added_for_detail)
         # 노래 탭 가수/앨범 » 필터 + 재생목록 다음곡 자동재생
         self._detail_widget.song_filter_requested.connect(self._on_song_filter_requested)
         self._detail_widget.play_next_requested.connect(self._on_play_next)
@@ -4679,15 +4726,14 @@ class LibraryPanel(QWidget):
         ]
 
     def _on_recommend_to_category(self, url: str) -> None:
-        """추천 카드 우클릭 '카테고리에 추가' — 드래그하지 않고도 담을 수 있게."""
-        from gui.panels.feed_panel import _CategoryPickDialog  # noqa: PLC0415
-        cats = self._vm.categories
-        if not cats:
-            self._vm.add_video(url)
-            return
-        dlg = _CategoryPickDialog(cats, self)
-        if dlg.exec() and dlg.selected_id is not None:
-            self._vm.add_video(url, dlg.selected_id)
+        """추천 카드 우클릭 '카테고리에 추가' — 드래그하지 않고도 담을 수 있게.
+
+        ``selected_id``는 **메서드**다 — 예전엔 괄호 없이 써서 항상 참이었고, 카테고리
+        id 자리에 바운드 메서드가 그대로 넘어갔다(등록 실패).
+        """
+        ok, cat_id = self._pick_category()
+        if ok:
+            self._vm.add_video(url, cat_id)
 
     def _start_thumb_preload(self, videos: list) -> None:
         """현재 뷰 모드에 맞는 크기로 썸네일을 bg에서 프리로드한다."""
@@ -5327,6 +5373,7 @@ class LibraryPanel(QWidget):
     def _open_detail(
         self, video_id: UUID, autoplay: bool = False,
         related: list | None = None, header: str | None = None, push_nav: bool = True,
+        resume_ms: int = 0,
     ) -> None:
         """로컬 영상 상세화면을 연다.
 
@@ -5349,7 +5396,7 @@ class LibraryPanel(QWidget):
             _load_thumb(detail.thumbnail_path, _TW_ICON, _TH_ICON)
             if detail.thumbnail_path else None
         )
-        self._detail_widget.load(detail, tag_ids, resume_ms=0, related=related,
+        self._detail_widget.load(detail, tag_ids, resume_ms=resume_ms, related=related,
                                  category_path=cat_path or None, poster=poster,
                                  autoplay=autoplay, related_header=header)
         self._detail_widget.set_recommendations(self._recommend_related_items())
@@ -6008,6 +6055,67 @@ class LibraryPanel(QWidget):
 
     def _on_url_dropped(self, url: str, category_id) -> None:
         self._vm.add_video(url, category_id)
+
+    # ── 상세화면 카테고리 지정 ─────────────────────────────────────
+    # 라이브러리 영상이든 추천/피드의 스트리밍 영상이든 같은 버튼 하나로 처리한다.
+    # 스트리밍 영상은 '등록 + 카테고리 지정'이 한 번에 일어나야 요약·가사 잠금이 풀린다
+    # (두 기능은 영상별로 DB에 저장돼 안정적인 로컬 video_id가 필요하다).
+
+    def _pick_category(self) -> tuple[bool, object]:
+        """카테고리 선택 다이얼로그 — (확인 여부, category_id | None)."""
+        from gui.panels.feed_panel import _CategoryPickDialog  # noqa: PLC0415
+        cats = self._vm.categories
+        if not cats:
+            # 카테고리가 하나도 없으면 미분류로 담는다(다이얼로그가 빈 채로 뜨지 않게).
+            return True, None
+        dlg = _CategoryPickDialog(cats, self)
+        if not dlg.exec():
+            return False, None
+        return True, dlg.selected_id()
+
+    def _on_detail_category_requested(self, payload) -> None:
+        """상세화면 📁 버튼/잠금 안내판 — 카테고리를 골라 담는다."""
+        from application.library.dtos import FeedVideoDTO  # noqa: PLC0415
+        ok, cat_id = self._pick_category()
+        if not ok:
+            return
+        if isinstance(payload, UUID):
+            self._vm.assign_category(payload, cat_id)
+            # 브레드크럼(카테고리 경로)을 즉시 반영한다.
+            self._reload_detail_in_place(payload)
+            return
+        if not isinstance(payload, FeedVideoDTO):
+            return
+        url = getattr(payload, "url", "")
+        if not url:
+            return
+        existing = self._vm.get_video_id_by_url(url)
+        if existing is not None:
+            # 이미 라이브러리에 있는 영상을 스트리밍으로 보고 있었다 — 이동만 하고 전환.
+            self._vm.assign_category(existing, cat_id)
+            self._switch_to_local_detail(existing)
+            return
+        self._pending_category_url = url
+        self._vm.add_video(url, cat_id)
+
+    def _on_video_added_for_detail(self, url: str) -> None:
+        """등록 완료 — 상세에서 담기를 눌렀던 영상이면 로컬 상세로 갈아탄다."""
+        if not url or url != self._pending_category_url:
+            return
+        self._pending_category_url = ""
+        video_id = self._vm.get_video_id_by_url(url)
+        if video_id is None:
+            logger.warning("등록 직후 영상 id를 찾지 못했다: %s", url)
+            return
+        self._switch_to_local_detail(video_id)
+
+    def _switch_to_local_detail(self, video_id: UUID) -> None:
+        """스트리밍 상세 → 같은 영상의 로컬 상세로 전환(재생 위치·재생 여부 유지)."""
+        if self._nav_stack.currentIndex() != 1:
+            return   # 이미 상세를 떠났다 — 등록만 하고 끝
+        resume = self._detail_widget.player_position_ms()
+        playing = self._detail_widget.is_playing()
+        self._open_detail(video_id, autoplay=playing, push_nav=False, resume_ms=resume)
 
     def _on_video_moved(self, video_id: UUID, category_id) -> None:
         self._vm.assign_category(video_id, category_id)
