@@ -10,814 +10,116 @@ player, redirects QMediaPlayer output there, and restores on exit.
 from __future__ import annotations
 
 import logging
-from collections import OrderedDict
 from pathlib import Path
 
 from PyQt6.QtCore import (
     QEvent,
     QPoint,
-    QPointF,
-    QRectF,
-    QSizeF,
-    QThread,
     QTimer,
     QUrl,
     Qt,
     pyqtSignal,
 )
-from PyQt6.QtGui import QBrush, QColor, QCursor, QKeyEvent, QPainter
+from PyQt6.QtGui import QCursor, QKeyEvent
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PyQt6.QtMultimediaWidgets import QGraphicsVideoItem
 from PyQt6.QtWidgets import (
     QApplication,
-    QFrame,
-    QGraphicsScene,
-    QGraphicsView,
-    QHBoxLayout,
     QLabel,
-    QMenu,
-    QSizeGrip,
-    QSizePolicy,
-    QSlider,
     QStackedWidget,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from application.library.dtos import DownloadInfoDTO
 from config import settings
-from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
-from gui.themes.manager import ThemeManager
+from domain.download.value_objects import DownloadSettings
 from gui.workers import retire_thread, track_thread
 from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
+
+
+# ── 분할된 부품 (gui/widgets/player/*) ─────────────────────────────
+# 이 파일에는 화면 조립·흐름 제어만 남기고 부품은 패키지로 옮겼다.
+# 아래 재수출은 기존 임포트 경로를 유지하기 위한 것이다.
+from gui.widgets.player.stream import (  # noqa: F401
+    _HEIGHT_CACHE,
+    _FormatProbeWorker,
+    _StreamWorker,
+    _cache_heights,
+    _is_youtube,
+    _pick_stream_url,
+    _stream_playable,
+)
+from gui.widgets.player.controls import (  # noqa: F401
+    _ControlBar,
+    _TrackSlider,
+    _bar_style,
+    _quality_badge_style,
+)
+from gui.widgets.player.surfaces import (  # noqa: F401
+    _FullscreenWindow,
+    _PipWindow,
+    _VideoArea,
+    _VideoView,
+)
+
+
+# ── 분할된 부품 (gui/widgets/player/*) ─────────────────────────────
+# 이 파일에는 화면 조립·흐름 제어만 남기고 부품은 패키지로 옮겼다.
+# 아래 재수출은 기존 임포트 경로를 유지하기 위한 것이다.
+from gui.widgets.player.constants import (  # noqa: F401
+    _merge_fmt,
+    _DEFAULT_QUALITY_FMT,
+    _DEFAULT_QUALITY_MERGE,
+    _MAX_STREAM_RETRIES,
+    _PROBE_RANGE,
+    _PROBE_TIMEOUT,
+    _PROBE_UA,
+    _QUALITY_HEIGHTS,
+    _QUALITY_OPTIONS,
+    _STREAM_CLIENTS,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # ── 스트림 URL 획득 보조 (순수 함수 — 네트워크 없이 테스트 가능) ──────────
 
-# 스트림 URL을 받을 때 순서대로 시도할 YouTube 플레이어 클라이언트(None = yt-dlp 기본).
-#
-# 기본 클라이언트가 돌려준 googlevideo URL이 **간헐적으로 403**을 내는 것을 실측으로
-# 확인했다(같은 영상이 어떤 때는 200, 어떤 때는 403 — PO token/SABR 전환기의 서버측
-# 거부로 보인다). 이때 다른 클라이언트로 다시 받으면 정상 URL이 나온다. 예전에는 첫
-# 시도가 실패하면 그대로 포기하고 브라우저를 열어버려, "앱에서 재생이 안 된다"는
-# 체감이 컸다.
-_STREAM_CLIENTS: tuple[str | None, ...] = (None, "android", "ios", "tv")
-
-# URL 검증 요청은 **실제 재생 주체(Qt Multimedia의 FFmpeg 백엔드)와 똑같이** 보내야 한다.
-#
-# 실측: 같은 googlevideo URL이 `Range: bytes=0-1`(제한 범위)에는 206을, `Range: bytes=0-`
-# (열린 범위 = ffmpeg가 파일을 열 때 보내는 요청)에는 403을 돌려주는 경우가 있다. 예전
-# 검증은 제한 범위를 써서 통과시켰고, 정작 재생은 403으로 실패했다(위양성). 그래서
-# **열린 범위**로 확인한다. 응답 본문은 읽지 않고 바로 닫으므로 대역폭 부담은 없다.
-# yt-dlp 전용 헤더도 쓰지 않는다 — 같은 이유로 위양성을 만든다.
-_PROBE_UA = "Lavf/61.7.100"          # FFmpeg가 보내는 기본 User-Agent
-_PROBE_RANGE = "bytes=0-"            # FFmpeg가 파일을 열 때 쓰는 열린 범위
-_PROBE_TIMEOUT = (5, 8)
-
-# 재생 도중 QMediaPlayer가 오류를 낼 때 스트림을 다시 받아 시도할 횟수.
-# 1회로 묶는 이유: 코덱 미지원처럼 다시 받아도 똑같이 실패하는 원인에서 무한 반복을 막는다.
-_MAX_STREAM_RETRIES = 1
 
 
-def _is_youtube(url: str) -> bool:
-    """YouTube URL인지 — 클라이언트 대체 재시도는 YouTube에서만 의미가 있다."""
-    return "youtube.com" in url or "youtu.be" in url
 
 
-def _pick_stream_url(info: dict) -> tuple[str, dict]:
-    """yt-dlp info에서 재생할 단일 URL을 고른다 → (url, format_info).
-
-    **영상+오디오가 모두 있는(muxed) 포맷을 우선**한다. 예전에는 마지막 폴백이 `url`만
-    있으면 무엇이든 집어서, 영상만 있는 포맷을 골라 소리가 없거나 재생이 실패하는
-    경우가 있었다. 무음 재생보다는 다음 후보로 넘어가는 편이 낫다.
-    """
-    if info.get("url"):
-        return info["url"], info
-    formats = info.get("formats") or []
-
-    def _muxed(f: dict) -> bool:
-        return f.get("vcodec") not in (None, "none") and f.get("acodec") not in (None, "none")
-
-    for want_mp4 in (True, False):
-        for f in reversed(formats):
-            if not f.get("url") or not _muxed(f):
-                continue
-            if want_mp4 and f.get("ext") != "mp4":
-                continue
-            return f["url"], f
-    return "", {}
 
 
-def _stream_playable(url: str) -> bool:
-    """URL을 QMediaPlayer에 넘기기 전에 **재생기와 같은 방식으로** 받아지는지 확인한다.
 
-    재생 시작 뒤에 실패하면 사용자는 깨진 화면만 보게 되므로, 넘기기 전에 걸러 다음
-    클라이언트로 넘어가는 편이 낫다. 요청 형태를 ffmpeg와 맞추는 것이 핵심이다
-    (`_PROBE_RANGE` 주석 참조 — 제한 범위로 확인하면 통과했는데 재생은 403인 일이 있다).
-    """
-    try:
-        import requests  # noqa: PLC0415
 
-        resp = requests.get(
-            url,
-            headers={"User-Agent": _PROBE_UA, "Accept": "*/*", "Range": _PROBE_RANGE},
-            stream=True,
-            timeout=_PROBE_TIMEOUT,
-        )
-        resp.close()   # 본문은 읽지 않는다 — 열린 범위라 그대로 두면 전체가 흘러온다
-        return resp.status_code in (200, 206)
-    except Exception:
-        logger.warning("스트림 URL 확인 실패 — 다음 후보로", exc_info=True)
-        return False
 
 
 # ── Background worker: resolve yt-dlp stream URL ──────────────────
 
-class _StreamWorker(QThread):
-    # (path_or_url, quality_label e.g. "720p", is_local) — is_local=True면 임시 병합 파일
-    stream_ready = pyqtSignal(str, str, bool)
-    progress     = pyqtSignal(int)   # 병합 다운로드 진행률(0-100)
-    failed       = pyqtSignal(str)
-
-    def __init__(
-        self,
-        url: str,
-        quality_fmt: str = "best[ext=mp4]/best",
-        merge: bool = False,
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self._url = url
-        self._quality_fmt = quality_fmt
-        self._merge = merge           # True면 영상+오디오를 ffmpeg로 병합해 임시 파일 재생
-
-    def run(self) -> None:
-        try:
-            import yt_dlp  # noqa: PLC0415
-            if self._merge:
-                self._run_merge(yt_dlp)
-            else:
-                self._run_stream(yt_dlp)
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-    # ── 즉시 스트리밍: 단일 muxed URL을 그대로 QMediaPlayer에 전달 ──
-    def _run_stream(self, yt_dlp) -> None:
-        """URL을 확보해 **검증까지 마친 뒤** 넘긴다. 실패하면 다른 클라이언트로 재시도.
-
-        한 번 실패했다고 곧바로 포기하지 않는 것이 핵심이다 — 기본 클라이언트의 403은
-        간헐적이라 대체 클라이언트로 다시 받으면 대개 살아난다.
-        """
-        clients = _STREAM_CLIENTS if _is_youtube(self._url) else (None,)
-        last_err = ""
-        unverified: tuple[str, str] | None = None   # 검증만 실패한 첫 URL
-        for client in clients:
-            try:
-                stream, label = self._extract_stream(yt_dlp, client)
-            except Exception as exc:
-                last_err = str(exc)
-                logger.warning(
-                    "스트림 추출 실패(client=%s): %s", client or "기본", last_err[:200]
-                )
-                continue
-            if not stream:
-                last_err = "스트림 URL을 가져올 수 없습니다."
-                logger.warning("재생 가능한 포맷 없음(client=%s)", client or "기본")
-                continue
-            if not _stream_playable(stream):
-                last_err = "스트림 URL이 거부되었습니다(재생 서버 403)."
-                logger.warning(
-                    "스트림 URL 거부됨(client=%s) — 다음 클라이언트로 재시도", client or "기본"
-                )
-                if unverified is None:
-                    unverified = (stream, label)
-                continue
-            if client:
-                logger.info("대체 클라이언트로 스트림 확보: client=%s", client)
-            self.stream_ready.emit(stream, label, False)
-            return
-        if unverified is not None:
-            # 확인 요청이 전부 막히는 환경(프록시·방화벽)일 수 있다. 검증에 실패했다는
-            # 이유만으로 재생을 포기하면 그런 환경에서는 영영 못 보므로, URL을 확보한
-            # 이상 플레이어에게 한 번은 맡긴다(예전 동작과 최소한 동일하다).
-            logger.warning("검증은 실패했으나 URL이 있어 그대로 재생 시도: %s", self._url)
-            self.stream_ready.emit(unverified[0], unverified[1], False)
-            return
-        logger.warning("모든 클라이언트에서 스트림 확보 실패: %s", self._url)
-        self.failed.emit(last_err or "스트림 URL을 가져올 수 없습니다.")
-
-    def _extract_stream(self, yt_dlp, client: str | None) -> tuple[str, str]:
-        """지정 클라이언트로 정보를 뽑아 (재생 URL, 화질 라벨)을 돌려준다."""
-        opts = {"quiet": True, "no_warnings": True,
-                "format": self._quality_fmt, "noplaylist": True}
-        if client:
-            opts["extractor_args"] = {"youtube": {"player_client": [client]}}
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(self._url, download=False) or {}
-        stream, fmt_info = _pick_stream_url(info)
-        h = fmt_info.get("height") or info.get("height")
-        return stream, (f"{h}p" if h else "")
-
-    # ── 고화질: 분리된 영상+오디오를 ffmpeg로 임시 mp4에 병합해 로컬 재생 ──
-    def _run_merge(self, yt_dlp) -> None:
-        import os  # noqa: PLC0415
-        import tempfile  # noqa: PLC0415
-        try:
-            from utils.resources import get_ffmpeg_path  # noqa: PLC0415
-            ffmpeg = get_ffmpeg_path()
-        except (FileNotFoundError, Exception):  # noqa: BLE001
-            ffmpeg = None
-        if not ffmpeg:
-            # ffmpeg 없으면 병합 불가 → 즉시 스트리밍으로 폴백(보통 360p)
-            self._run_stream(yt_dlp)
-            return
-
-        clients = _STREAM_CLIENTS if _is_youtube(self._url) else (None,)
-        for client in clients:
-            tmpdir = tempfile.mkdtemp(prefix="ovc_stream_")
-            opts = {
-                "quiet": True, "no_warnings": True, "noplaylist": True,
-                "format": self._quality_fmt,
-                "merge_output_format": "mp4",
-                "outtmpl": os.path.join(tmpdir, "stream.%(ext)s"),
-                "ffmpeg_location": ffmpeg,
-                "progress_hooks": [self._merge_hook],
-            }
-            if client:
-                opts["extractor_args"] = {"youtube": {"player_client": [client]}}
-            try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(self._url, download=True) or {}
-                rd = (info.get("requested_downloads") or [{}])[0]
-                path = rd.get("filepath") or info.get("filepath") or ydl.prepare_filename(info)
-                if not path or not os.path.exists(path):
-                    # 병합 산출물을 못 찾으면 디렉터리에서 첫 파일을 집는다
-                    files = [os.path.join(tmpdir, f) for f in os.listdir(tmpdir)]
-                    path = files[0] if files else ""
-            except Exception as exc:
-                logger.warning(
-                    "고화질 병합 실패(client=%s): %s", client or "기본", str(exc)[:200]
-                )
-                continue
-            if path and os.path.exists(path):
-                if client:
-                    logger.info("대체 클라이언트로 고화질 병합 성공: client=%s", client)
-                h = rd.get("height") or info.get("height")
-                self.stream_ready.emit(path, f"{h}p" if h else "", True)
-                return
-        # 고화질을 못 만들었다고 재생 자체를 포기하지 않는다 — 낮은 화질이라도 트는 편이
-        # 브라우저로 튕기는 것보다 낫다(사용자는 '앱에서 재생'을 원해서 누른 것이다).
-        logger.warning("고화질 병합 전부 실패 — 일반 스트리밍으로 폴백: %s", self._url)
-        self._quality_fmt = _DEFAULT_QUALITY_FMT
-        self._run_stream(yt_dlp)
-
-    def _merge_hook(self, d: dict) -> None:
-        if d.get("status") != "downloading":
-            return
-        try:
-            pct = str(d.get("_percent_str") or "0").strip().rstrip("%")
-            self.progress.emit(int(float(pct or 0)))
-        except (ValueError, TypeError):
-            pass
 
 
 # ── Control bar (overlaid at the bottom of the video area) ────────
 
-def _bar_style() -> str:
-    """현재 테마 토큰을 반영한 컨트롤바 QSS를 반환한다."""
-    tok = ThemeManager.instance().current()
-    return f"""
-QWidget#ctrlbar {{
-    background: rgba(0,0,0,115);
-}}
-QToolButton {{
-    color: {tok.text_primary};
-    background: transparent;
-    border: none;
-    font-size: 13px;
-    padding: 2px 4px;
-    min-width: 24px;
-    min-height: 24px;
-}}
-QToolButton:hover {{ color: {tok.accent_hover}; background: rgba(255,255,255,15); border-radius: 3px; }}
-QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 9pt; }}
-/* 슬라이더(_TrackSlider)는 QPainter로 직접 그린다 — 영상 오버레이 위에서
-   QSlider::groove/add-page 서브컨트롤이 검게 렌더되는 문제를 회피하기 위함. */
-"""
 
 
-class _FormatProbeWorker(QThread):
-    """영상이 실제로 제공하는 화질(세로 해상도) 목록을 조회한다.
-
-    화질 메뉴를 고정 목록으로 두면 최대 1080p인 영상에도 4K가 뜬다. 다운로드
-    포맷 문자열은 `height<=N` 이라 실제 최대치를 넘는 선택지는 같은 파일을
-    받으므로 무의미하다. yt-dlp 호출이라 반드시 백그라운드에서 실행한다.
-    """
-
-    heights_ready = pyqtSignal(str, list)   # (url, 내림차순 높이 목록)
-    failed        = pyqtSignal(str)
-
-    def __init__(self, url: str, parent=None) -> None:
-        super().__init__(parent)
-        self._url = url
-
-    def run(self) -> None:
-        try:
-            import yt_dlp  # noqa: PLC0415
-
-            opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(self._url, download=False) or {}
-            heights = sorted(
-                {
-                    int(f["height"])
-                    for f in (info.get("formats") or [])
-                    if f.get("height") and f.get("vcodec") not in (None, "none")
-                },
-                reverse=True,
-            )
-            if not heights and info.get("height"):
-                heights = [int(info["height"])]
-            self.heights_ready.emit(self._url, heights)
-        except Exception as exc:
-            # 네트워크·추출 실패는 치명적이지 않다 — 호출측이 전체 목록으로 폴백한다.
-            logger.warning("사용 가능한 화질 조회 실패(%s): %s", self._url, exc)
-            self.failed.emit(str(exc))
 
 
 # URL → 사용 가능한 높이 목록 (세션 캐시, 상한 있음)
-_HEIGHT_CACHE: "OrderedDict[str, list[int]]" = OrderedDict()
-_HEIGHT_CACHE_MAX = 64
 
 
-def _cache_heights(url: str, heights: list[int]) -> None:
-    if not url:
-        return
-    _HEIGHT_CACHE[url] = heights
-    _HEIGHT_CACHE.move_to_end(url)
-    while len(_HEIGHT_CACHE) > _HEIGHT_CACHE_MAX:
-        _HEIGHT_CACHE.popitem(last=False)
 
 
-def _quality_badge_style() -> str:
-    tok = ThemeManager.instance().current()
-    return (
-        f"color:{tok.text_primary}; background:{tok.badge_bg}; "
-        "font-size:8pt; padding:1px 5px; border-radius:3px;"
-    )
-
-# YouTube 고화질(>360p)은 영상+오디오가 분리돼 ffmpeg 병합이 필요하다.
-# Windows Media Foundation 호환을 위해 avc1(H.264)+m4a(AAC)를 우선 선택한다.
-def _merge_fmt(h: int) -> str:
-    return (
-        f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
-        f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/"
-        f"best[height<={h}][ext=mp4]/best[height<={h}]/best"
-    )
 
 
-# (메뉴 라벨, yt-dlp 포맷, 버튼 단축 라벨, merge: 병합 필요 여부)
-_QUALITY_OPTIONS = [
-    ("자동 (빠른 재생)", "best[ext=mp4]/best", "자동",  False),
-    ("1080p",           _merge_fmt(1080),     "1080p", True),
-    ("720p",            _merge_fmt(720),      "720p",  True),
-    ("480p",            _merge_fmt(480),      "480p",  True),
-    ("360p",            "best[height<=360][ext=mp4]/best[height<=360]/best", "360p", False),
-    ("240p",            "best[height<=240][ext=mp4]/best[height<=240]/best", "240p", False),
-]
-_DEFAULT_QUALITY_FMT = _QUALITY_OPTIONS[0][1]
-_DEFAULT_QUALITY_MERGE = _QUALITY_OPTIONS[0][3]
-# 재생 품질 단축 라벨 → 세로 해상도 ("자동"은 제한 없음)
-_QUALITY_HEIGHTS: dict[str, int] = {
-    "1080p": 1080, "720p": 720, "480p": 480, "360p": 360, "240p": 240,
-}
 
 
-class _TrackSlider(QSlider):
-    """트랙·핸들을 QPainter로 직접 그리는 QSlider.
-
-    QGraphicsVideoItem(영상) 위에 컨트롤바가 겹쳐진 상황에서는 Qt 스타일시트의
-    `QSlider::groove`/`::add-page` 서브컨트롤이 색을 무시하고 검게 렌더되는 문제가
-    있다(영상 오버레이 위 서브컨트롤 렌더 제약). 반면 위젯 배경·sub-page 같은
-    직접 채움은 정상 렌더되므로, 트랙 전체를 `paintEvent`에서 QPainter로 직접
-    그린다. 직접 채움은 반투명 알파도 영상 위에 정상 합성되므로, 미채움 트랙은
-    **반투명 화이트**로 그려 영상이 비쳐 보이게 한다(사용자 요구 = 반투명).
-    """
-
-    _TRACK_H = 4
-    _HANDLE_R = 6
-    # 미채움 트랙 — 반투명 화이트(영상이 비쳐 보이는 옅은 반투명)
-    _TRACK_ALPHA = 115
-
-    def paintEvent(self, event) -> None:  # noqa: N802 (Qt 시그니처)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        tok = ThemeManager.instance().current()
-        rect = self.rect()
-        cy = rect.height() / 2
-        pad = self._HANDLE_R + 1
-        x0 = float(pad)
-        span = max(1.0, rect.width() - 2 * pad)
-        mn, mx = self.minimum(), self.maximum()
-        frac = 0.0 if mx <= mn else (self.value() - mn) / (mx - mn)
-        frac = min(1.0, max(0.0, frac))
-        hx = x0 + span * frac
-        th = self._TRACK_H
-        r = th / 2
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        # 미채움 트랙(전체) — 반투명 화이트로 영상이 비침
-        painter.setBrush(QColor(255, 255, 255, self._TRACK_ALPHA))
-        painter.drawRoundedRect(QRectF(x0, cy - th / 2, span, th), r, r)
-        # 채움(핸들 왼쪽) — 불투명 progress_fg로 진행분을 또렷하게
-        painter.setBrush(QColor(tok.progress_fg))
-        painter.drawRoundedRect(QRectF(x0, cy - th / 2, hx - x0, th), r, r)
-        # 핸들
-        hr = self._HANDLE_R
-        painter.setBrush(QColor(tok.text_primary))
-        painter.drawEllipse(QPointF(hx, cy), float(hr), float(hr))
-        painter.end()
 
 
-class _ControlBar(QWidget):
-    play_toggled       = pyqtSignal()
-    seek_relative      = pyqtSignal(int)   # delta in seconds
-    seek_to_ms         = pyqtSignal(int)   # absolute ms
-    volume_changed     = pyqtSignal(int)   # 0-100
-    mute_toggled       = pyqtSignal()
-    fullscreen_toggled = pyqtSignal()
-    pip_toggled        = pyqtSignal()         # 화면 속 화면(PiP) 토글
-    download_requested = pyqtSignal(object)   # DownloadSettings
-    quality_changed    = pyqtSignal(str, str, bool) # (fmt_string, short_label, merge)
-    # ⬇ 클릭 — 플레이어가 사용 가능한 화질을 확인한 뒤 open_download_menu()를 부른다
-    download_menu_requested = pyqtSignal()
-    # 자막(가사) — 좌클릭 토글, 우클릭 메뉴에서 싱크 조정
-    subtitle_toggled       = pyqtSignal(bool)
-    subtitle_offset_nudged = pyqtSignal(int)   # ±ms
-    subtitle_sync_here     = pyqtSignal()      # 현재 재생 위치를 현재 줄에 맞춤
-    subtitle_offset_reset  = pyqtSignal()
-    subtitle_prefs_reset   = pyqtSignal()      # 자막 크기·위치를 기본값으로 초기화
 
-    _HEIGHT = 72
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setObjectName("ctrlbar")
-        self.setStyleSheet(_bar_style())
-        self.setFixedHeight(self._HEIGHT)
-        self._heights: list[int] | None = None   # 이 영상이 제공하는 화질(미확인이면 None)
-        self._has_subtitle = False
-        self._subtitle_on = True
-        self._subtitle_offset_ms = 0
-        self._subtitle_prefs_dirty = False
-        ThemeManager.instance().theme_changed.connect(
-            lambda _: self.setStyleSheet(_bar_style())
-        )
-        # Allow the bar to receive mouse events (needed for clicks on controls)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-        self._dragging = False
-        self._setup()
-
-    def _setup(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 4, 8, 6)
-        outer.setSpacing(4)
-
-        # Progress slider (full width)
-        self._progress = _TrackSlider(Qt.Orientation.Horizontal)
-        self._progress.setRange(0, 0)
-        self._progress.setToolTip("재생 위치")
-        self._progress.sliderPressed.connect(lambda: setattr(self, "_dragging", True))
-        self._progress.sliderReleased.connect(self._on_seek_released)
-        outer.addWidget(self._progress)
-
-        # Button row
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(2)
-
-        def btn(text: str, tip: str, slot) -> QToolButton:
-            b = QToolButton()
-            b.setText(text)
-            b.setToolTip(tip)
-            b.clicked.connect(slot)
-            return b
-
-        self._btn_play = btn("▶", "재생/일시정지  (Space / K)", self.play_toggled.emit)
-        self._btn_back = btn("⏪", "10초 뒤로  (J)", lambda: self.seek_relative.emit(-10))
-        self._btn_fwd  = btn("⏩", "10초 앞으로  (L)", lambda: self.seek_relative.emit(10))
-        self._btn_mute = btn("🔊", "음소거  (M)", self.mute_toggled.emit)
-
-        self._vol = _TrackSlider(Qt.Orientation.Horizontal)
-        self._vol.setRange(0, 100)
-        self._vol.setValue(100)
-        self._vol.setFixedWidth(68)
-        self._vol.setToolTip("볼륨  (↑/↓)")
-        self._vol.valueChanged.connect(self.volume_changed.emit)
-
-        self._time_lbl = QLabel("0:00 / 0:00")
-
-        self._quality_lbl = QLabel("")
-        self._quality_lbl.setStyleSheet(_quality_badge_style())
-        self._quality_lbl.hide()
-
-        self._btn_quality = QToolButton()
-        self._btn_quality.setText("자동")
-        self._btn_quality.setToolTip("재생 품질")
-        self._btn_quality.setStyleSheet(
-            "QToolButton{font-size:8pt;padding:1px 5px;border-radius:3px;"
-            "background:rgba(255,255,255,20);color:#ddd;}"
-            "QToolButton:hover{background:rgba(255,255,255,40);}"
-        )
-        self._btn_quality.clicked.connect(self._show_quality_menu)
-
-        self._btn_cc = btn("💬", "가사 자막  (C)", self._on_cc_clicked)
-        self._btn_cc.setEnabled(False)
-        self._btn_cc.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._btn_cc.customContextMenuRequested.connect(
-            lambda _pos: self._show_subtitle_menu()
-        )
-
-        self._btn_dl = btn("⬇", "다운로드", self.download_menu_requested.emit)
-        self._btn_pip = btn("⧉", "화면 속 화면  (P)", self.pip_toggled.emit)
-        self._btn_fs = btn("⛶", "전체화면  (F)", self.fullscreen_toggled.emit)
-
-        for w in (self._btn_play, self._btn_back, self._btn_fwd,
-                  self._btn_mute, self._vol, self._time_lbl):
-            row.addWidget(w)
-        row.addStretch()
-        row.addWidget(self._quality_lbl)
-        row.addWidget(self._btn_quality)
-        row.addWidget(self._btn_cc)
-        row.addWidget(self._btn_dl)
-        row.addWidget(self._btn_pip)
-        row.addWidget(self._btn_fs)
-        outer.addLayout(row)
-
-        # 초기 글리프를 상태와 맞춘다 — 가사가 붙기 전(비활성)에는 빈 말풍선이어야 한다.
-        self._update_cc_look()
-
-    # ── State helpers ──────────────────────────────────────────────
-
-    def update_position(self, pos_ms: int, dur_ms: int) -> None:
-        if not self._dragging:
-            self._progress.setRange(0, dur_ms)
-            self._progress.setValue(pos_ms)
-        self._time_lbl.setText(f"{self._fmt(pos_ms)} / {self._fmt(dur_ms)}")
-
-    def update_duration(self, dur_ms: int) -> None:
-        if not self._dragging:
-            self._progress.setRange(0, dur_ms)
-
-    def set_playing(self, playing: bool) -> None:
-        self._btn_play.setText("⏸" if playing else "▶")
-
-    def set_muted(self, muted: bool) -> None:
-        self._btn_mute.setText("🔇" if muted else "🔊")
-
-    def set_volume(self, vol: int) -> None:
-        self._vol.blockSignals(True)
-        self._vol.setValue(vol)
-        self._vol.blockSignals(False)
-
-    def set_quality(self, label: str) -> None:
-        self._quality_lbl.setText(label)
-        self._quality_lbl.setVisible(bool(label))
-
-    # ── 자막(가사) ─────────────────────────────────────────────────
-    def set_has_subtitle(self, has: bool) -> None:
-        """싱크 가사 유무 — 없으면 버튼을 비활성하고 이유를 툴팁으로 알린다."""
-        self._has_subtitle = has
-        self._refresh_cc_enabled()
-        self._update_cc_look()
-
-    def set_subtitle_prefs_dirty(self, dirty: bool) -> None:
-        """자막 크기·위치가 기본값에서 벗어나 있는지.
-
-        조절 단축키(Ctrl+휠/방향키)에는 가사 유무 조건이 없어서 **아무 영상에서나**
-        값을 바꿀 수 있는데, 초기화 메뉴는 💬 버튼에 달려 있고 그 버튼은 싱크 가사가
-        있을 때만 활성이었다. 그래서 비(非)노래 영상에서 키운 값을 되돌릴 방법이
-        없었다. 값이 기본값이 아니면 가사가 없어도 버튼을 열어 둔다(초기화 항목만).
-        """
-        dirty = bool(dirty)
-        if dirty == self._subtitle_prefs_dirty:
-            return
-        self._subtitle_prefs_dirty = dirty
-        self._refresh_cc_enabled()
-
-    def _refresh_cc_enabled(self) -> None:
-        enabled = self._has_subtitle or self._subtitle_prefs_dirty
-        self._btn_cc.setEnabled(enabled)
-        if self._has_subtitle:
-            tip = "가사 자막  (C)"
-        elif enabled:
-            tip = "시간 정보가 있는 가사가 없습니다 — 우클릭: 자막 크기·위치 초기화"
-        else:
-            tip = "시간 정보가 있는 가사가 없습니다"
-        self._btn_cc.setToolTip(tip)
-
-    def set_subtitle_on(self, on: bool) -> None:
-        self._subtitle_on = on
-        self._update_cc_look()
-
-    def set_subtitle_offset_ms(self, ms: int) -> None:
-        self._subtitle_offset_ms = int(ms)
-
-    def _update_cc_look(self) -> None:
-        # 자막이 실제로 나오는 상태(가사 있음 + 켜짐)면 말풍선을 채우고, 그 밖에는
-        # 빈 말풍선으로 바꾼다 — 아이콘 하나로 on/off를 구분한다.
-        self._btn_cc.setText("💬" if (self._subtitle_on and self._has_subtitle) else "🗨")
-
-    def _on_cc_clicked(self) -> None:
-        if not self._has_subtitle:
-            return
-        self._subtitle_on = not self._subtitle_on
-        self._update_cc_look()
-        self.subtitle_toggled.emit(self._subtitle_on)
-
-    def _build_subtitle_menu(self) -> "QMenu | None":
-        """💬 우클릭 메뉴를 만든다. 열 이유가 없으면 None.
-
-        싱크 오프셋 항목들은 트랙이 있어야 의미가 있으므로 가사가 있을 때만 넣고,
-        크기·위치 초기화는 값이 기본값에서 벗어나 있으면 가사가 없어도 넣는다.
-        (``exec``와 분리해 둔 것은 모달 루프 없이 구성만 테스트하기 위해서다.)
-        """
-        if not self._has_subtitle and not self._subtitle_prefs_dirty:
-            return None
-        menu = QMenu(self)
-        if self._has_subtitle:
-            sec = self._subtitle_offset_ms / 1000.0
-            menu.addAction(f"싱크: {sec:+.2f}초").setEnabled(False)
-            menu.addSeparator()
-            menu.addAction("−0.25초  ( [ / , )", lambda: self.subtitle_offset_nudged.emit(-250))
-            menu.addAction("+0.25초  ( ] / . )", lambda: self.subtitle_offset_nudged.emit(250))
-            menu.addAction("현재 위치를 이 줄에 맞춤  ( \\ )", self.subtitle_sync_here.emit)
-            menu.addSeparator()
-            menu.addAction("초기화", self.subtitle_offset_reset.emit)
-        menu.addAction("자막 크기·위치 초기화", self.subtitle_prefs_reset.emit)
-        return menu
-
-    def _show_subtitle_menu(self) -> None:
-        menu = self._build_subtitle_menu()
-        if menu is None:
-            return
-        menu.exec(self._btn_cc.mapToGlobal(self._btn_cc.rect().bottomLeft()))
-
-    def _on_seek_released(self) -> None:
-        self._dragging = False
-        self.seek_to_ms.emit(self._progress.value())
-
-    # ── 사용 가능한 화질 ───────────────────────────────────────────
-    def set_available_heights(self, heights: "list[int] | None") -> None:
-        """이 영상이 실제로 제공하는 세로 해상도 목록. None이면 '알 수 없음'."""
-        self._heights = list(heights) if heights else None
-
-    def set_download_busy(self, busy: bool) -> None:
-        """화질 확인 중에는 ⬇ 버튼을 잠근다(중복 조회 방지)."""
-        self._btn_dl.setEnabled(not busy)
-        self._btn_dl.setToolTip("화질 확인 중…" if busy else "다운로드")
-
-    def _max_height(self) -> "int | None":
-        return max(self._heights) if self._heights else None
-
-    def _height_offered(self, height: "int | None") -> bool:
-        """해당 화질이 의미 있는 선택지인지.
-
-        포맷 문자열이 `height<=N` 이라 최대치를 넘는 항목은 같은 결과를 주므로 뺀다.
-        (세로 영상은 높이가 1920처럼 크게 잡히니 '정확히 존재하는 값'이 아니라
-        최대치 이하인지로 판정한다.)
-        """
-        top = self._max_height()
-        return height is None or top is None or height <= top
-
-    def _show_quality_menu(self) -> None:
-        menu = QMenu(self)
-        tok = ThemeManager.instance().current()
-        menu.setStyleSheet(
-            f"QMenu{{background:{tok.bg_elevated};color:{tok.text_primary};border:1px solid {tok.border_muted};}}"
-            f"QMenu::item:selected{{background:{tok.bg_overlay};}}"
-        )
-        for menu_label, fmt, short, merge in _QUALITY_OPTIONS:
-            if not self._height_offered(_QUALITY_HEIGHTS.get(short)):
-                continue
-            act = menu.addAction(menu_label)
-            act.triggered.connect(
-                lambda _c, f=fmt, s=short, m=merge: self._on_quality_item(f, s, m)
-            )
-        btn_pos = self._btn_quality.mapToGlobal(QPoint(0, 0))
-        hint = menu.sizeHint()
-        menu.exec(QPoint(btn_pos.x(), btn_pos.y() - hint.height()))
-
-    def _on_quality_item(self, fmt: str, short: str, merge: bool) -> None:
-        self._btn_quality.setText(short)
-        self.quality_changed.emit(fmt, short, merge)
-
-    def open_download_menu(self) -> None:
-        """다운로드 메뉴를 연다 — 이 영상이 실제로 제공하는 화질만 나열한다."""
-        menu = QMenu(self)
-        tok = ThemeManager.instance().current()
-        menu.setStyleSheet(
-            f"QMenu{{background:{tok.bg_elevated};color:{tok.text_primary};border:1px solid {tok.border_muted};}}"
-            f"QMenu::item:selected{{background:{tok.bg_overlay};}}"
-        )
-
-        vm = menu.addMenu("🎬  동영상")
-        top = self._max_height()
-        best_label = f"최고 화질  ({top}p)" if top else "최고 화질"
-        for quality, height, label in [
-            (Quality.BEST,  None, best_label),
-            (Quality.P2160, 2160, "2160p  (4K)"),
-            (Quality.P1080, 1080, "1080p  (HD)"),
-            (Quality.P720,   720, "720p"),
-            (Quality.P480,   480, "480p"),
-            (Quality.P360,   360, "360p"),
-        ]:
-            if not self._height_offered(height):
-                continue
-            act = vm.addAction(label)
-            act.triggered.connect(
-                lambda _c, q=quality: self.download_requested.emit(
-                    DownloadSettings(quality=q, fmt=MediaFormat.MP4)
-                )
-            )
-
-        am = menu.addMenu("🎵  오디오")
-        for fmt, label in [(MediaFormat.MP3, "MP3"), (MediaFormat.M4A, "M4A")]:
-            act = am.addAction(label)
-            act.triggered.connect(
-                lambda _c, f=fmt: self.download_requested.emit(
-                    DownloadSettings(quality=Quality.AUDIO, fmt=f)
-                )
-            )
-
-        btn_pos = self._btn_dl.mapToGlobal(QPoint(0, 0))
-        hint    = menu.sizeHint()
-        menu.exec(QPoint(btn_pos.x(), btn_pos.y() - hint.height()))
-
-    @staticmethod
-    def _fmt(ms: int) -> str:
-        s = ms // 1000
-        m, s = divmod(s, 60)
-        h, m = divmod(m, 60)
-        return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
 # ── 16:9 video area with overlaid control bar ─────────────────────
 
-class _VideoArea(QWidget):
-    """Enforces 16:9 aspect ratio; hosts the visual stack and overlays
-    the control bar at the bottom (QRhi backend ensures correct z-order)."""
-
-    _BAR_H = _ControlBar._HEIGHT
-
-    def __init__(self, stack: QStackedWidget, parent=None) -> None:
-        super().__init__(parent)
-        self.setStyleSheet("background:#000;")
-        self.setMouseTracking(True)
-        self._stack = stack
-        self._bar: QWidget | None = None
-        self._subtitle: QWidget | None = None
-        stack.setParent(self)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-
-    def set_overlay_bar(self, bar: QWidget) -> None:
-        self._bar = bar
-        bar.setParent(self)
-        self._layout_children()
-
-    def set_overlay_subtitle(self, widget: QWidget) -> None:
-        self._subtitle = widget
-        widget.setParent(self)
-        self._layout_children()
-
-    def hasHeightForWidth(self) -> bool:
-        return True
-
-    def heightForWidth(self, w: int) -> int:
-        return max(w * 9 // 16, 90)
-
-    def resizeEvent(self, event) -> None:
-        self.setFixedHeight(self.heightForWidth(self.width()))
-        self._layout_children()
-        super().resizeEvent(event)
-
-    def _layout_children(self) -> None:
-        # self.height() 대신 heightForWidth 를 직접 계산:
-        # resizeEvent 안에서 setFixedHeight() 직후에는 self.height()가 이전 값을 반환하므로
-        # 컨트롤바 Y 좌표가 위젯 바깥으로 밀리는 버그가 발생함.
-        h = self.heightForWidth(self.width())
-        self._stack.setGeometry(0, 0, self.width(), h)
-        if self._subtitle is not None:
-            # 영역 전체를 덮는다 — 글자를 키우거나 위치를 올려도 잘리지 않는다.
-            # 컨트롤바를 나중에 raise_() 하므로 바가 계속 자막 위에 온다.
-            self._subtitle.setGeometry(0, 0, self.width(), h)
-            self._subtitle.raise_()
-        if self._bar is not None:
-            self._bar.setGeometry(0, h - self._BAR_H, self.width(), self._BAR_H)
-            self._bar.raise_()
 
 
 # ── Video view (QGraphicsView + QGraphicsVideoItem) ───────────────
@@ -825,262 +127,12 @@ class _VideoArea(QWidget):
 # 이 D3D 렌더링이 Qt 위젯을 덮어써 컨트롤바 오버레이가 불가능함.
 # QGraphicsVideoItem은 Qt 텍스처 시스템으로 렌더링하므로 오버레이가 정상 동작.
 
-class _VideoView(QGraphicsView):
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setStyleSheet("background: #000; border: none;")
-        self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setMouseTracking(True)
-        self.setInteractive(False)
-        # QGraphicsView는 기본적으로 포커스를 잡고 방향키(↑/↓/←/→)를 스크롤용으로
-        # 소비한다. 전체화면·PiP 창에서 이 뷰가 포커스를 쥐면 창의 keyPressEvent가
-        # 방향키를 못 받아 볼륨(↑/↓)·탐색(←/→) 단축키가 먹통이 된다. 포커스를 아예
-        # 잡지 않게 해 상위 창이 모든 키를 처리하도록 한다.
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
-        scene = QGraphicsScene(self)
-        scene.setBackgroundBrush(QBrush(QColor("#000000")))
-        self.setScene(scene)
-
-        self._item = QGraphicsVideoItem()
-        scene.addItem(self._item)
-        self._item.nativeSizeChanged.connect(lambda _: self._fit())
-
-    @property
-    def video_item(self) -> QGraphicsVideoItem:
-        return self._item
-
-    def wheelEvent(self, event) -> None:
-        # QGraphicsView 는 휠을 스크롤로 소비한다. 스크롤바를 꺼 둔 뷰라 쓸모가 없고,
-        # 삼키면 상위 플레이어의 자막 크기·위치 단축키가 조용히 죽는다.
-        event.ignore()
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self.setSceneRect(0, 0, self.width(), self.height())
-        self._fit()
-
-    def _fit(self) -> None:
-        w, h = self.width(), self.height()
-        if w <= 0 or h <= 0:
-            return
-        native = self._item.nativeSize()
-        if native.isValid() and native.width() > 0 and native.height() > 0:
-            scale = min(w / native.width(), h / native.height())
-            vw, vh = native.width() * scale, native.height() * scale
-            self._item.setPos(QPointF((w - vw) / 2, (h - vh) / 2))
-            self._item.setSize(QSizeF(vw, vh))
-        else:
-            self._item.setPos(QPointF(0, 0))
-            self._item.setSize(QSizeF(w, h))
 
 
 # ── Dedicated fullscreen window ───────────────────────────────────
 
-class _PipWindow(QWidget):
-    """화면 속 화면(PiP) — 항상 위에 뜨는 작은 플로팅 재생 창.
-
-    `_FullscreenWindow`와 동일하게 공유 `QMediaPlayer`의 출력을 자체 `_VideoView`로
-    리다이렉트한다(재생 위치·볼륨·상태는 그대로 유지). `_FullscreenWindow`와 마찬가지로
-    **컨트롤바(`bar`) 신호는 외부(InlinePlayer)에서 반드시 배선**해야 버튼이 동작한다.
-    **자막 오버레이(`subtitle`)도 `bar`와 마찬가지로 외부(InlinePlayer)가 내용을 채워야
-    한다.**
-
-    프레임리스·항상 위이며, 영상 영역 드래그로 이동하고 우하단 `QSizeGrip`으로
-    크기를 조절한다. 닫기(창 X/Esc/PiP 버튼/더블클릭)는 `exit_requested`로 알린다.
-    """
-
-    exit_requested = pyqtSignal()
-
-    _DEFAULT_W = 480
-    _DEFAULT_H = 270
-
-    def __init__(
-        self,
-        player: QMediaPlayer,
-        audio: QAudioOutput,
-        key_handler=None,
-        wheel_handler=None,
-    ) -> None:
-        super().__init__(
-            None,
-            Qt.WindowType.Window
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint,
-        )
-        self.setStyleSheet("background:#000;")
-        self.setWindowTitle("화면 속 화면")
-        self._player = player
-        self._key_handler = key_handler
-        self._wheel_handler = wheel_handler
-        self._drag_offset: QPoint | None = None
-
-        self._vw = _VideoView(self)
-        # 영상 영역은 마우스 이벤트를 투명 처리 → 창 드래그가 영상 위에서도 동작.
-        # 부수효과로 휠 이벤트의 히트테스트가 _vw(viewport)를 건너뛰고 이 창으로
-        # 떨어져 wheelEvent()가 호출되지만, **거기에 의존하지는 않는다** —
-        # InlinePlayer.eventFilter 의 Wheel 분기가 이 창의 viewport 도 명시적으로
-        # 가로채므로(전체화면과 동일) 이 속성을 빼도 Ctrl+휠은 살아 있다.
-        self._vw.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self._vw.viewport().setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-
-        self.subtitle = LyricsOverlay(self)
-        self.bar = _ControlBar(self)
-        # PiP 창에서는 전체화면 버튼 숨기고, PiP 버튼은 '인라인 복귀' 용도
-        self.bar._btn_fs.hide()
-        self.bar._btn_pip.setToolTip("인라인으로 복귀")
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        lay.addWidget(self._vw)
-
-        player.setVideoOutput(self._vw.video_item)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-        self._grip = QSizeGrip(self)
-        self.resize(self._DEFAULT_W, self._DEFAULT_H)
-        QTimer.singleShot(0, self._layout_children)
-
-    def _layout_children(self) -> None:
-        bh = _ControlBar._HEIGHT
-        self.subtitle.setGeometry(0, 0, self.width(), self.height())
-        self.subtitle.raise_()
-        self.subtitle.show()
-        self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
-        self.bar.raise_()
-        self.bar.show()
-        gs = 16
-        self._grip.setGeometry(self.width() - gs, self.height() - gs, gs, gs)
-        self._grip.raise_()
-
-    def resizeEvent(self, event) -> None:
-        self._layout_children()
-        super().resizeEvent(event)
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        if self._key_handler:
-            self._key_handler(event)
-        else:
-            super().keyPressEvent(event)
-
-    def wheelEvent(self, event) -> None:
-        # 자막 크기·위치 조절이 분리 창에서도 동작하도록 InlinePlayer 로 넘긴다.
-        if self._wheel_handler:
-            self._wheel_handler(event)
-        else:
-            super().wheelEvent(event)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_offset = (
-                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            )
-            event.accept()
-
-    def mouseMoveEvent(self, event) -> None:
-        if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
-            self.move(event.globalPosition().toPoint() - self._drag_offset)
-            event.accept()
-
-    def mouseReleaseEvent(self, event) -> None:
-        self._drag_offset = None
-
-    def mouseDoubleClickEvent(self, event) -> None:
-        self.exit_requested.emit()
-
-    def closeEvent(self, event) -> None:
-        self.exit_requested.emit()
-        event.ignore()
 
 
-class _FullscreenWindow(QWidget):
-    """Top-level fullscreen window on the target screen.
-
-    Holds its own QVideoWidget; QMediaPlayer output is redirected here.
-    All key events are forwarded to the provided key_handler so that the
-    InlinePlayer's full shortcut set (Space, J, L, F, Esc, …) works.
-
-    `_PipWindow`와 동일하게 **컨트롤바(`bar`) 신호는 외부(InlinePlayer)에서 반드시
-    배선**해야 버튼이 동작한다(재생/탐색/볼륨/음소거/다운로드/화질/전체화면·PiP 전환).
-    **자막 오버레이(`subtitle`)도 `bar`와 마찬가지로 외부(InlinePlayer)가 내용을 채워야
-    한다.**
-    """
-
-    exit_requested = pyqtSignal()
-
-    def __init__(
-        self,
-        player: QMediaPlayer,
-        audio: QAudioOutput,
-        key_handler=None,
-        wheel_handler=None,
-    ) -> None:
-        super().__init__(
-            None,
-            Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint,
-        )
-        self.setStyleSheet("background:#000;")
-        self._player = player
-        self._key_handler = key_handler
-        self._wheel_handler = wheel_handler
-
-        self._vw = _VideoView(self)
-        self.subtitle = LyricsOverlay(self)
-        self.bar = _ControlBar(self)
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        lay.addWidget(self._vw)
-
-        player.setVideoOutput(self._vw.video_item)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-        QTimer.singleShot(0, self._position_bar)
-
-    def _position_bar(self) -> None:
-        bh = _ControlBar._HEIGHT
-        self.subtitle.setGeometry(0, 0, self.width(), self.height())
-        self.subtitle.raise_()
-        self.subtitle.show()
-        self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
-        self.bar.raise_()
-        self.bar.show()
-
-    def resizeEvent(self, event) -> None:
-        bh = _ControlBar._HEIGHT
-        self.subtitle.setGeometry(0, 0, self.width(), self.height())
-        self.subtitle.raise_()
-        self.bar.setGeometry(0, self.height() - bh, self.width(), bh)
-        self.bar.raise_()
-        super().resizeEvent(event)
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        # Forward every key to InlinePlayer so all shortcuts work in fullscreen
-        if self._key_handler:
-            self._key_handler(event)
-        else:
-            if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_F):
-                self.exit_requested.emit()
-            else:
-                super().keyPressEvent(event)
-
-    def wheelEvent(self, event) -> None:
-        # 자막 크기·위치 조절이 분리 창에서도 동작하도록 InlinePlayer 로 넘긴다.
-        if self._wheel_handler:
-            self._wheel_handler(event)
-        else:
-            super().wheelEvent(event)
-
-    def mouseDoubleClickEvent(self, event) -> None:
-        self.exit_requested.emit()
-
-    def closeEvent(self, event) -> None:
-        self.exit_requested.emit()
-        event.ignore()
 
 
 # ── Public widget ─────────────────────────────────────────────────

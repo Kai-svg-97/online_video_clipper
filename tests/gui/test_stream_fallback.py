@@ -150,7 +150,11 @@ def _worker(url: str = "https://www.youtube.com/watch?v=abc") -> vp._StreamWorke
 
 
 def _run(worker, module, monkeypatch, playable) -> tuple[list, list]:
-    monkeypatch.setattr(vp, "_stream_playable", playable)
+    # 워커는 gui/widgets/player/stream.py 안에 있다 — 그 모듈의 전역을 패치해야
+    # 실제로 검증 함수가 바뀐다(video_player의 재수출 이름을 바꿔 봐야 소용없다).
+    from gui.widgets.player import stream as stream_mod
+
+    monkeypatch.setattr(stream_mod, "_stream_playable", playable)
     ready: list = []
     failed: list = []
     worker.stream_ready.connect(
