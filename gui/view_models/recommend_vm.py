@@ -25,6 +25,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# 미리 받기 한 묶음 크기와 검색 깊이의 기본값. 페이지마다 검색을 깊게 파고
+# (per_query = _BASE_PER_QUERY × (page+1)) 이미 본 URL을 걸러 새 것만 남긴다.
+_MORE_LIMIT = 12
+_BASE_PER_QUERY = 12
+
 
 class _RecommendWorker(QThread):
     finished_ok   = pyqtSignal(list)
@@ -51,6 +56,10 @@ class RecommendViewModel(QObject):
     partial_ready   = pyqtSignal(list)   # list[FeedVideoDTO] — 부분 결과(즉시 표시용)
     loading_changed = pyqtSignal(bool)
     error_occurred  = pyqtSignal(str)
+    # ── 미리 받기(무한 스크롤) ──
+    more_ready           = pyqtSignal(list)   # list[FeedVideoDTO] — 뒤에 덧붙일 묶음
+    more_loading_changed = pyqtSignal(bool)
+    more_exhausted       = pyqtSignal()       # 더 나오지 않음(요청 중단 신호)
 
     def __init__(
         self,
@@ -65,6 +74,11 @@ class RecommendViewModel(QObject):
         self._worker: _RecommendWorker | None = None
         self._gen: int = 0
         self._last_key: str = ""
+        # 미리 받기 상태 — 같은 씨앗으로 '더 깊이' 검색해 뒤에 덧붙인다.
+        self._more_worker: _RecommendWorker | None = None
+        self._seeds: tuple = ((), (), ())
+        self._page: int = 0
+        self._more_exhausted: bool = False
 
     @property
     def items(self) -> list[FeedVideoDTO]:
@@ -102,6 +116,11 @@ class RecommendViewModel(QObject):
             self.items_changed.emit(self._items)   # 캐시 재표시
             return
         self._last_key = key
+        # 새 씨앗이면 미리 받기도 처음부터 — 이전 목록의 페이지 깊이를 물려받으면
+        # 첫 '더 받기'가 엉뚱하게 깊은 결과부터 가져온다.
+        self._seeds = (seed_titles, seed_channels, seed_tags)
+        self._page = 0
+        self._more_exhausted = False
 
         cookie_opts = self._cookie_opts()
         query = GetRecommendationsQuery(
@@ -126,6 +145,65 @@ class RecommendViewModel(QObject):
         worker.finished.connect(lambda w=worker, g=gen: self._on_worker_done(w, g))
         self._worker = worker
         worker.start()
+
+    def load_more(self, exclude_urls: frozenset[str] = frozenset()) -> None:
+        """지금 목록 뒤에 덧붙일 추가분을 백그라운드로 받는다.
+
+        **씨앗을 새로 뽑지 않는다.** `derive_seed_queries`는 목록당 최대 3개(제목
+        키워드·최다 태그·최다 채널)뿐이라 더 뽑을 검색어가 없다. 대신 같은 검색어로
+        **더 깊이**(`per_query`를 페이지마다 늘려) 검색하고, 이미 보여 준 URL을
+        `exclude_urls`로 걸러 새로 나온 것만 남긴다.
+
+        결과가 하나도 없으면 그 씨앗은 바닥난 것으로 보고 더 요청하지 않는다
+        (스크롤할 때마다 같은 검색을 반복하면 조용히 네트워크만 축낸다).
+        """
+        if self._more_exhausted or self._more_worker is not None:
+            return
+        seed_titles, seed_channels, seed_tags = self._seeds
+        if not seed_titles and not seed_channels and not seed_tags:
+            return
+        self._page += 1
+        query = GetRecommendationsQuery(
+            seed_titles=seed_titles,
+            seed_channels=seed_channels,
+            seed_tags=seed_tags,
+            limit=_MORE_LIMIT,
+            per_query=_BASE_PER_QUERY * (self._page + 1),
+            exclude_urls=exclude_urls,
+            cookie_opts=self._cookie_opts(),
+        )
+        gen = self._gen
+        self.more_loading_changed.emit(True)
+        worker = _RecommendWorker(
+            lambda on_progress=None: self._handler.handle(query), self
+        )
+        worker.finished_ok.connect(lambda items, g=gen: self._on_more_ok(items, g))
+        worker.finished_err.connect(lambda msg, g=gen: self._on_more_err(msg, g))
+        worker.finished.connect(lambda w=worker: self._on_more_done(w))
+        self._more_worker = worker
+        worker.start()
+
+    def _on_more_ok(self, items: list, gen: int) -> None:
+        if gen != self._gen:
+            return   # 그 사이 씨앗이 바뀌었다 — 늦게 온 추가분은 버린다
+        if not items:
+            self._more_exhausted = True
+            self.more_exhausted.emit()
+            return
+        self._items = [*self._items, *items]
+        self.more_ready.emit(items)
+
+    def _on_more_err(self, msg: str, gen: int) -> None:
+        # 추가분 실패는 화면을 어지럽히지 않는다 — 이미 보고 있는 목록은 멀쩡하다.
+        logger.warning("추천 추가분 조회 실패: %s", msg)
+        if gen == self._gen:
+            self._more_exhausted = True
+            self.more_exhausted.emit()
+
+    def _on_more_done(self, worker: _RecommendWorker) -> None:
+        if worker is self._more_worker:
+            self._more_worker = None
+        self.more_loading_changed.emit(False)
 
     def invalidate(self) -> None:
         """씨앗 캐시를 비워 다음 load()가 반드시 재조회하게 한다."""
@@ -155,7 +233,8 @@ class RecommendViewModel(QObject):
 
     def shutdown(self) -> None:
         """종료 시 진행 중인 워커를 정리한다 (MainWindow.closeEvent에서 호출)."""
-        worker = self._worker
-        self._worker = None
-        if worker is not None and worker.isRunning():
-            worker.wait(3000)
+        for attr in ("_worker", "_more_worker"):
+            worker = getattr(self, attr)
+            setattr(self, attr, None)
+            if worker is not None and worker.isRunning():
+                worker.wait(3000)

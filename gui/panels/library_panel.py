@@ -57,6 +57,7 @@ from gui.view_models.library_vm import LibraryViewModel
 # 화면 조립(_setup_ui)·배선(_connect_signals)만 이 파일에 남기고, 나머지 동작은
 # 주제별 mixin으로 나눴다. 런타임 클래스는 하나라 상태 공유는 이전과 같다.
 from gui.panels.library.mixins.album import AlbumViewMixin
+from gui.panels.library.mixins.mini_player import MiniPlayerMixin
 from gui.panels.library.mixins.recommend import RecommendStripMixin
 from gui.panels.library.mixins.navigation import NavigationMixin
 from gui.panels.library.mixins.detail import DetailNavigationMixin
@@ -192,6 +193,7 @@ logger = logging.getLogger(__name__)
 
 class LibraryPanel(
     AlbumViewMixin,
+    MiniPlayerMixin,
     RecommendStripMixin,
     NavigationMixin,
     DetailNavigationMixin,
@@ -206,6 +208,9 @@ class LibraryPanel(
     download_requested = pyqtSignal(str, str, object)
     path_changed       = pyqtSignal(str)   # 현재 위치 경로 문자열 (breadcrumb)
     back_exhausted     = pyqtSignal()      # 뒤로가기 기록 소진(외부에서 원본 페이지 복귀용)
+    # 지금 재생 중 미니바 — 상세를 떠나도 재생이 이어질 때 MainWindow가 하단 띠로 그린다.
+    now_playing_changed  = pyqtSignal(object)          # dict | None
+    now_playing_progress = pyqtSignal(int, int, bool)  # position_ms, duration_ms, playing
 
     def __init__(
         self,
@@ -246,6 +251,10 @@ class LibraryPanel(
         self._nav_history: list[dict] = []
         self._nav_future: list[dict] = []
         self._is_restoring: bool = False
+        # 미니바 표시용 현재 재생 정보(상세를 열 때 채운다)
+        self._mini_title: str = ""
+        self._mini_subtitle: str = ""
+        self._mini_poster = None
         self._current_channel_url: str = ""      # 단일 채널 피드 복원용
         self._current_detail_payload: object = None  # 상세 화면 재진입용(UUID|FeedVideoDTO)
         # 가수/앨범 필터 재생목록 컨텍스트 — 마우스 뒤로가기 재생 이력 되짚기용.
@@ -270,6 +279,8 @@ class LibraryPanel(
         self._recommend_timer.setInterval(_RECOMMEND_DEBOUNCE_MS)
         self._recommend_timer.timeout.connect(self._refresh_recommendations)
         self._connect_signals()
+        # 지금 재생 중 미니바 상태(상세를 떠나도 재생이 이어지는 경우)
+        self._init_mini_player()
         # 목록·트리·카드 그리드의 휠 스크롤을 픽셀 단위 + 보간으로 바꾼다
         # (기본값은 항목 단위라 카드 한 장씩 뚝뚝 점프한다).
         apply_smooth_scroll_tree(self)
@@ -650,11 +661,16 @@ class LibraryPanel(
         self._recommend_strip.download_requested.connect(self._on_feed_card_download)
         self._recommend_strip.add_to_category_requested.connect(self._on_recommend_to_category)
         self._recommend_strip.add_to_playlist_requested.connect(self._on_feed_card_to_playlist)
+        self._recommend_strip.load_more_requested.connect(self._on_recommend_more)
         if self._recommend_vm is not None:
             self._recommend_vm.items_changed.connect(self._on_recommend_items)
             self._recommend_vm.partial_ready.connect(self._on_recommend_partial)
             self._recommend_vm.loading_changed.connect(self._recommend_strip.set_loading)
             self._recommend_vm.error_occurred.connect(self._on_recommend_error)
+            self._recommend_vm.more_ready.connect(self._on_recommend_more_ready)
+            self._recommend_vm.more_loading_changed.connect(
+                self._recommend_strip.set_more_loading)
+            self._recommend_vm.more_exhausted.connect(self._on_recommend_exhausted)
         else:
             self._recommend_strip.set_status("추천 기능을 사용할 수 없습니다.")
             # 조회가 아예 없으므로 노출 조건(결과 도착)이 영영 오지 않는다 —

@@ -148,13 +148,15 @@ class DetailNavigationMixin:
     def _open_detail(
         self, video_id: UUID, autoplay: bool = False,
         related: list | None = None, header: str | None = None, push_nav: bool = True,
-        resume_ms: int = 0,
+        resume_ms: int = 0, stay_on_list: bool = False,
     ) -> None:
         """로컬 영상 상세화면을 연다.
 
         related가 None이면 일반 진입 — 현재 목록으로 연관 목록을 구성하고 재생목록 모드를
         해제한다. related가 주어지면(재생목록 내 이동) 그 목록/헤더를 유지한다.
-        push_nav=False면 화면 히스토리를 남기지 않는다(재생목록 내 이동)."""
+        push_nav=False면 화면 히스토리를 남기지 않는다(재생목록 내 이동).
+        stay_on_list=True면 상세로 화면을 바꾸지 않고 위젯에만 싣는다 — 미니바로
+        듣는 중 자동 다음곡이 화면을 뺏지 않게 하기 위한 것이다."""
         detail = self._vm.get_video_detail(video_id)
         if detail is None:
             return
@@ -179,7 +181,14 @@ class DetailNavigationMixin:
                                  autoplay=autoplay, related_header=header)
         self._detail_widget.set_recommendations(self._recommend_related_items())
         self._current_detail_payload = video_id
-        self._nav_stack.setCurrentIndex(1)
+        self._remember_now_playing(detail.title, detail.channel_name or "", poster)
+        self._remember_related_for_mini(related, header)
+        if stay_on_list:
+            # 미니바 재생 중 — 화면은 목록에 두고 재생만 다음 곡으로 넘긴다.
+            self._refresh_mini_track()
+        else:
+            self._clear_mini_player(stop=False)   # 상세를 보는 동안엔 띠가 필요 없다
+            self._nav_stack.setCurrentIndex(1)
         self._vm.request_thumbnail_refresh(video_id, detail.url)
         if self._song_vm is not None:
             self._song_vm.load(video_id)
@@ -187,6 +196,7 @@ class DetailNavigationMixin:
     def _open_stream_detail(
         self, feed_dto, autoplay: bool = False,
         related: list | None = None, header: str | None = None, push_nav: bool = True,
+        stay_on_list: bool = False,
     ) -> None:
         """구독 피드/채널의 스트리밍 영상 상세화면을 연다.
 
@@ -203,7 +213,13 @@ class DetailNavigationMixin:
                                         poster=None)
         self._detail_widget.set_recommendations(self._recommend_related_items())
         self._current_detail_payload = feed_dto
-        self._nav_stack.setCurrentIndex(1)
+        self._remember_now_playing(feed_dto.title, feed_dto.channel_name or "", None)
+        self._remember_related_for_mini(related, header)
+        if stay_on_list:
+            self._refresh_mini_track()
+        else:
+            self._clear_mini_player(stop=False)
+            self._nav_stack.setCurrentIndex(1)
 
     def _on_related_item_selected(self, payload) -> None:
         """연관 영상/재생목록 클릭 — 재생목록 모드면 이력에 쌓고 재생, 아니면 일반 진입."""
@@ -218,8 +234,15 @@ class DetailNavigationMixin:
             self._open_stream_detail(payload)
 
     def _on_play_next(self, payload) -> None:
-        """재생목록 자동재생 — 다음 항목을 로드하고 바로 재생한다."""
+        """재생목록 자동재생 — 다음 항목을 로드하고 바로 재생한다.
+
+        미니바로 듣는 중이면 **화면을 바꾸지 않는다** — 목록을 둘러보는 중에 곡이
+        끝났다고 상세 화면이 튀어나오면 하던 일을 방해한다.
+        """
         from application.library.dtos import FeedVideoDTO  # noqa: PLC0415
+        if self._now_playing is not None:
+            self._play_next_in_mini(payload)
+            return
         if self._playlist_ctx is not None:
             self._playlist_ctx["history"].append(payload)
             self._open_playlist_payload(payload, autoplay=True)

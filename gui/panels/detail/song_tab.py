@@ -43,6 +43,13 @@ from domain.song.value_objects import LyricsLine
 from gui.themes.colors import sem
 
 from gui.panels.detail.widgets import _EditableField, _LockedNotice, _SpinRefreshButton, _clear_layout, _t
+from gui.panels.detail.text_zoom import (
+    ZOOM_TOOLTIP,
+    clamp_scale,
+    load_scale,
+    scale_label,
+    scaled_pt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +340,7 @@ class _SongTab(QWidget):
     synced_requested = pyqtSignal()          # 싱크(시간 정보) 가사 찾기
     lyrics_seek_requested = pyqtSignal(int)  # 가사 줄 클릭 → 그 줄 시작 ms
     offset_changed = pyqtSignal(int)         # 사용자가 싱크 보정값을 바꿈(절대 ms)
+    font_scale_reset_requested = pyqtSignal()  # 배율 버튼 — 글자 크기를 기본값으로
     category_requested = pyqtSignal()        # 안내판의 '카테고리에 담기' 클릭
 
     # 가사 영역 스택 인덱스
@@ -355,6 +363,7 @@ class _SongTab(QWidget):
         self._editable = True
         self._lyrics_lines: list[LyricsLine] = []
         self._current_dto: SongInfoDTO | None = None
+        self._font_scale: float = load_scale()
         self._side_by_side = False   # 번역 배치: False=원문 아래, True=원문 오른쪽
         self._rows: list[_LyricRow] = []
         self._current_row: _LyricRow | None = None
@@ -452,6 +461,14 @@ class _SongTab(QWidget):
         hint = QLabel("(더블클릭하여 편집)")
         hint.setStyleSheet(f"font-size:8pt; color:{_t().text_secondary};")
         lyr_header.addWidget(hint)
+        # 글자 크기 — 지금 배율을 보여 주고, 누르면 기본값으로 되돌린다.
+        self._zoom_btn = QPushButton(scale_label(self._font_scale))
+        self._zoom_btn.setFixedSize(46, 22)
+        self._zoom_btn.setFlat(True)
+        self._zoom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._zoom_btn.setToolTip(ZOOM_TOOLTIP)
+        self._zoom_btn.clicked.connect(self.font_scale_reset_requested.emit)
+        lyr_header.addWidget(self._zoom_btn)
         # 번역 배치 전환 아이콘 (비한국어 병행 가사일 때만 노출)
         self._layout_btn = QPushButton("⬌")
         self._layout_btn.setFixedSize(24, 22)
@@ -692,14 +709,32 @@ class _SongTab(QWidget):
             content_idx += 1
         self._lyrics_layout.addStretch()
 
-    @staticmethod
-    def _lyric_label(text: str, color: str, pt: int) -> QLabel:
-        """가사 한 줄 라벨 — 평문 렌더(가사 속 &·< 등이 엔티티로 오표기되지 않도록)."""
+    def _lyric_label(self, text: str, color: str, pt: int) -> QLabel:
+        """가사 한 줄 라벨 — 평문 렌더(가사 속 &·< 등이 엔티티로 오표기되지 않도록).
+
+        크기는 사용자가 정한 배율(`set_font_scale`)을 곱해 정한다 — 읽는 글이라
+        화면·시력에 따라 알맞은 크기가 다르다.
+        """
         lbl = QLabel(text)
         lbl.setWordWrap(True)
         lbl.setTextFormat(Qt.TextFormat.PlainText)
-        lbl.setStyleSheet(f"color:{color}; font-size:{pt}pt; background:transparent;")
+        lbl.setStyleSheet(
+            f"color:{color}; font-size:{scaled_pt(pt, self._font_scale)}pt;"
+            " background:transparent;"
+        )
         return lbl
+
+    def set_font_scale(self, scale: float) -> None:
+        """가사 글자 배율을 바꾸고 즉시 다시 그린다(현재 강조 줄은 유지)."""
+        scale = clamp_scale(scale)
+        if scale == self._font_scale:
+            return
+        self._font_scale = scale
+        self._zoom_btn.setText(scale_label(scale))
+        current = self._current_row.line_index if self._current_row else None
+        self._render_lyrics(self._current_dto)
+        if current is not None:
+            self.set_current_line(current)
 
     # ── 재생 연동 (현재 줄 강조·자동 스크롤) ──────────────────────
     _SCROLL_HOLD_SEC = 3.0   # 사용자가 직접 스크롤한 뒤 자동 스크롤을 멈추는 시간

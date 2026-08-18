@@ -35,6 +35,13 @@ from gui.widgets.player.constants import _QUALITY_HEIGHTS, _QUALITY_OPTIONS
 logger = logging.getLogger(__name__)
 
 
+# 재생 컨트롤 아이콘(글리프) 크기 — 예전 13px/24px 상자는 큰 화면에서 알아보기
+# 어려울 만큼 작았다. 두 배로 키우고 바 높이도 그만큼 늘린다(높이를 그대로 두면
+# 진행 슬라이더와 버튼 행이 서로를 밀어낸다).
+_ICON_PX = 26
+_ICON_BOX = 48
+
+
 def _bar_style() -> str:
     """현재 테마 토큰을 반영한 컨트롤바 QSS를 반환한다."""
     tok = ThemeManager.instance().current()
@@ -46,13 +53,13 @@ QToolButton {{
     color: {tok.text_primary};
     background: transparent;
     border: none;
-    font-size: 13px;
-    padding: 2px 4px;
-    min-width: 24px;
-    min-height: 24px;
+    font-size: {_ICON_PX}px;
+    padding: 2px 6px;
+    min-width: {_ICON_BOX}px;
+    min-height: {_ICON_BOX}px;
 }}
 QToolButton:hover {{ color: {tok.accent_hover}; background: rgba(255,255,255,15); border-radius: 3px; }}
-QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 9pt; }}
+QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 11pt; }}
 /* 슬라이더(_TrackSlider)는 QPainter로 직접 그린다 — 영상 오버레이 위에서
    QSlider::groove/add-page 서브컨트롤이 검게 렌더되는 문제를 회피하기 위함. */
 """
@@ -61,7 +68,7 @@ def _quality_badge_style() -> str:
     tok = ThemeManager.instance().current()
     return (
         f"color:{tok.text_primary}; background:{tok.badge_bg}; "
-        "font-size:8pt; padding:1px 5px; border-radius:3px;"
+        "font-size:10pt; padding:2px 7px; border-radius:4px;"
     )
 
 class _TrackSlider(QSlider):
@@ -128,7 +135,8 @@ class _ControlBar(QWidget):
     subtitle_offset_reset  = pyqtSignal()
     subtitle_prefs_reset   = pyqtSignal()      # 자막 크기·위치를 기본값으로 초기화
 
-    _HEIGHT = 72
+    # 진행 슬라이더 + 버튼 행(_ICON_BOX) + 여백. 아이콘을 키우면 함께 커져야 한다.
+    _HEIGHT = 96
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -195,7 +203,7 @@ class _ControlBar(QWidget):
         self._btn_quality.setText("자동")
         self._btn_quality.setToolTip("재생 품질")
         self._btn_quality.setStyleSheet(
-            "QToolButton{font-size:8pt;padding:1px 5px;border-radius:3px;"
+            "QToolButton{font-size:10pt;padding:3px 9px;border-radius:4px;"
             "background:rgba(255,255,255,20);color:#ddd;}"
             "QToolButton:hover{background:rgba(255,255,255,40);}"
         )

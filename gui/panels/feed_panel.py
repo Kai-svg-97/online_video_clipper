@@ -704,6 +704,7 @@ class RecommendStrip(QWidget):
     """
 
     refresh_requested         = pyqtSignal()
+    load_more_requested       = pyqtSignal()         # 끝에 닿기 전 미리 더 받기
     expanded_changed          = pyqtSignal(bool)
     video_clicked             = pyqtSignal(object)   # FeedVideoDTO
     download_requested        = pyqtSignal(str, str)
@@ -714,11 +715,15 @@ class RecommendStrip(QWidget):
     THUMB_SIZE = (192, 108)
     # 헤더만 남았을 때의 높이 — 스플리터 최소 높이 계산에 쓴다.
     HEADER_H = 30
+    # 오른쪽 끝에서 이만큼 남았을 때 미리 다음 묶음을 받는다(카드 2장쯤 앞).
+    PREFETCH_MARGIN_PX = 420
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._cards: list[_FeedCard] = []
         self._expanded = True
+        self._more_busy = False        # 추가분을 받는 중(중복 요청 방지)
+        self._more_exhausted = False   # 더 받을 게 없다고 판명됨
         self._build_ui()
         self._apply_theme(ThemeManager.instance().current())
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
@@ -788,6 +793,9 @@ class RecommendStrip(QWidget):
         self._scroll.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
+        # 끝에 도달하기 **전에** 다음 묶음을 미리 받는다 — 끝까지 밀고 나서야 받으면
+        # 빈 공백을 마주한 뒤 기다리게 된다.
+        self._scroll.horizontalScrollBar().valueChanged.connect(self._on_hscroll)
         root.addWidget(self._scroll, stretch=1)
 
         self._empty_lbl = QLabel("추천할 영상이 없습니다.")
@@ -836,6 +844,29 @@ class RecommendStrip(QWidget):
     def count(self) -> int:
         return len(self._cards)
 
+    # ── 미리 받기 ───────────────────────────────────────────────────────────
+    def set_more_loading(self, loading: bool) -> None:
+        """추가분 조회 중 표시. 조회 중에는 다시 요청하지 않는다."""
+        self._more_busy = loading
+        if loading:
+            self._status_lbl.setText("더 불러오는 중…")
+        elif self._status_lbl.text() == "더 불러오는 중…":
+            self._status_lbl.setText("")
+
+    def set_more_exhausted(self, exhausted: bool) -> None:
+        """더 받을 게 없으면 스크롤할 때마다 헛되이 조회하지 않는다."""
+        self._more_exhausted = exhausted
+
+    def _on_hscroll(self, value: int) -> None:
+        if not self._expanded or self._more_busy or self._more_exhausted:
+            return
+        bar = self._scroll.horizontalScrollBar()
+        if bar.maximum() <= 0:
+            return   # 스크롤할 것도 없다(다 보이는 상태)
+        margin = max(self.PREFETCH_MARGIN_PX, self._scroll.viewport().width() // 2)
+        if bar.maximum() - value <= margin:
+            self.load_more_requested.emit()
+
     # ── 카드 ────────────────────────────────────────────────────────────────
     def clear(self) -> None:
         for card in self._cards:
@@ -846,6 +877,7 @@ class RecommendStrip(QWidget):
 
     def set_items(self, items: list[FeedVideoDTO]) -> None:
         self.clear()
+        self._more_exhausted = False   # 씨앗이 바뀌면 다시 더 받을 수 있다
         self.append_items(items)
 
     def append_items(self, items: list[FeedVideoDTO]) -> None:

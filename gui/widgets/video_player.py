@@ -442,9 +442,18 @@ class InlinePlayer(QWidget):
         """현재 재생 위치(ms). 재생 전이면 0."""
         return self._player.position()
 
+    @property
+    def duration_ms(self) -> int:
+        """현재 영상 길이(ms). 아직 모르면 0."""
+        return self._player.duration()
+
     def seek_to_ms(self, ms: int) -> None:
         """절대 위치(ms)로 재생 위치를 이동한다. 설명 타임스탬프 클릭 등에서 사용."""
         self._player.setPosition(max(0, int(ms)))
+
+    def toggle_play(self) -> None:
+        """재생/일시정지 — 컨트롤바 밖(미니바 등)에서 부르는 공개 진입점."""
+        self._toggle_play()
 
     # ── 가사 자막 ──────────────────────────────────────────────────
     def set_lyrics(self, track: LyricsTrack | None) -> None:

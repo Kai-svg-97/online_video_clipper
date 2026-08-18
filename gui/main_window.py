@@ -27,6 +27,7 @@ from gui.panels.library_panel import LibraryPanel
 from gui.panels.monitoring_panel import MonitoringPanel
 from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
 from gui.panels.stats_panel import StatsPanel
+from gui.widgets.mini_player_bar import MiniPlayerBar
 from gui.themes.manager import ThemeManager
 from gui.toast import KIND_ERROR, KIND_SUCCESS, show_toast
 from gui.workers import wait_all
@@ -485,7 +486,16 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
 
-        root = QHBoxLayout(central)
+        # 세로 = (사이드바+콘텐츠) 위 / 지금 재생 중 미니바 아래.
+        # 미니바를 스택 안이 아니라 창 바닥에 두어야 다른 페이지(다운로드·설정)로 가도
+        # 재생 중인 것이 계속 보인다.
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        body = QWidget()
+        outer.addWidget(body, 1)
+
+        root = QHBoxLayout(body)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
@@ -555,6 +565,10 @@ class MainWindow(QMainWindow):
         root.addWidget(self._sidebar)
         root.addWidget(self._stack, 1)
 
+        # 지금 재생 중 미니바 (기본 숨김 — 상세를 떠나며 재생이 이어질 때만 뜬다)
+        self._mini_bar = MiniPlayerBar()
+        outer.addWidget(self._mini_bar)
+
         # 상태 표시줄
         self.setStatusBar(QStatusBar())
 
@@ -569,6 +583,17 @@ class MainWindow(QMainWindow):
 
     def _setup_signals(self) -> None:
         lp = self._library_page.library_panel()
+
+        # ── 지금 재생 중 미니바 ──────────────────────────────────────
+        # 재생 주체는 라이브러리 상세의 InlinePlayer 그대로다 — 이 띠는 상태를
+        # 비추고 조작만 되돌려 보낸다(플레이어를 옮기지 않는다).
+        lp.now_playing_changed.connect(self._on_now_playing_changed)
+        lp.now_playing_progress.connect(self._on_now_playing_progress)
+        self._mini_bar.play_toggled.connect(lp.mini_toggle_play)
+        self._mini_bar.next_requested.connect(lp.mini_next)
+        self._mini_bar.seek_requested.connect(lp.mini_seek)
+        self._mini_bar.close_requested.connect(lp.mini_close)
+        self._mini_bar.open_requested.connect(self._on_mini_open)
 
         self._pending_url: str = ""
 
@@ -743,6 +768,28 @@ class MainWindow(QMainWindow):
         """다운로드 상세의 브레드크럼 클릭 → 라이브러리 패널의 해당 카테고리로 이동."""
         self._sidebar._navigate(_PAGE_LIBRARY)
         self._library_page.library_panel().navigate_to_category(cat_id)
+
+    def _on_now_playing_changed(self, info) -> None:
+        """미니바 표시/숨김 — info가 None이면 재생이 끝났거나 상세로 돌아간 것이다."""
+        if not info:
+            self._mini_bar.hide()
+            return
+        self._mini_bar.set_track(
+            info.get("title", ""), info.get("subtitle", ""),
+            info.get("poster"), bool(info.get("has_next")),
+        )
+        self._mini_bar.show()
+
+    def _on_now_playing_progress(self, position_ms: int, duration_ms: int,
+                                 playing: bool) -> None:
+        self._mini_bar.set_duration(duration_ms)
+        self._mini_bar.set_position(position_ms)
+        self._mini_bar.set_playing(playing)
+
+    def _on_mini_open(self) -> None:
+        """띠 클릭 — 라이브러리로 전환한 뒤 보던 상세 화면으로 돌아간다."""
+        self._sidebar._navigate(_PAGE_LIBRARY)   # 스택 전환 + 사이드바 강조를 함께
+        self._library_page.library_panel().mini_open()
 
     def _on_stats_category_selected(self, cat_id: object) -> None:
         """통계 채널 섹션에서 카테고리 클릭 → 라이브러리 해당 카테고리로 이동.

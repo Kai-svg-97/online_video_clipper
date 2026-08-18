@@ -174,6 +174,7 @@ class RecommendStripMixin:
         # 새 씨앗으로 조회를 시작한다 — 결과가 올 때까지 다시 감춘다(직전 카테고리의
         # 추천이 새 목록의 추천인 것처럼 남아 있지 않도록).
         self._hide_recommend_strip()
+        self._recommend_strip.set_more_exhausted(False)
         self._recommend_vm.load(
             seed_titles=titles,
             seed_channels=channels,
@@ -225,6 +226,28 @@ class RecommendStripMixin:
         # 상세화면이 열려 있으면 우측 목록 아래 추천 구역도 함께 갱신한다.
         if self._nav_stack.currentIndex() == 1:
             self._detail_widget.set_recommendations(self._recommend_related_items())
+
+    # ── 미리 받기(무한 스크롤) ───────────────────────────────────────────
+    # 스트립이 오른쪽 끝에 닿기 **전에** 다음 묶음을 요청한다. 이미 보여 준 URL을
+    # 함께 넘겨야 같은 영상이 두 번 걸리지 않는다(핸들러가 그 목록을 걸러 낸다).
+
+    def _on_recommend_more(self) -> None:
+        if self._recommend_vm is None or not self._recommend_ready:
+            return   # 첫 조회가 끝나기 전에는 더 받을 것도 없다
+        shown = frozenset(
+            dto.url for dto in self._recommend_vm.items if getattr(dto, "url", "")
+        )
+        self._recommend_vm.load_more(exclude_urls=shown)
+
+    def _on_recommend_more_ready(self, items: list) -> None:
+        self._recommend_strip.append_items(items)
+        # 상세가 열려 있으면 우측 추천 구역도 함께 늘린다(같은 결과를 공유한다).
+        if self._nav_stack.currentIndex() == 1:
+            self._detail_widget.set_recommendations(self._recommend_related_items())
+
+    def _on_recommend_exhausted(self) -> None:
+        """더 나올 것이 없다 — 스크롤할 때마다 같은 검색을 반복하지 않는다."""
+        self._recommend_strip.set_more_exhausted(True)
 
     def _on_recommend_error(self, msg: str) -> None:
         logger.warning("추천 영상 조회 실패: %s", msg)

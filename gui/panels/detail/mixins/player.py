@@ -128,11 +128,45 @@ class PlayerControlMixin:
         self.set_related(related or [], header=related_header)
 
     def player_position_ms(self) -> int:
-        """현재 재생 위치(ms) — 등록 후 로컬 상세로 갈아탈 때 이어보기용."""
+        """현재 재생 위치(ms) — 이어보기 저장·미니바 표시용.
+
+        `InlinePlayer.position_ms`는 **프로퍼티**다. 예전엔 이걸 메서드처럼 불러
+        (`position_ms()`) 매번 TypeError가 났고, 그 예외를 아래 except가 삼켜
+        **항상 0을 돌려줬다** — 이어보기 위치가 조용히 저장되지 않았다(테스트가
+        이 메서드를 통째로 monkeypatch해 잡히지 않았다).
+        """
         try:
-            return int(self._player.position_ms())
+            return int(self._player.position_ms)
         except (RuntimeError, AttributeError, TypeError):
+            logger.debug("재생 위치 조회 실패 — 0으로 간주", exc_info=True)
             return 0
+
+    def player_duration_ms(self) -> int:
+        """현재 영상 길이(ms) — 미니바 슬라이더 범위용(모르면 0)."""
+        try:
+            return int(self._player.duration_ms)
+        except (RuntimeError, AttributeError, TypeError):
+            logger.debug("재생 길이 조회 실패 — 0으로 간주", exc_info=True)
+            return 0
+
+    def toggle_play(self) -> None:
+        """재생/일시정지 — 미니바처럼 플레이어 밖에서 조작할 때 쓴다."""
+        self._player.toggle_play()
+
+    def seek_to_ms(self, ms: int) -> None:
+        self._player.seek_to_ms(ms)
+
+    def next_payload(self):
+        """재생목록에서 지금 다음 항목(없으면 None) — 미니바 ⏭ 노출 판단용."""
+        if not self._playlist or not self._current_key:
+            return None
+        idx = next(
+            (i for i, p in enumerate(self._playlist) if _payload_key(p) == self._current_key),
+            -1,
+        )
+        if idx < 0 or idx + 1 >= len(self._playlist):
+            return None
+        return self._playlist[idx + 1]
 
     def _on_playback_finished(self) -> None:
         """현재 곡 재생이 끝나면 재생목록의 다음 항목을 자동재생 요청한다(끝이면 정지)."""

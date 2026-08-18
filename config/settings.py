@@ -142,6 +142,8 @@ RECOMMEND_STRIP_HEIGHT: int = _load_int("recommend_strip_height", 250)
 # 어디서나 같은 비중으로 보인다. 값 범위 clamp 는 LyricsOverlay 가 담당한다.
 SUBTITLE_FONT_SCALE: float = _load_float("subtitle_font_scale", 1.0)
 SUBTITLE_BOTTOM_RATIO: float = _load_float("subtitle_bottom_ratio", 0.10)
+# 상세 화면에서 "읽는 글"(요약·가사)의 글자 배율 — 전역 보기 설정이다.
+DETAIL_TEXT_SCALE: float = _load_float("detail_text_scale", 1.0)
 LAST_UPDATE_CHECK: float = float(_load_config().get("last_update_check", 0) or 0)
 SNOOZED_UPDATE_VERSION: str = _resolve_str("snoozed_update_version", "")
 
@@ -187,6 +189,7 @@ def save_setting(key: str, value) -> None:
         "recommend_strip_height": "RECOMMEND_STRIP_HEIGHT",
         "subtitle_font_scale": "SUBTITLE_FONT_SCALE",
         "subtitle_bottom_ratio": "SUBTITLE_BOTTOM_RATIO",
+        "detail_text_scale": "DETAIL_TEXT_SCALE",
         "last_update_check": "LAST_UPDATE_CHECK",
         "snoozed_update_version": "SNOOZED_UPDATE_VERSION",
         "yt_auth_browser": "YT_AUTH_BROWSER",

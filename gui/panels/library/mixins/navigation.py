@@ -259,7 +259,12 @@ class NavigationMixin:
 
     def _on_back_from_detail(self) -> None:
         self._playlist_ctx = None   # 상세를 완전히 벗어남 — 재생목록 모드 해제
-        self._detail_widget.stop_player()
+        # 재생 중이었다면 멈추지 않고 하단 미니바로 넘긴다 — 듣던 노래가 화면을
+        # 바꿨다는 이유만으로 끊기지 않게. 멈춰 있었다면 예전처럼 정리한다.
+        if self._detail_widget.is_playing():
+            self._enter_mini_player()
+        else:
+            self._detail_widget.stop_player()
         # 목록으로 복귀는 살짝 띄우며 바꾼다(영상 화면으로 갈 때는 즉시 전환).
         fade_switch(self._nav_stack, 0)
 

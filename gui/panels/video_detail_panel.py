@@ -24,6 +24,7 @@ from PyQt6.QtCore import (
     Qt,
     pyqtSignal,
 )
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -45,6 +46,17 @@ from PyQt6.QtWidgets import (
 
 
 from application.library.dtos import VideoDetailDTO
+from gui.panels.detail.text_zoom import (
+    DEFAULT_SCALE as DEFAULT_TEXT_SCALE,
+    STEP as ZOOM_STEP,
+    SUMMARY_BASE_PT,
+    ZOOM_TOOLTIP,
+    clamp_scale,
+    load_scale,
+    save_scale,
+    scale_label,
+    scaled_pt,
+)
 from gui.smooth_scroll import apply_smooth_scroll_tree
 from gui.widgets.video_player import InlinePlayer
 
@@ -205,6 +217,8 @@ class VideoDetailWidget(
         self._playlist: list = []        # 우측 목록 payload 순서 — 자동재생 다음곡 계산용
         self._current_key = ""           # 현재 재생 항목 키(RelatedItem.key) — 목록 강조용
         self._summary_raw = ""           # 요약 원문(편집 대상) — 렌더 전 텍스트
+        # 읽는 글(요약·가사)의 글자 배율 — Ctrl +/- 로 조절, 전역 설정에 저장한다.
+        self._text_scale: float = load_scale()
         self._current_url = ""           # 브라우저 열기/재생 실패 폴백용
         self._active_dl_frame: QFrame | None = None
         self._active_dl_bar: QProgressBar | None = None
@@ -229,7 +243,61 @@ class VideoDetailWidget(
         self._position_timer.setInterval(_POSITION_SAVE_MS)
         self._position_timer.timeout.connect(self._report_position)
         self._setup_skeleton()
+        self._setup_text_zoom_shortcuts()
+        self._apply_text_scale()
         apply_smooth_scroll_tree(self)
+
+    # ── 읽는 글(요약·가사) 글자 크기 ────────────────────────────────
+    # 요약·가사는 읽으라고 있는 글인데 크기가 코드에 박혀 있었다. Ctrl +/- 로 조절하고
+    # 각 헤더의 배율 버튼(또는 Ctrl+0)으로 기본값으로 되돌린다. 단일 키는 플레이어
+    # 몫이라 쓰지 않는다(입력 규칙). 범위는 이 상세 화면에 한정한다.
+
+    def _setup_text_zoom_shortcuts(self) -> None:
+        scope = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        for keys, slot in (
+            (("Ctrl++", "Ctrl+="), self.zoom_text_in),   # '+'는 Shift 없이도 눌리게 둘 다
+            (("Ctrl+-",), self.zoom_text_out),
+            (("Ctrl+0",), self.reset_text_scale),
+        ):
+            for seq in keys:
+                sc = QShortcut(QKeySequence(seq), self)
+                sc.setContext(scope)
+                sc.activated.connect(slot)
+
+    def zoom_text_in(self) -> None:
+        self._set_text_scale(self._text_scale + ZOOM_STEP)
+
+    def zoom_text_out(self) -> None:
+        self._set_text_scale(self._text_scale - ZOOM_STEP)
+
+    def reset_text_scale(self) -> None:
+        self._set_text_scale(DEFAULT_TEXT_SCALE)
+
+    def _set_text_scale(self, scale: float) -> None:
+        scale = clamp_scale(scale)
+        if scale == self._text_scale:
+            return          # 이미 한계값 — 저장·재렌더할 이유가 없다
+        self._text_scale = scale
+        self._apply_text_scale()
+        save_scale(scale)
+
+    def _apply_text_scale(self) -> None:
+        """배율을 요약·가사 두 영역에 함께 적용한다(글자 크기는 화면 설정이다)."""
+        pt = scaled_pt(SUMMARY_BASE_PT, self._text_scale)
+        font = self._summary_edit.font()
+        font.setPointSize(pt)
+        self._summary_edit.setFont(font)
+        self._summary_edit.document().setDefaultFont(font)
+        self._summary_editor.setFont(font)
+        self._summary_zoom_btn.setText(scale_label(self._text_scale))
+        self._song_tab.set_font_scale(self._text_scale)
+        # 이미 렌더된 HTML은 기본 글꼴이 바뀌어도 다시 그려야 반영된다.
+        if self._summary_raw:
+            self._summary_edit.setHtml(
+                self._render_timestamped_html(
+                    self._summary_raw, line_gap=self._SUMMARY_LINE_GAP
+                )
+            )
 
     # ── Skeleton (built once) ──────────────────────────────────────
 
@@ -384,6 +452,13 @@ class VideoDetailWidget(
         self._summary_status_lbl = QLabel("")
         self._summary_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         refresh_row.addWidget(self._summary_status_lbl)
+        self._summary_zoom_btn = QPushButton(scale_label(self._text_scale))
+        self._summary_zoom_btn.setFixedSize(46, 24)
+        self._summary_zoom_btn.setFlat(True)
+        self._summary_zoom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._summary_zoom_btn.setToolTip(ZOOM_TOOLTIP)
+        self._summary_zoom_btn.clicked.connect(self.reset_text_scale)
+        refresh_row.addWidget(self._summary_zoom_btn)
         self._summary_refresh_btn = QPushButton("⟳")
         self._summary_refresh_btn.setFixedSize(28, 28)
         self._summary_refresh_btn.setToolTip("Gemini 요약 갱신")
@@ -440,6 +515,8 @@ class VideoDetailWidget(
         # → _on_subtitle_offset_changed(디바운스 저장). 탭이 직접 저장하지 않는 이유는
         # 위 경로 하나로 바·오버레이 갱신과 DB 저장 디바운스를 동시에 재사용하기 위해서다.
         self._song_tab.offset_changed.connect(self._player.set_subtitle_offset_ms)
+        # 가사 헤더의 배율 버튼도 요약 쪽 버튼과 같은 곳으로 — 두 영역이 한 배율을 쓴다.
+        self._song_tab.font_scale_reset_requested.connect(self.reset_text_scale)
         self._song_tab.category_requested.connect(self._on_category_clicked)
         self._tabs.addTab(_wrap(self._song_tab), "노래")
 
