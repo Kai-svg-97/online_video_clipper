@@ -28,6 +28,7 @@ from gui.panels.monitoring_panel import MonitoringPanel
 from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
 from gui.panels.stats_panel import StatsPanel
 from gui.themes.manager import ThemeManager
+from gui.toast import KIND_ERROR, KIND_SUCCESS, show_toast
 from gui.workers import wait_all
 from gui.themes.tokens import ThemeTokens
 from gui.view_models.clip_vm import ClipViewModel
@@ -631,6 +632,8 @@ class MainWindow(QMainWindow):
         self._add_progress.hide()
         short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
         self.statusBar().showMessage(f"등록 완료: {short}", 5000)
+        # 상태바는 시선이 가지 않는 곳이라 '끝났다'는 소식은 토스트로도 알린다.
+        show_toast(self, f"등록 완료 — {short}", KIND_SUCCESS)
 
     # ── 등록 후 자동 보강 (요약/가사) ──────────────────────────────────
     _ENRICH_LABEL = {"song": "가사 조회", "summary": "요약 생성"}
@@ -651,9 +654,11 @@ class MainWindow(QMainWindow):
         if ok:
             suffix = f" ({detail})" if detail else ""
             self.statusBar().showMessage(f"{label} 완료{suffix}", 5000)
+            show_toast(self, f"{label} 완료{suffix}", KIND_SUCCESS)
         else:
             reason = detail or "알 수 없는 오류"
             self.statusBar().showMessage(f"{label} 실패: {reason}", 8000)
+            show_toast(self, f"{label} 실패 — {reason}", KIND_ERROR, msec=6000)
 
     # ------------------------------------------------------------------
     def _on_clipboard_changed(self) -> None:
