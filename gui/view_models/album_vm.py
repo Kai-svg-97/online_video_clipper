@@ -61,6 +61,33 @@ class _FillWorker(QThread):
             self.finished_err.emit(str(exc))
 
 
+class _AddTracksWorker(QThread):
+    """앨범 곡 담기 — 곡마다 등록(yt-dlp 메타데이터 조회)이라 진행률을 흘려보낸다."""
+
+    progress = pyqtSignal(int, int)     # (완료, 전체)
+    finished_ok = pyqtSignal(int)
+    finished_err = pyqtSignal(str)
+
+    def __init__(self, fn: Callable, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._fn = fn
+        self._cancel = False
+
+    def cancel(self) -> None:
+        self._cancel = True
+
+    def run(self) -> None:
+        try:
+            count = self._fn(
+                on_progress=lambda done, total: self.progress.emit(done, total),
+                should_cancel=lambda: self._cancel,
+            )
+            self.finished_ok.emit(int(count or 0))
+        except Exception as exc:   # noqa: BLE001
+            logger.exception("앨범 곡 담기 실패")
+            self.finished_err.emit(str(exc))
+
+
 class AlbumViewModel(QObject):
     """앨범 그리드/상세 화면의 상태."""
 
@@ -69,6 +96,8 @@ class AlbumViewModel(QObject):
     track_filled = pyqtSignal(object)      # AlbumTrackDTO — 자동 매핑 1곡 완료
     fill_finished = pyqtSignal(int)
     unknown_resolved = pyqtSignal(int)     # 앨범을 추정해 채운 곡 수(>0이면 목록 재조회)
+    add_progress = pyqtSignal(int, int)    # 카테고리 담기 진행 (완료, 전체)
+    tracks_added = pyqtSignal(int)         # 카테고리에 담은 곡 수
     loading_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
 
@@ -78,6 +107,7 @@ class AlbumViewModel(QObject):
         get_detail,          # GetAlbumDetailHandler
         fill_tracks=None,    # FillAlbumTracksHandler | None
         resolve_unknown=None,  # ResolveUnknownAlbumsHandler | None
+        add_tracks=None,     # AddAlbumTracksHandler | None
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -85,6 +115,8 @@ class AlbumViewModel(QObject):
         self._get_detail = get_detail
         self._fill = fill_tracks
         self._resolve = resolve_unknown
+        self._add = add_tracks
+        self._add_worker: _AddTracksWorker | None = None
         self._workers: list[QThread] = []
         self._fill_worker: _FillWorker | None = None
         self._gen = 0
@@ -169,6 +201,36 @@ class AlbumViewModel(QObject):
             except TypeError:
                 logger.debug("채우기 워커 신호가 이미 해제됨")
 
+    def add_tracks_to_category(self, detail, category_id=None) -> None:
+        """앨범의 자동 매핑 곡들을 카테고리에 담는다(곡마다 등록이라 백그라운드)."""
+        if self._add is None or detail is None:
+            self.tracks_added.emit(0)
+            return
+        from application.song.album_queries import AddAlbumTracksCommand  # noqa: PLC0415
+
+        cmd = AddAlbumTracksCommand(
+            album_title=detail.album_title,
+            artist=detail.artist,
+            category_id=category_id,
+            tracks=list(detail.tracks),
+        )
+        self.cancel_add()
+        worker = _AddTracksWorker(lambda **kw: self._add.handle(cmd, **kw), self)
+        worker.progress.connect(self.add_progress)
+        worker.finished_ok.connect(self.tracks_added)
+        worker.finished_err.connect(self.error_occurred)
+        worker.finished.connect(lambda w=worker: self._retire(w))
+        self._add_worker = worker
+        self._workers.append(worker)
+        worker.start()
+
+    def cancel_add(self) -> None:
+        """담기 진행 중이면 멈춘다(앨범을 옮기거나 화면을 떠날 때)."""
+        worker = self._add_worker
+        self._add_worker = None
+        if worker is not None and worker.isRunning():
+            worker.cancel()
+
     def resolve_unknown_albums(self, category_id=None, category_ids=None) -> None:
         """앨범 값이 빈 노래의 앨범을 외부 조회로 추정해 채운다(백그라운드)."""
         if self._resolve is None:
@@ -199,6 +261,8 @@ class AlbumViewModel(QObject):
             self._workers.remove(worker)
         if worker is self._fill_worker:
             self._fill_worker = None
+        if worker is self._add_worker:
+            self._add_worker = None
 
     def _on_albums(self, albums: list, gen: int) -> None:
         if gen != self._gen:
@@ -221,6 +285,7 @@ class AlbumViewModel(QObject):
     def shutdown(self) -> None:
         """종료 시 워커 정리 (MainWindow.closeEvent → LibraryPanel)."""
         self.cancel_fill()
+        self.cancel_add()
         for worker in list(self._workers):
             if worker.isRunning():
                 worker.wait(3000)

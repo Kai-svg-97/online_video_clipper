@@ -225,7 +225,7 @@ online_video_clipper/
 │       └── portable_package.py      # ZipLibraryPackageWriter·ZipLibraryPackageReader — manifest.json+data.json+thumbnails/ zip. 값 해석(THUMBNAIL_DIR 절대경로 결합)은 여기서만 한다
 │
 ├── gui/                             # Presentation layer (PyQt6, MVVM)
-│   ├── workers.py                   # 실행 중 QThread 안전 보유/은퇴 — `track_thread`(부모 분리 + 레지스트리 보유)·`retire_thread`(신호 해제 후 끝까지 보유)·`wait_all`(종료 시 대기). **실행 중인 QThread가 파괴되면 Qt가 프로세스를 죽인다**(실측: exit 0xC0000409)
+│   ├── workers.py                   # 실행 중 QThread 안전 보유/은퇴 — `track_thread`(부모 분리 + 레지스트리 보유)·`retire_thread`(**신호 이름**으로 해제 후 끝까지 보유)·`wait_all`(종료 시 대기). 끝난 워커는 참조만 놓는다(deleteLater 금지 — 들고 있는 쪽에서 RuntimeError). **실행 중인 QThread가 파괴되면 Qt가 프로세스를 죽인다**(실측: exit 0xC0000409)
 │   ├── single_instance.py           # SingleInstanceGuard — QLocalServer 기반 중복 실행 방지(main.py가 DB 열기 전 호출, 두 번째 인스턴스는 기존 창을 앞으로 부르고 종료)
 │   ├── main_window.py               # 루트 윈도우, 사이드바 네비게이션(라이브러리·다운로드·채널 모니터링·통계), 패널 스택 — 구독 피드는 라이브러리 좌측 트리로 통합됨. **통계 채널 섹션 → 카테고리 드릴다운**: `StatsPanel.category_selected` → `_on_stats_category_selected`가 라이브러리로 전환·`navigate_to_category` 후 `_return_to_page=_PAGE_STATS` 예약. 라이브러리 뒤로가기를 소진하면(`LibraryPanel.back_exhausted`) `_on_library_back_exhausted`가 통계로 복귀(라이브러리 자체 히스토리를 먼저 되짚고 소진 시 통계). 다른 페이지로 이동하면 `_on_page_changed`가 예약을 무효화. **등록 후 자동 보강 상태 표시**: `enrich_started`→상태바 "가사 조회 중"/"요약 생성 중"(`_ENRICH_LABEL`), `enrich_finished`→완료(5초)/실패(8초). `kind="skipped"`+ok이면 메시지를 지운다. **사이드바 배경은 `_SideBar.paintEvent`에서 직접 칠한다** — 앱 레벨 QSS의 `QWidget { background-color }`가 위젯 레벨 스타일시트(ID 선택자 포함)를 덮어써 `bg_surface`가 적용되지 않았다(slate에서는 base/surface 차이가 3단위라 미발견). 따라서 사이드바 배경·우측 경계선 색을 바꿀 땐 QSS가 아니라 `paintEvent`를 수정할 것. **상단 ▶ 로고와 계정(인증) 버튼은 제거됨** — 로고는 기능 없는 장식이고, 계정 버튼은 클릭 동작이 바로 아래 기어 버튼과 완전히 동일한 중복이었다(`update_account_status()`도 호출처 없는 죽은 코드여서 함께 삭제, `_SVG_ACCOUNT` 상수도 제거)
 │   ├── panels/
@@ -498,6 +498,11 @@ online_video_clipper/
   정렬은 `(disc_no, track_no)`, 표시는 2장 이상일 때만 `1-3`처럼 디스크를 붙인다.
   기존 캐시는 어느 디스크의 것인지 알 수 없어(=틀린 매핑이 섞여 있어)
   `migrate_album_disc_no`가 **버리고 다시 만든다** — 파생 캐시라 다시 조회하면 복구된다.
+  **수록곡 헤더의 '＋ 현재 카테고리에 등록'**(`add_all_requested` → `AddAlbumTracksHandler`)은
+  자동 매핑된(스트리밍) 곡을 현재 카테고리로 한꺼번에 담는다. 등록만 하면 새 영상이 앨범 값
+  없이 들어와 '앨범 미상'으로 떨어지므로 — 담았는데 그 앨범에는 안 보인다 — **노래 정보
+  (가수·앨범·곡 제목)를 함께 기록**한다. `AddVideoHandler`가 upsert라 중복 클릭·부분 실패 후
+  재시도도 안전하고, 한 곡이 실패해도 나머지는 계속 담는다.
   라이브러리에 없는 곡은 앨범을 열 때 `FillAlbumTracksHandler`가 `"<가수> <곡> official audio"`로
   yt-dlp 검색해 붙이고(곡당 1회, 결과는 `album_track_links`에 저장돼 재검색하지 않음), 진행 상황을
   곡 단위 콜백으로 흘려 도착하는 대로 표시한다. 수록곡 배지는 **내 등록/자동 매핑/없음** 세 가지다.
@@ -589,6 +594,11 @@ online_video_clipper/
   대신 `gui/workers.py`의 `track_thread`(생성 직후)와 `retire_thread`(정리 시)를 쓴다. 결과
   슬롯은 **QObject의 바운드 메서드**로 연결한다 — 수신 위젯이 사라지면 Qt가 연결을 자동으로
   끊지만, 위젯을 캡처한 람다는 그 보호를 받지 못해 죽은 위젯을 건드린다.
+- **끝난 워커를 `deleteLater`로 지우지 않는다.** 아직 그 워커를 들고 있는 쪽(예: 플레이어의
+  `self._worker`)이 나중에 접근하면 `RuntimeError: wrapped C/C++ object ... has been deleted`가
+  난다(재생 중 뒤로가기에서 실제로 났다). `gui/workers.py`는 레지스트리에서 참조만 놓고,
+  마지막 참조가 사라질 때 파이썬이 정리한다. `retire_thread`는 신호를 **이름으로** 받는다 —
+  호출부에서 `worker.failed`를 꺼내는 순간 이미 정리된 객체면 거기서 터지기 때문이다.
 - 백그라운드 워커를 만드는 뷰모델은 `shutdown()`을 제공하고 `MainWindow.closeEvent`에서 호출해 종료 시 워커를 정리한다. yt-dlp 다운로드처럼 협조적 취소 훅이 없으면 `terminate()` 후 `wait()`로 종료를 보장한다.
 
 ## 색상 규칙 (mandatory)

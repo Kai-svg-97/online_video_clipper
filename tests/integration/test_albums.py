@@ -17,6 +17,8 @@ from application.song.album_dtos import (
     TRACK_ORIGIN_MISSING,
 )
 from application.song.album_queries import (
+    AddAlbumTracksCommand,
+    AddAlbumTracksHandler,
     FillAlbumTracksCommand,
     FillAlbumTracksHandler,
     GetAlbumDetailHandler,
@@ -239,12 +241,17 @@ class TestAlbumDetail:
 
 
 class _StubMedia:
-    def __init__(self, results=None):
+    def __init__(self, results=None, unique=False):
         self._results = results or []
+        self._unique = unique          # 곡마다 다른 영상을 주는 실제 검색과 같게
         self.queries: list[str] = []
 
     def fetch_search_videos(self, query, limit=12, cookie_opts=None):
         self.queries.append(query)
+        if self._unique:
+            n = len(self.queries)
+            return [{"url": f"https://youtu.be/auto{n}", "title": query,
+                     "channel_name": "official", "yt_video_id": f"auto{n}"}]
         return self._results
 
 
@@ -411,3 +418,109 @@ class TestTwoDiscAlbum:
 
         assert len(media.queries) == 3
         assert len(set(media.queries)) == 3   # 같은 검색이 반복되면 같은 곡을 붙인 것
+
+
+class _StubAddVideo:
+    """AddVideoHandler 스텁 — 등록된 URL을 기록하고 애그리게이트를 돌려준다."""
+
+    def __init__(self, videos):
+        self._videos = videos
+        self.calls: list[tuple] = []
+
+    def handle(self, cmd):
+        # 실제 AddVideoHandler는 같은 URL이면 갱신만 한다(upsert) — 스텁도 그렇게 둔다.
+        self.calls.append((cmd.url, cmd.category_id))
+        existing = self._videos.get_by_url(cmd.url)
+        if existing is not None:
+            if cmd.category_id is not None:
+                existing.assign_category(cmd.category_id)
+            self._videos.save(existing)
+            return existing
+        agg = VideoAggregate.create(VideoUrl(cmd.url), cmd.url)
+        if cmd.category_id is not None:
+            agg.assign_category(cmd.category_id)
+        self._videos.save(agg)
+        return agg
+
+
+class TestAddAlbumTracks:
+    """앨범 수록곡을 현재 카테고리에 한꺼번에 담기."""
+
+    def _detail_with_auto(self, repos):
+        videos, songs, albums = repos
+        cat = Category.create("Music")
+        videos.save_category(cat)
+        _add_song(videos, songs, "https://youtu.be/p1", "IU - Palette",
+                  artist="IU", album="Palette", song_title="Palette", category_id=cat.id)
+        handler = GetAlbumDetailHandler(videos, songs, albums, _StubProvider(album=_palette_meta()))
+        key = make_album_key("IU", "Palette")
+        media = _StubMedia(unique=True)
+        FillAlbumTracksHandler(handler, albums, media).handle(
+            FillAlbumTracksCommand(album_key=key, category_id=cat.id)
+        )
+        detail = handler.handle(GetAlbumDetailQuery(album_key=key, category_id=cat.id))
+        return cat, handler, key, detail
+
+    def test_자동_매핑_곡만_카테고리에_등록한다(self, repos):
+        videos, songs, albums = repos
+        cat, _handler, _key, detail = self._detail_with_auto(repos)
+        adder = _StubAddVideo(videos)
+
+        count = AddAlbumTracksHandler(adder, songs).handle(
+            AddAlbumTracksCommand(
+                album_title=detail.album_title, artist=detail.artist,
+                category_id=cat.id, tracks=detail.tracks,
+            )
+        )
+
+        assert count == 2                                   # 자동 매핑 2곡
+        assert all(c[1] == cat.id for c in adder.calls)     # 현재 카테고리로 들어간다
+        assert all(url.startswith("https://youtu.be/auto") for url, _ in adder.calls)
+
+    def test_담은_곡은_그_앨범으로_묶이도록_노래정보를_쓴다(self, repos):
+        # 앨범 값을 안 쓰면 새 영상이 '앨범 미상'으로 떨어져 방금 담은 앨범에 안 보인다.
+        videos, songs, albums = repos
+        cat, handler, key, detail = self._detail_with_auto(repos)
+        adder = _StubAddVideo(videos)
+
+        AddAlbumTracksHandler(adder, songs).handle(
+            AddAlbumTracksCommand(
+                album_title=detail.album_title, artist=detail.artist,
+                category_id=cat.id, tracks=detail.tracks,
+            )
+        )
+
+        after = handler.handle(GetAlbumDetailQuery(album_key=key, category_id=cat.id))
+        assert after.library_count == 3       # 원래 1곡 + 담은 2곡
+        assert after.auto_count == 0
+
+    def test_담을_곡이_없으면_아무_일도_하지_않는다(self, repos):
+        videos, songs, _albums = repos
+        adder = _StubAddVideo(videos)
+
+        count = AddAlbumTracksHandler(adder, songs).handle(
+            AddAlbumTracksCommand(album_title="X", tracks=[])
+        )
+
+        assert count == 0
+        assert adder.calls == []
+
+    def test_한_곡이_실패해도_나머지는_담는다(self, repos):
+        videos, songs, _albums = repos
+        cat, _handler, _key, detail = self._detail_with_auto(repos)
+
+        class _Flaky(_StubAddVideo):
+            def handle(self, cmd):
+                if len(self.calls) == 0:
+                    self.calls.append((cmd.url, cmd.category_id))
+                    raise RuntimeError("등록 실패")
+                return super().handle(cmd)
+
+        adder = _Flaky(videos)
+        count = AddAlbumTracksHandler(adder, songs).handle(
+            AddAlbumTracksCommand(
+                album_title=detail.album_title, category_id=cat.id, tracks=detail.tracks,
+            )
+        )
+
+        assert count == 1     # 두 곡 중 하나만 실패

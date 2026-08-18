@@ -4400,12 +4400,15 @@ class LibraryPanel(QWidget):
         self._album_detail.track_clicked.connect(self._on_album_track_clicked)
         self._album_detail.refresh_requested.connect(self._on_album_refresh)
         self._album_detail.fill_requested.connect(self._on_album_fill_requested)
+        self._album_detail.add_all_requested.connect(self._on_album_add_all)
         if self._album_vm is not None:
             self._album_vm.albums_changed.connect(self._on_albums_changed)
             self._album_vm.detail_ready.connect(self._on_album_detail_ready)
             self._album_vm.track_filled.connect(self._on_album_track_filled)
             self._album_vm.fill_finished.connect(self._on_album_fill_finished)
             self._album_vm.unknown_resolved.connect(self._on_album_unknown_resolved)
+            self._album_vm.add_progress.connect(self._on_album_add_progress)
+            self._album_vm.tracks_added.connect(self._on_album_tracks_added)
             self._album_vm.error_occurred.connect(self._on_album_error)
 
         self._breadcrumb_bar.segment_clicked.connect(self._on_breadcrumb_nav)
@@ -5520,6 +5523,32 @@ class LibraryPanel(QWidget):
         self._current_album_key = None
         if self._album_vm is not None:
             self._album_vm.cancel_fill()
+            self._album_vm.cancel_add()
+
+    def _on_album_add_all(self, detail) -> None:
+        """수록곡 헤더의 '＋ 현재 카테고리에 등록' — 자동 매핑 곡을 지금 카테고리에 담는다."""
+        if self._album_vm is None or detail is None:
+            return
+        self._album_detail.set_add_busy(True)
+        self._album_detail.set_status("카테고리에 담는 중…")
+        self._album_vm.add_tracks_to_category(detail, category_id=self._current_cat_id)
+
+    def _on_album_add_progress(self, done: int, total: int) -> None:
+        self._album_detail.set_status(f"카테고리에 담는 중… {done}/{total}곡")
+
+    def _on_album_tracks_added(self, count: int) -> None:
+        """담기 완료 — 목록과 앨범 상세를 다시 읽어 '내 등록'으로 바뀌게 한다."""
+        self._album_detail.set_add_busy(False)
+        if not count:
+            self._album_detail.set_status("담을 곡이 없습니다.")
+            return
+        self._album_detail.set_status(f"{count}곡을 카테고리에 담았습니다.")
+        self._vm.load()          # 라이브러리 목록·카테고리 개수 갱신
+        if self._current_album_key:
+            self._album_vm.load_detail(
+                self._current_album_key, category_id=self._current_cat_id,
+                category_ids=self._album_category_ids(),
+            )
 
     def _on_album_back(self) -> None:
         """앨범 상세의 ‹ 버튼 — 영상 상세와 같이 화면 히스토리를 되짚는다."""

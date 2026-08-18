@@ -628,7 +628,7 @@ class DownloadPanel(QWidget):
         if self._worker and self._worker.isRunning():
             # 신호만 끊고 끝날 때까지 레지스트리가 붙든다 — quit()은 이벤트 루프만
             # 끝내므로 디코딩 중인 run()은 계속 돌고, 그 상태로 삭제되면 앱이 죽는다.
-            retire_thread(self._worker, self._worker.batch_ready)
+            retire_thread(self._worker, "batch_ready")
         paths = self._model.thumb_paths()
         if not paths:
             return

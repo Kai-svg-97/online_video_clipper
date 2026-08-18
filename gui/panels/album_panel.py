@@ -369,6 +369,7 @@ class AlbumDetailPanel(QWidget):
     track_clicked = pyqtSignal(object)          # AlbumTrackDTO
     refresh_requested = pyqtSignal(str)         # album_key — 앨범 정보 다시 받기
     fill_requested = pyqtSignal(str)            # album_key — 빠진 곡 다시 찾기
+    add_all_requested = pyqtSignal(object)      # AlbumDetailDTO — 현재 카테고리에 담기
 
     JACKET = 220
 
@@ -448,12 +449,22 @@ class AlbumDetailPanel(QWidget):
 
         right = QVBoxLayout()
         right.setSpacing(4)
+        header_row = QHBoxLayout()
         self._tracks_header = QLabel("수록곡")
         hf = QFont()
         hf.setPointSize(10)
         hf.setWeight(QFont.Weight.Bold)
         self._tracks_header.setFont(hf)
-        right.addWidget(self._tracks_header)
+        header_row.addWidget(self._tracks_header)
+        header_row.addStretch(1)
+        # 자동 매핑된 곡(내 라이브러리에 없는 곡)을 현재 카테고리로 한꺼번에 담는다.
+        self._btn_add_all = QPushButton("＋ 현재 카테고리에 등록")
+        self._btn_add_all.setToolTip(
+            "이 앨범에서 아직 라이브러리에 없는 곡을 현재 카테고리에 등록합니다"
+        )
+        self._btn_add_all.clicked.connect(self._on_add_all)
+        header_row.addWidget(self._btn_add_all)
+        right.addLayout(header_row)
         self._tracks_scroll = QScrollArea()
         self._tracks_scroll.setWidgetResizable(True)
         self._tracks_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -492,6 +503,10 @@ class AlbumDetailPanel(QWidget):
         self._artist_lbl.setText(detail.artist)
         self._desc_lbl.setText(detail.description)
         self._btn_play.setEnabled(any(t.playable for t in detail.tracks))
+        # 담을 대상은 '자동 매핑'된 곡뿐이다(내 등록은 이미 있고, 없음은 주소가 없다).
+        self._btn_add_all.setEnabled(
+            any(t.origin == TRACK_ORIGIN_AUTO for t in detail.tracks)
+        )
         self._load_art(detail)
         self._render_tracks(detail.tracks)
         self.set_status(
@@ -509,6 +524,11 @@ class AlbumDetailPanel(QWidget):
     def set_busy(self, busy: bool) -> None:
         self._btn_fill.setEnabled(not busy)
         self._btn_refresh.setEnabled(not busy)
+
+    def set_add_busy(self, busy: bool) -> None:
+        """담기 진행 중 버튼 잠금 — 같은 곡을 두 번 등록하지 않게."""
+        self._btn_add_all.setEnabled(not busy)
+        self._btn_add_all.setText("담는 중…" if busy else "＋ 현재 카테고리에 등록")
 
     def apply_filled_track(self, track: AlbumTrackDTO) -> None:
         """자동 매핑이 끝난 곡 하나를 제자리에서 갱신한다(전체 재조회 없이)."""
@@ -533,6 +553,7 @@ class AlbumDetailPanel(QWidget):
         )
         self._render_tracks(tracks)
         self._btn_play.setEnabled(any(t.playable for t in tracks))
+        self._btn_add_all.setEnabled(any(t.origin == TRACK_ORIGIN_AUTO for t in tracks))
         self.set_status(
             f"내 등록 {self._detail.library_count}곡  ·  자동 {self._detail.auto_count}곡"
             + (f"  ·  없음 {self._detail.missing_count}곡"
@@ -582,3 +603,7 @@ class AlbumDetailPanel(QWidget):
     def _on_play(self) -> None:
         if self._detail is not None:
             self.play_album_requested.emit(self._detail)
+
+    def _on_add_all(self) -> None:
+        if self._detail is not None:
+            self.add_all_requested.emit(self._detail)

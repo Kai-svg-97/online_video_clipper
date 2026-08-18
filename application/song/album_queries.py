@@ -71,6 +71,16 @@ class FillAlbumTracksCommand:
 
 
 @dataclass
+class AddAlbumTracksCommand:
+    """앨범 수록곡을 카테고리에 한꺼번에 담는다."""
+
+    album_title: str
+    artist: str = ""
+    category_id: UUID | None = None
+    tracks: list = field(default_factory=list)   # list[AlbumTrackDTO]
+
+
+@dataclass
 class ResolveUnknownAlbumsCommand:
     """앨범 값이 빈 노래의 앨범을 외부 조회로 추정해 채운다."""
 
@@ -463,6 +473,73 @@ class FillAlbumTracksHandler:
             if entry.get("url"):
                 return entry
         return None
+
+
+class AddAlbumTracksHandler:
+    """앨범의 수록곡을 현재 카테고리에 등록한다.
+
+    대상은 **자동 매핑된(스트리밍) 곡**뿐이다 — 이미 라이브러리에 있는 곡은 담을 게 없고,
+    아직 못 찾은 곡은 주소가 없다.
+
+    등록 뒤에는 **노래 정보(가수·앨범·곡 제목)를 함께 기록한다.** 그러지 않으면 방금
+    담은 영상이 앨범 값 없이 들어와 '앨범 미상'으로 떨어지고, 정작 그 앨범 화면에는
+    나타나지 않는다(담았는데 안 보이는 것처럼 된다).
+
+    ``AddVideoHandler``는 같은 URL이 이미 있으면 갱신+카테고리 지정만 하므로(upsert),
+    중복 클릭이나 일부만 담긴 상태에서 다시 눌러도 안전하다.
+    """
+
+    def __init__(self, add_video, song_repo: ISongRepository) -> None:
+        self._add = add_video          # AddVideoHandler
+        self._songs = song_repo
+
+    def handle(self, cmd: AddAlbumTracksCommand, on_progress=None, should_cancel=None) -> int:
+        from application.library.commands import AddVideoCommand  # noqa: PLC0415
+
+        targets = [
+            t for t in cmd.tracks
+            if getattr(t, "origin", "") == TRACK_ORIGIN_AUTO and getattr(t, "stream_url", "")
+        ]
+        if not targets:
+            logger.info("앨범 곡 담기: 담을 곡이 없다 (앨범=%s)", cmd.album_title)
+            return 0
+        added = 0
+        for index, track in enumerate(targets, start=1):
+            if should_cancel and should_cancel():
+                logger.info("앨범 곡 담기 취소됨 (앨범=%s)", cmd.album_title)
+                break
+            try:
+                aggregate = self._add.handle(
+                    AddVideoCommand(url=track.stream_url, category_id=cmd.category_id)
+                )
+            except Exception:
+                # 한 곡이 실패해도 나머지는 계속 담는다(네트워크·비공개 영상 등).
+                logger.exception("앨범 곡 등록 실패: %s", track.stream_url)
+                continue
+            self._write_song_info(aggregate.id, cmd, track)
+            added += 1
+            if on_progress:
+                on_progress(index, len(targets))
+        logger.info(
+            "앨범 곡 담기: %d/%d곡 (앨범=%s, 카테고리=%s)",
+            added, len(targets), cmd.album_title, cmd.category_id,
+        )
+        return added
+
+    def _write_song_info(self, video_id: UUID, cmd: AddAlbumTracksCommand, track) -> None:
+        """담은 영상에 이 앨범의 노래 정보를 붙인다(수동 편집분은 보존)."""
+        from domain.song.aggregates import SongInfoAggregate  # noqa: PLC0415
+
+        aggregate = self._songs.get(video_id)
+        if aggregate is None:
+            aggregate = SongInfoAggregate.create(video_id, is_song=True)
+        aggregate.apply_fetched(
+            artist=(getattr(track, "artist", "") or cmd.artist) or None,
+            album=cmd.album_title or None,
+            song_title=getattr(track, "title", "") or None,
+            mark_song=True,
+        )
+        self._songs.save(aggregate)
 
 
 class ResolveUnknownAlbumsHandler:

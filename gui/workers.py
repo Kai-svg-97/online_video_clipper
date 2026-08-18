@@ -40,34 +40,48 @@ def track_thread(thread: QThread) -> QThread:
     """
     if thread in _RUNNING:
         return thread
-    if thread.parent() is not None:
-        thread.setParent(None)
+    try:
+        if thread.parent() is not None:
+            thread.setParent(None)
+    except RuntimeError:
+        return thread   # 이미 정리된 워커
     _RUNNING.add(thread)
     thread.finished.connect(lambda t=thread: _release(t))
     return thread
 
 
 def _release(thread: QThread) -> None:
+    """레지스트리에서 놓는다 — **deleteLater는 부르지 않는다.**
+
+    끝난 워커를 `deleteLater`로 지우면 C++ 객체가 사라지는데, 아직 그 워커를 들고 있는
+    쪽(예: 플레이어의 `self._worker`)이 나중에 접근하면
+    ``RuntimeError: wrapped C/C++ object ... has been deleted``가 난다 — 실제로 재생 중
+    뒤로가기에서 그 오류가 났다. 참조만 놓으면 마지막 참조가 사라질 때 파이썬이
+    정리하며, 그때 스레드는 이미 끝나 있어 안전하다.
+    """
     _RUNNING.discard(thread)
-    thread.deleteLater()
 
 
-def retire_thread(thread: QThread | None, *signals) -> None:
+def retire_thread(thread: QThread | None, *signal_names: str) -> None:
     """워커를 놓아 준다 — 결과 신호를 끊고, 실행 중이면 끝날 때까지 붙든다.
 
-    호출부는 이 뒤로 워커를 참조하지 않아도 된다(참조를 버려도 안전하다).
+    신호는 **객체가 아니라 이름**으로 받는다. 호출부에서 ``worker.finished_ok``처럼
+    꺼내려는 순간 이미 정리된 객체면 거기서 RuntimeError가 나기 때문에, 접근 자체를
+    이 안에서 감싼다(호출부는 워커의 생사를 몰라도 된다).
     """
     if thread is None:
         return
-    for signal in signals:
+    for name in signal_names:
         try:
-            signal.disconnect()
-        except (TypeError, RuntimeError):
-            logger.debug("워커 신호가 이미 해제됨 — 무시")
-    if thread.isRunning():
+            getattr(thread, name).disconnect()
+        except (TypeError, RuntimeError, AttributeError):
+            logger.debug("워커 신호 %s가 이미 해제됨 — 무시", name)
+    try:
+        running = thread.isRunning()
+    except RuntimeError:
+        return   # 이미 정리된 워커 — 할 일이 없다
+    if running:
         track_thread(thread)
-    else:
-        thread.deleteLater()
 
 
 def running_count() -> int:

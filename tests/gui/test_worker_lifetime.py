@@ -87,7 +87,7 @@ class TestRetireThread:
         before = running_count()
         worker.start()
 
-        retire_thread(worker, worker.done)
+        retire_thread(worker, "done")
 
         assert running_count() == before + 1     # 참조를 버려도 파괴되지 않는다
         _drain(qtbot, worker)
@@ -99,12 +99,26 @@ class TestRetireThread:
         _drain(qtbot, worker)
         before = running_count()
 
-        retire_thread(worker, worker.done)
+        retire_thread(worker, "done")
 
         assert running_count() == before
 
     def test_None은_그냥_넘어간다(self):
         retire_thread(None)   # 예외 없이 무시
+
+    def test_끝난_워커를_은퇴시켜도_참조가_살아_있다(self, qtbot):
+        """레지스트리가 deleteLater로 지우면, 아직 그 워커를 들고 있던 쪽에서
+        'wrapped C/C++ object has been deleted'가 난다(재생 중 뒤로가기에서 실제로 났다)."""
+        worker = track_thread(_Sleeper(msec=1))
+        worker.start()
+        _drain(qtbot, worker)
+        qtbot.wait(50)
+        QApplication.processEvents()
+
+        # 끝난 뒤에도 파이썬 래퍼로 안전하게 접근할 수 있어야 한다.
+        assert worker.isRunning() is False
+        retire_thread(worker, "done")          # 두 번 정리해도 안전
+        assert worker.isFinished() is True
 
     def test_wait_all은_남은_워커를_기다린다(self, qtbot):
         worker = track_thread(_Sleeper(msec=80))

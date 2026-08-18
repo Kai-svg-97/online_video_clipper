@@ -149,7 +149,7 @@ class TestTrackRowMissing:
 def album_vm():
     vm = MagicMock()
     for sig in ("albums_changed", "detail_ready", "track_filled", "fill_finished",
-                "unknown_resolved", "error_occurred"):
+                "unknown_resolved", "error_occurred", "add_progress", "tracks_added"):
         getattr(vm, sig).connect = MagicMock()
     vm.detail = None
     return vm
@@ -502,3 +502,73 @@ class TestMultiDiscRows:
         panel.set_detail(_detail())
 
         assert [row._no_lbl.text() for row in panel._rows] == ["1", "2", "3"]
+
+
+class TestAddAllButton:
+    """수록곡 헤더의 '＋ 현재 카테고리에 등록' 버튼."""
+
+    def _auto_detail(self):
+        return AlbumDetailDTO(
+            key="iu\x1fpalette", album_title="Palette", artist="IU",
+            tracks=[
+                AlbumTrackDTO(track_no=1, title="Palette", origin=TRACK_ORIGIN_LIBRARY,
+                              video_id=uuid4()),
+                AlbumTrackDTO(track_no=2, title="밤편지", origin=TRACK_ORIGIN_AUTO,
+                              stream_url="https://youtu.be/auto1"),
+            ],
+        )
+
+    def test_자동_매핑_곡이_있으면_버튼이_활성이다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+
+        panel.set_detail(self._auto_detail())
+
+        assert panel._btn_add_all.isEnabled()
+
+    def test_담을_곡이_없으면_버튼이_꺼진다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+
+        panel.set_detail(AlbumDetailDTO(
+            key="k", album_title="A", artist="B",
+            tracks=[AlbumTrackDTO(track_no=1, title="x", origin=TRACK_ORIGIN_LIBRARY,
+                                  video_id=uuid4())],
+        ))
+
+        assert not panel._btn_add_all.isEnabled()
+
+    def test_버튼이_앨범_DTO를_실어_보낸다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+        detail = self._auto_detail()
+        panel.set_detail(detail)
+        got: list = []
+        panel.add_all_requested.connect(got.append)
+
+        panel._btn_add_all.click()
+
+        assert got == [detail]
+
+    def test_패널이_현재_카테고리로_담기를_요청한다(self, panel, album_vm):
+        cat_id = uuid4()
+        panel._current_cat_id = cat_id
+        detail = self._auto_detail()
+
+        panel._on_album_add_all(detail)
+
+        album_vm.add_tracks_to_category.assert_called_once()
+        assert album_vm.add_tracks_to_category.call_args.kwargs["category_id"] == cat_id
+        assert not panel._album_detail._btn_add_all.isEnabled()   # 진행 중 잠금
+
+    def test_담기가_끝나면_목록과_상세를_다시_읽는다(self, panel, album_vm, library_vm, monkeypatch):
+        loaded: list = []
+        monkeypatch.setattr(library_vm, "load", lambda: loaded.append(1))
+        panel._current_album_key = "iu\x1fpalette"
+        album_vm.load_detail.reset_mock()
+
+        panel._on_album_tracks_added(2)
+
+        assert loaded == [1]                     # 라이브러리 목록 갱신
+        album_vm.load_detail.assert_called_once()  # 자동 매핑 → 내 등록으로 바뀜
+        assert panel._album_detail._btn_add_all.isEnabled()

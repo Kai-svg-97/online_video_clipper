@@ -1647,16 +1647,13 @@ class InlinePlayer(QWidget):
             # 예전엔 quit()+deleteLater()였는데, quit()은 이벤트 루프만 끝내므로
             # yt-dlp를 도는 run()은 계속 실행되고, 그 상태로 삭제되면 Qt가 프로세스를
             # 죽였다(스트림을 받는 도중 뒤로가기 → 앱 종료).
-            retire_thread(
-                self._worker,
-                self._worker.stream_ready, self._worker.progress, self._worker.failed,
-            )
+            retire_thread(self._worker, "stream_ready", "progress", "failed")
             self._worker = None
         if self._probe:
             # 화질 조회 결과가 늦게 와도 이미 다른 영상으로 넘어갔을 수 있다.
             # 스트림 워커와 같은 이유로 quit()+deleteLater()는 쓰지 않는다 —
             # yt-dlp를 도는 run()은 quit()으로 멈추지 않는다.
-            retire_thread(self._probe, self._probe.heights_ready, self._probe.failed)
+            retire_thread(self._probe, "heights_ready", "failed")
             self._probe = None
         self._bar.set_download_busy(False)
         self._visual_stack.setCurrentIndex(0)
@@ -2077,19 +2074,22 @@ class InlinePlayer(QWidget):
         # 이전 워커가 살아 있으면 늦게 도착하는 신호를 무시한다.
         # 참조만 버리면 실행 중인 QThread가 파괴돼 프로세스가 죽는다 — retire_thread가
         # 신호를 끊고 끝날 때까지 대신 붙들어 준다(gui/workers.py).
-        retire_thread(
-            self._worker,
-            *( (self._worker.stream_ready, self._worker.progress, self._worker.failed)
-               if self._worker is not None else () ),
-        )
+        retire_thread(self._worker, "stream_ready", "progress", "failed")
         # 부모를 주지 않는다 — 플레이어가 사라져도 스레드가 함께 파괴되지 않게.
         self._worker = track_thread(_StreamWorker(
             self._video_url, self._current_quality_fmt, self._current_merge
         ))
+        # 끝나면 참조를 놓는다 — 끝난 워커를 계속 들고 있으면 뒤늦은 정리에서 헷갈린다.
+        self._worker.finished.connect(lambda w=self._worker: self._forget_stream_worker(w))
         self._worker.stream_ready.connect(self._on_stream_ready)
         self._worker.progress.connect(self._on_merge_progress)
         self._worker.failed.connect(self._on_stream_failed)
         self._worker.start()
+
+    def _forget_stream_worker(self, worker) -> None:
+        """스트림 워커가 끝나면 참조를 놓는다(다음 정리에서 죽은 객체를 만지지 않게)."""
+        if self._worker is worker:
+            self._worker = None
 
     def _on_merge_progress(self, pct: int) -> None:
         self._status_lbl.setText(f"고화질 준비 중…  {pct}%")

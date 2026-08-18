@@ -408,6 +408,7 @@ def main() -> int:
 
     # 앨범 보기 — 외부 앨범 정보(iTunes, 무키)는 실패해도 라이브러리 곡으로 폴백한다.
     from application.song.album_queries import (  # noqa: PLC0415
+        AddAlbumTracksHandler,
         FillAlbumTracksHandler,
         GetAlbumDetailHandler,
         GetAlbumsHandler,
@@ -422,6 +423,8 @@ def main() -> int:
     resolve_albums_h   = ResolveUnknownAlbumsHandler(
         video_repo, song_repo, album_repo, _album_provider
     )
+    # 앨범 수록곡을 현재 카테고리에 담기 — 등록(AddVideoHandler)에 노래 정보 기록을 얹는다.
+    add_album_tracks_h = AddAlbumTracksHandler(add_video, song_repo)
     add_url_to_pl_h    = AddUrlToPlaylistHandler(add_video, playlist_repo)
 
     rename_playlist_h  = RenamePlaylistHandler(playlist_repo, yt_api=_yt_api)
@@ -506,6 +509,7 @@ def main() -> int:
         get_detail=get_album_detail_h,
         fill_tracks=fill_album_h,
         resolve_unknown=resolve_albums_h,
+        add_tracks=add_album_tracks_h,
     )
     download_vm = DownloadViewModel(
         start_handler=start_dl,
