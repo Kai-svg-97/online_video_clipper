@@ -248,6 +248,52 @@ CREATE TABLE IF NOT EXISTS lyrics_sources (
     priority     INTEGER NOT NULL DEFAULT 100   -- 작을수록 먼저 시도
 );
 
+-- 앨범 정보 캐시 (외부 조회 결과) — 파생 데이터라 동기화 대상이 아니다.
+-- 앨범은 저장 단위가 아니라 노래 정보(가수·앨범)에서 파생되는 묶음이므로, 여기에는
+-- '다시 조회하지 않기 위한' 자켓·발매일·수록곡 목록만 담는다. 지우면 다시 받아온다.
+CREATE TABLE IF NOT EXISTS album_cache (
+    album_key    TEXT PRIMARY KEY,              -- domain.song.album.make_album_key
+    album_title  TEXT NOT NULL DEFAULT '',
+    artist       TEXT NOT NULL DEFAULT '',
+    artwork_url  TEXT NOT NULL DEFAULT '',
+    artwork_path TEXT NOT NULL DEFAULT '',      -- THUMBNAIL_DIR 기준 상대경로 ('' = 미다운로드)
+    description  TEXT NOT NULL DEFAULT '',
+    release_date TEXT NOT NULL DEFAULT '',
+    genre        TEXT NOT NULL DEFAULT '',
+    copyright    TEXT NOT NULL DEFAULT '',
+    track_count  INTEGER NOT NULL DEFAULT 0,
+    tracks_json  TEXT NOT NULL DEFAULT '[]',    -- [{"n": 번호, "t": 제목, "a": 가수, "d": 초}, ...]
+    source_name  TEXT NOT NULL DEFAULT '',
+    source_url   TEXT NOT NULL DEFAULT '',
+    fetched_at   TEXT NOT NULL
+);
+
+-- 라이브러리에 없는 수록곡에 자동으로 붙인 스트리밍 영상(official 음원 추정).
+-- 라이브러리에 있는 곡은 조회 시점에 제목 매칭으로 찾으므로 저장하지 않는다 —
+-- 여기 남는 건 '내가 등록하지 않은' 자동 매핑뿐이라, 목록의 출처 배지가 이 표의
+-- 존재 여부와 정확히 일치한다.
+CREATE TABLE IF NOT EXISTS album_track_links (
+    album_key     TEXT NOT NULL,
+    track_no      INTEGER NOT NULL,
+    track_title   TEXT NOT NULL DEFAULT '',
+    stream_url    TEXT NOT NULL DEFAULT '',
+    stream_title  TEXT NOT NULL DEFAULT '',
+    stream_channel TEXT NOT NULL DEFAULT '',
+    stream_yt_id  TEXT NOT NULL DEFAULT '',
+    duration_sec  INTEGER,
+    origin        TEXT NOT NULL DEFAULT 'auto',  -- auto = 자동 검색으로 붙임
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (album_key, track_no)
+);
+
+-- 앨범 미상 노래의 외부 조회 상태 — 실패한 곡을 화면 열 때마다 다시 조회하지 않기 위한 기록.
+-- 성공하면 song_info.album이 채워져 자연히 제 앨범으로 옮겨 가므로 found=1 행은 흔적일 뿐이다.
+CREATE TABLE IF NOT EXISTS album_lookup_state (
+    video_id TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    found    INTEGER NOT NULL DEFAULT 0,
+    tried_at TEXT NOT NULL
+);
+
 -- =========================================================
 -- Sync context (클라우드 동기화 — 레코드 단위 oplog CRDT)
 -- 아래 테이블은 로컬 전용(동기화 대상 아님) — 병합 레지스터 상태를 materialize한다.

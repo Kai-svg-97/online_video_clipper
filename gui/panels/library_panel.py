@@ -71,6 +71,7 @@ from PyQt6.QtWidgets import (
 import config.settings as _settings
 from application.library.dtos import CategoryDTO, VideoDTO
 from config.settings import LRU_THUMBNAIL_MAX, THUMBNAIL_DIR, THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH
+from domain.library.repositories import MUSIC_ROOT_CATEGORY_NAMES
 from gui.dialogs.batch_download_dialog import BatchDownloadDialog
 from gui.panels.video_detail_panel import (
     RelatedItem,
@@ -117,6 +118,14 @@ _VIEW_DETAIL = 2
 _VIEW_FOLDER = 3   # 폴더 내 재생목록 카드 그리드
 _VIEW_FEED   = 4   # 구독 채널/전체 피드 카드 그리드
 _VIEW_CHANNELS = 5 # 구독 채널 목록(아바타 카드) 그리드
+_VIEW_ALBUMS = 6   # 앨범 자켓 그리드 (정렬 '앨범' 선택 시 — 음악 카테고리 전용)
+
+# 정렬 콤보의 '앨범' 항목 식별자. 실제 SQL 정렬 컬럼이 아니라 **화면 모드 전환**이라
+# 다른 값들과 구분되는 sentinel을 쓴다(리포지토리에 넘기면 안 된다).
+_SORT_ALBUM = "__album__"
+
+# _nav_stack 페이지 — 0=목록 컨테이너, 1=영상 상세, 2=앨범 상세
+_NAV_ALBUM_DETAIL = 2
 
 # 검색어 입력 디바운스(ms) — 입력이 멎은 뒤 한 번만 조회한다.
 _SEARCH_DEBOUNCE_MS = 300
@@ -3950,6 +3959,7 @@ class LibraryPanel(QWidget):
         monitoring_vm=None,
         song_vm=None,
         recommend_vm=None,
+        album_vm=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -3961,6 +3971,10 @@ class LibraryPanel(QWidget):
         self._monitoring_vm = monitoring_vm
         self._song_vm = song_vm
         self._recommend_vm = recommend_vm
+        self._album_vm = album_vm
+        # 앨범 보기 상태 — 정렬 '앨범'을 고르면 켜지고, 다른 정렬로 바꾸면 꺼진다.
+        self._album_mode: bool = False
+        self._current_album_key: str | None = None
         self._all_tags: list = []
         self._active_tag_ids: set[UUID] = set()
         self._current_cat_id: UUID | None = None
@@ -4215,6 +4229,11 @@ class LibraryPanel(QWidget):
         self._channels_view = self._build_channels_view()
         self._view_stack.addWidget(self._channels_view)
 
+        # 앨범 자켓 그리드 (_VIEW_ALBUMS = 6) — 음악 카테고리에서 정렬 '앨범' 선택 시
+        from gui.panels.album_panel import AlbumGrid  # noqa: PLC0415
+        self._album_grid = AlbumGrid()
+        self._view_stack.addWidget(self._album_grid)
+
         # ── 영상 목록 + 추천 스트립을 수직 스플리터로 묶는다 ──
         # 스플리터 핸들을 끌어 추천 영역 높이를 조절하고, 스트립 헤더의 삼각형
         # 버튼으로 본문만 접는다(헤더는 남아 다시 펼칠 수 있다). 스플리터 자식
@@ -4252,6 +4271,11 @@ class LibraryPanel(QWidget):
             download_vm=self._download_vm,
         )
         self._nav_stack.addWidget(self._detail_widget)
+
+        # 앨범 상세 (_nav_stack 인덱스 2) — 자켓·설명·수록곡 목록
+        from gui.panels.album_panel import AlbumDetailPanel  # noqa: PLC0415
+        self._album_detail = AlbumDetailPanel()
+        self._nav_stack.addWidget(self._album_detail)
 
         outer_splitter.addWidget(self._nav_stack)
 
@@ -4362,6 +4386,21 @@ class LibraryPanel(QWidget):
             # 조회가 아예 없으므로 노출 조건(결과 도착)이 영영 오지 않는다 —
             # 안내 문구를 보여줘야 하니 헤더 높이만큼 바로 띄운다.
             self._reveal_recommend_strip(False)
+        # ── 앨범 보기 ──
+        self._album_grid.album_clicked.connect(self._on_album_clicked)
+        self._album_detail.back_requested.connect(self._on_album_back)
+        self._album_detail.play_album_requested.connect(self._on_play_album)
+        self._album_detail.track_clicked.connect(self._on_album_track_clicked)
+        self._album_detail.refresh_requested.connect(self._on_album_refresh)
+        self._album_detail.fill_requested.connect(self._on_album_fill_requested)
+        if self._album_vm is not None:
+            self._album_vm.albums_changed.connect(self._on_albums_changed)
+            self._album_vm.detail_ready.connect(self._on_album_detail_ready)
+            self._album_vm.track_filled.connect(self._on_album_track_filled)
+            self._album_vm.fill_finished.connect(self._on_album_fill_finished)
+            self._album_vm.unknown_resolved.connect(self._on_album_unknown_resolved)
+            self._album_vm.error_occurred.connect(self._on_album_error)
+
         self._breadcrumb_bar.segment_clicked.connect(self._on_breadcrumb_nav)
         self._breadcrumb_bar.tag_removed.connect(self._on_active_tag_removed)
         self._vm.metadata_refresh_progress.connect(self._on_refresh_progress)
@@ -5296,6 +5335,279 @@ class LibraryPanel(QWidget):
             self._model.set_reorder_mode(False)
             self.path_changed.emit("라이브러리")
         self._refresh_breadcrumb()
+        # 음악 카테고리에서만 정렬 '앨범'을 노출한다(카테고리마다 달라진다).
+        self._update_sort_options()
+        if self._album_mode:
+            self._load_albums()
+
+    # ── 앨범 보기 (음악 카테고리 전용) ───────────────────────────────
+    # 앨범은 저장된 것이 아니라 노래 정보(가수·앨범)에서 파생되는 묶음이다. 그래서
+    # '앨범'은 정렬 항목으로 들어오지만 실제로는 **화면 모드 전환**이고(_SORT_ALBUM),
+    # 리포지토리 정렬 컬럼으로 넘어가지 않는다.
+
+    def _is_music_category(self, cat_id) -> bool:
+        """이 카테고리의 최상위 조상 이름이 음악 계열인지(Music/Song/음악/노래/뮤직).
+
+        판정 기준은 도메인 상수(MUSIC_ROOT_CATEGORY_NAMES)를 그대로 쓴다 — 가사 검색
+        범위와 같은 규칙이어야 "가사는 되는데 앨범은 안 뜨는" 어긋남이 없다.
+        """
+        if cat_id is None:
+            return False
+        by_id = {c.id: c for c in self._vm.categories}
+        node = by_id.get(cat_id)
+        depth = 0
+        while node is not None and depth < 32:   # 데이터가 순환해도 멈추도록 가드
+            parent = by_id.get(node.parent_id) if node.parent_id else None
+            if parent is None:
+                return (node.name or "").strip().lower() in MUSIC_ROOT_CATEGORY_NAMES
+            node = parent
+            depth += 1
+        return False
+
+    def _album_sort_index(self) -> int:
+        """정렬 콤보에서 '앨범' 항목의 위치(없으면 -1).
+
+        ``QComboBox.findData``는 파이썬 튜플을 QVariant로 감싸 비교하므로 일치하지 않는다
+        — 항목 데이터를 직접 훑어 첫 원소로 판정한다.
+        """
+        for i in range(self._sort_combo.count()):
+            data = self._sort_combo.itemData(i)
+            if isinstance(data, tuple) and data and data[0] == _SORT_ALBUM:
+                return i
+        return -1
+
+    def _album_category_ids(self) -> list:
+        """앨범 보기 대상 카테고리 — 현재 카테고리 + **모든 하위**.
+
+        음악 라이브러리는 보통 'Music > 가수 > 곡' 구조라, 루트에서 앨범을 보면 하위에
+        있는 곡이 전부 빠진다. 앨범은 카테고리 경계보다 '어떤 노래를 갖고 있나'가 중요해
+        하위까지 포함한다(일반 목록 뷰는 기존대로 해당 카테고리만 보여 준다).
+        """
+        if self._current_cat_id is None:
+            return []
+        children: dict = {}
+        for cat in self._vm.categories:
+            children.setdefault(cat.parent_id, []).append(cat.id)
+        out = [self._current_cat_id]
+        queue = [self._current_cat_id]
+        seen = {self._current_cat_id}
+        while queue:
+            node = queue.pop()
+            for child in children.get(node, []):
+                if child in seen:        # 데이터가 순환해도 멈춘다
+                    continue
+                seen.add(child)
+                out.append(child)
+                queue.append(child)
+        return out
+
+    def _update_sort_options(self) -> None:
+        """음악 카테고리에서만 정렬 콤보에 '앨범'을 넣는다."""
+        idx = self._album_sort_index()
+        want = self._album_vm is not None and self._is_music_category(self._current_cat_id)
+        if want and idx < 0:
+            self._sort_combo.addItem("앨범", (_SORT_ALBUM, True))
+        elif not want and idx >= 0:
+            if self._sort_combo.currentIndex() == idx:
+                # 앨범 보기 중에 음악이 아닌 카테고리로 옮겼다 — 기본 정렬로 되돌린다.
+                self._sort_combo.setCurrentIndex(0)
+            self._sort_combo.removeItem(idx)
+
+    def _enter_album_mode(self) -> None:
+        if self._album_vm is None:
+            return
+        self._album_mode = True
+        self._leave_detail_if_open()
+        self._switch_view(_VIEW_ALBUMS)
+        self._album_grid.set_status("앨범을 구성하는 중…")
+        self._load_albums()
+        # 앨범 값이 빈 노래는 외부 조회로 추정해 채운다(백그라운드, 실패는 재조회 안 함).
+        self._album_vm.resolve_unknown_albums(
+            category_id=self._current_cat_id, category_ids=self._album_category_ids()
+        )
+
+    def _exit_album_mode(self) -> None:
+        self._album_mode = False
+        self._current_album_key = None
+        if self._album_vm is not None:
+            self._album_vm.cancel_fill()
+        if self._nav_stack.currentIndex() == _NAV_ALBUM_DETAIL:
+            self._nav_stack.setCurrentIndex(0)
+        if self._view_stack.currentIndex() == _VIEW_ALBUMS:
+            self._switch_view(self._view_group.checkedId())
+
+    def _load_albums(self) -> None:
+        if self._album_vm is None:
+            return
+        self._album_vm.load_albums(
+            category_id=self._current_cat_id, category_ids=self._album_category_ids()
+        )
+
+    def _on_albums_changed(self, albums: list) -> None:
+        if not self._album_mode:
+            return
+        self._album_grid.set_albums(albums)
+        self._album_grid.set_status(
+            "" if albums else "이 카테고리에는 앨범으로 묶을 노래가 없습니다."
+        )
+
+    def _on_album_clicked(self, album_key: str) -> None:
+        """앨범 카드 클릭 — 상세를 연다(수록곡은 외부 조회라 백그라운드)."""
+        if self._album_vm is None:
+            return
+        self._current_album_key = album_key
+        self._album_detail.set_detail(None, crumb="앨범 정보를 가져오는 중…")
+        self._album_detail.set_busy(True)
+        self._nav_stack.setCurrentIndex(_NAV_ALBUM_DETAIL)
+        self._album_vm.load_detail(
+            album_key, category_id=self._current_cat_id,
+            category_ids=self._album_category_ids(),
+        )
+
+    def _on_album_detail_ready(self, detail) -> None:
+        if not self._album_mode:
+            return
+        crumb = self._build_category_path(self._current_cat_id) if self._current_cat_id else ""
+        self._album_detail.set_detail(detail, crumb=crumb)
+        self._album_detail.set_busy(False)
+        # 라이브러리에 없는 수록곡은 열자마자 백그라운드로 찾아 채운다(사용자 조작 없이).
+        if detail is not None and detail.missing_count and self._album_vm is not None:
+            self._album_detail.set_status(
+                f"{self._album_detail.status_text()}  ·  빠진 곡 찾는 중…"
+            )
+            self._album_vm.fill_missing_tracks(
+                detail.key, category_id=self._current_cat_id,
+                category_ids=self._album_category_ids(),
+            )
+
+    def _on_album_track_filled(self, track) -> None:
+        self._album_detail.apply_filled_track(track)
+
+    def _on_album_fill_finished(self, count: int) -> None:
+        if count:
+            self._album_detail.set_status(
+                f"{self._album_detail.status_text()}  ·  {count}곡 자동 매핑"
+            )
+
+    def _on_album_error(self, msg: str) -> None:
+        logger.warning("앨범 조회 실패: %s", msg)
+        self._album_grid.set_status("앨범 정보를 가져오지 못했습니다.")
+        self._album_detail.set_busy(False)
+
+    def _on_album_back(self) -> None:
+        self._nav_stack.setCurrentIndex(0)
+        self._current_album_key = None
+        if self._album_vm is not None:
+            self._album_vm.cancel_fill()
+
+    def _on_album_unknown_resolved(self, count: int) -> None:
+        if count and self._album_mode:
+            self._load_albums()   # 앨범을 찾은 곡들이 제 묶음으로 옮겨 간다
+
+    def _on_album_refresh(self, album_key: str) -> None:
+        if self._album_vm is None or not album_key:
+            return
+        self._album_detail.set_busy(True)
+        self._album_vm.load_detail(
+            album_key, category_id=self._current_cat_id,
+            category_ids=self._album_category_ids(), refresh=True,
+        )
+
+    def _on_album_fill_requested(self, album_key: str) -> None:
+        if self._album_vm is None or not album_key:
+            return
+        self._album_vm.fill_missing_tracks(
+            album_key, category_id=self._current_cat_id,
+            category_ids=self._album_category_ids(),
+        )
+
+    def _album_related_items(self, detail) -> list:
+        """앨범 수록곡을 상세화면 재생목록(RelatedItem) 항목으로 바꾼다.
+
+        로컬 곡은 video_id를, 자동 매핑 곡은 FeedVideoDTO를 payload로 싣는다 —
+        상세화면의 기존 재생목록 경로(_open_playlist_payload)가 두 종류를 모두 다룬다.
+        """
+        from application.library.dtos import FeedVideoDTO  # noqa: PLC0415
+        from application.song.album_dtos import (  # noqa: PLC0415
+            TRACK_ORIGIN_AUTO,
+            TRACK_ORIGIN_LIBRARY,
+        )
+
+        items = []
+        for track in detail.tracks:
+            if track.origin == TRACK_ORIGIN_LIBRARY and track.video_id is not None:
+                video = next((v for v in self._vm.videos if v.id == track.video_id), None)
+                if video is not None:
+                    items.append(self._related_from_video(video))
+                    continue
+                # 현재 페이지에 없는 곡(다른 페이지·다른 정렬) — 최소 정보로 행을 만든다.
+                items.append(RelatedItem(
+                    key=str(track.video_id),
+                    title=track.title,
+                    channel=track.artist,
+                    duration_sec=track.duration_sec,
+                    meta_text="내 등록",
+                    payload=track.video_id,
+                    thumb_path=track.thumbnail_path,
+                ))
+            elif track.origin == TRACK_ORIGIN_AUTO and track.stream_url:
+                dto = FeedVideoDTO(
+                    url=track.stream_url,
+                    title=track.stream_title or track.title,
+                    channel_name=track.stream_channel or track.artist,
+                    channel_id="",
+                    thumbnail_url=(
+                        f"https://i.ytimg.com/vi/{track.stream_yt_id}/hqdefault.jpg"
+                        if track.stream_yt_id else ""
+                    ),
+                    thumbnail_path="",
+                    published_at="",
+                    view_count=None,
+                    duration_sec=track.duration_sec,
+                    in_library=False,
+                    yt_video_id=track.stream_yt_id,
+                )
+                items.append(self._related_from_feed(dto))
+        return items
+
+    def _on_play_album(self, detail) -> None:
+        """앨범 재생 — 수록곡을 재생목록으로 삼아 첫 곡부터 이어 재생한다."""
+        items = self._album_related_items(detail)
+        if not items:
+            return
+        self._start_album_playlist(detail, items, items[0].payload)
+
+    def _on_album_track_clicked(self, track) -> None:
+        """수록곡 클릭 — 그 곡부터 앨범을 이어 재생한다."""
+        detail = self._album_vm.detail if self._album_vm is not None else None
+        if detail is None:
+            return
+        items = self._album_related_items(detail)
+        payload = None
+        for item in items:
+            if track.video_id is not None and item.payload == track.video_id:
+                payload = item.payload
+                break
+            if track.stream_url and getattr(item.payload, "url", "") == track.stream_url:
+                payload = item.payload
+                break
+        if payload is None:
+            return
+        self._start_album_playlist(detail, items, payload)
+
+    def _start_album_playlist(self, detail, items: list, payload) -> None:
+        """앨범 재생목록 컨텍스트를 세우고 지정한 곡을 연다.
+
+        기존 '가수/앨범 필터' 재생목록과 같은 구조(_playlist_ctx)를 쓰므로 자동 다음곡·
+        마우스 뒤로가기 되짚기가 그대로 동작한다.
+        """
+        self._playlist_ctx = {
+            "items": items,
+            "header": f"앨범: {detail.album_title}",
+            "prev_related": items,
+            "history": [payload],
+        }
+        self._open_playlist_payload(payload, autoplay=True)
 
     def _on_reorder_toggled(self, checked: bool) -> None:
         self._model.set_reorder_mode(checked)
@@ -5674,7 +5986,16 @@ class LibraryPanel(QWidget):
             logger.exception("상세 정보 재로드 실패: %s", video_id)
 
     def _on_sort_changed(self, index: int) -> None:
-        sort_by, sort_asc = self._sort_combo.itemData(index)
+        data = self._sort_combo.itemData(index)
+        if not isinstance(data, tuple) or len(data) != 2:
+            # 항목 제거 등으로 인덱스가 -1이 되면 데이터가 없다 — 아무것도 하지 않는다.
+            return
+        sort_by, sort_asc = data
+        if sort_by == _SORT_ALBUM:
+            self._enter_album_mode()
+            return
+        if self._album_mode:
+            self._exit_album_mode()
         self._vm.set_sort(sort_by, sort_asc)
 
     # ── Smart Folders ──────────────────────────────────────────────
@@ -5803,9 +6124,17 @@ class LibraryPanel(QWidget):
     # ── 내비게이션 히스토리 ────────────────────────────────────────────
 
     def _leave_detail_if_open(self) -> None:
-        """상세 화면(_nav_stack 인덱스 1)이 열려 있으면 목록 컨테이너로 복귀한다."""
-        if self._nav_stack.currentIndex() == 1:
+        """상세 화면이 열려 있으면 목록 컨테이너로 복귀한다.
+
+        영상 상세(인덱스 1)뿐 아니라 **앨범 상세(인덱스 2)**도 함께 닫는다 — 트리에서
+        다른 노드를 골랐는데 앨범 상세가 그대로 떠 있으면 목록만 바뀌고 화면은 그대로라
+        먹통처럼 보인다.
+        """
+        idx = self._nav_stack.currentIndex()
+        if idx == 1:
             self._on_back_from_detail()
+        elif idx == _NAV_ALBUM_DETAIL:
+            self._on_album_back()
 
     def _capture_screen(self) -> dict:
         """현재 화면을 완전 스냅샷으로 캡처한다(트리 노드 종류 + 뷰 + 태그)."""

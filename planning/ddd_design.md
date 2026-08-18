@@ -157,6 +157,18 @@ ffmpeg 기반 구간 추출.
 - **번역**: 비한국어 가사에 한글 병행. 한국어/번역기 미설치 시 원문만(graceful).
 - **수동 편집 보존**: 사용자가 편집한 필드는 `manual_fields`에 기록돼 갱신 시 덮어쓰지 않는다(`apply_fetched`).
 - **등록 시 메타데이터만, 가사는 상세 진입 시 조회**: 대량 임포트가 네트워크로 막히지 않게 함(`FetchSongInfoCommand.fetch_lyrics`).
+- **앨범은 저장 단위가 아니라 파생 그룹이다**: 앨범 애그리게이트는 없다.
+  `domain/song/album.py`의 순수 함수(`make_album_key`·`group_songs_into_albums`·
+  `match_track_to_songs`)가 노래 정보(가수·앨범·제목)에서 앨범 묶음을 만든다. 표기가 달라도
+  같은 앨범이면 같은 키가 나오도록 정규화하며(괄호 꼬리표·"Official Audio"·기호 제거,
+  주 아티스트 기준), 문자열 `"null"`처럼 자동 수집이 남긴 자리표시자는 **앨범명으로 보지
+  않는다**(실제 DB에서 확인된 값 — 그대로 두면 무관한 곡이 한 앨범으로 뭉친다).
+  앨범명이 없는 곡은 '앨범 미상'으로 모으고, 외부 조회로 앨범을 찾으면 `apply_fetched`로
+  노래 정보에 채워 다음 조회부터 제 앨범으로 옮겨 간다.
+  **Ports**: `IAlbumMetadataProvider`(`fetch_album`·`find_album_of_track` → `AlbumMetadata`,
+  구현: iTunes Search API 무키). **저장소**: `IAlbumRepository`(domain/song/album_repository.py)는
+  외부 조회 캐시(`album_cache`)·자동 매핑(`album_track_links`)·재조회 방지 기록
+  (`album_lookup_state`)만 담는다 — 전부 **파생 데이터라 동기화 대상이 아니고** 지워도 복구된다.
 - **자막 싱크 보정은 애그리게이트를 통해서만**: `SongInfoAggregate.set_lyrics_offset(ms)`가 오프셋 변경(±30초 clamp 포함)을 담당한다. `edit_lyrics`(가사 수동 편집)는 줄 수가 같을 때만 기존 타이밍(`start_ms`)을 유지하고, 줄 구성이 바뀌면 신뢰할 수 없으므로 폐기한다.
 
 ---

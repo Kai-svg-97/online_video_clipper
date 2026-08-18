@@ -7,7 +7,7 @@ from uuid import UUID
 
 from domain.song.aggregates import SongInfoAggregate
 from domain.song.entities import LyricsSource, SongInfo
-from domain.song.repositories import ISongRepository
+from domain.song.repositories import ISongRepository, SongFields
 from domain.song.value_objects import LyricsLine, SongSourceRef
 from infrastructure.persistence.database import Database
 
@@ -157,6 +157,31 @@ class SqliteSongRepository(ISongRepository):
         with self._db.connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [UUID(r["video_id"]) for r in rows]
+
+    def list_song_fields(self, video_ids: list[UUID]) -> dict[UUID, SongFields]:
+        """앨범 그루핑용 노래 정보 일괄 조회 — 가사(JSON)는 읽지 않는다."""
+        if not video_ids:
+            return {}
+        ids = [str(v) for v in video_ids]
+        out: dict[UUID, SongFields] = {}
+        with self._db.connection() as conn:
+            # SQLite 변수 상한(기본 999)을 넘지 않게 나눠 조회한다.
+            for i in range(0, len(ids), 400):
+                chunk = ids[i:i + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    "SELECT video_id, is_song, artist, album, song_title FROM song_info"
+                    f" WHERE video_id IN ({placeholders})",  # noqa: S608
+                    chunk,
+                ).fetchall()
+                for r in rows:
+                    out[UUID(r["video_id"])] = SongFields(
+                        is_song=bool(r["is_song"]),
+                        artist=r["artist"] or "",
+                        album=r["album"] or "",
+                        song_title=r["song_title"] or "",
+                    )
+        return out
 
     # ── 가사 출처 레지스트리 ────────────────────────────────────────
     def list_lyrics_sources(self) -> list[LyricsSource]:

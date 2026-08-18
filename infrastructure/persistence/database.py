@@ -27,6 +27,7 @@ MIGRATION_IDS: tuple[str, ...] = (
     "migrate_media_paths_relative",
     "migrate_video_summary_status",
     "migrate_lyrics_offset",
+    "migrate_album_tables",
 )
 
 
@@ -164,6 +165,53 @@ class Database:
                 logger.info("song_info.lyrics_offset_ms 컬럼 추가 완료")
             except Exception:
                 logger.debug("song_info.lyrics_offset_ms 컬럼 이미 존재 — 건너뜀")
+
+    def _migrate_album_tables(self) -> None:
+        """앨범 캐시/자동 매핑 테이블을 만든다 (idempotent).
+
+        기존 설치본에도 schema.sql의 CREATE TABLE IF NOT EXISTS가 적용되지만, 마이그레이션
+        목록에 넣어 "이 코드가 아는 스키마 능력"(MIGRATION_IDS)에 포함시킨다 — 동기화
+        스키마 게이트가 이 집합으로 호환성을 판정한다. 두 표 모두 **파생 캐시**라
+        동기화 대상이 아니며, 지워도 다시 조회하면 복구된다.
+        """
+        with self.connection() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS album_cache ("
+                " album_key TEXT PRIMARY KEY,"
+                " album_title TEXT NOT NULL DEFAULT '',"
+                " artist TEXT NOT NULL DEFAULT '',"
+                " artwork_url TEXT NOT NULL DEFAULT '',"
+                " artwork_path TEXT NOT NULL DEFAULT '',"
+                " description TEXT NOT NULL DEFAULT '',"
+                " release_date TEXT NOT NULL DEFAULT '',"
+                " genre TEXT NOT NULL DEFAULT '',"
+                " copyright TEXT NOT NULL DEFAULT '',"
+                " track_count INTEGER NOT NULL DEFAULT 0,"
+                " tracks_json TEXT NOT NULL DEFAULT '[]',"
+                " source_name TEXT NOT NULL DEFAULT '',"
+                " source_url TEXT NOT NULL DEFAULT '',"
+                " fetched_at TEXT NOT NULL)"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS album_track_links ("
+                " album_key TEXT NOT NULL,"
+                " track_no INTEGER NOT NULL,"
+                " track_title TEXT NOT NULL DEFAULT '',"
+                " stream_url TEXT NOT NULL DEFAULT '',"
+                " stream_title TEXT NOT NULL DEFAULT '',"
+                " stream_channel TEXT NOT NULL DEFAULT '',"
+                " stream_yt_id TEXT NOT NULL DEFAULT '',"
+                " duration_sec INTEGER,"
+                " origin TEXT NOT NULL DEFAULT 'auto',"
+                " created_at TEXT NOT NULL,"
+                " PRIMARY KEY (album_key, track_no))"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS album_lookup_state ("
+                " video_id TEXT PRIMARY KEY,"
+                " found INTEGER NOT NULL DEFAULT 0,"
+                " tried_at TEXT NOT NULL)"
+            )
 
     def _migrate_song_tables(self) -> None:
         """노래 정보/가사 출처 테이블 시드 (idempotent).

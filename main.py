@@ -155,6 +155,7 @@ def main() -> int:
     from infrastructure.persistence.sqlite_channel_repository import SqliteChannelRepository
     from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
     from infrastructure.ffmpeg.ffmpeg_adapter import FfmpegAdapter
+    from infrastructure.persistence.sqlite_album_repository import SqliteAlbumRepository
     from infrastructure.persistence.sqlite_song_repository import SqliteSongRepository
     from infrastructure.song.lyrics_providers import build_default_providers
     from infrastructure.song.translator import DeepTranslatorAdapter
@@ -285,6 +286,8 @@ def main() -> int:
     playlist_repo  = SqlitePlaylistRepository(db)
     folder_repo    = SqlitePlaylistFolderRepository(db)
     song_repo      = SqliteSongRepository(db)
+    # 앨범 캐시는 파생 데이터라 동기화 캡처 대상이 아니다(Recording*로 감싸지 않는다).
+    album_repo     = SqliteAlbumRepository(db)
 
     # 6b. 클라우드 동기화 — 연결돼 있으면 repo를 캡처(Recording*)로 교체(미연결이면 무변경).
     sync_service = SyncService(db)
@@ -402,6 +405,23 @@ def main() -> int:
     get_channel_vids_h = GetChannelVideosHandler(ytdlp, video_repo, _yt_api)
     get_ch_infos_h     = GetSubscribedChannelInfosHandler(_yt_api)
     get_recommend_h    = GetRecommendationsHandler(ytdlp, video_repo, _yt_api)
+
+    # 앨범 보기 — 외부 앨범 정보(iTunes, 무키)는 실패해도 라이브러리 곡으로 폴백한다.
+    from application.song.album_queries import (  # noqa: PLC0415
+        FillAlbumTracksHandler,
+        GetAlbumDetailHandler,
+        GetAlbumsHandler,
+        ResolveUnknownAlbumsHandler,
+    )
+    from infrastructure.song.album_providers import build_default_album_provider  # noqa: PLC0415
+
+    _album_provider    = build_default_album_provider()
+    get_albums_h       = GetAlbumsHandler(video_repo, song_repo, album_repo)
+    get_album_detail_h = GetAlbumDetailHandler(video_repo, song_repo, album_repo, _album_provider)
+    fill_album_h       = FillAlbumTracksHandler(get_album_detail_h, album_repo, ytdlp)
+    resolve_albums_h   = ResolveUnknownAlbumsHandler(
+        video_repo, song_repo, album_repo, _album_provider
+    )
     add_url_to_pl_h    = AddUrlToPlaylistHandler(add_video, playlist_repo)
 
     rename_playlist_h  = RenamePlaylistHandler(playlist_repo, yt_api=_yt_api)
@@ -480,6 +500,13 @@ def main() -> int:
         handler=get_recommend_h,
         auth_service=auth_service,
     )
+    from gui.view_models.album_vm import AlbumViewModel  # noqa: PLC0415
+    album_vm = AlbumViewModel(
+        get_albums=get_albums_h,
+        get_detail=get_album_detail_h,
+        fill_tracks=fill_album_h,
+        resolve_unknown=resolve_albums_h,
+    )
     download_vm = DownloadViewModel(
         start_handler=start_dl,
         cancel_handler=cancel_dl,
@@ -551,6 +578,7 @@ def main() -> int:
         playlist_vm=playlist_vm,
         feed_vm=feed_vm,
         recommend_vm=recommend_vm,
+        album_vm=album_vm,
         auth_service=auth_service,
         yt_oauth=yt_oauth,
         song_vm=song_vm,

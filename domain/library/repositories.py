@@ -15,9 +15,12 @@ MATCH_FIELD_KEYS: tuple[str, ...] = (
     "title", "tags", "description", "notes", "summary", "song", "lyrics",
 )
 
-# 가사 검색을 허용할 최상위(루트) 카테고리 이름 — trim + 소문자로 비교한다.
-# 검색 계약의 일부라 도메인에 둔다(테스트가 import 해 규칙을 고정).
-MUSIC_ROOT_CATEGORY_NAMES: frozenset[str] = frozenset({"music", "음악", "노래"})
+# 음악 카테고리로 취급할 최상위(루트) 카테고리 이름 — trim + 소문자로 비교한다.
+# 가사 검색 범위와 **앨범 보기(정렬 '앨범')** 노출 조건을 함께 결정하는 계약이라
+# 도메인에 둔다(테스트가 import 해 규칙을 고정).
+MUSIC_ROOT_CATEGORY_NAMES: frozenset[str] = frozenset(
+    {"music", "song", "음악", "노래", "뮤직"}
+)
 
 
 @dataclass

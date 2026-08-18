@@ -99,3 +99,50 @@ class ITranslator(Protocol):
     def detect_language(self, text: str) -> str:
         """언어 코드(ISO 639-1)를 추정한다. 실패 시 ""."""
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class AlbumTrackInfo:
+    """외부 앨범 정보의 수록곡 1건."""
+
+    track_no: int
+    title: str
+    artist: str = ""
+    duration_sec: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AlbumMetadata:
+    """외부에서 받은 앨범 정보 — 자켓·설명 재료·수록곡 목록.
+
+    ``description``을 출처가 문장으로 주는 경우는 드물어서(iTunes는 안 준다) 비워 두고,
+    표시용 문구는 application 레이어가 장르·발매일·수록곡 수·저작권으로 조립한다.
+    출처가 진짜 설명을 주면 그대로 싣는다.
+    """
+
+    album_title: str
+    artist: str
+    artwork_url: str = ""
+    release_date: str = ""      # ISO 또는 출처 원문
+    genre: str = ""
+    copyright: str = ""
+    track_count: int = 0
+    tracks: list[AlbumTrackInfo] = field(default_factory=list)
+    description: str = ""
+    source_name: str = ""
+    source_url: str = ""
+
+
+class IAlbumMetadataProvider(Protocol):
+    """앨범 정보 출처(무키 iTunes 등). 구현체는 infrastructure/song/album_providers.py.
+
+    두 방향이 모두 필요하다 — 앨범명을 아는 경우(``fetch_album``)와, 곡만 알고 어느
+    앨범인지 모르는 경우(``find_album_of_track``, 노래 탭 앨범 값이 빈 영상). 실패·없음은
+    예외가 아니라 None으로 알린다(네트워크 출처라 실패가 정상 경로다).
+    """
+
+    key: str
+
+    def fetch_album(self, artist: str, album: str) -> AlbumMetadata | None: ...
+
+    def find_album_of_track(self, artist: str, title: str) -> AlbumMetadata | None: ...
