@@ -6,14 +6,11 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPainterPath
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -23,13 +20,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSpinBox,
-    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
@@ -40,16 +33,39 @@ from gui.themes.tokens import PRESETS, ThemeTokens
 from version import __version__
 from gui.themes.colors import sem
 
+
+# ── 분할된 부품 (gui/panels/settings/*) ─────────────────────────────
+# 이 파일에는 화면 조립·흐름 제어만 남기고 부품은 패키지로 옮겼다.
+# 아래 재수출은 기존 임포트 경로를 유지하기 위한 것이다.
+from gui.panels.settings.theme_cards import (  # noqa: F401
+    _ThemeCard,
+    _ThemePreview,
+)
+from gui.panels.settings.hidden_tags import (  # noqa: F401
+    _HiddenTagsSection,
+    _TagMoveDelegate,
+    _TagMoveList,
+)
+from gui.panels.settings.sections import (  # noqa: F401
+    _CloudSyncSection,
+    _ImportExportSection,
+    _LyricsSourcesSection,
+)
+
+
+# ── 분할된 부품 (gui/panels/settings/*) ─────────────────────────────
+# 이 파일에는 화면 조립·흐름 제어만 남기고 부품은 패키지로 옮겼다.
+# 아래 재수출은 기존 임포트 경로를 유지하기 위한 것이다.
+from gui.panels.settings.helpers import (  # noqa: F401
+    _t,
+    open_folder,
+)
+
 logger = logging.getLogger(__name__)
 
 
-def _t():
-    return ThemeManager.instance().current()
 
 
-def open_folder(path) -> None:
-    """OS 파일 탐색기로 폴더를 연다 — 경로를 직접 찾아 입력할 필요를 없앤다."""
-    QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
 
 # 쿠키 파일 등록 방법 안내 — "이건 컴퓨터 전문가용 앱이 아니다"는 사용자 신고에 따라,
@@ -70,325 +86,20 @@ COOKIE_HELP_TEXT = (
 )
 
 
-class _ThemeCard(QWidget):
-    """테마 프리셋 선택 카드 — 미니 창 목업 + 이름."""
-
-    _CARD_W = 80
-    _CARD_H = 56
-
-    def __init__(self, tokens: ThemeTokens, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._tokens = tokens
-        self._selected = False
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedWidth(self._CARD_W + 16)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        # 미리보기 캔버스
-        self._preview = _ThemePreview(tokens)
-        self._preview.setFixedSize(self._CARD_W, self._CARD_H)
-        layout.addWidget(self._preview, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        # 이름 레이블 — 카드가 놓인 배경은 "현재" 테마이므로 미리보기 테마 색이 아니라
-        # 현재 테마 색으로 칠해야 한다(어두운 프리셋 이름이 밝은 배경에서 흐려지지 않게).
-        self._name_lbl = QLabel(tokens.display_name)
-        self._name_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.set_selected(False)
-        layout.addWidget(self._name_lbl)
-
-    # ------------------------------------------------------------------
-    def set_selected(self, selected: bool) -> None:
-        self._selected = selected
-        self._preview.set_selected(selected)
-        cur = _t()
-        color = cur.accent if selected else cur.text_secondary
-        weight = "600" if selected else "500"
-        self._name_lbl.setStyleSheet(
-            f"font-size: 11px; font-weight: {weight}; color: {color};"
-        )
-
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        ThemeManager.instance().apply(self._tokens.name)
 
 
-class _ThemePreview(QWidget):
-    """테마 미리보기 — QPainter로 미니 창을 그린다."""
-
-    def __init__(self, tokens: ThemeTokens, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._tokens = tokens
-        self._selected = False
-
-    def set_selected(self, selected: bool) -> None:
-        self._selected = selected
-        self.update()
-
-    def paintEvent(self, event) -> None:  # type: ignore[override]
-        tok = self._tokens
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-        r = 5  # corner radius
-
-        # 외곽 테두리 (선택 시 액센트 색상)
-        border_color = tok.selected_border if self._selected else tok.border_muted
-        border_w = 2 if self._selected else 1
-
-        # 배경
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, w, h, r, r)
-        p.fillPath(path, QColor(tok.bg_base))
-
-        # 테두리
-        pen = p.pen()
-        pen.setColor(QColor(border_color))
-        pen.setWidth(border_w)
-        p.setPen(pen)
-        p.drawRoundedRect(border_w // 2, border_w // 2,
-                          w - border_w, h - border_w, r, r)
-
-        # 사이드바 (좌측 10px)
-        sb_w = 10
-        p.fillRect(border_w, border_w, sb_w, h - border_w * 2,
-                   QColor(tok.bg_surface))
-
-        # 사이드바 아이콘 점
-        dot_x = border_w + sb_w // 2 - 2
-        p.fillRect(dot_x, 8, 4, 4, QColor(tok.accent))
-        p.fillRect(dot_x, 16, 4, 4, QColor(tok.bg_overlay))
-        p.fillRect(dot_x, 24, 4, 4, QColor(tok.bg_overlay))
-
-        # 콘텐츠 영역 카드들
-        cx = border_w + sb_w + 4
-        cw = (w - cx - border_w - 4) // 3 - 2
-        ch = (h - border_w * 2 - 12) // 2 - 1
-        for col in range(3):
-            card_x = cx + col * (cw + 2)
-            p.fillRect(card_x, border_w + 8, cw, ch, QColor(tok.bg_elevated))
-
-        # 상단 바 (URL 바)
-        p.fillRect(border_w + sb_w, border_w, w - border_w - sb_w - border_w,
-                   7, QColor(tok.bg_surface))
-
-        p.end()
 
 
 # ---------------------------------------------------------------------------
 # 태그 이동 목록 (드래그 앤 드롭 지원)
 # ---------------------------------------------------------------------------
 
-_MOVE_MIME = "application/x-settings-tag-name"
 
 
-class _TagMoveDelegate(QStyledItemDelegate):
-    """태그 이름(왼쪽)과 영상 수(오른쪽)를 나란히 그리는 델리게이트."""
-
-    def sizeHint(self, option, index) -> QSize:
-        return QSize(max(option.rect.width(), 160), 26)
-
-    def paint(self, painter, option, index) -> None:
-        from PyQt6.QtWidgets import QApplication, QStyle  # noqa: PLC0415
-        QApplication.style().drawPrimitive(
-            QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget
-        )
-        name  = index.data(Qt.ItemDataRole.UserRole + 2) or ""
-        count = index.data(Qt.ItemDataRole.UserRole + 1) or 0
-        tok   = _t()
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # 태그명
-        painter.setFont(QFont("", 9))
-        painter.setPen(QColor(tok.text_on_accent if selected else tok.text_primary))
-        name_rect = option.rect.adjusted(8, 0, -44, 0)
-        painter.drawText(
-            name_rect,
-            Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
-            f"#{name}",
-        )
-
-        # 영상 수 뱃지
-        painter.setFont(QFont("", 8))
-        painter.setPen(QColor(tok.text_on_accent if selected else tok.text_muted))
-        count_rect = option.rect.adjusted(0, 0, -6, 0)
-        painter.drawText(
-            count_rect,
-            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
-            str(count),
-        )
-
-        painter.restore()
 
 
-class _TagMoveList(QListWidget):
-    """다른 _TagMoveList로부터의 드래그 드롭을 수락하는 태그 목록."""
-
-    drop_received = pyqtSignal(list)  # list[str] — tag names
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.setItemDelegate(_TagMoveDelegate(self))
-        self.setSpacing(1)
-
-    def mimeTypes(self) -> list[str]:
-        return [_MOVE_MIME]
-
-    def mimeData(self, items) -> QMimeData:
-        mime = QMimeData()
-        names = [i.data(Qt.ItemDataRole.UserRole + 2) for i in items
-                 if i.data(Qt.ItemDataRole.UserRole + 2)]
-        mime.setData(_MOVE_MIME, QByteArray("|".join(names).encode()))
-        return mime
-
-    def dragEnterEvent(self, event) -> None:
-        if event.source() is not self and event.mimeData().hasFormat(_MOVE_MIME):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event) -> None:
-        if event.source() is not self and event.mimeData().hasFormat(_MOVE_MIME):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event) -> None:
-        if event.source() is not self and event.mimeData().hasFormat(_MOVE_MIME):
-            raw   = bytes(event.mimeData().data(_MOVE_MIME)).decode()
-            names = [n for n in raw.split("|") if n]
-            if names:
-                self.drop_received.emit(names)
-            event.acceptProposedAction()
-        else:
-            event.ignore()
 
 
-class _HiddenTagsSection(QWidget):
-    """태그 숨김 관리 섹션 — 표시 태그 ↔ 숨긴 태그 두 목록."""
-
-    changed = pyqtSignal()
-
-    def __init__(
-        self,
-        get_tags_fn: Callable,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._get_tags = get_tags_fn
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(6)
-
-        # 안내 문구
-        hint = QLabel(
-            "표시 태그를 더블클릭하거나 오른쪽으로 드래그하면 태그 목록에서 숨겨집니다."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary}; margin-bottom: 4px;")
-        root.addWidget(hint)
-
-        lists_row = QHBoxLayout()
-        lists_row.setSpacing(12)
-
-        # ── 표시 태그 ──────────────────────────────────
-        vis_col = QVBoxLayout()
-        vis_col.setSpacing(4)
-        vis_lbl = QLabel("표시 태그  (더블클릭 → 숨기기)")
-        vis_lbl.setStyleSheet("font-size: 10px; font-weight: 600;")
-        self._vis_list = _TagMoveList()
-        self._vis_list.setMinimumHeight(200)
-        self._vis_list.itemDoubleClicked.connect(
-            lambda item: self._move_to_hidden([item.data(Qt.ItemDataRole.UserRole + 2)])
-        )
-        self._vis_list.drop_received.connect(self._move_to_visible)
-        vis_col.addWidget(vis_lbl)
-        vis_col.addWidget(self._vis_list)
-        lists_row.addLayout(vis_col)
-
-        # ── 화살표 힌트 ───────────────────────────────
-        arrow_col = QVBoxLayout()
-        arrow_col.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        lbl_r = QLabel("→")
-        lbl_l = QLabel("←")
-        for lbl in (lbl_r, lbl_l):
-            lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            lbl.setStyleSheet(f"font-size: 14px; color: {_t().text_secondary};")
-        arrow_col.addStretch()
-        arrow_col.addWidget(lbl_r)
-        arrow_col.addSpacing(8)
-        arrow_col.addWidget(lbl_l)
-        arrow_col.addStretch()
-        lists_row.addLayout(arrow_col)
-
-        # ── 숨긴 태그 ──────────────────────────────────
-        hid_col = QVBoxLayout()
-        hid_col.setSpacing(4)
-        hid_lbl = QLabel("숨긴 태그  (더블클릭 → 표시)")
-        hid_lbl.setStyleSheet("font-size: 10px; font-weight: 600;")
-        self._hid_list = _TagMoveList()
-        self._hid_list.setMinimumHeight(200)
-        self._hid_list.itemDoubleClicked.connect(
-            lambda item: self._move_to_visible([item.data(Qt.ItemDataRole.UserRole + 2)])
-        )
-        self._hid_list.drop_received.connect(self._move_to_hidden)
-        hid_col.addWidget(hid_lbl)
-        hid_col.addWidget(self._hid_list)
-        lists_row.addLayout(hid_col)
-
-        root.addLayout(lists_row)
-
-    # ------------------------------------------------------------------
-    def refresh(self) -> None:
-        """태그 목록을 새로 불러와 두 목록을 재구성한다."""
-        from config.settings import load_hidden_tag_names  # noqa: PLC0415
-        hidden_names = load_hidden_tag_names()
-        all_tags = sorted(self._get_tags(), key=lambda t: t.name)
-
-        self._vis_list.clear()
-        self._hid_list.clear()
-
-        for tag in all_tags:
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole,     tag.id)
-            item.setData(Qt.ItemDataRole.UserRole + 1, tag.count)
-            item.setData(Qt.ItemDataRole.UserRole + 2, tag.name)
-            if tag.name in hidden_names:
-                self._hid_list.addItem(item)
-            else:
-                self._vis_list.addItem(item)
-
-    # ------------------------------------------------------------------
-    def _move_to_hidden(self, names: list[str]) -> None:
-        from config.settings import load_hidden_tag_names, save_hidden_tag_names  # noqa: PLC0415
-        hidden = load_hidden_tag_names()
-        for n in names:
-            hidden.add(n)
-        save_hidden_tag_names(hidden)
-        self.refresh()
-        self.changed.emit()
-
-    def _move_to_visible(self, names: list[str]) -> None:
-        from config.settings import load_hidden_tag_names, save_hidden_tag_names  # noqa: PLC0415
-        hidden = load_hidden_tag_names()
-        for n in names:
-            hidden.discard(n)
-        save_hidden_tag_names(hidden)
-        self.refresh()
-        self.changed.emit()
 
 
 # ---------------------------------------------------------------------------
@@ -396,415 +107,10 @@ class _HiddenTagsSection(QWidget):
 # ---------------------------------------------------------------------------
 
 
-class _LyricsSourcesSection(QWidget):
-    """가사·메타데이터 출처(사이트) 관리형 목록 — 활성/순서/추가/삭제.
-
-    노래 상세 탭이 가사를 조회할 때 이 목록을 priority 순으로 순회한다. 사용자가
-    출처를 켜고/끄고, 순서를 바꾸고, 커스텀 출처를 추가할 수 있게 한다(확장 가능).
-    """
-
-    def __init__(self, song_vm, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._vm = song_vm
-        self._ordered_ids: list = []
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(8)
-
-        self._rows_holder = QWidget()
-        self._rows_layout = QVBoxLayout(self._rows_holder)
-        self._rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._rows_layout.setSpacing(4)
-        root.addWidget(self._rows_holder)
-
-        add_row = QHBoxLayout()
-        add_row.setSpacing(6)
-        self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("이름 (예: 가사위키)")
-        self._key_edit = QLineEdit()
-        self._key_edit.setPlaceholderText("provider_key (lrclib/genius/melon/bugs/genie)")
-        add_btn = QPushButton("추가")
-        add_btn.clicked.connect(self._on_add)
-        add_row.addWidget(self._name_edit, 2)
-        add_row.addWidget(self._key_edit, 2)
-        add_row.addWidget(add_btn)
-        root.addLayout(add_row)
-
-        hint = QLabel(
-            "위에서 아래 순서로 조회하며 부족한 항목을 채웁니다. 체크 해제 시 건너뜁니다."
-        )
-        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_muted};")
-        hint.setWordWrap(True)
-        root.addWidget(hint)
-
-        if self._vm is not None:
-            self._vm.sources_changed.connect(self.reload)
-        self.reload()
-
-    def reload(self) -> None:
-        while self._rows_layout.count():
-            item = self._rows_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        if self._vm is None:
-            return
-        sources = self._vm.list_lyrics_sources()
-        self._ordered_ids = [s.id for s in sources]
-        for idx, s in enumerate(sources):
-            self._rows_layout.addWidget(self._build_row(idx, s, len(sources)))
-
-    def _build_row(self, idx: int, src, total: int) -> QWidget:
-        tok = _t()
-        row = QWidget()
-        rl = QHBoxLayout(row)
-        rl.setContentsMargins(6, 2, 6, 2)
-        rl.setSpacing(8)
-
-        chk = QCheckBox()
-        chk.setChecked(src.enabled)
-        chk.setToolTip("이 출처 사용")
-        chk.toggled.connect(lambda on, sid=src.id: self._vm.update_lyrics_source(sid, enabled=on))
-        rl.addWidget(chk)
-
-        name = QLabel(f"{src.name}  ·  {src.provider_key}")
-        name.setStyleSheet(f"font-size: 11px; color: {tok.text_primary};")
-        rl.addWidget(name, 1)
-
-        up = QPushButton("▲")
-        up.setFixedSize(24, 24)
-        up.setEnabled(idx > 0)
-        up.clicked.connect(lambda _, i=idx: self._move(i, -1))
-        rl.addWidget(up)
-        down = QPushButton("▼")
-        down.setFixedSize(24, 24)
-        down.setEnabled(idx < total - 1)
-        down.clicked.connect(lambda _, i=idx: self._move(i, +1))
-        rl.addWidget(down)
-        dele = QPushButton("삭제")
-        dele.setFixedHeight(24)
-        dele.clicked.connect(lambda _, sid=src.id: self._vm.delete_lyrics_source(sid))
-        rl.addWidget(dele)
-        return row
-
-    def _move(self, idx: int, delta: int) -> None:
-        ids = list(self._ordered_ids)
-        j = idx + delta
-        if 0 <= j < len(ids):
-            ids[idx], ids[j] = ids[j], ids[idx]
-            self._vm.reorder_lyrics_sources(ids)
-
-    def _on_add(self) -> None:
-        name = self._name_edit.text().strip()
-        key = self._key_edit.text().strip()
-        if not name or not key:
-            return
-        self._vm.add_lyrics_source(name, key)
-        self._name_edit.clear()
-        self._key_edit.clear()
 
 
-class _CloudSyncSection(QWidget):
-    """클라우드 동기화 연결/해제·상태·지금 동기화 UI (SyncViewModel 주입 시에만 표시).
-
-    provider(Google Drive/OneDrive) 선택 + OAuth 자격증명 입력 → 연결. 연결되면 상태·계정을
-    표시하고 '지금 동기화' 버튼을 노출한다. 실제 OAuth·동기화는 sync_vm이 QThread로 수행.
-    """
-
-    def __init__(self, sync_vm, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._vm = sync_vm
-        self._build()
-        sync_vm.status_changed.connect(self._on_status)
-        sync_vm.busy_changed.connect(self._on_busy)
-        sync_vm.sync_finished.connect(self._on_sync_finished)
-        sync_vm.error_occurred.connect(self._on_error)
-        self._vm.refresh_status()
-
-    def _build(self) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(8)
-
-        # 안내 — 폴더 방식이 기본. 로그인·개발자 설정 없이 바로 동기화.
-        help_lbl = QLabel(
-            "여러 PC에서 라이브러리·메모·다운로드 이력·미디어 파일을 동기화합니다.\n"
-            "OneDrive/Google Drive 데스크톱 앱이 동기화하는 폴더를 지정하면 로그인 없이 바로 "
-            "동기화됩니다. 다른 PC에서도 같은 폴더(그 PC의 OneDrive 안 같은 위치)를 지정하세요."
-        )
-        help_lbl.setWordWrap(True)
-        help_lbl.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
-        root.addWidget(help_lbl)
-
-        # 로컬 폴더 경로 행 (기본 방식)
-        folder_row = QHBoxLayout()
-        self._folder_path = QLineEdit()
-        detected = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
-        if detected:
-            self._folder_path.setText(str(Path(detected) / "ovc-sync"))
-        self._folder_path.setPlaceholderText("예: C:/Users/나/OneDrive/ovc-sync")
-        self._browse_btn = QPushButton("찾아보기…")
-        self._browse_btn.clicked.connect(self._on_browse)
-        folder_row.addWidget(self._folder_path, 1)
-        folder_row.addWidget(self._browse_btn)
-        self._folder_row_widget = QWidget()
-        self._folder_row_widget.setLayout(folder_row)
-        root.addWidget(self._folder_row_widget)
-
-        # 고급: 클라우드 API 직접 연결(OAuth) — 기본 숨김.
-        self._advanced_check = QCheckBox("고급: 클라우드 API로 직접 연결 (OAuth)")
-        self._advanced_check.toggled.connect(self._on_advanced_toggled)
-        root.addWidget(self._advanced_check)
-
-        self._api_box = QWidget()
-        api_layout = QVBoxLayout(self._api_box)
-        api_layout.setContentsMargins(0, 0, 0, 0)
-        prov_row = QHBoxLayout()
-        prov_row.addWidget(QLabel("제공자"))
-        self._provider_combo = QComboBox()
-        self._provider_combo.addItem("Google Drive", "gdrive")
-        self._provider_combo.addItem("OneDrive", "onedrive")
-        self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
-        prov_row.addWidget(self._provider_combo)
-        prov_row.addStretch()
-        api_layout.addLayout(prov_row)
-        self._client_id = QLineEdit()
-        self._client_id.setPlaceholderText("OAuth Client ID")
-        api_layout.addWidget(self._client_id)
-        self._client_secret = QLineEdit()
-        self._client_secret.setPlaceholderText("OAuth Client Secret (Google Drive)")
-        self._client_secret.setEchoMode(QLineEdit.EchoMode.Password)
-        api_layout.addWidget(self._client_secret)
-        self._api_box.setVisible(False)
-        root.addWidget(self._api_box)
-
-        btn_row = QHBoxLayout()
-        self._connect_btn = QPushButton("연결")
-        self._connect_btn.clicked.connect(self._on_connect)
-        self._disconnect_btn = QPushButton("연결 해제")
-        self._disconnect_btn.clicked.connect(self._vm.disconnect)
-        self._sync_btn = QPushButton("지금 동기화")
-        self._sync_btn.clicked.connect(self._vm.sync_now)
-        btn_row.addWidget(self._connect_btn)
-        btn_row.addWidget(self._disconnect_btn)
-        btn_row.addWidget(self._sync_btn)
-        btn_row.addStretch()
-        root.addLayout(btn_row)
-
-        self._status_lbl = QLabel("상태 확인 중…")
-        self._status_lbl.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
-        self._status_lbl.setWordWrap(True)
-        root.addWidget(self._status_lbl)
-        self._on_provider_changed()
-
-    def _on_advanced_toggled(self, checked: bool) -> None:
-        # 고급(API) 모드 ↔ 폴더 모드 전환.
-        self._api_box.setVisible(checked)
-        self._folder_row_widget.setVisible(not checked)
-
-    def _on_provider_changed(self) -> None:
-        # OneDrive는 client secret 불필요(공용 클라이언트).
-        self._client_secret.setVisible(self._provider_combo.currentData() == "gdrive")
-
-    def _on_browse(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "동기화 폴더 선택")
-        if path:
-            self._folder_path.setText(path)
-
-    def _on_connect(self) -> None:
-        # 기본(고급 미체크) = 폴더 방식.
-        if not self._advanced_check.isChecked():
-            path = self._folder_path.text().strip()
-            if not path:
-                self._status_lbl.setText("동기화 폴더를 선택하세요.")
-                return
-            self._vm.connect("folder", folder_path=path)
-            self._status_lbl.setText("폴더 연결 중…")
-            return
-        key = self._provider_combo.currentData()
-        cid = self._client_id.text().strip()
-        if not cid:
-            self._status_lbl.setText("Client ID를 입력하세요.")
-            return
-        if key == "gdrive":
-            secret = self._client_secret.text().strip()
-            if not secret:
-                self._status_lbl.setText("Google Drive는 Client Secret이 필요합니다.")
-                return
-            self._vm.connect(key, client_id=cid, client_secret=secret)
-        else:
-            self._vm.connect(key, client_id=cid)
-        self._status_lbl.setText("브라우저에서 인증을 진행하세요…")
-
-    def _on_status(self, dto) -> None:
-        if dto is None:
-            return
-        if dto.connected:
-            acct = dto.account_name or "(계정 미상)"
-            last = dto.last_pull_utc[:19].replace("T", " ") if dto.last_pull_utc else "없음"
-            self._status_lbl.setText(f"연결됨: {acct} · 마지막 동기화: {last}")
-            self._connect_btn.setEnabled(False)
-            self._disconnect_btn.setEnabled(True)
-            self._sync_btn.setEnabled(True)
-        else:
-            self._status_lbl.setText("연결 안 됨")
-            self._connect_btn.setEnabled(True)
-            self._disconnect_btn.setEnabled(False)
-            self._sync_btn.setEnabled(False)
-
-    def _on_busy(self, busy: bool) -> None:
-        # 작업 중엔 버튼 잠금(상태 라벨로 진행 표시).
-        self._connect_btn.setEnabled(not busy)
-        self._sync_btn.setEnabled(not busy and self._vm.is_connected())
-
-    def _on_sync_finished(self, pushed: int, pulled: int) -> None:
-        self._status_lbl.setText(f"동기화 완료 (올림 {pushed} · 내려받음 {pulled})")
-
-    def _on_error(self, msg: str) -> None:
-        self._status_lbl.setText(f"오류: {msg}")
 
 
-class _ImportExportSection(QWidget):
-    """라이브러리 가져오기/내보내기 UI (transfer_vm 주입 시에만 표시).
-
-    내보내기: 카테고리 체크트리(``CategorySelectDialog``) → 저장 위치 선택 → 백그라운드
-    내보내기. 가져오기: 패키지 파일 선택 → 미리보기(카테고리 체크트리) → 충돌 감지 →
-    값이 다른 영상이 있으면 필드별 선택(``ImportConflictResolutionDialog``) → 병합.
-    실제 파일 I/O·병합 로직은 전부 transfer_vm(QThread)이 수행하고, 이 위젯은 다이얼로그
-    순서만 조율한다.
-    """
-
-    def __init__(self, transfer_vm, get_categories_fn, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._vm = transfer_vm
-        self._get_categories_fn = get_categories_fn
-        self._archive_path = ""
-        self._import_category_ids: list[str] = []
-        self._build()
-        transfer_vm.export_finished.connect(self._on_export_finished)
-        transfer_vm.preview_ready.connect(self._on_preview_ready)
-        transfer_vm.conflicts_ready.connect(self._on_conflicts_ready)
-        transfer_vm.import_finished.connect(self._on_import_finished)
-        transfer_vm.error_occurred.connect(self._on_error)
-        transfer_vm.busy_changed.connect(self._on_busy_changed)
-
-    def _build(self) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(8)
-
-        help_lbl = QLabel(
-            "선택한 카테고리의 영상·태그·노래 정보(가사·싱크 오프셋)를 파일 하나로 내보내\n"
-            "다른 사람에게 전달하거나 백업할 수 있습니다. 가져올 때 같은 이름의 카테고리는\n"
-            "합쳐지고, 이미 있는 영상은 값이 다른 항목만 골라서 반영합니다."
-        )
-        help_lbl.setWordWrap(True)
-        help_lbl.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
-        root.addWidget(help_lbl)
-
-        btn_row = QHBoxLayout()
-        self._export_btn = QPushButton("내보내기…")
-        self._import_btn = QPushButton("가져오기…")
-        self._export_btn.clicked.connect(self._on_export_clicked)
-        self._import_btn.clicked.connect(self._on_import_clicked)
-        btn_row.addWidget(self._export_btn)
-        btn_row.addWidget(self._import_btn)
-        btn_row.addStretch()
-        root.addLayout(btn_row)
-
-        self._status_lbl = QLabel("")
-        self._status_lbl.setWordWrap(True)
-        self._status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
-        root.addWidget(self._status_lbl)
-
-    # ── 내보내기 ──────────────────────────────────────────────────────────
-
-    def _on_export_clicked(self) -> None:
-        from gui.dialogs.library_transfer_dialogs import CategorySelectDialog  # noqa: PLC0415
-
-        categories = self._get_categories_fn() if self._get_categories_fn else []
-        if not categories:
-            self._status_lbl.setText("내보낼 카테고리가 없습니다.")
-            return
-        dlg = CategorySelectDialog(categories, "내보낼 카테고리 선택", self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        selected = dlg.selected_category_ids()
-        if not selected:
-            self._status_lbl.setText("내보낼 카테고리를 선택하세요.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "내보내기", "", "라이브러리 패키지 (*.ovcpkg)"
-        )
-        if not path:
-            return
-        if not path.lower().endswith(".ovcpkg"):
-            path += ".ovcpkg"
-        self._status_lbl.setText("내보내는 중…")
-        self._vm.export_library(selected, path)
-
-    def _on_export_finished(self, result) -> None:
-        self._status_lbl.setText(
-            f"● 내보내기 완료 — 카테고리 {result.category_count}개, "
-            f"영상 {result.video_count}개 → {result.path}"
-        )
-
-    # ── 가져오기 ──────────────────────────────────────────────────────────
-
-    def _on_import_clicked(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "가져오기", "", "라이브러리 패키지 (*.ovcpkg)"
-        )
-        if not path:
-            return
-        self._archive_path = path
-        self._status_lbl.setText("패키지 확인 중…")
-        self._vm.preview_import(path)
-
-    def _on_preview_ready(self, preview) -> None:
-        from gui.dialogs.library_transfer_dialogs import CategorySelectDialog  # noqa: PLC0415
-
-        if not preview.categories:
-            self._status_lbl.setText("패키지에 카테고리가 없습니다.")
-            return
-        dlg = CategorySelectDialog(list(preview.categories), "가져올 카테고리 선택", self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            self._status_lbl.setText("")
-            return
-        selected = dlg.selected_category_ids()
-        if not selected:
-            self._status_lbl.setText("가져올 카테고리를 선택하세요.")
-            return
-        self._import_category_ids = selected
-        self._status_lbl.setText("겹치는 영상 확인 중…")
-        self._vm.detect_conflicts(self._archive_path, selected)
-
-    def _on_conflicts_ready(self, conflicts_dto) -> None:
-        from gui.dialogs.library_transfer_dialogs import (  # noqa: PLC0415
-            ImportConflictResolutionDialog,
-        )
-
-        resolutions: dict[str, dict[str, str]] = {}
-        if conflicts_dto.conflicts:
-            dlg = ImportConflictResolutionDialog(conflicts_dto.conflicts, self)
-            if dlg.exec() != QDialog.DialogCode.Accepted:
-                self._status_lbl.setText("가져오기를 취소했습니다.")
-                return
-            resolutions = dlg.resolutions()
-        self._status_lbl.setText("가져오는 중…")
-        self._vm.import_library(self._archive_path, self._import_category_ids, resolutions)
-
-    def _on_import_finished(self, result) -> None:
-        self._status_lbl.setText(
-            f"● 가져오기 완료 — 새 영상 {result.created_count}개, "
-            f"병합 {result.merged_count}개, 카테고리 {result.category_count}개"
-        )
-
-    def _on_error(self, msg: str) -> None:
-        self._status_lbl.setText(f"오류: {msg[:200]}")
-
-    def _on_busy_changed(self, busy: bool) -> None:
-        self._export_btn.setEnabled(not busy)
-        self._import_btn.setEnabled(not busy)
 
 
 class SettingsPanel(QWidget):
@@ -868,6 +174,33 @@ class SettingsPanel(QWidget):
         layout.addLayout(header_row)
         layout.addSpacing(20)
 
+        self._build_theme_section(layout)
+        self._add_divider(layout)
+        self._build_paths_section(layout)
+        self._add_divider(layout)
+        self._build_general_section(layout)
+        self._add_divider(layout)
+        self._build_download_section(layout)
+        self._build_lyrics_sources_section(layout)
+        self._build_cloud_sync_section(layout)
+        self._build_transfer_section(layout)
+        self._build_youtube_api_section(layout)
+        self._build_cookie_section(layout)
+        self._build_hidden_tags_section(layout)
+
+        layout.addStretch()
+
+    def _add_divider(self, layout) -> None:
+        """섹션 사이 구분선."""
+        # ── 구분선 ──
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {_t().border};")
+        layout.addWidget(sep)
+        layout.addSpacing(24)
+
+    def _build_theme_section(self, layout) -> None:
+        """테마 프리셋 격자."""
         # ── 테마 섹션 ──
         theme_label = QLabel("테마")
         theme_label.setStyleSheet(
@@ -897,13 +230,8 @@ class SettingsPanel(QWidget):
         layout.addWidget(hint)
         layout.addSpacing(28)
 
-        # ── 구분선 ──
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {_t().border};")
-        layout.addWidget(sep)
-        layout.addSpacing(24)
-
+    def _build_paths_section(self, layout) -> None:
+        """저장 경로(DB·다운로드·썸네일·로그) + 폴더 열기 버튼."""
         # ── 저장 경로 섹션 ──
         path_label = QLabel("저장 경로")
         path_label.setStyleSheet(
@@ -954,13 +282,8 @@ class SettingsPanel(QWidget):
         layout.addWidget(note)
         layout.addSpacing(28)
 
-        # ── 구분선 ──
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"color: {_t().border};")
-        layout.addWidget(sep2)
-        layout.addSpacing(24)
-
+    def _build_general_section(self, layout) -> None:
+        """일반 설정(테마 적용 방식·자동 보강 등)."""
         # ── 일반 섹션 ──
         gen_label = QLabel("일반")
         gen_label.setStyleSheet(
@@ -1041,13 +364,8 @@ class SettingsPanel(QWidget):
         layout.addWidget(enrich_hint)
         layout.addSpacing(28)
 
-        # ── 구분선 ──
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.Shape.HLine)
-        sep3.setStyleSheet(f"color: {_t().border};")
-        layout.addWidget(sep3)
-        layout.addSpacing(24)
-
+    def _build_download_section(self, layout) -> None:
+        """다운로드 기본값(화질·형식·경로)."""
         # ── 다운로드 섹션 ──
         dl_label = QLabel("다운로드")
         dl_label.setStyleSheet(
@@ -1131,6 +449,8 @@ class SettingsPanel(QWidget):
         layout.addLayout(format_row)
         layout.addSpacing(28)
 
+    def _build_lyrics_sources_section(self, layout) -> None:
+        """가사 출처 관리(노래 탭 조회 순서/사용여부)."""
         # ── 가사 출처 관리 섹션 (노래 탭 가사 조회 순서/사용여부) ──
         if self._song_vm is not None:
             layout.addSpacing(24)
@@ -1149,6 +469,8 @@ class SettingsPanel(QWidget):
             self._lyrics_sources_section = _LyricsSourcesSection(self._song_vm)
             layout.addWidget(self._lyrics_sources_section)
 
+    def _build_cloud_sync_section(self, layout) -> None:
+        """클라우드 동기화(여러 PC 간 라이브러리 공유)."""
         # ── 클라우드 동기화 섹션 (여러 PC 간 라이브러리 동기화) ──
         if self._sync_vm is not None:
             layout.addSpacing(24)
@@ -1167,6 +489,8 @@ class SettingsPanel(QWidget):
             self._cloud_sync_section = _CloudSyncSection(self._sync_vm)
             layout.addWidget(self._cloud_sync_section)
 
+    def _build_transfer_section(self, layout) -> None:
+        """라이브러리 가져오기/내보내기."""
         # ── 라이브러리 가져오기/내보내기 섹션 ──
         if self._transfer_vm is not None:
             layout.addSpacing(24)
@@ -1187,6 +511,8 @@ class SettingsPanel(QWidget):
             )
             layout.addWidget(self._import_export_section)
 
+    def _build_youtube_api_section(self, layout) -> None:
+        """YouTube API 연동(번들 OAuth 로그인)."""
         # ── YouTube API 연동 섹션 ──
         layout.addSpacing(20)
         yt_label = QLabel("YouTube API 연동")
@@ -1226,6 +552,8 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._yt_status_lbl)
         self._refresh_yt_status()
 
+    def _build_cookie_section(self, layout) -> None:
+        """구독 피드용 브라우저 쿠키(YouTube API에 피드 엔드포인트가 없다)."""
         # ── 구독 피드 브라우저 쿠키 (YouTube API에는 피드 엔드포인트 없음) ──
         layout.addSpacing(16)
         feed_label = QLabel("구독 피드 — 브라우저 쿠키 (선택)")
@@ -1336,6 +664,8 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._feed_status_lbl)
         self._refresh_feed_auth_ui()
 
+    def _build_hidden_tags_section(self, layout) -> None:
+        """숨김 태그 관리 — 목록이 길어 맨 아래에 둔다."""
         # ── 숨김 태그 관리 섹션 (맨 아래 — 긴 목록이 다른 설정 접근을 방해하지 않도록) ──
         layout.addSpacing(28)
         sep_hidden = QFrame()
@@ -1362,7 +692,6 @@ class SettingsPanel(QWidget):
             layout.addWidget(no_tags_lbl)
             self._hidden_tags_section = None
 
-        layout.addStretch()
 
     def _build_update_header(self) -> QWidget:
         """헤더 우측 컴팩트 업데이트 위젯 — 자동확인 토글 + 상태 + (준비 시)설치 버튼."""

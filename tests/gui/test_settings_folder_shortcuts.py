@@ -14,7 +14,8 @@ from PyQt6.QtWidgets import QDialog, QLabel, QPushButton
 
 class TestOpenFolder:
     def test_QDesktopServices_openUrl을_호출한다(self, monkeypatch):
-        import gui.panels.settings_panel as sp
+        # open_folder는 부품 모듈로 옮겨졌다 — **쓰는 쪽 모듈**을 패치한다.
+        import gui.panels.settings.helpers as sp
 
         called = MagicMock()
         monkeypatch.setattr(sp.QDesktopServices, "openUrl", called)
