@@ -83,6 +83,15 @@ class IAlbumRepository(ABC):
         ...
 
     @abstractmethod
+    def delete_track_link(self, album_key: str, disc_no: int, track_no: int) -> None:
+        """자동 매핑 1건만 지운다 — 잘못 붙은 음원을 사용자가 직접 제거할 때 쓴다.
+
+        지우면 그 수록곡은 다시 '없음'으로 돌아가며, 다음에 '빠진 곡 찾기'를 누르면
+        재검색 대상이 된다.
+        """
+        ...
+
+    @abstractmethod
     def mark_album_lookup(self, video_id: UUID, found: bool) -> None:
         """앨범 미상 곡의 외부 조회 시도를 기록한다(실패 재조회 방지)."""
         ...

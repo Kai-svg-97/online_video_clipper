@@ -140,7 +140,7 @@ online_video_clipper/
 │       ├── entities.py              # SongInfo(가수·앨범·제목·발매년도·가사·is_song·manual_fields·`lyrics_offset_ms`(자막 싱크 보정)·`is_synced` 프로퍼티(시각 있는 줄 존재 여부)) + LyricsSource(출처 레지스트리)
 │       ├── aggregates.py            # SongInfoAggregate — apply_fetched(수동편집 보존)·edit_field·edit_lyrics(줄 수 같으면 기존 타이밍 유지)·set_lyrics_offset(±30초 clamp, 공개 상수 `MAX_LYRICS_OFFSET_MS`)
 │       ├── repositories.py          # ISongRepository (+ 가사 출처 CRUD)
-│       ├── album.py                 # 앨범 그루핑 순수 규칙 — normalize_name·make_album_key(자리표시자 "null" 제외)·group_songs_into_albums·match_track_to_songs. I/O 없음
+│       ├── album.py                 # 앨범 그루핑 순수 규칙 — normalize_name·make_album_key(자리표시자 "null" 제외)·group_songs_into_albums·match_track_to_songs·**earliest_registered**(앨범 식별의 앵커 = 가장 먼저 등록한 곡)·**pick_official_audio**(자동 채우기 후보 검증 — 커버·리액션·1시간 루프·동명이곡 배제 + Topic 채널/가수/길이 근접도 점수). I/O 없음
 │       ├── album_repository.py      # IAlbumRepository + AlbumCacheRecord·AlbumTrackLink (파생 캐시 저장소 인터페이스)
 │       ├── ports.py                 # ILyricsProvider(`fetch` 1건)·**ILyricsSearchProvider**(`search` 다건 — 후보 목록용 선택 확장)·ITranslator(Protocol) + LyricsResult(`popularity`=출처 조회수 0이면 지표 없음, `duration_sec`=곡 길이) + `DEFAULT_LYRICS_SEARCH_LIMIT`(출처당 후보 상한, 0=무제한)
 │       └── events.py                # SongInfoUpdated
@@ -230,7 +230,7 @@ online_video_clipper/
 ├── gui/                             # Presentation layer (PyQt6, MVVM)
 │   ├── anim.py                      # 짧은 등장 연출 — `fade_in`(비동기 도착 썸네일)·`fade_switch`(화면 전환). **영상이 있는 화면에는 걸지 않는다**(QGraphicsOpacityEffect는 픽스맵 합성이라 비디오 서피스가 검게 비거나 깜빡인다). 효과는 끝나면 반드시 떼어 낸다
 │   ├── toast.py                     # 오른쪽 아래 토스트 알림 — 완료 소식만(진행 중은 상태바 담당). 위로 쌓기·클릭 닫기·자동 소멸·상한 4개
-│   ├── smooth_scroll.py             # 휠 스크롤 부드럽게 — 픽셀 스크롤 + 180ms 보간. **수정키 휠은 가로채지 않는다**(Ctrl+휠=뷰 전환, Ctrl+Shift+휠=자막 조절). 세로가 없는 가로 띠는 휠을 가로로 돌린다. `apply_smooth_scroll_tree(panel)`을 화면 조립 뒤 한 번 호출
+│   ├── smooth_scroll.py             # 휠 스크롤 부드럽게 — 픽셀 스크롤 + 180ms 보간. **수정키 휠은 가로채지 않는다**(Ctrl+휠=뷰 전환, Ctrl+Shift+휠=자막 조절). **가로 전용 띠(추천 스트립 등) 판정은 "세로 스크롤 범위가 있는가"가 아니라 "세로 스크롤바 정책이 `ScrollBarAlwaysOff`인가"로 한다**(`_SmoothScroller._pick_bar`) — 카드 높이가 뷰포트보다 몇 px만 커도(폰트 렌더링 차이 등) 숨은 세로 막대에 근소한 범위가 생겨, 예전엔 휠마다 그 막대가 움직이며 화면이 위아래로 덜거덕거렸다(실제 신고 — 추천 영상 스트립). 정책이 꺼져 있으면 범위와 무관하게 가로로 고정한다. `apply_smooth_scroll_tree(panel)`을 화면 조립 뒤 한 번 호출
 │   ├── workers.py                   # 실행 중 QThread 안전 보유/은퇴 — `track_thread`(부모 분리 + 레지스트리 보유)·`retire_thread`(**신호 이름**으로 해제 후 끝까지 보유)·`wait_all`(종료 시 대기). 끝난 워커는 참조만 놓는다(deleteLater 금지 — 들고 있는 쪽에서 RuntimeError). **실행 중인 QThread가 파괴되면 Qt가 프로세스를 죽인다**(실측: exit 0xC0000409)
 │   ├── single_instance.py           # SingleInstanceGuard — QLocalServer 기반 중복 실행 방지(main.py가 DB 열기 전 호출, 두 번째 인스턴스는 기존 창을 앞으로 부르고 종료)
 │   ├── main_window.py               # 루트 윈도우, 사이드바 네비게이션(라이브러리·다운로드·채널 모니터링·통계), 패널 스택 — 구독 피드는 라이브러리 좌측 트리로 통합됨. **통계 채널 섹션 → 카테고리 드릴다운**: `StatsPanel.category_selected` → `_on_stats_category_selected`가 라이브러리로 전환·`navigate_to_category` 후 `_return_to_page=_PAGE_STATS` 예약. 라이브러리 뒤로가기를 소진하면(`LibraryPanel.back_exhausted`) `_on_library_back_exhausted`가 통계로 복귀(라이브러리 자체 히스토리를 먼저 되짚고 소진 시 통계). 다른 페이지로 이동하면 `_on_page_changed`가 예약을 무효화. **등록 후 자동 보강 상태 표시**: `enrich_started`→상태바 "가사 조회 중"/"요약 생성 중"(`_ENRICH_LABEL`), `enrich_finished`→완료(5초)/실패(8초). `kind="skipped"`+ok이면 메시지를 지운다. **사이드바 배경은 `_SideBar.paintEvent`에서 직접 칠한다** — 앱 레벨 QSS의 `QWidget { background-color }`가 위젯 레벨 스타일시트(ID 선택자 포함)를 덮어써 `bg_surface`가 적용되지 않았다(slate에서는 base/surface 차이가 3단위라 미발견). 따라서 사이드바 배경·우측 경계선 색을 바꿀 땐 QSS가 아니라 `paintEvent`를 수정할 것. **상단 ▶ 로고와 계정(인증) 버튼은 제거됨** — 로고는 기능 없는 장식이고, 계정 버튼은 클릭 동작이 바로 아래 기어 버튼과 완전히 동일한 중복이었다(`update_account_status()`도 호출처 없는 죽은 코드여서 함께 삭제, `_SVG_ACCOUNT` 상수도 제거)
@@ -271,7 +271,7 @@ online_video_clipper/
 │   │   │   ├── text_zoom.py         # 요약·가사 글자 배율 — clamp·pt 계산·설정 저장(`detail_text_scale`). 두 영역이 한 배율을 공유한다
 │   │   │   ├── workers.py           # `_GeminiSummaryWorker`
 │   │   │   └── mixins/              # info(제목·태그·설명·메모)·summary·song·files(다운로드/클립)·player
-│   │   ├── album_panel.py           # 앨범 보기 부품 (진입은 툴바 보기 유형 💿 버튼) — `AlbumGrid`(자켓 카드 그리드, 폭에 맞춰 reflow)·`AlbumDetailPanel`(좌: 자켓·설명·▶앨범재생·빠진 곡 찾기 / 우: 수록곡 목록). 수록곡 행(`_TrackRow`)에 **출처 배지**(내 등록/자동 매핑/없음)를 그린다. 자켓은 `_ThumbLoader`(prefix="album")를 재사용해 URL에서 받아 캐시하고, 없으면 대표 영상 썸네일 → ♪ 자리표시자 순으로 폴백
+│   │   ├── album_panel.py           # 앨범 보기 부품 (진입은 툴바 보기 유형 💿 버튼) — `AlbumGrid`(자켓 카드 그리드, 폭에 맞춰 reflow)·`AlbumDetailPanel`(좌: 자켓·설명·▶앨범재생·빠진 곡 찾기 / 우: 수록곡 목록). 수록곡 행(`_TrackRow`)에 **출처 배지**(내 등록/자동 매핑/없음)를 그린다. **수록곡 헤더의 '✎ 수정' 토글(`_btn_edit`)을 켜야만 행마다 삭제(✕) 버튼이 보이고**, 그것도 자동 매핑(AUTO) 행에만 붙는다(`_TrackRow.set_edit_mode` — 내 라이브러리 영상 삭제는 훨씬 무거운 동작이라 여기서 다루지 않고 '없음'은 지울 게 없다). `set_detail`은 앨범이 바뀌면 수정 모드를 끈다(켜진 채 남으면 새 앨범에서 실수로 누른다). 자켓은 `_ThumbLoader`(prefix="album")를 재사용해 URL에서 받아 캐시하고, 없으면 대표 영상 썸네일 → ♪ 자리표시자 순으로 폴백
 │   │   ├── settings_panel.py        # **섹션 배치만** 담당한다 — 520줄짜리 `_build_ui`를 섹션 빌더 10개로 쪼갰고 큰 섹션 위젯은 `settings/` 패키지에 있다(1,744→1,014줄). 전체 설정 패널 (다운로드 경로, 테마 등) + **가사 출처 관리**(`_LyricsSourcesSection`: `song_vm` 주입 시에만 표시) + **클라우드 동기화**(`_CloudSyncSection`: **폴더 방식이 기본**(안내 문구 + 폴더 경로 입력·찾아보기, OneDrive 환경변수 감지 시 `<OneDrive>/ovc-sync` 자동 채움) — 로그인·개발자설정 불필요. **"고급: 클라우드 API로 직접 연결(OAuth)" 체크박스**로 API provider(Google Drive/OneDrive) 드롭다운+Client ID/Secret을 펼침(`_advanced_check` 토글, 기본 숨김). 연결/해제/지금 동기화 버튼·상태 라벨. `sync_vm` 주입 시에만 표시) + **YouTube API 연동**(`yt_oauth` 주입 시에만 표시 — 위 클라우드 동기화의 "Client ID/Secret"과는 **별개 기능**이다. Client ID/Secret 입력란 없이 단일 버튼 `_yt_auth_btn`("Google 계정으로 연결"/"연결 중…"/"Google 계정 다시 연결") + `_yt_disconnect_btn`("연결 해제")만 노출한다. `YouTubeOAuthAdapter.has_client_config()`가 False면(번들 클라이언트 미포함) 버튼을 비활성화하고 "배포자에게 문의하세요" 안내를, 연결 성공 시 채널명 + "앱을 다시 시작하면…" 재시작 안내를 `_yt_status_lbl`에 표시한다. 인증 플로우는 `_AuthWorker`(QThread)가 무인자 `run_auth_flow()`를 호출한다 — Client ID/Secret 문자열을 UI가 갖고 있지 않다. 아래의 구독 피드용 브라우저 쿠키 섹션과는 시각적으로 분리된 별도 섹션이다) + **라이브러리 가져오기/내보내기**(`_ImportExportSection` — `transfer_vm` 주입 시에만 표시. 내보내기: `get_categories_fn`(=`library_vm.categories`)로 로컬 카테고리 체크트리(`CategorySelectDialog`) 노출 → `QFileDialog.getSaveFileName`으로 `.ovcpkg` 경로 선택 → `transfer_vm.export_library`. 가져오기: `QFileDialog.getOpenFileName` → `preview_import`로 패키지 안의 카테고리 체크트리 노출 → `detect_conflicts` → 값이 다른 영상이 있으면 `ImportConflictResolutionDialog`로 필드별 선택 → `import_library`. 각 단계는 이전 다이얼로그가 취소되면 그다음 단계로 넘어가지 않는다). **숨김 태그 관리 섹션은 맨 아래**(긴 목록이 다른 설정 접근을 방해하지 않도록 재배치). **업데이트 UI는 헤더('설정' 라벨) 우측 컴팩트 위젯**(`_build_update_header`: 자동확인 토글 + 상태 라벨 `_upd_status_lbl` + 준비 시 `_upd_install_btn`)로 이동 — 기존 하단 큰 섹션 제거. `set_update_ready(dto)`가 상태를 '준비됨'으로 바꾸고 설치 버튼 노출, `_on_install_update`→`install_update_requested`. 일반 섹션에 **"등록 시 요약·가사 자동 채우기"** 체크박스(`_auto_enrich_check` → `auto_enrich_on_add`) + 안내 문구(요약은 YouTube 쿠키 필요·일괄 임포트 제외)
 │   │   ├── settings/                # ⬆ settings_panel의 부품 (분할 결과)
 │   │   │   ├── helpers.py           # `_t`(현재 토큰)·`open_folder`(탐색기 열기)
@@ -308,7 +308,7 @@ online_video_clipper/
 │       ├── clip_vm.py               # ClipViewModel — 클립 목록 + 추출 작업
 │       ├── playlist_vm.py           # PlaylistViewModel — 재생목록 관리
 │       ├── recommend_vm.py          # RecommendViewModel — 추천 스트립 상태. `_RecommendWorker`(QThread) + 세대 카운터로 이전 조회 결과 폐기, 씨앗 캐시(`_last_key`)로 같은 목록 재조회 방지(`force=True`면 무시, 실패 시 캐시 비움), shutdown(). **FeedViewModel을 재사용하지 않는다** — FeedViewModel의 `_gen`은 키별 캐시가 있어도 전역 하나라, 추천 조회가 세대를 올리면 동시에 진행 중인 구독 피드/채널 조회 결과가 버려진다(추천은 목록이 바뀔 때마다 돌아 그 충돌이 상시 발생)
-│       ├── album_vm.py              # AlbumViewModel — 앨범 목록/상세/빠진 곡 채우기를 QThread로. 세대 카운터로 늦게 온 결과 폐기, `cancel_fill()`로 앨범 이동 시 진행 중 검색 중단, shutdown()
+│       ├── album_vm.py              # AlbumViewModel — 앨범 목록/상세/빠진 곡 채우기를 QThread로. 세대 카운터로 늦게 온 결과 폐기, `cancel_fill()`로 앨범 이동 시 진행 중 검색 중단, shutdown(). `remove_track_link(disc_no, track_no)`는 **QThread 없이 즉시** 처리한다(DB 삭제 한 줄이라 네트워크가 없다) — 성공하면 그 슬롯을 '없음'으로 되돌린 DTO를 `track_removed`로 실어 화면 한 자리만 갱신한다(전체 재조회 없음)
 │       ├── song_vm.py               # SongViewModel — 노래 탭 상태(load/refresh를 `_SongFetchWorker`(QThread) 백그라운드 조회, 필드·가사 편집, 노래 토글, 가사 출처 관리). **가사 후보 목록**: `search_lyrics_candidates`(`_CandidateSearchWorker` — `candidates_started`/`candidate_ready`/`candidates_finished` 방출, 새 검색 시 이전 워커 `cancel()`+신호 disconnect)·`apply_lyrics_candidate`(`_ApplyCandidateWorker` — 번역이 네트워크라 백그라운드). `translate_lyrics`(현재 가사 재번역, `_TranslateWorker`). **같은 영상 중복 조회 방지**(`_in_flight`), shutdown()
 │       ├── sync_vm.py                # SyncViewModel — 클라우드 동기화 UI 상태(설정 패널). SyncService를 `_SyncWorker`(push/pull+미디어)·`_ConnectWorker`(OAuth) QThread로 감쌈. 연결 시 QTimer로 주기 자동 동기화(start_auto_sync=기동 후 1회+주기). 시그널: status_changed·busy_changed·sync_finished·connection_changed·error_occurred. shutdown()
 │       └── transfer_vm.py            # LibraryTransferViewModel — 가져오기/내보내기 UI 상태(설정 패널). 네 핸들러(export/preview/conflicts/import)가 전부 `handle(cmd)->DTO` 한 메서드짜리라 워커 클래스 하나(`_CommandWorker`)를 공유. 시그널: export_finished·preview_ready·conflicts_ready·import_finished·busy_changed·error_occurred. shutdown()
@@ -546,6 +546,15 @@ online_video_clipper/
   **앨범을 열 때** `GetAlbumDetailHandler`가 iTunes(무키)에서 받아 `album_cache`에 저장한다.
   **iTunes `lookup`에는 `country`를 붙이면 안 된다** — 실측 결과 수록곡이 통째로 빠지고 앨범
   한 건만 돌아와, 14곡짜리 앨범이 '내 곡 1개'로 조용히 잘못 보였다(`search`에는 붙여도 된다).
+  **앨범 식별은 앨범명 텍스트 검색보다 곡 기준 조회를 먼저 시도한다**
+  (`GetAlbumDetailHandler._resolve_metadata`) — 표기 차이·동명 앨범(재발매·베스트 앨범 등)
+  때문에 `fetch_album(가수, 앨범명)`이 엉뚱한 앨범을 고르는 사고가 있었다. 대신
+  `earliest_registered`(`domain/song/album.py`)로 **그 묶음에서 가장 먼저 등록한 곡**을
+  앵커로 골라(생성 시각이 없으면 목록의 첫 항목으로 폴백) `find_album_of_track(가수,
+  곡제목)`으로 정확히 그 곡을 iTunes에서 찾아 앨범을 확정한다 — 사용자가 직접 처음
+  등록한 곡은 손대지 않은 원본 데이터라 가장 신뢰할 수 있다. `_anchor_in_tracks`가
+  찾은 앨범이 실제로 그 곡을 담고 있는지 검증하는 안전판이다(잘못된 collectionId
+  방어) — 검증에 실패하거나 앵커가 없을 때만 기존 앨범명 검색으로 되돌아간다.
   외부 조회가 실패하면 **내가 가진 곡만으로** 앨범을 구성한다(화면이 통째로 비지 않게).
   외부 수록곡과 내 영상은 `match_track_to_songs`로 붙이는데, 영상 제목에 붙은 꼬리표를 걷어낸
   뒤 완전일치→부분일치 순으로 보고 **3글자 미만 곡명은 부분일치를 허용하지 않는다**("Go"가
@@ -569,6 +578,27 @@ online_video_clipper/
   라이브러리에 없는 곡은 앨범을 열 때 `FillAlbumTracksHandler`가 `"<가수> <곡> official audio"`로
   yt-dlp 검색해 붙이고(곡당 1회, 결과는 `album_track_links`에 저장돼 재검색하지 않음), 진행 상황을
   곡 단위 콜백으로 흘려 도착하는 대로 표시한다. 수록곡 배지는 **내 등록/자동 매핑/없음** 세 가지다.
+  **검색 결과를 그대로 붙이지 않고 `domain/song/album.py:pick_official_audio`로 검증한다** —
+  실제 신고: "자신의 음원이 아닌 경우"(동명이곡·커버·리액션·1시간 루프)가 수록곡에 붙었다.
+  순수 함수라 네트워크 없이 판정한다: ① 후보 제목에 커버·리믹스·라이브 등
+  위험 키워드가 있으면 배제(**대상 곡 제목 자체에 있는 표기는 예외** — 정식 발매곡이
+  "Song (Remix)"면 후보도 당연히 그 표기를 담고 있어야 하므로) ② 정규화한 제목이 실제로
+  그 곡을 가리키는지 확인(완전 일치 또는 3글자 이상 부분 포함) ③ iTunes가 준 곡 길이와
+  크게 다르면(다른 버전·컴필레이션 추정) 배제. 살아남은 후보 중에서는 가수 이름이
+  보이는지, YouTube가 자동 생성하는 `<가수> - Topic` 채널인지(공식 음원임을 강하게
+  시사), 곡 길이가 얼마나 가까운지로 점수를 매겨 가장 그럴듯한 것을 고른다. 검색
+  풀은 검증으로 걸러질 것을 감안해 `_SEARCH_POOL`(8)로 넉넉히 받는다(한 번의
+  `ytsearchN:` 호출이라 늘려도 요청 수는 그대로다). **하나도 통과하지 못하면 그
+  수록곡은 계속 'missing'으로 남는다** — 틀린 음원을 붙이느니 '없음'이 낫다.
+  **수정 모드로 잘못 붙은 자동 매핑을 지운다**: 앨범 상세 우측 상단 "✎ 수정" 토글을
+  누르면(누르기 전엔 완전히 숨겨져 있다) **자동 매핑(AUTO) 행에만** 삭제(✕) 버튼이
+  뜬다(`_TrackRow.set_edit_mode` — 내 라이브러리 영상은 훨씬 무거운 동작이라 대상이
+  아니고, '없음'은 지울 게 없다). 클릭하면 `RemoveAlbumTrackLinkHandler`가
+  `album_track_links`에서 그 (disc_no, track_no) 한 줄만 지우고(`IAlbumRepository.
+  delete_track_link`) DB 삭제뿐이라 QThread 없이 즉시 처리되며(`AlbumViewModel.
+  remove_track_link`), 그 슬롯만 '없음'으로 되돌린 DTO를 실어 화면 한 자리만
+  갱신한다(전체 재조회 없음). 다른 앨범으로 넘어가면 수정 모드는 자동으로 꺼진다
+  (`AlbumDetailPanel.set_detail`) — 켜진 채로 남으면 새로 연 앨범에서 실수로 누를 수 있다.
   앨범 값이 빈 노래는 `ResolveUnknownAlbumsHandler`가 가수·제목으로 앨범을 추정해 `apply_fetched`로
   채우고(다음 조회부터 제 앨범으로 이동), 실패한 곡은 `album_lookup_state`에 남겨 **화면을 열
   때마다 같은 조회를 반복하지 않는다**. 재생은 새 경로를 만들지 않고 기존 재생목록 컨텍스트
@@ -637,9 +667,14 @@ online_video_clipper/
   설정(`detail_text_scale`)에 저장한다. 가사는 줄마다 스타일시트로 크기를 주므로 배율이
   바뀌면 다시 그리되 **현재 강조 줄은 유지**한다. 0.1 누적이 `1.97000…2`로 저장되지 않도록
   `clamp_scale`이 소수 둘째 자리에서 끊는다(자막 배율에서 겪은 문제).
-- **재생 컨트롤 아이콘 크기** — 글리프 13px/상자 24px은 큰 화면에서 알아보기 어려웠다.
-  26px/48px로 키우고 **바 높이도 72 → 96으로 함께 늘렸다** — 높이를 그대로 두면 진행
-  슬라이더와 버튼 행이 서로를 밀어낸다. 화질 배지·시간 라벨도 함께 키워 균형을 맞췄다.
+- **재생 컨트롤 아이콘 크기** — 13px/24px(원래) → 26px/48px(2배, `gui/widgets/player/
+  controls.py`) → **28px/38px**(상자를 20%가량 줄이되(48→38) 글자 대 상자 비율은 오히려
+  키움(26/48=54% → 28/38=74%), 안쪽 여백도 `2px 6px` → `0px 1px`로 최소화)로 두 단계
+  조정했다. 상자만 줄이고 글자 비율·여백을 그대로 두면 작아진 상자 안에 여백만 커 보여
+  '꽉 찬' 느낌이 나지 않는다 — 그래서 상자를 줄이는 변경은 항상 비율 확대·여백 축소를
+  함께 한다. **바 높이는 `_ICON_BOX + 48`**(여백+슬라이더 행 몫은 아이콘 상자 크기와
+  무관하게 항상 48px)로 유도해, 상자 크기를 바꿀 때마다 높이 상수를 손으로 다시
+  계산하지 않는다.
 - **이어보기(재생 위치)** — `videos.last_position_ms`·`last_played_at`. **기기마다 보던
   지점이 다르므로 동기화 캡처 대상이 아니다**(view_count와 같은 취급). 판정은 도메인
   규칙(`VideoAggregate.update_playback_position`): 15초 미만은 기록하지 않고(잠깐 눌렀다 만 것),
@@ -740,6 +775,10 @@ online_video_clipper/
 
 - **새 스크롤 영역을 만들면 `apply_smooth_scroll(area)`를 태운다**(패널 단위면
   `apply_smooth_scroll_tree(self)`). Qt 기본은 항목 단위 스크롤이라 카드 한 장씩 점프한다.
+- **가로 전용 띠는 세로 스크롤바 정책을 `ScrollBarAlwaysOff`로 명시한다.** 내용 높이가
+  뷰포트보다 몇 px만 커도 숨은 세로 막대에 근소한 범위가 생기는데, `_pick_bar`는 정책이
+  꺼져 있으면 그 범위를 무시하고 가로로 고정한다 — 정책을 빼먹으면 휠을 굴릴 때마다
+  화면이 위아래로 덜거덕거린다(실제 신고).
 - **수정키가 붙은 휠은 절대 가로채지 않는다.** Ctrl+휠은 목록 뷰 전환, Ctrl(+Shift)+휠은
   자막 크기·위치 조절이 이미 쓴다 — 삼키면 그 기능이 **조용히** 죽는다.
 - **단일 키(Space·J·K·L·화살표·C·M·F·P·[·]·\)는 플레이어 것이다.** 화면 단축키는

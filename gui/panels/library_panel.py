@@ -684,6 +684,9 @@ class LibraryPanel(
         self._album_detail.refresh_requested.connect(self._on_album_refresh)
         self._album_detail.fill_requested.connect(self._on_album_fill_requested)
         self._album_detail.add_all_requested.connect(self._on_album_add_all)
+        self._album_detail.track_delete_requested.connect(
+            self._on_album_track_delete_requested
+        )
         if self._album_vm is not None:
             self._album_vm.albums_changed.connect(self._on_albums_changed)
             self._album_vm.detail_ready.connect(self._on_album_detail_ready)
@@ -692,6 +695,7 @@ class LibraryPanel(
             self._album_vm.unknown_resolved.connect(self._on_album_unknown_resolved)
             self._album_vm.add_progress.connect(self._on_album_add_progress)
             self._album_vm.tracks_added.connect(self._on_album_tracks_added)
+            self._album_vm.track_removed.connect(self._on_album_track_removed)
             self._album_vm.error_occurred.connect(self._on_album_error)
 
         self._breadcrumb_bar.segment_clicked.connect(self._on_breadcrumb_nav)

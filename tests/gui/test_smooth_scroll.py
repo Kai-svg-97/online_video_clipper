@@ -131,6 +131,35 @@ class TestWheelHandling:
 
         qtbot.waitUntil(lambda: hbar.value() > start, timeout=2000)
 
+    def test_내용이_뷰포트보다_살짝_커도_가로로_흐른다(self, qtbot):
+        """추천 스트립 실제 신고 — 카드 높이가 뷰포트보다 몇 px만 더 커도 세로
+        스크롤바(숨겨져 있어도)가 근소한 범위를 가져, 예전엔 휠마다 그 숨은 막대가
+        움직이며 화면이 위아래로 덜거덕거렸다. ``ScrollBarAlwaysOff``는 설계상
+        가로 전용이라는 뜻이므로, 근소한 범위가 있어도 가로로 고정해야 한다.
+        """
+        area = QScrollArea()
+        qtbot.addWidget(area)
+        inner = QLabel("가로로 아주 긴 내용")
+        # 뷰포트보다 세로로 살짝 더 크게 — 실제 신고의 "카드가 몇 px 더 크다" 상황 재현.
+        inner.setFixedSize(3000, 130)
+        area.setWidget(inner)
+        area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.resize(300, 120)
+        area.show()
+        qtbot.waitExposed(area)
+        vbar = area.verticalScrollBar()
+        assert vbar.maximum() > vbar.minimum(), "재현 전제 — 세로 범위가 실제로 생겨야 한다"
+        apply_smooth_scroll(area)
+        scroller = area._smooth_scroller
+        hbar = area.horizontalScrollBar()
+        v_before = vbar.value()
+        h_start = hbar.value()
+
+        assert scroller.eventFilter(area.viewport(), _wheel(-120)) is True
+
+        qtbot.waitUntil(lambda: hbar.value() > h_start, timeout=2000)
+        assert vbar.value() == v_before   # 숨은 세로 막대는 전혀 움직이지 않는다
+
 
 class TestApplyToTree:
     def test_하위_스크롤_영역에_한_번에_적용된다(self, qtbot):

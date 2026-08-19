@@ -25,6 +25,8 @@ from application.song.album_queries import (
     GetAlbumDetailQuery,
     GetAlbumsHandler,
     GetAlbumsQuery,
+    RemoveAlbumTrackLinkCommand,
+    RemoveAlbumTrackLinkHandler,
     ResolveUnknownAlbumsCommand,
     ResolveUnknownAlbumsHandler,
 )
@@ -239,6 +241,51 @@ class TestAlbumDetail:
         assert "K-Pop" in detail.description
         assert "2017-04-21" in detail.description
 
+    def test_먼저_등록한_곡의_가수_제목으로_앨범을_확정한다(self, repos):
+        """앨범명 텍스트 검색(fetch_album)보다 정확한 곡 기준 조회(find_album_of_track)를
+        먼저 시도한다 — 표기 차이·동명 앨범으로 엉뚱한 앨범을 고르는 사고를 줄인다."""
+        provider = _StubProvider(album=_wrong_album_meta(), track_album=_palette_meta())
+        cat, handler = self._setup(repos, provider)
+
+        detail = handler.handle(
+            GetAlbumDetailQuery(album_key=make_album_key("IU", "Palette"), category_id=cat.id)
+        )
+
+        assert [t.track_no for t in detail.tracks] == [1, 2, 3]
+        assert detail.tracks[0].title == "Palette"
+        assert detail.tracks[0].origin == TRACK_ORIGIN_LIBRARY
+        assert provider.album_calls == 0    # 앨범명 검색은 시도조차 하지 않았다
+        assert provider.track_calls == 1
+
+    def test_곡_기준_조회가_엉뚱한_앨범이면_앨범명_검색으로_되돌아간다(self, repos):
+        """잘못된 collectionId 방어 — 찾은 앨범이 실제로 그 곡을 담고 있지 않으면
+        무시하고 앨범명 검색으로 폴백한다."""
+        provider = _StubProvider(album=_palette_meta(), track_album=_wrong_album_meta())
+        cat, handler = self._setup(repos, provider)
+
+        detail = handler.handle(
+            GetAlbumDetailQuery(album_key=make_album_key("IU", "Palette"), category_id=cat.id)
+        )
+
+        assert [t.track_no for t in detail.tracks] == [1, 2, 3]
+        assert detail.tracks[0].title == "Palette"
+        assert provider.album_calls == 1
+        assert provider.track_calls == 1
+
+
+def _wrong_album_meta():
+    """앵커 곡("Palette")을 담고 있지 않은 앨범 — 동명 앨범 오매칭 시나리오."""
+    return AlbumMetadata(
+        album_title="Palette",
+        artist="다른가수",
+        track_count=2,
+        tracks=[
+            AlbumTrackInfo(track_no=1, title="딴 노래1", artist="다른가수"),
+            AlbumTrackInfo(track_no=2, title="딴 노래2", artist="다른가수"),
+        ],
+        source_name="iTunes",
+    )
+
 
 class _StubMedia:
     def __init__(self, results=None, unique=False):
@@ -264,10 +311,9 @@ class TestFillTracks:
         _add_song(videos, songs, "https://youtu.be/p1", "IU - Palette",
                   artist="IU", album="Palette", song_title="Palette", category_id=cat.id)
         detail_handler = GetAlbumDetailHandler(videos, songs, albums, provider)
-        media = _StubMedia([{
-            "url": "https://youtu.be/auto1", "title": "IU - 밤편지 (Official Audio)",
-            "channel_name": "1theK", "yt_video_id": "auto1", "duration_sec": 254,
-        }])
+        # 곡마다 검색 결과가 다른 실제 검색과 같게(unique) — 각 후보 제목은 검색어를
+        # 그대로 담고 있어 그 트랙의 검증(제목 일치)을 통과한다.
+        media = _StubMedia(unique=True)
         key = make_album_key("IU", "Palette")
 
         filled = FillAlbumTracksHandler(detail_handler, albums, media).handle(
@@ -279,7 +325,37 @@ class TestFillTracks:
         detail = detail_handler.handle(GetAlbumDetailQuery(album_key=key, category_id=cat.id))
         autos = [t for t in detail.tracks if t.origin == TRACK_ORIGIN_AUTO]
         assert len(autos) == 2
-        assert autos[0].stream_url == "https://youtu.be/auto1"
+        # 서로 다른 곡이니 서로 다른 영상이 붙어야 한다 — 같은 URL이면 검증 없이
+        # 아무 후보나 붙이던 예전 버그가 되살아난 것이다.
+        assert len({t.stream_url for t in autos}) == 2
+
+    def test_제목이_다른_곡의_음원은_붙이지_않는다(self, repos):
+        """동명이곡·엉뚱한 검색 결과를 걸러 낸다 — 실제 신고된 문제(자신의 음원이
+        아닌 경우가 붙는다)의 회귀 테스트."""
+        videos, songs, albums = repos
+        provider = _StubProvider(album=_palette_meta())
+        cat = Category.create("Music")
+        videos.save_category(cat)
+        _add_song(videos, songs, "https://youtu.be/p1", "IU - Palette",
+                  artist="IU", album="Palette", song_title="Palette", category_id=cat.id)
+        detail_handler = GetAlbumDetailHandler(videos, songs, albums, provider)
+        # 검색 결과가 "밤편지" 하나뿐이라 "이런 엔딩" 검색에도 같은 후보가 온다 —
+        # 제목이 다르므로 "이런 엔딩"에는 붙으면 안 된다.
+        media = _StubMedia([{
+            "url": "https://youtu.be/auto1", "title": "IU - 밤편지 (Official Audio)",
+            "channel_name": "1theK", "duration_sec": 254,
+        }])
+        key = make_album_key("IU", "Palette")
+
+        filled = FillAlbumTracksHandler(detail_handler, albums, media).handle(
+            FillAlbumTracksCommand(album_key=key, category_id=cat.id)
+        )
+
+        assert filled == 1                       # 밤편지만 (제목이 일치)
+        detail = detail_handler.handle(GetAlbumDetailQuery(album_key=key, category_id=cat.id))
+        by_title = {t.title: t.origin for t in detail.tracks}
+        assert by_title["밤편지"] == TRACK_ORIGIN_AUTO
+        assert by_title["이런 엔딩"] == TRACK_ORIGIN_MISSING   # 붙이지 않고 '없음'으로 남는다
 
     def test_이미_붙은_곡은_다시_검색하지_않는다(self, repos):
         videos, songs, albums = repos
@@ -289,7 +365,7 @@ class TestFillTracks:
         _add_song(videos, songs, "https://youtu.be/p1", "IU - Palette",
                   artist="IU", album="Palette", song_title="Palette", category_id=cat.id)
         detail_handler = GetAlbumDetailHandler(videos, songs, albums, provider)
-        media = _StubMedia([{"url": "https://youtu.be/auto1", "title": "auto"}])
+        media = _StubMedia(unique=True)   # 곡마다 제목이 일치하는 후보 — 검증을 통과한다
         cmd = FillAlbumTracksCommand(album_key=make_album_key("IU", "Palette"), category_id=cat.id)
         handler = FillAlbumTracksHandler(detail_handler, albums, media)
 
@@ -396,7 +472,7 @@ class TestTwoDiscAlbum:
     def test_자동_매핑이_디스크별로_따로_저장된다(self, repos):
         videos, songs, albums = repos
         cat, handler, key, _ = self._setup(repos)
-        media = _StubMedia([{"url": "https://youtu.be/auto", "title": "auto"}])
+        media = _StubMedia(unique=True)   # 곡마다 제목이 일치하는 후보 — 검증을 통과한다
 
         FillAlbumTracksHandler(handler, albums, media).handle(
             FillAlbumTracksCommand(album_key=key, category_id=cat.id)
@@ -441,6 +517,60 @@ class _StubAddVideo:
             agg.assign_category(cmd.category_id)
         self._videos.save(agg)
         return agg
+
+
+class TestRemoveTrackLink:
+    """잘못 붙은 자동 매핑을 사용자가 직접 지운다(앨범 수정 모드의 삭제 버튼)."""
+
+    def test_지우면_다시_없음으로_돌아간다(self, repos):
+        videos, songs, albums = repos
+        cat = Category.create("Music")
+        videos.save_category(cat)
+        _add_song(videos, songs, "https://youtu.be/p1", "IU - Palette",
+                  artist="IU", album="Palette", song_title="Palette", category_id=cat.id)
+        detail_handler = GetAlbumDetailHandler(
+            videos, songs, albums, _StubProvider(album=_palette_meta())
+        )
+        key = make_album_key("IU", "Palette")
+        media = _StubMedia(unique=True)
+        FillAlbumTracksHandler(detail_handler, albums, media).handle(
+            FillAlbumTracksCommand(album_key=key, category_id=cat.id)
+        )
+        detail = detail_handler.handle(GetAlbumDetailQuery(album_key=key, category_id=cat.id))
+        auto_track = next(t for t in detail.tracks if t.origin == TRACK_ORIGIN_AUTO)
+
+        RemoveAlbumTrackLinkHandler(albums).handle(
+            RemoveAlbumTrackLinkCommand(
+                album_key=key, disc_no=auto_track.disc_no, track_no=auto_track.track_no
+            )
+        )
+
+        reloaded = detail_handler.handle(GetAlbumDetailQuery(album_key=key, category_id=cat.id))
+        by_slot = {t.slot: t for t in reloaded.tracks}
+        assert by_slot[auto_track.slot].origin == TRACK_ORIGIN_MISSING
+
+    def test_다른_슬롯은_건드리지_않는다(self, repos):
+        videos, songs, albums = repos
+        cat = Category.create("Music")
+        videos.save_category(cat)
+        _add_song(videos, songs, "https://youtu.be/p1", "IU - Palette",
+                  artist="IU", album="Palette", song_title="Palette", category_id=cat.id)
+        detail_handler = GetAlbumDetailHandler(
+            videos, songs, albums, _StubProvider(album=_palette_meta())
+        )
+        key = make_album_key("IU", "Palette")
+        media = _StubMedia(unique=True)
+        FillAlbumTracksHandler(detail_handler, albums, media).handle(
+            FillAlbumTracksCommand(album_key=key, category_id=cat.id)
+        )
+
+        RemoveAlbumTrackLinkHandler(albums).handle(
+            RemoveAlbumTrackLinkCommand(album_key=key, disc_no=1, track_no=2)
+        )
+
+        remaining = albums.get_track_links(key)
+        assert (1, 2) not in remaining
+        assert (1, 3) in remaining   # "이런 엔딩"은 그대로 남아 있다
 
 
 class TestAddAlbumTracks:

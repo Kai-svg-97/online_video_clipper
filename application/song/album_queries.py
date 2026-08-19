@@ -31,9 +31,12 @@ from domain.song.album import (
     NO_ALBUM_TITLE,
     AlbumGroup,
     SongRef,
+    earliest_registered,
     group_songs_into_albums,
     make_album_key,
     match_track_to_songs,
+    normalize_name,
+    pick_official_audio,
 )
 from domain.song.album_repository import AlbumCacheRecord, AlbumTrackLink, IAlbumRepository
 from domain.song.ports import AlbumTrackInfo
@@ -78,6 +81,15 @@ class AddAlbumTracksCommand:
     artist: str = ""
     category_id: UUID | None = None
     tracks: list = field(default_factory=list)   # list[AlbumTrackDTO]
+
+
+@dataclass
+class RemoveAlbumTrackLinkCommand:
+    """자동 매핑된 수록곡 연결을 지운다(잘못 붙은 음원을 사용자가 직접 제거)."""
+
+    album_key: str
+    disc_no: int
+    track_no: int
 
 
 @dataclass
@@ -126,6 +138,7 @@ def _collect_song_refs(
                     duration_sec=(
                         video.duration.seconds if getattr(video, "duration", None) else None
                     ),
+                    created_at=video.created_at,
                 )
             )
         if len(page) < _PAGE:
@@ -236,11 +249,7 @@ class GetAlbumDetailHandler:
 
     # ── 내부 ───────────────────────────────────────────────────────
     def _fetch_and_cache(self, group: AlbumGroup) -> AlbumCacheRecord | None:
-        try:
-            meta = self._provider.fetch_album(group.artist, group.album_title)
-        except Exception:
-            logger.exception("앨범 정보 조회 실패 (%s - %s)", group.artist, group.album_title)
-            return None
+        meta = self._resolve_metadata(group)
         if meta is None:
             logger.info("앨범 정보를 찾지 못했다 (%s - %s)", group.artist, group.album_title)
             return None
@@ -260,6 +269,50 @@ class GetAlbumDetailHandler:
         )
         self._albums.save_album(record)
         return record
+
+    def _resolve_metadata(self, group: AlbumGroup):
+        """앨범을 어떻게 식별할지 — 가장 먼저 등록한 곡을 기준으로 먼저 시도한다.
+
+        앨범명 텍스트로 검색하면(``fetch_album``) 표기 차이·동명 앨범(재발매·베스트
+        앨범 등) 때문에 엉뚱한 앨범을 고를 수 있다. 사용자가 가장 먼저 등록한 곡은
+        손대지 않은 원본 데이터라 가장 신뢰할 수 있으므로, 그 곡의 가수·제목으로
+        정확히 그 곡을 iTunes에서 찾아(``find_album_of_track``) 앨범을 확정하는 편이
+        훨씬 정확하다. 이 경로가 실패하거나(앵커 없음) 찾은 앨범이 실제로 그 곡을
+        담고 있지 않을 때만(잘못된 collectionId 방어) 앨범명 검색으로 되돌아간다.
+        """
+        anchor = earliest_registered(group.songs)
+        if anchor is not None and anchor.effective_title:
+            try:
+                meta = self._provider.find_album_of_track(anchor.artist, anchor.effective_title)
+            except Exception:
+                logger.exception(
+                    "앨범 식별(곡 기준) 실패 (%s - %s)", anchor.artist, anchor.effective_title
+                )
+                meta = None
+            if meta is not None and self._anchor_in_tracks(anchor, meta.tracks):
+                return meta
+            if meta is not None:
+                logger.info(
+                    "곡 기준으로 찾은 앨범이 그 곡을 담고 있지 않아 앨범명 검색으로 전환 (%s)",
+                    anchor.effective_title,
+                )
+        try:
+            return self._provider.fetch_album(group.artist, group.album_title)
+        except Exception:
+            logger.exception("앨범 정보 조회 실패 (%s - %s)", group.artist, group.album_title)
+            return None
+
+    @staticmethod
+    def _anchor_in_tracks(anchor: SongRef, tracks: list) -> bool:
+        """찾은 앨범이 정말 앵커 곡을 담고 있는지 확인 — 잘못된 collectionId 방어."""
+        target = normalize_name(anchor.effective_title)
+        if not target:
+            return False
+        return any(
+            normalize_name(t.title) == target
+            or (len(target) >= 3 and target in normalize_name(t.title))
+            for t in tracks
+        )
 
     @staticmethod
     def _describe(record: AlbumCacheRecord | None, group: AlbumGroup) -> str:
@@ -422,8 +475,10 @@ class FillAlbumTracksHandler:
             if should_cancel and should_cancel():
                 logger.info("앨범 자동 채우기 취소됨 (%s)", cmd.album_key)
                 break
-            entry = self._search_official(track.artist or detail.artist, track.title,
-                                          cmd.cookie_opts)
+            entry = self._search_official(
+                track.artist or detail.artist, track.title,
+                cmd.cookie_opts, track.duration_sec,
+            )
             if entry is None:
                 continue
             link = AlbumTrackLink(
@@ -457,22 +512,51 @@ class FillAlbumTracksHandler:
         logger.info("앨범 자동 채우기: %d/%d곡 (%s)", filled, len(missing), cmd.album_key)
         return filled
 
-    def _search_official(self, artist: str, title: str, cookie_opts: dict) -> dict | None:
-        """official 음원 영상을 찾는다 — 검색어에 'official audio'를 붙여 뮤비·커버를 피한다."""
+    # 검증 후 걸러지는 후보가 많으므로(커버·리액션·동명이곡) 넉넉히 받아 둔다.
+    # 한 번의 ytsearchN: 호출이라 개수를 늘려도 요청 수는 그대로다.
+    _SEARCH_POOL = 8
+
+    def _search_official(
+        self, artist: str, title: str, cookie_opts: dict,
+        expected_duration_sec: int | None = None,
+    ) -> dict | None:
+        """official 음원 영상을 찾는다 — 검색어에 'official audio'를 붙여 뮤비·커버를 피한다.
+
+        yt-dlp가 준 후보를 그대로 믿지 않고 ``pick_official_audio``로 제목·가수·길이를
+        검증한다 — 그러지 않으면 동명이곡·커버·1시간 루프가 그대로 붙는다(실제로 그
+        신고가 있었다). 검증을 통과한 후보가 하나도 없으면 ``None``을 돌려주고, 그
+        수록곡은 계속 '없음'으로 남는다(틀린 음원보다 낫다).
+        """
         query = " ".join(p for p in (artist, title, "official audio") if p).strip()
         if not query:
             return None
         try:
             found = self._media.fetch_search_videos(
-                query=query, limit=3, cookie_opts=cookie_opts or {}
+                query=query, limit=self._SEARCH_POOL, cookie_opts=cookie_opts or {}
             )
         except Exception:
             logger.exception("수록곡 검색 실패 (%r)", query)
             return None
-        for entry in found:
-            if entry.get("url"):
-                return entry
-        return None
+        return pick_official_audio(
+            found, title=title, artist=artist, expected_duration_sec=expected_duration_sec
+        )
+
+
+class RemoveAlbumTrackLinkHandler:
+    """자동 매핑된 수록곡 연결을 지운다 — 그 수록곡은 다시 '없음'으로 돌아간다.
+
+    앨범 상세의 수정 모드에서 잘못 붙은 음원(동명이곡·커버 등)을 사용자가 직접 지울 때
+    쓴다. DB 삭제 한 줄이라 네트워크 없이 즉시 처리된다.
+    """
+
+    def __init__(self, album_repo: IAlbumRepository) -> None:
+        self._albums = album_repo
+
+    def handle(self, cmd: RemoveAlbumTrackLinkCommand) -> None:
+        self._albums.delete_track_link(cmd.album_key, cmd.disc_no, cmd.track_no)
+        logger.info(
+            "자동 매핑 삭제: %s (디스크%d-트랙%d)", cmd.album_key, cmd.disc_no, cmd.track_no
+        )
 
 
 class AddAlbumTracksHandler:

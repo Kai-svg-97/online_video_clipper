@@ -138,6 +138,85 @@ class TestAlbumDetailPanel:
         assert got == [detail]
 
 
+class TestEditModeDelete:
+    """수정 모드 — 잘못 붙은 자동 매핑을 쉽게 지운다.
+
+    지키는 것:
+    * 수정 버튼을 누르기 전엔 삭제 버튼이 아예 보이지 않는다(실수 방지).
+    * 삭제 버튼은 자동 매핑(AUTO) 행에만 뜬다 — 내 라이브러리 영상·'없음'은 대상이 아니다.
+    """
+
+    def test_기본은_삭제_버튼이_보이지_않는다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+
+        panel.set_detail(_detail())
+
+        assert all(row._delete_btn.isHidden() for row in panel._rows)
+
+    def test_수정_버튼을_누르면_자동_매핑_행에만_삭제_버튼이_뜬다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_detail(_detail())
+
+        panel._btn_edit.setChecked(True)
+
+        origins = {row._track.origin: not row._delete_btn.isHidden() for row in panel._rows}
+        assert origins[TRACK_ORIGIN_LIBRARY] is False
+        assert origins[TRACK_ORIGIN_AUTO] is True
+        assert origins[TRACK_ORIGIN_MISSING] is False
+
+    def test_다시_누르면_전부_숨긴다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_detail(_detail())
+        panel._btn_edit.setChecked(True)
+
+        panel._btn_edit.setChecked(False)
+
+        assert all(row._delete_btn.isHidden() for row in panel._rows)
+
+    def test_삭제_버튼_클릭이_패널_신호로_올라온다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_detail(_detail())
+        panel._btn_edit.setChecked(True)
+        got: list = []
+        panel.track_delete_requested.connect(got.append)
+        auto_row = next(r for r in panel._rows if r._track.origin == TRACK_ORIGIN_AUTO)
+
+        auto_row._delete_btn.click()
+
+        assert got and got[0].origin == TRACK_ORIGIN_AUTO
+
+    def test_다른_앨범으로_넘어가면_수정_모드가_풀린다(self, qtbot):
+        """삭제 버튼이 켜진 채로 남으면 새로 연 앨범에서 실수로 누를 수 있다."""
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_detail(_detail())
+        panel._btn_edit.setChecked(True)
+
+        panel.set_detail(_detail())
+
+        assert panel._btn_edit.isChecked() is False
+        assert all(row._delete_btn.isHidden() for row in panel._rows)
+
+    def test_삭제_후_반영된_행도_수정_모드를_유지한다(self, qtbot):
+        """한 곡을 지운 뒤 다른 잘못된 곡도 이어서 지울 수 있어야 한다."""
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_detail(_detail())
+        panel._btn_edit.setChecked(True)
+
+        panel.apply_filled_track(AlbumTrackDTO(
+            track_no=3, title="이런 엔딩", origin=TRACK_ORIGIN_MISSING,
+        ))
+
+        assert panel._btn_edit.isChecked() is True
+        auto_rows = [r for r in panel._rows if r._track.origin == TRACK_ORIGIN_AUTO]
+        assert auto_rows and not auto_rows[0]._delete_btn.isHidden()
+
+
 class TestTrackRowMissing:
     def test_없는_곡은_playable이_아니다(self, qtbot):
         row = _TrackRow(AlbumTrackDTO(track_no=1, title="x", origin=TRACK_ORIGIN_MISSING))

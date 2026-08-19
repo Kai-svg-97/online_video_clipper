@@ -62,11 +62,21 @@ class _SmoothScroller(QObject):
 
     # ── 내부 ───────────────────────────────────────────────────────
     def _pick_bar(self):
-        """세로 막대를 쓰되, 세로가 없고 가로만 있는 영역이면 가로로 돌린다."""
-        vbar = self._area.verticalScrollBar()
-        if vbar is not None and vbar.maximum() > vbar.minimum():
+        """세로 막대를 쓰되, 세로가 없고 가로만 있는 영역이면 가로로 돌린다.
+
+        "세로가 없다"는 **정책**(``ScrollBarAlwaysOff``)으로 판단한다 — 예전엔 "지금
+        스크롤할 내용이 있는가"(``vbar.maximum() > minimum()``)로만 판단했는데, 카드
+        한 장이 뷰포트보다 몇 픽셀만 더 커도(폰트 렌더링 차이 등) 그 근소한 범위가
+        생겨 휠을 굴릴 때마다 **숨겨진** 세로 막대가 움직이며 화면이 위아래로
+        덜거덕거렸다(실제 신고 — 추천 영상 스트립). 세로 스크롤바를 아예 꺼 둔
+        영역은 설계상 가로 전용이므로, 우연히 생긴 범위와 무관하게 가로로 고정한다.
+        """
+        area = self._area
+        vbar = area.verticalScrollBar()
+        v_off = area.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        if vbar is not None and not v_off and vbar.maximum() > vbar.minimum():
             return vbar
-        hbar = self._area.horizontalScrollBar()
+        hbar = area.horizontalScrollBar()
         if hbar is not None and hbar.maximum() > hbar.minimum():
             return hbar
         return vbar

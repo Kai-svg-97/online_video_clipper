@@ -98,6 +98,7 @@ class AlbumViewModel(QObject):
     unknown_resolved = pyqtSignal(int)     # 앨범을 추정해 채운 곡 수(>0이면 목록 재조회)
     add_progress = pyqtSignal(int, int)    # 카테고리 담기 진행 (완료, 전체)
     tracks_added = pyqtSignal(int)         # 카테고리에 담은 곡 수
+    track_removed = pyqtSignal(object)     # AlbumTrackDTO — 삭제 후 '없음'으로 되돌린 슬롯
     loading_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
 
@@ -108,6 +109,7 @@ class AlbumViewModel(QObject):
         fill_tracks=None,    # FillAlbumTracksHandler | None
         resolve_unknown=None,  # ResolveUnknownAlbumsHandler | None
         add_tracks=None,     # AddAlbumTracksHandler | None
+        remove_track_link=None,   # RemoveAlbumTrackLinkHandler | None
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -116,6 +118,7 @@ class AlbumViewModel(QObject):
         self._fill = fill_tracks
         self._resolve = resolve_unknown
         self._add = add_tracks
+        self._remove_link = remove_track_link
         self._add_worker: _AddTracksWorker | None = None
         self._workers: list[QThread] = []
         self._fill_worker: _FillWorker | None = None
@@ -246,6 +249,44 @@ class AlbumViewModel(QObject):
             lambda: self._resolve.handle(cmd),
             lambda count: self.unknown_resolved.emit(int(count or 0)),
         )
+
+    def remove_track_link(self, disc_no: int, track_no: int) -> None:
+        """자동 매핑을 지운다 — 잘못 붙은 음원(동명이곡·커버 등)을 사용자가 직접 제거.
+
+        DB 삭제 한 줄이라 네트워크가 없어 QThread 없이 즉시 처리한다. 성공하면 그
+        슬롯을 '없음'으로 되돌린 DTO를 실어 ``track_removed``를 방출한다 — 화면은
+        전체를 다시 조회하지 않고 그 자리만 갱신한다(다른 슬롯의 자동 채우기 결과가
+        섞여 들어올 여지를 없앤다).
+        """
+        if self._remove_link is None or self._detail is None:
+            return
+        from application.song.album_dtos import TRACK_ORIGIN_MISSING, AlbumTrackDTO  # noqa: PLC0415
+        from application.song.album_queries import RemoveAlbumTrackLinkCommand  # noqa: PLC0415
+
+        target = next(
+            (t for t in self._detail.tracks if t.slot == (disc_no, track_no)), None
+        )
+        if target is None:
+            return
+        try:
+            self._remove_link.handle(
+                RemoveAlbumTrackLinkCommand(
+                    album_key=self._detail.key, disc_no=disc_no, track_no=track_no
+                )
+            )
+        except Exception as exc:   # noqa: BLE001 — UI로 사유를 올린다
+            logger.exception("자동 매핑 삭제 실패")
+            self.error_occurred.emit(str(exc))
+            return
+        missing = AlbumTrackDTO(
+            track_no=target.track_no,
+            disc_no=target.disc_no,
+            title=target.title,
+            artist=target.artist,
+            duration_sec=target.duration_sec,
+            origin=TRACK_ORIGIN_MISSING,
+        )
+        self.track_removed.emit(missing)
 
     # ── 내부 ───────────────────────────────────────────────────────
     def _run(self, fn: Callable, on_ok: Callable) -> None:

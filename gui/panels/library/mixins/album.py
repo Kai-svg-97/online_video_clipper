@@ -248,6 +248,14 @@ class AlbumViewMixin:
     def _on_album_track_filled(self, track) -> None:
         self._album_detail.apply_filled_track(track)
 
+    def _on_album_track_delete_requested(self, track) -> None:
+        """수정 모드의 ✕ — 잘못 붙은 자동 매핑을 지운다(DB 삭제뿐이라 즉시 처리)."""
+        if self._album_vm is not None:
+            self._album_vm.remove_track_link(track.disc_no, track.track_no)
+
+    def _on_album_track_removed(self, track) -> None:
+        self._album_detail.apply_filled_track(track)
+
     def _on_album_fill_finished(self, count: int) -> None:
         if count:
             self._album_detail.set_status(

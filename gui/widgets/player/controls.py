@@ -35,11 +35,13 @@ from gui.widgets.player.constants import _QUALITY_HEIGHTS, _QUALITY_OPTIONS
 logger = logging.getLogger(__name__)
 
 
-# 재생 컨트롤 아이콘(글리프) 크기 — 예전 13px/24px 상자는 큰 화면에서 알아보기
-# 어려울 만큼 작았다. 두 배로 키우고 바 높이도 그만큼 늘린다(높이를 그대로 두면
-# 진행 슬라이더와 버튼 행이 서로를 밀어낸다).
-_ICON_PX = 26
-_ICON_BOX = 48
+# 재생 컨트롤 아이콘(글리프) 크기 — 두 배로 키운 뒤(13→26px/24→48px 상자) 이번엔
+# 버튼 상자를 20% 줄이면서(48→38px), 대신 글자 대 상자 비율을 키워(26/48=54% →
+# 28/38=74%) 상자 안을 꽉 채우게 한다. 상자만 줄이고 글자 비율을 그대로 두면
+# 작아진 상자 안에서 여백만 커 보여 '꽉 찬' 느낌이 나지 않는다. 안쪽 여백도
+# 최소로 줄여야 실제로 상자 가장자리까지 글리프가 닿는다.
+_ICON_PX = 28
+_ICON_BOX = 38
 
 
 def _bar_style() -> str:
@@ -54,7 +56,7 @@ QToolButton {{
     background: transparent;
     border: none;
     font-size: {_ICON_PX}px;
-    padding: 2px 6px;
+    padding: 0px 1px;
     min-width: {_ICON_BOX}px;
     min-height: {_ICON_BOX}px;
 }}
@@ -138,8 +140,9 @@ class _ControlBar(QWidget):
     video_subtitle_selected  = pyqtSignal(int, str)   # (slot, track_key)
     video_subtitle_translate = pyqtSignal(int, str)   # (slot, 대상 언어 코드, ""=원본)
 
-    # 진행 슬라이더 + 버튼 행(_ICON_BOX) + 여백. 아이콘을 키우면 함께 커져야 한다.
-    _HEIGHT = 96
+    # 진행 슬라이더 + 버튼 행(_ICON_BOX) + 여백 — 여백·슬라이더 몫은 아이콘 상자
+    # 크기와 무관하게 항상 48px이다(예전 24px 상자일 때도, 48px 상자일 때도 동일).
+    _HEIGHT = _ICON_BOX + 48
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)

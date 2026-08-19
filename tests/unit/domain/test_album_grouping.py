@@ -5,26 +5,30 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from domain.song.album import (
     NO_ALBUM_TITLE,
     SongRef,
+    earliest_registered,
     group_songs_into_albums,
     make_album_key,
     match_track_to_songs,
     normalize_name,
+    pick_official_audio,
     primary_artist,
 )
 
 
-def _song(title="곡", artist="가수", album="앨범", video_title=None):
+def _song(title="곡", artist="가수", album="앨범", video_title=None, created_at=None):
     return SongRef(
         video_id=uuid4(),
         video_title=video_title if video_title is not None else title,
         song_title=title,
         artist=artist,
         album=album,
+        created_at=created_at,
     )
 
 
@@ -133,3 +137,128 @@ class TestTrackMatching:
 
     def test_없는_곡은_None이다(self):
         assert match_track_to_songs("존재하지 않는 곡", [_song("밤편지")]) is None
+
+
+class TestEarliestRegistered:
+    """앨범 식별의 기준(앵커) — 가장 먼저 등록한 곡을 고른다."""
+
+    def test_등록_시각이_가장_이른_곡을_고른다(self):
+        base = datetime(2026, 1, 1)
+        first = _song("Palette", created_at=base)
+        second = _song("밤편지", created_at=base + timedelta(days=1))
+        third = _song("이런 엔딩", created_at=base + timedelta(days=2))
+
+        assert earliest_registered([third, first, second]) is first
+
+    def test_등록_시각이_없으면_첫_항목으로_폴백한다(self):
+        a = _song("A")
+        b = _song("B")
+
+        assert earliest_registered([a, b]) is a
+
+    def test_빈_목록은_None이다(self):
+        assert earliest_registered([]) is None
+
+
+class TestPickOfficialAudio:
+    """자동 채우기 후보 검증 — 커버·리액션·동명이곡을 걸러 낸다.
+
+    실제 신고: 앨범 보기에서 '자신의 음원이 아닌' 영상이 수록곡에 붙는 사고가 있었다.
+    """
+
+    def _entry(self, title, channel="", duration_sec=None, url="https://x/v"):
+        return {"url": url, "title": title, "channel_name": channel,
+                "duration_sec": duration_sec}
+
+    def test_동명이곡은_배제한다(self):
+        """찾던 곡과 다른 제목이면 그 후보는 절대 붙지 않는다."""
+        candidates = [self._entry("IU - 밤편지 (Official Audio)", duration_sec=254)]
+
+        assert pick_official_audio(candidates, title="이런 엔딩", artist="IU") is None
+
+    def test_제목이_일치하면_붙인다(self):
+        candidates = [self._entry("IU - 밤편지 (Official Audio)", duration_sec=254)]
+
+        picked = pick_official_audio(candidates, title="밤편지", artist="IU")
+
+        assert picked is not None and picked["url"] == "https://x/v"
+
+    def test_커버_영상은_배제한다(self):
+        candidates = [self._entry("밤편지 Cover by 누군가", duration_sec=254)]
+
+        assert pick_official_audio(candidates, title="밤편지", artist="IU") is None
+
+    def test_리액션_영상은_배제한다(self):
+        candidates = [self._entry("IU 밤편지 리액션", duration_sec=254)]
+
+        assert pick_official_audio(candidates, title="밤편지", artist="IU") is None
+
+    def test_대상_제목_자체에_있는_표기는_배제하지_않는다(self):
+        """정식 발매곡이 '(Remix)'라면 후보도 당연히 그 표기를 담고 있어야 한다."""
+        candidates = [self._entry("Song (Remix) - Official Audio")]
+
+        assert pick_official_audio(candidates, title="Song (Remix)") is not None
+
+    def test_길이가_많이_다르면_배제한다(self):
+        """1시간 루프·컴필레이션처럼 다른 버전일 가능성이 높은 후보를 거른다."""
+        candidates = [self._entry("IU 밤편지 1 Hour Loop", duration_sec=3600)]
+
+        assert pick_official_audio(candidates, title="밤편지", artist="IU",
+                                   expected_duration_sec=254) is None
+
+    def test_길이_정보가_없으면_판정하지_않는다(self):
+        """모르는 정보로 거르면 정상 후보까지 놓친다."""
+        candidates = [self._entry("IU - 밤편지 (Official Audio)")]
+
+        picked = pick_official_audio(candidates, title="밤편지", artist="IU",
+                                     expected_duration_sec=254)
+
+        assert picked is not None
+
+    def test_Topic_채널을_우선한다(self):
+        """'- Topic'은 YouTube가 자동 생성하는 공식 음원 채널이다."""
+        candidates = [
+            self._entry("밤편지 - Cover", channel="누군가", url="https://x/cover"),
+            self._entry("IU - 밤편지", channel="IU - Topic", url="https://x/topic"),
+        ]
+
+        picked = pick_official_audio(candidates, title="밤편지", artist="IU")
+
+        assert picked["url"] == "https://x/topic"
+
+    def test_가수_이름이_보이는_후보를_우선한다(self):
+        candidates = [
+            self._entry("밤편지 (Official Audio)", channel="음악채널", url="https://x/a"),
+            self._entry("IU 밤편지 (Official Audio)", channel="1theK", url="https://x/b"),
+        ]
+
+        picked = pick_official_audio(candidates, title="밤편지", artist="IU")
+
+        assert picked["url"] == "https://x/b"
+
+    def test_길이가_더_가까운_후보를_우선한다(self):
+        candidates = [
+            self._entry("IU 밤편지", duration_sec=180, url="https://x/far"),
+            self._entry("IU 밤편지", duration_sec=253, url="https://x/close"),
+        ]
+
+        picked = pick_official_audio(candidates, title="밤편지", artist="IU",
+                                     expected_duration_sec=254)
+
+        assert picked["url"] == "https://x/close"
+
+    def test_모두_배제되면_None이다(self):
+        candidates = [self._entry("전혀 다른 곡")]
+
+        assert pick_official_audio(candidates, title="밤편지", artist="IU") is None
+
+    def test_url이_없는_후보는_무시한다(self):
+        candidates = [{"title": "밤편지", "channel_name": "", "duration_sec": None, "url": ""}]
+
+        assert pick_official_audio(candidates, title="밤편지") is None
+
+    def test_빈_제목은_바로_None이다(self):
+        assert pick_official_audio([self._entry("아무거나")], title="") is None
+
+    def test_빈_후보_목록은_None이다(self):
+        assert pick_official_audio([], title="밤편지") is None

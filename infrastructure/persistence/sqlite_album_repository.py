@@ -190,6 +190,13 @@ class SqliteAlbumRepository(IAlbumRepository):
         with self._db.connection() as conn:
             conn.execute("DELETE FROM album_track_links WHERE album_key=?", (album_key,))
 
+    def delete_track_link(self, album_key: str, disc_no: int, track_no: int) -> None:
+        with self._db.connection() as conn:
+            conn.execute(
+                "DELETE FROM album_track_links WHERE album_key=? AND disc_no=? AND track_no=?",
+                (album_key, int(disc_no), int(track_no)),
+            )
+
     # ── 앨범 추정 조회 기록 ─────────────────────────────────────────
     def mark_album_lookup(self, video_id: UUID, found: bool) -> None:
         with self._db.connection() as conn:

@@ -436,6 +436,7 @@ def main() -> int:
         FillAlbumTracksHandler,
         GetAlbumDetailHandler,
         GetAlbumsHandler,
+        RemoveAlbumTrackLinkHandler,
         ResolveUnknownAlbumsHandler,
     )
     from infrastructure.song.album_providers import build_default_album_provider  # noqa: PLC0415
@@ -449,6 +450,7 @@ def main() -> int:
     )
     # 앨범 수록곡을 현재 카테고리에 담기 — 등록(AddVideoHandler)에 노래 정보 기록을 얹는다.
     add_album_tracks_h = AddAlbumTracksHandler(add_video, song_repo)
+    remove_album_link_h = RemoveAlbumTrackLinkHandler(album_repo)
     add_url_to_pl_h    = AddUrlToPlaylistHandler(add_video, playlist_repo)
 
     rename_playlist_h  = RenamePlaylistHandler(playlist_repo, yt_api=_yt_api)
@@ -535,6 +537,7 @@ def main() -> int:
         fill_tracks=fill_album_h,
         resolve_unknown=resolve_albums_h,
         add_tracks=add_album_tracks_h,
+        remove_track_link=remove_album_link_h,
     )
     download_vm = DownloadViewModel(
         start_handler=start_dl,

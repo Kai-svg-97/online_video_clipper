@@ -138,16 +138,36 @@ class TestLyricsScale:
 
 
 class TestControlIconSize:
-    def test_아이콘이_예전_두_배다(self):
-        """13px/24px 상자는 큰 화면에서 알아보기 어려웠다."""
-        assert _ICON_PX == 26
-        assert _ICON_BOX == 48
+    """13px/24px(원래) → 26px/48px(2배, 너무 컸다는 반대 신고 없음) →
+    28px/38px(상자 20% 축소 + 글자 비율을 키워 상자를 꽉 채움)로 조정된 이력.
+
+    상자를 줄이면서 글자 크기를 그대로 두면 작아진 상자 안에 여백만 커 보인다 —
+    그래서 상자 대비 글자 비율(fill ratio)이 이전보다 **커야** 한다.
+    """
+
+    def test_상자가_이전보다_20퍼센트가량_작다(self):
+        assert _ICON_BOX == 38
+        prev_box = 48
+        assert 0.75 <= _ICON_BOX / prev_box <= 0.85
+
+    def test_글자가_상자를_꽉_채우도록_비율이_커졌다(self):
+        """상자만 줄이고 비율을 그대로 두면 '꽉 찬' 느낌이 나지 않는다."""
+        prev_ratio = 26 / 48
+        new_ratio = _ICON_PX / _ICON_BOX
+        assert new_ratio > prev_ratio
 
     def test_스타일에_실제로_반영된다(self, qtbot):
         css = _bar_style()
 
         assert f"font-size: {_ICON_PX}px" in css
         assert f"min-width: {_ICON_BOX}px" in css
+        assert f"min-height: {_ICON_BOX}px" in css
+
+    def test_안쪽_여백이_최소화됐다(self, qtbot):
+        """여백이 크면 글자가 커져도 상자 가장자리까지 닿지 않는다."""
+        css = _bar_style()
+
+        assert "padding: 0px 1px" in css
 
     def test_바_높이가_아이콘을_담을_만큼_크다(self, qtbot):
         """높이를 그대로 두면 진행 슬라이더와 버튼 행이 서로를 밀어낸다."""
@@ -155,3 +175,11 @@ class TestControlIconSize:
         qtbot.addWidget(bar)
 
         assert bar.height() >= _ICON_BOX + 24
+
+    def test_버튼_크기가_실제로_이전보다_작다(self, qtbot):
+        bar = _ControlBar()
+        qtbot.addWidget(bar)
+
+        # 이전 세대(26px/48px)의 재생 버튼 실측 크기 — 회귀 시 이 값과 같아진다.
+        prev_height = 55
+        assert bar._btn_play.sizeHint().height() < prev_height

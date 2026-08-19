@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -285,7 +286,8 @@ class _TrackRow(QFrame):
     잘못된 것처럼 보인다.
     """
 
-    clicked = pyqtSignal(object)   # AlbumTrackDTO
+    clicked = pyqtSignal(object)            # AlbumTrackDTO
+    delete_requested = pyqtSignal(object)   # AlbumTrackDTO — 수정 모드의 ✕ 클릭
 
     def __init__(
         self, track: AlbumTrackDTO, show_disc: bool = False, parent: QWidget | None = None
@@ -293,6 +295,7 @@ class _TrackRow(QFrame):
         super().__init__(parent)
         self._track = track
         self._show_disc = show_disc
+        self._edit_mode = False
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         if track.playable:
@@ -330,6 +333,24 @@ class _TrackRow(QFrame):
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         row.addWidget(self._badge)
 
+        # 수정 모드에서만 보이는 삭제 버튼 — **자동 매핑(AUTO)에만** 둔다. 내 라이브러리
+        # 영상을 지우는 것은 훨씬 더 무거운 동작(영상 자체 삭제)이라 여기서 다루지 않고,
+        # '없음'은 애초에 지울 대상이 없다. 잘못 붙은 음원(동명이곡·커버 등)만 대상이다.
+        self._delete_btn = QToolButton()
+        self._delete_btn.setText("✕")
+        self._delete_btn.setToolTip("이 자동 매핑을 지웁니다(다시 '없음'으로 돌아갑니다)")
+        self._delete_btn.setFixedSize(22, 22)
+        self._delete_btn.setAutoRaise(True)
+        self._delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._delete_btn.clicked.connect(lambda: self.delete_requested.emit(self._track))
+        self._delete_btn.setVisible(False)
+        row.addWidget(self._delete_btn)
+
+    def set_edit_mode(self, on: bool) -> None:
+        """수정 모드 토글 — 자동 매핑 행에만 삭제 버튼을 드러낸다."""
+        self._edit_mode = on
+        self._delete_btn.setVisible(on and self._track.origin == TRACK_ORIGIN_AUTO)
+
     def _apply_theme(self, tokens) -> None:
         from gui.themes.colors import sem  # noqa: PLC0415
 
@@ -356,6 +377,11 @@ class _TrackRow(QFrame):
             f"color:{badge_color}; font-size:8pt; border:1px solid {badge_color};"
             " border-radius:8px; padding:1px 4px; background:transparent;"
         )
+        danger = sem("danger")
+        self._delete_btn.setStyleSheet(
+            f"QToolButton {{ color:{danger}; border:none; font-weight:bold; }}"
+            f" QToolButton:hover {{ background:{tokens.bg_elevated}; border-radius:4px; }}"
+        )
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton and self._track.playable:
@@ -369,6 +395,7 @@ class AlbumDetailPanel(QWidget):
     back_requested = pyqtSignal()
     play_album_requested = pyqtSignal(object)   # AlbumDetailDTO
     track_clicked = pyqtSignal(object)          # AlbumTrackDTO
+    track_delete_requested = pyqtSignal(object)  # AlbumTrackDTO — 수정 모드에서 ✕ 클릭
     refresh_requested = pyqtSignal(str)         # album_key — 앨범 정보 다시 받기
     fill_requested = pyqtSignal(str)            # album_key — 빠진 곡 다시 찾기
     add_all_requested = pyqtSignal(object)      # AlbumDetailDTO — 현재 카테고리에 담기
@@ -380,6 +407,9 @@ class AlbumDetailPanel(QWidget):
         self._detail: AlbumDetailDTO | None = None
         self._loader = None
         self._rows: list[_TrackRow] = []
+        # 수정 모드 — 켜져 있는 동안만 각 행에 삭제(✕) 버튼이 보인다. 잘못 붙은 음원을
+        # 실수로 지우지 않도록 기본은 꺼져 있다("수정" 버튼을 눌러야 나타난다).
+        self._edit_mode = False
         self._build()
         self._apply_theme(ThemeManager.instance().current())
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
@@ -459,6 +489,13 @@ class AlbumDetailPanel(QWidget):
         self._tracks_header.setFont(hf)
         header_row.addWidget(self._tracks_header)
         header_row.addStretch(1)
+        # 수정 모드 — 잘못 붙은 자동 매핑(동명이곡·커버 등)을 쉽게 지우기 위한 토글.
+        # 켜기 전에는 삭제 버튼이 전혀 보이지 않는다(실수로 지우는 사고 방지).
+        self._btn_edit = QPushButton("✎ 수정")
+        self._btn_edit.setCheckable(True)
+        self._btn_edit.setToolTip("수정 모드 — 잘못 붙은 자동 매핑 음원을 지울 수 있습니다")
+        self._btn_edit.toggled.connect(self._on_edit_toggled)
+        header_row.addWidget(self._btn_edit)
         # 자동 매핑된 곡(내 라이브러리에 없는 곡)을 현재 카테고리로 한꺼번에 담는다.
         self._btn_add_all = QPushButton("＋ 현재 카테고리에 등록")
         self._btn_add_all.setToolTip(
@@ -495,6 +532,9 @@ class AlbumDetailPanel(QWidget):
     def set_detail(self, detail: AlbumDetailDTO | None, crumb: str = "") -> None:
         self._detail = detail
         self._crumb.setText(crumb)
+        # 다른 앨범으로 넘어가면 수정 모드를 끈다 — 삭제 버튼이 켜진 채로 남아 있으면
+        # 방금 연 앨범에서 실수로 잘못 누를 수 있다.
+        self._btn_edit.setChecked(False)
         if detail is None:
             self._title_lbl.setText("앨범을 찾을 수 없습니다.")
             self._artist_lbl.setText("")
@@ -572,8 +612,16 @@ class AlbumDetailPanel(QWidget):
         for i, track in enumerate(tracks):
             row = _TrackRow(track, show_disc=multi_disc)
             row.clicked.connect(self.track_clicked)
+            row.delete_requested.connect(self.track_delete_requested)
+            row.set_edit_mode(self._edit_mode)
             self._tracks_layout.insertWidget(i, row)
             self._rows.append(row)
+
+    def _on_edit_toggled(self, checked: bool) -> None:
+        self._edit_mode = checked
+        self._btn_edit.setText("완료" if checked else "✎ 수정")
+        for row in self._rows:
+            row.set_edit_mode(checked)
 
     def _load_art(self, detail: AlbumDetailDTO) -> None:
         local = detail.artwork_path or detail.fallback_thumb_path
