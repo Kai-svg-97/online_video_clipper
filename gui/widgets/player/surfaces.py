@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import (
+    QEvent,
     QPoint,
     QPointF,
     QSizeF,
@@ -38,10 +39,23 @@ logger = logging.getLogger(__name__)
 
 
 class _VideoArea(QWidget):
-    """Enforces 16:9 aspect ratio; hosts the visual stack and overlays
-    the control bar at the bottom (QRhi backend ensures correct z-order)."""
+    """16:9를 지향하되 **창 밖으로 넘치지 않는** 영상 영역.
+
+    컨트롤바는 이 영역의 바닥에 얹히므로, 영역이 배정된 공간보다 커지면 바가 창 밖으로
+    밀려 **보이지도 눌리지도 않는다**. 예전에는 폭에서 계산한 16:9 높이를 그대로
+    `setFixedHeight`로 박아, 창이 가로로 길어질수록(울트라와이드·최대화) 영역이 창보다
+    높아져 실제로 그 일이 났다(실측: 2200×900 창에서 바 하단이 창 아래로 335px).
+
+    그래서 높이를 **창 높이의 일정 비율로 제한**한다. 넘칠 때는 영상이 좌우로 레터박스
+    (필러박스)될 뿐 — `_VideoView._fit`이 비율을 지켜 맞춰 넣는다 — 화면이 잘리는 것보다
+    낫고, 무엇보다 컨트롤바가 언제나 영역 안 바닥에 있다. 자동 숨김은 그대로다.
+    """
 
     _BAR_H = _ControlBar._HEIGHT
+    # 창 높이 대비 영상 영역의 최대 높이. 나머지는 제목·메타·탭 몫이다 — 영상이 창을
+    # 다 차지하면 바뿐 아니라 그 아래 내용도 함께 밀려난다.
+    _MAX_WINDOW_RATIO = 0.62
+    _MIN_H = 90
 
     def __init__(self, stack: QStackedWidget, parent=None) -> None:
         super().__init__(parent)
@@ -51,6 +65,7 @@ class _VideoArea(QWidget):
         self._bar: QWidget | None = None
         self._subtitle: QWidget | None = None
         stack.setParent(self)
+        self._window_watched = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
     def set_overlay_bar(self, bar: QWidget) -> None:
@@ -67,12 +82,47 @@ class _VideoArea(QWidget):
         return True
 
     def heightForWidth(self, w: int) -> int:
-        return max(w * 9 // 16, 90)
+        """이 폭에서 쓸 높이 — 16:9지만 창을 넘지 않는 선까지만.
+
+        레이아웃도 이 값을 보고 자리를 나누므로 **제한을 여기서** 걸어야 배정과 실제
+        배치가 어긋나지 않는다(둘이 다르면 바 위치 계산이 다시 틀어진다).
+        """
+        ideal = max(w * 9 // 16, self._MIN_H)
+        return min(ideal, self._max_height())
+
+    def _max_height(self) -> int:
+        """창 높이에서 허용할 최대 영역 높이(창을 모를 땐 제한하지 않는다)."""
+        window = self.window()
+        if window is None or window is self:
+            return 1 << 24
+        height = window.height()
+        if height <= 200:
+            return 1 << 24   # 아직 배치 전(초기 크기) — 여기서 제한하면 영역이 찌부러진다
+        return max(self._MIN_H, int(height * self._MAX_WINDOW_RATIO))
 
     def resizeEvent(self, event) -> None:
+        self._apply_geometry()
+        super().resizeEvent(event)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        # **창 높이가 바뀔 때도 다시 계산해야 한다.** 세로만 줄이면 이 위젯의 폭은
+        # 그대로라 자기 resizeEvent가 오지 않고(높이는 고정돼 있다) 제한값이 낡은 채
+        # 남아, 컨트롤바가 다시 창 밖으로 밀린다.
+        window = self.window()
+        if window is not None and window is not self and not self._window_watched:
+            window.installEventFilter(self)
+            self._window_watched = True
+        self._apply_geometry()
+        super().showEvent(event)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Resize and obj is self.window():
+            self._apply_geometry()
+        return False
+
+    def _apply_geometry(self) -> None:
         self.setFixedHeight(self.heightForWidth(self.width()))
         self._layout_children()
-        super().resizeEvent(event)
 
     def _layout_children(self) -> None:
         # self.height() 대신 heightForWidth 를 직접 계산:
