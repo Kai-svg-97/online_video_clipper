@@ -268,3 +268,59 @@ def _cache_heights(url: str, heights: list[int]) -> None:
     while len(_HEIGHT_CACHE) > _HEIGHT_CACHE_MAX:
         _HEIGHT_CACHE.popitem(last=False)
 
+
+
+# ── 영상 자막(YouTube 캡션) 워커 ──────────────────────────────────────────────
+# 목록 조회(yt-dlp)와 파일 내려받기(HTTP) 둘 다 네트워크라 QThread에서 한다.
+# 실패는 조용히 빈 결과로 돌려보낸다 — 자막이 없다고 재생을 막을 이유는 없다.
+
+# 영상별 자막 목록 캐시 — 같은 영상을 다시 열 때 yt-dlp 조회를 되풀이하지 않는다.
+_VSUB_LIST_CACHE: "OrderedDict[str, list]" = OrderedDict()
+_VSUB_LIST_CACHE_MAX = 32
+
+
+class _SubtitleListWorker(QThread):
+    """이 영상이 제공하는 자막 트랙 목록을 조회한다."""
+
+    done = pyqtSignal(str, list)   # (video_url, tracks)
+
+    def __init__(self, url: str, cookie_opts: dict | None = None, parent=None) -> None:
+        super().__init__(parent)
+        self._url = url
+        self._cookie_opts = cookie_opts or {}
+
+    def run(self) -> None:
+        from infrastructure.subtitle.youtube_subtitles import (  # noqa: PLC0415
+            fetch_tracks_for_url,
+        )
+        try:
+            tracks = fetch_tracks_for_url(self._url, self._cookie_opts)
+        except Exception as exc:
+            logger.warning("자막 목록 조회 실패: %s", exc)
+            tracks = []
+        while len(_VSUB_LIST_CACHE) >= _VSUB_LIST_CACHE_MAX:
+            _VSUB_LIST_CACHE.popitem(last=False)
+        _VSUB_LIST_CACHE[self._url] = tracks
+        self.done.emit(self._url, tracks)
+
+
+class _SubtitleFetchWorker(QThread):
+    """고른 트랙의 자막 파일을 내려받아 큐 목록으로 돌려준다."""
+
+    done = pyqtSignal(int, str, list)   # (slot, track_key, cues)
+
+    def __init__(self, slot: int, track, parent=None) -> None:
+        super().__init__(parent)
+        self._slot = slot
+        self._track = track
+
+    def run(self) -> None:
+        from infrastructure.subtitle.youtube_subtitles import fetch_cues  # noqa: PLC0415
+        try:
+            cues = fetch_cues(self._track)
+        except Exception as exc:
+            logger.warning("자막 내려받기 실패: %s", exc)
+            cues = []
+        # key 는 '번역 전' 기준이어야 선택 상태와 맞는다(번역은 같은 트랙의 변형이다).
+        base_key = f"{'auto' if self._track.auto else 'sub'}:{self._track.lang}:"
+        self.done.emit(self._slot, base_key, cues)

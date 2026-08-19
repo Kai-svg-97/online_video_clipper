@@ -175,6 +175,10 @@ class LyricsOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._original = ""
         self._translation = ""
+        # 영상 자막(YouTube 캡션) — 가사와 별개 줄이다. 둘 다 켜져 있으면 가사가 위,
+        # 영상 자막이 아래에 놓인다(자막은 화면 맨 아래가 익숙한 자리다).
+        self._sub_primary = ""
+        self._sub_secondary = ""
         self._notice = ""
         self._visible_text = True
         # 사용자 조절값(Task 4에서 setter 로 노출). 비율이라 창 크기와 무관하게 일정.
@@ -191,6 +195,24 @@ class LyricsOverlay(QWidget):
         self._original = original
         self._translation = translation
         self.update()
+
+    def set_subtitle_texts(self, primary: str, secondary: str = "") -> None:
+        """영상 자막 두 줄을 함께 세팅한다(빈 문자열이면 그 줄은 그리지 않는다).
+
+        두 트랙을 **동시에** 보여 주는 것이 목적이라 한 번에 받는다 — 따로 세팅하면
+        한쪽만 바뀐 순간에 짝이 어긋난 화면이 한 프레임 스친다.
+        """
+        primary, secondary = primary or "", secondary or ""
+        if primary == self._sub_primary and secondary == self._sub_secondary:
+            return
+        self._sub_primary = primary
+        self._sub_secondary = secondary
+        self.update()
+
+    @property
+    def subtitle_texts(self) -> tuple[str, str]:
+        """(첫째 줄, 둘째 줄) — 테스트가 렌더 대신 상태를 확인할 때 쓴다."""
+        return self._sub_primary, self._sub_secondary
 
     def set_text_visible(self, on: bool) -> None:
         """자막 on/off. ``QWidget.setVisible``과 구분하기 위해 이름을 분리했다."""
@@ -311,7 +333,10 @@ class LyricsOverlay(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 시그니처)
         # 자막이 꺼져 있거나 표시할 줄이 없어도 **피드백 문구는 그린다** — 조절이
         # 먹었는지 알려 주는 유일한 신호라 자막 상태와 무관해야 한다.
-        has_cue = bool(self._visible_text and (self._original or self._translation))
+        has_cue = bool(self._visible_text and (
+            self._original or self._translation
+            or self._sub_primary or self._sub_secondary
+        ))
         if not has_cue and not self._notice:
             return
         painter = QPainter(self)
@@ -334,6 +359,16 @@ class LyricsOverlay(QWidget):
         rows += [
             (line, sub_font, _TRANSLATION_COLOR, sub_metrics.height())
             for line in self._wrap(self._translation, sub_metrics, max_w)
+        ]
+        # 영상 자막 — 첫째 트랙은 원문과 같은 크기, 둘째 트랙은 한 단계 작게 그려
+        # 어느 쪽이 주 자막인지 한눈에 구분되게 한다.
+        rows += [
+            (line, main_font, _TEXT_COLOR, main_metrics.height())
+            for line in self._wrap(self._sub_primary, main_metrics, max_w)
+        ]
+        rows += [
+            (line, sub_font, _TRANSLATION_COLOR, sub_metrics.height())
+            for line in self._wrap(self._sub_secondary, sub_metrics, max_w)
         ]
         if not rows:
             painter.end()

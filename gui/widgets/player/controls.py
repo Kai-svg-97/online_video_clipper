@@ -16,7 +16,7 @@ from PyQt6.QtCore import (
     Qt,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtGui import QActionGroup, QColor, QPainter
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -134,6 +134,9 @@ class _ControlBar(QWidget):
     subtitle_sync_here     = pyqtSignal()      # 현재 재생 위치를 현재 줄에 맞춤
     subtitle_offset_reset  = pyqtSignal()
     subtitle_prefs_reset   = pyqtSignal()      # 자막 크기·위치를 기본값으로 초기화
+    # 영상 자막(YouTube 캡션) — 두 칸(0·1)을 각각 고른다. key가 ""이면 그 칸은 끄기.
+    video_subtitle_selected  = pyqtSignal(int, str)   # (slot, track_key)
+    video_subtitle_translate = pyqtSignal(int, str)   # (slot, 대상 언어 코드, ""=원본)
 
     # 진행 슬라이더 + 버튼 행(_ICON_BOX) + 여백. 아이콘을 키우면 함께 커져야 한다.
     _HEIGHT = 96
@@ -145,6 +148,10 @@ class _ControlBar(QWidget):
         self.setFixedHeight(self._HEIGHT)
         self._heights: list[int] | None = None   # 이 영상이 제공하는 화질(미확인이면 None)
         self._has_subtitle = False
+        # 영상 자막 상태: 목록과 두 칸의 선택(트랙 key + 번역 대상)
+        self._video_tracks: list = []
+        self._vsub_keys: list[str] = ["", ""]
+        self._vsub_langs: list[str] = ["", ""]
         self._subtitle_on = True
         self._subtitle_offset_ms = 0
         self._subtitle_prefs_dirty = False
@@ -216,6 +223,11 @@ class _ControlBar(QWidget):
             lambda _pos: self._show_subtitle_menu()
         )
 
+        # 영상 자막(CC) — 가사 자막(💬)과 다른 기능이라 버튼을 따로 둔다.
+        self._btn_vsub = btn("CC", "영상 자막 — 언어 선택·자동 번역",
+                             self._show_video_subtitle_menu)
+        self._btn_vsub.setEnabled(False)
+
         self._btn_dl = btn("⬇", "다운로드", self.download_menu_requested.emit)
         self._btn_pip = btn("⧉", "화면 속 화면  (P)", self.pip_toggled.emit)
         self._btn_fs = btn("⛶", "전체화면  (F)", self.fullscreen_toggled.emit)
@@ -227,6 +239,7 @@ class _ControlBar(QWidget):
         row.addWidget(self._quality_lbl)
         row.addWidget(self._btn_quality)
         row.addWidget(self._btn_cc)
+        row.addWidget(self._btn_vsub)
         row.addWidget(self._btn_dl)
         row.addWidget(self._btn_pip)
         row.addWidget(self._btn_fs)
@@ -312,6 +325,88 @@ class _ControlBar(QWidget):
         self._subtitle_on = not self._subtitle_on
         self._update_cc_look()
         self.subtitle_toggled.emit(self._subtitle_on)
+
+    # ── 영상 자막(CC) ──────────────────────────────────────────────
+    # 두 칸을 각각 고르게 하는 이유는 **동시에 두 언어를 보기 위해서**다(원어 + 모국어).
+    # 이 바는 트랙을 해석하지 않는다 — 목록을 받아 그리고 고른 key만 돌려보낸다.
+    # 번역 조합(트랙 × 대상 언어)은 경우의 수가 많아 메뉴로 펼치면 감당이 안 되므로,
+    # '언어'와 '자동 번역'을 각각 고르게 하고 조합은 플레이어가 만든다.
+
+    def set_video_subtitle_tracks(self, tracks: list) -> None:
+        """고를 수 있는 자막 트랙 목록(`.key`/`.label`을 가진 객체)."""
+        self._video_tracks = list(tracks or [])
+        self._btn_vsub.setEnabled(bool(self._video_tracks))
+        self._btn_vsub.setToolTip(
+            "영상 자막 — 언어 선택·자동 번역" if self._video_tracks
+            else "이 영상에는 자막이 없습니다"
+        )
+        self._update_vsub_look()
+
+    def set_video_subtitle_selection(self, slot: int, key: str, translate_to: str = "") -> None:
+        if slot not in (0, 1):
+            return
+        self._vsub_keys[slot] = key or ""
+        self._vsub_langs[slot] = translate_to or ""
+        self._update_vsub_look()
+
+    def _update_vsub_look(self) -> None:
+        """켜져 있으면 글자를 강조해 상태가 보이게 한다."""
+        on = any(self._vsub_keys)
+        self._btn_vsub.setText("CC" if on else "cc")
+
+    def _show_video_subtitle_menu(self) -> None:
+        if not self._video_tracks:
+            return
+        menu = QMenu(self)
+        for slot in (0, 1):
+            sub = menu.addMenu(f"자막 {slot + 1}" + ("" if slot == 0 else " (동시 표시)"))
+            group = QActionGroup(sub)
+            group.setExclusive(True)
+            off = sub.addAction("끄기")
+            off.setCheckable(True)
+            off.setChecked(not self._vsub_keys[slot])
+            off.triggered.connect(
+                lambda _c=False, s=slot: self.video_subtitle_selected.emit(s, "")
+            )
+            group.addAction(off)
+            sub.addSeparator()
+            for track in self._video_tracks:
+                act = sub.addAction(track.label)
+                act.setCheckable(True)
+                act.setChecked(self._vsub_keys[slot] == track.key)
+                act.triggered.connect(
+                    lambda _c=False, s=slot, k=track.key:
+                    self.video_subtitle_selected.emit(s, k)
+                )
+                group.addAction(act)
+            sub.addSeparator()
+            trans = sub.addMenu("자동 번역")
+            tgroup = QActionGroup(trans)
+            tgroup.setExclusive(True)
+            none_act = trans.addAction("번역 안 함")
+            none_act.setCheckable(True)
+            none_act.setChecked(not self._vsub_langs[slot])
+            none_act.triggered.connect(
+                lambda _c=False, s=slot: self.video_subtitle_translate.emit(s, "")
+            )
+            tgroup.addAction(none_act)
+            for code, label in self._translate_targets():
+                act = trans.addAction(label)
+                act.setCheckable(True)
+                act.setChecked(self._vsub_langs[slot] == code)
+                act.triggered.connect(
+                    lambda _c=False, s=slot, c=code:
+                    self.video_subtitle_translate.emit(s, c)
+                )
+                tgroup.addAction(act)
+        menu.exec(self._btn_vsub.mapToGlobal(self._btn_vsub.rect().bottomLeft()))
+
+    @staticmethod
+    def _translate_targets() -> tuple:
+        from infrastructure.subtitle.youtube_subtitles import (  # noqa: PLC0415
+            TRANSLATE_TARGETS,
+        )
+        return TRANSLATE_TARGETS
 
     def _build_subtitle_menu(self) -> "QMenu | None":
         """💬 우클릭 메뉴를 만든다. 열 이유가 없으면 None.

@@ -184,6 +184,9 @@ class RecommendViewModel(QObject):
         worker.start()
 
     def _on_more_ok(self, items: list, gen: int) -> None:
+        # 결과가 도착한 시점에 자리를 비운다 — 스레드가 완전히 끝나기(finished)를
+        # 기다리면 그 사이 들어온 다음 요청이 '조회 중'으로 오인돼 조용히 버려진다.
+        self._more_worker = None
         if gen != self._gen:
             return   # 그 사이 씨앗이 바뀌었다 — 늦게 온 추가분은 버린다
         if not items:
@@ -195,6 +198,7 @@ class RecommendViewModel(QObject):
 
     def _on_more_err(self, msg: str, gen: int) -> None:
         # 추가분 실패는 화면을 어지럽히지 않는다 — 이미 보고 있는 목록은 멀쩡하다.
+        self._more_worker = None
         logger.warning("추천 추가분 조회 실패: %s", msg)
         if gen == self._gen:
             self._more_exhausted = True
@@ -203,7 +207,10 @@ class RecommendViewModel(QObject):
     def _on_more_done(self, worker: _RecommendWorker) -> None:
         if worker is self._more_worker:
             self._more_worker = None
-        self.more_loading_changed.emit(False)
+        if self._more_worker is None:
+            # 이미 다음 요청이 시작됐다면 '조회 중'을 유지한다 — 여기서 False를 쏘면
+            # 진행 중인데도 스트립이 다시 요청을 받아 중복 조회가 된다.
+            self.more_loading_changed.emit(False)
 
     def invalidate(self) -> None:
         """씨앗 캐시를 비워 다음 load()가 반드시 재조회하게 한다."""

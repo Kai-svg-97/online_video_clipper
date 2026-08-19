@@ -144,6 +144,9 @@ SUBTITLE_FONT_SCALE: float = _load_float("subtitle_font_scale", 1.0)
 SUBTITLE_BOTTOM_RATIO: float = _load_float("subtitle_bottom_ratio", 0.10)
 # 상세 화면에서 "읽는 글"(요약·가사)의 글자 배율 — 전역 보기 설정이다.
 DETAIL_TEXT_SCALE: float = _load_float("detail_text_scale", 1.0)
+# 영상 자막(YouTube 캡션) — 지난번에 고른 언어를 기억해 다음 영상에도 이어 켠다.
+VIDEO_SUBTITLE_LANG_1: str = _resolve_str("video_subtitle_lang_1", "")
+VIDEO_SUBTITLE_LANG_2: str = _resolve_str("video_subtitle_lang_2", "")
 LAST_UPDATE_CHECK: float = float(_load_config().get("last_update_check", 0) or 0)
 SNOOZED_UPDATE_VERSION: str = _resolve_str("snoozed_update_version", "")
 
@@ -190,6 +193,8 @@ def save_setting(key: str, value) -> None:
         "subtitle_font_scale": "SUBTITLE_FONT_SCALE",
         "subtitle_bottom_ratio": "SUBTITLE_BOTTOM_RATIO",
         "detail_text_scale": "DETAIL_TEXT_SCALE",
+        "video_subtitle_lang_1": "VIDEO_SUBTITLE_LANG_1",
+        "video_subtitle_lang_2": "VIDEO_SUBTITLE_LANG_2",
         "last_update_check": "LAST_UPDATE_CHECK",
         "snoozed_update_version": "SNOOZED_UPDATE_VERSION",
         "yt_auth_browser": "YT_AUTH_BROWSER",

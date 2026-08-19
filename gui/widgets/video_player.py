@@ -40,7 +40,11 @@ from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
 # ── 분할된 부품 (gui/widgets/player/*) ─────────────────────────────
 # 이 파일에는 화면 조립·흐름 제어만 남기고 부품은 패키지로 옮겼다.
 # 아래 재수출은 기존 임포트 경로를 유지하기 위한 것이다.
+from gui.widgets.subtitle_track import SubtitleTrack
 from gui.widgets.player.stream import (  # noqa: F401
+    _SubtitleFetchWorker,
+    _SubtitleListWorker,
+    _VSUB_LIST_CACHE,
     _HEIGHT_CACHE,
     _FormatProbeWorker,
     _StreamWorker,
@@ -194,6 +198,19 @@ class InlinePlayer(QWidget):
         self._stream_retries: int = 0         # 재생 오류 후 스트림 재획득 횟수
         self._track: LyricsTrack | None = None
         self._subtitle_on = True
+        # 영상 자막(YouTube 캡션) — 두 칸을 동시에 켤 수 있다(원어 + 모국어).
+        self._vsub_available: list = []
+        self._vsub_keys: list[str] = ["", ""]
+        self._vsub_langs: list[str] = ["", ""]
+        self._vsub_tracks: list = [None, None]
+        self._vsub_texts: tuple[str, str] = ("", "")
+        self._vsub_workers: list = [None, None]
+        self._vsub_list_worker = None
+        # 지난번에 고른 언어 — 영상이 바뀌어도 같은 언어가 있으면 이어서 켠다.
+        self._vsub_pref_lang: list[str] = [
+            getattr(settings, "VIDEO_SUBTITLE_LANG_1", "") or "",
+            getattr(settings, "VIDEO_SUBTITLE_LANG_2", "") or "",
+        ]
         # 자막 표시 설정은 전역이라 생성 시 설정값을 읽어 시작한다.
         self._subtitle_font_scale: float = settings.SUBTITLE_FONT_SCALE
         self._subtitle_bottom_ratio: float = settings.SUBTITLE_BOTTOM_RATIO
@@ -290,6 +307,8 @@ class InlinePlayer(QWidget):
         )
         self._bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
         self._bar.subtitle_prefs_reset.connect(self._reset_subtitle_prefs)
+        self._bar.video_subtitle_selected.connect(self._select_video_subtitle)
+        self._bar.video_subtitle_translate.connect(self._translate_video_subtitle)
 
         # Wire player signals → control bar
         self._player.positionChanged.connect(self._on_position)
@@ -598,6 +617,7 @@ class InlinePlayer(QWidget):
 
     def _apply_subtitle_position(self, pos_ms: int) -> None:
         """재생 위치에 맞춰 자막을 갱신한다. **줄이 바뀔 때만** 다시 그린다."""
+        self._apply_video_subtitle_position(pos_ms)
         if self._track is None:
             return
         idx = self._track.index_at(pos_ms)
@@ -609,6 +629,162 @@ class InlinePlayer(QWidget):
         for overlay in self._all_subtitles():
             overlay.set_cue(cue)
         self.current_line_changed.emit(line_index)
+
+    # ── 영상 자막(YouTube 캡션) ────────────────────────────────────
+    # 가사 자막과 **별개 기능**이다: 가사는 노래 정보에서 오고 영상 자막은 그 영상에
+    # 딸린 캡션이다. 두 칸을 동시에 켤 수 있어 원어와 모국어를 나란히 볼 수 있다.
+    # 트랙 목록·내려받기는 네트워크라 QThread에서만 한다(gui/workers.py 규칙).
+
+    def _apply_video_subtitle_position(self, pos_ms: int) -> None:
+        """두 칸의 현재 자막을 함께 갱신한다(내용이 바뀔 때만 다시 그린다)."""
+        if not any(self._vsub_tracks):
+            return
+        texts = tuple(
+            (track.text_at(pos_ms) if track is not None else "")
+            for track in self._vsub_tracks
+        )
+        if texts == self._vsub_texts:
+            return
+        self._vsub_texts = texts
+        for overlay in self._all_subtitles():
+            overlay.set_subtitle_texts(*texts)
+
+    def _load_video_subtitle_list(self) -> None:
+        """이 영상이 제공하는 자막 목록을 백그라운드로 조회한다(캐시 있으면 즉시)."""
+        url = self._video_url
+        if not url:
+            return
+        cached = _VSUB_LIST_CACHE.get(url)
+        if cached is not None:
+            self._on_video_subtitle_list(url, cached)
+            return
+        worker = _SubtitleListWorker(url, self._cookie_opts_for_subtitles())
+        worker.done.connect(self._on_video_subtitle_list)
+        worker.finished.connect(lambda w=worker: retire_thread(w, "done"))
+        track_thread(worker)
+        self._vsub_list_worker = worker
+        worker.start()
+
+    def _cookie_opts_for_subtitles(self) -> dict:
+        """자막 조회용 yt-dlp 옵션(쿠키 등). 없으면 익명으로 — 자막은 대개 공개다."""
+        return dict(getattr(self, "_ydl_opts", None) or {})
+
+    def _on_video_subtitle_list(self, url: str, tracks: list) -> None:
+        if url != self._video_url:
+            return   # 그 사이 다른 영상으로 넘어갔다
+        _VSUB_LIST_CACHE[url] = tracks
+        self._vsub_available = tracks
+        for bar in self._all_bars():
+            bar.set_video_subtitle_tracks(tracks)
+        self._restore_preferred_subtitles()
+
+    def _restore_preferred_subtitles(self) -> None:
+        """지난번에 고른 언어가 이 영상에도 있으면 자동으로 켠다.
+
+        영상마다 다시 고르게 하면 두 줄 자막처럼 '늘 쓰는 설정'이 매번 사라진다.
+        """
+        for slot in (0, 1):
+            lang = self._vsub_pref_lang[slot]
+            if not lang:
+                continue
+            track = next((t for t in self._vsub_available if t.lang == lang), None)
+            if track is not None:
+                self._select_video_subtitle(slot, track.key, save=False)
+
+    def _select_video_subtitle(self, slot: int, key: str, save: bool = True) -> None:
+        """칸 하나의 트랙을 고른다(key가 비면 끈다)."""
+        if slot not in (0, 1):
+            return
+        if not key:
+            self._vsub_keys[slot] = ""
+            self._vsub_tracks[slot] = None
+            self._vsub_texts = ("", "")
+            for bar in self._all_bars():
+                bar.set_video_subtitle_selection(slot, "", self._vsub_langs[slot])
+            for overlay in self._all_subtitles():
+                overlay.set_subtitle_texts(*self._vsub_texts)
+            if save:
+                self._save_subtitle_pref(slot, "")
+            return
+        base = next((t for t in self._vsub_available if t.key == key), None)
+        if base is None:
+            return
+        self._vsub_keys[slot] = key
+        for bar in self._all_bars():
+            bar.set_video_subtitle_selection(slot, key, self._vsub_langs[slot])
+        if save:
+            self._save_subtitle_pref(slot, base.lang)
+        self._fetch_video_subtitle(slot, base)
+
+    def _translate_video_subtitle(self, slot: int, lang: str) -> None:
+        """칸 하나의 자동 번역 대상을 바꾼다(빈 값이면 원본)."""
+        if slot not in (0, 1):
+            return
+        self._vsub_langs[slot] = lang or ""
+        for bar in self._all_bars():
+            bar.set_video_subtitle_selection(slot, self._vsub_keys[slot], self._vsub_langs[slot])
+        key = self._vsub_keys[slot]
+        if not key:
+            # 아직 언어를 고르지 않았다면 첫 트랙(자동 생성 우선)에 번역을 건다 —
+            # '번역만 골랐는데 아무 일도 없다'가 되지 않도록.
+            base = next((t for t in self._vsub_available if t.auto), None)                 or (self._vsub_available[0] if self._vsub_available else None)
+            if base is None:
+                return
+            self._select_video_subtitle(slot, base.key)
+            return
+        base = next((t for t in self._vsub_available if t.key == key), None)
+        if base is not None:
+            self._fetch_video_subtitle(slot, base)
+
+    def _fetch_video_subtitle(self, slot: int, base) -> None:
+        """자막 파일을 백그라운드로 받아 트랙으로 만든다."""
+        from infrastructure.subtitle.youtube_subtitles import translated  # noqa: PLC0415
+
+        lang = self._vsub_langs[slot]
+        track_info = translated(base, lang) if lang else base
+        self._status_lbl.setText("자막을 받는 중…")
+        self._status_lbl.show()
+        self._start_subtitle_fetch(slot, track_info)
+
+    def _start_subtitle_fetch(self, slot: int, track_info) -> None:
+        """자막 내려받기 워커를 띄운다(테스트가 여기만 가로채면 네트워크가 없다)."""
+        worker = _SubtitleFetchWorker(slot, track_info)
+        worker.done.connect(self._on_video_subtitle_cues)
+        worker.finished.connect(lambda w=worker: retire_thread(w, "done"))
+        track_thread(worker)
+        self._vsub_workers[slot] = worker
+        worker.start()
+
+    def _on_video_subtitle_cues(self, slot: int, key: str, cues: list) -> None:
+        if slot not in (0, 1) or key != self._vsub_keys[slot]:
+            return   # 그 사이 다른 트랙을 골랐다
+        self._status_lbl.hide()
+        if not cues:
+            self._show_transient("자막을 가져오지 못했습니다", 2500)
+            return
+        self._vsub_tracks[slot] = SubtitleTrack.from_tuples(cues)
+        self._vsub_texts = ("", "")   # 강제 갱신
+        self._apply_video_subtitle_position(self._player.position())
+
+    def _save_subtitle_pref(self, slot: int, lang: str) -> None:
+        self._vsub_pref_lang[slot] = lang
+        try:
+            settings.save_setting(f"video_subtitle_lang_{slot + 1}", lang)
+        except Exception:
+            logger.exception("자막 언어 설정 저장 실패")
+
+    def _clear_video_subtitles(self) -> None:
+        """다른 영상으로 넘어갈 때 — 이전 영상의 자막이 남지 않게 한다."""
+        self._vsub_available = []
+        self._vsub_keys = ["", ""]
+        self._vsub_tracks = [None, None]
+        self._vsub_texts = ("", "")
+        for bar in self._all_bars():
+            bar.set_video_subtitle_tracks([])
+            for slot in (0, 1):
+                bar.set_video_subtitle_selection(slot, "", self._vsub_langs[slot])
+        for overlay in self._all_subtitles():
+            overlay.set_subtitle_texts("", "")
 
     def _set_subtitle_offset(self, ms: int) -> None:
         if self._track is None:
@@ -661,6 +837,8 @@ class InlinePlayer(QWidget):
         self._current_quality_short = InlinePlayer._last_quality_short
         self._stream_quality_label = ""
         self.set_lyrics(None)   # 이전 영상의 자막이 남지 않게 초기화
+        self._clear_video_subtitles()
+        self._load_video_subtitle_list()
         self._visual_stack.setCurrentIndex(0)
         if thumbnail_pixmap and not thumbnail_pixmap.isNull():
             self._thumb_label.setPixmap(thumbnail_pixmap)
@@ -882,6 +1060,8 @@ class InlinePlayer(QWidget):
         bar = self._fs_win.bar
         # 전체화면 바 → 플레이어 (인라인 바와 동일한 핸들러 재사용)
         bar.play_toggled.connect(self._toggle_play)
+        bar.video_subtitle_selected.connect(self._select_video_subtitle)
+        bar.video_subtitle_translate.connect(self._translate_video_subtitle)
         bar.seek_relative.connect(self._seek_relative)
         bar.seek_to_ms.connect(self._player.setPosition)
         bar.volume_changed.connect(self._on_volume_changed)
@@ -909,6 +1089,12 @@ class InlinePlayer(QWidget):
         self._apply_subtitle_prefs()
         bar.set_subtitle_on(self._subtitle_on)
         bar.set_subtitle_offset_ms(self._track.offset_ms if has else 0)
+        # 영상 자막 목록·선택도 새 바에 그대로 실어야 분리 창에서 고를 수 있다.
+        bar.set_video_subtitle_tracks(self._vsub_available)
+        for slot in (0, 1):
+            bar.set_video_subtitle_selection(
+                slot, self._vsub_keys[slot], self._vsub_langs[slot]
+            )
         bar.subtitle_toggled.connect(self.set_subtitle_enabled)
         bar.subtitle_offset_nudged.connect(self._nudge_subtitle_offset)
         bar.subtitle_sync_here.connect(
@@ -917,6 +1103,7 @@ class InlinePlayer(QWidget):
         bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
         bar.subtitle_prefs_reset.connect(self._reset_subtitle_prefs)
         self._fs_win.subtitle.set_text_visible(self._subtitle_on)
+        self._fs_win.subtitle.set_subtitle_texts(*self._vsub_texts)
         # 현재 줄을 새 창에도 1회 반영
         self._current_line_index = -2
         self._apply_subtitle_position(self._player.position())
@@ -969,6 +1156,8 @@ class InlinePlayer(QWidget):
         bar = self._pip_win.bar
         # PiP 바 → 플레이어 (인라인 바와 동일한 핸들러 재사용)
         bar.play_toggled.connect(self._toggle_play)
+        bar.video_subtitle_selected.connect(self._select_video_subtitle)
+        bar.video_subtitle_translate.connect(self._translate_video_subtitle)
         bar.seek_relative.connect(self._seek_relative)
         bar.seek_to_ms.connect(self._player.setPosition)
         bar.volume_changed.connect(self._on_volume_changed)
@@ -995,6 +1184,12 @@ class InlinePlayer(QWidget):
         self._apply_subtitle_prefs()
         bar.set_subtitle_on(self._subtitle_on)
         bar.set_subtitle_offset_ms(self._track.offset_ms if has else 0)
+        # 영상 자막 목록·선택도 새 바에 그대로 실어야 분리 창에서 고를 수 있다.
+        bar.set_video_subtitle_tracks(self._vsub_available)
+        for slot in (0, 1):
+            bar.set_video_subtitle_selection(
+                slot, self._vsub_keys[slot], self._vsub_langs[slot]
+            )
         bar.subtitle_toggled.connect(self.set_subtitle_enabled)
         bar.subtitle_offset_nudged.connect(self._nudge_subtitle_offset)
         bar.subtitle_sync_here.connect(
@@ -1003,6 +1198,7 @@ class InlinePlayer(QWidget):
         bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
         bar.subtitle_prefs_reset.connect(self._reset_subtitle_prefs)
         self._pip_win.subtitle.set_text_visible(self._subtitle_on)
+        self._pip_win.subtitle.set_subtitle_texts(*self._vsub_texts)
         # 현재 줄을 새 창에도 1회 반영
         self._current_line_index = -2
         self._apply_subtitle_position(self._player.position())

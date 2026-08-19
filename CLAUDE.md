@@ -203,6 +203,9 @@ online_video_clipper/
 │   │   ├── album_providers.py       # ITunesAlbumProvider(무키) — 앨범 자켓·발매일·장르·수록곡. **lookup에 country를 붙이면 수록곡이 통째로 빠진다**(실측)
 │   │   ├── translator.py            # deep-translator 래퍼(ITranslator) — 미설치/실패 시 원문 그대로(graceful)
 │   │   └── lrc.py                   # LRC(가사 타이밍) 파서 — `parse_lrc(text) -> [(시작ms|None, 가사)]`. 다중 타임스탬프 전개·`[offset:]` 반영·메타 태그 제거. 순수 함수라 단위 테스트로 규칙을 고정
+│   ├── subtitle/                    # 영상 자막(YouTube 캡션) — QThread에서만 호출
+│   │   ├── parsers.py               # json3·WebVTT → (시작ms, 끝ms, 텍스트). 순수 함수. 자동 자막의 단어 타이밍 태그 제거 + **밀려 올라가며 반복되는 같은 문장 합치기**(안 하면 화면에 겹쳐 보인다)
+│   │   └── youtube_subtitles.py     # 트랙 목록(`list_tracks`)·내려받기(`fetch_cues`)·자동 번역(`translated` → URL에 `tlang=`). **자동 자막 목록에서 번역본(`tlang=` 있는 항목)을 걸러 낸다** — 안 걸러 내면 수백 개가 나열돼 메뉴를 쓸 수 없다(실측 312개). 원본 자동 자막 키는 `en-en` 꼴이라 `en`으로 정규화해 수동 자막과 중복되지 않게 한다
 │   ├── event_bus.py                 # In-process event dispatcher
 │   └── sync/                        # 클라우드 동기화 인프라 (Phase 2~) — 구현 중
 │       ├── keyring_secret_store.py  # ISecretStore (Windows Credential Manager, 백엔드 부재 시 파일 폴백)
@@ -246,6 +249,7 @@ online_video_clipper/
 │   │   │   ├── tree.py              # `_PlaylistTree`·`_PlaylistPanel`·`_BreadcrumbBar` — 좌측 내비 트리(드래그앤드롭·컨텍스트 메뉴·스피너)
 │   │   │   └── mixins/              # LibraryPanel 동작 묶음 — 런타임 클래스는 하나(상태 공유 방식 불변)
 │   │   │       ├── album.py         # 앨범 보기(그리드·상세·담기·재생)
+│   │   │       ├── mini_player.py   # 지금 재생 중 미니바 상태(재생 유지·복귀·자동 다음곡)
 │   │   │       ├── recommend.py     # 추천 스트립(디바운스 조회·등장/퇴장 연출)
 │   │   │       ├── navigation.py    # 화면 히스토리(스냅샷 복원)·브레드크럼
 │   │   │       ├── detail.py        # 상세 진입/이탈·재생목록(자동 다음곡)
@@ -264,6 +268,7 @@ online_video_clipper/
 │   │   │   ├── related.py           # `RelatedItem`·`_RelatedRow`·`_RelatedList`(연관 영상 + 그 아래 추천 구역)
 │   │   │   ├── song_tab.py          # `_SongTab`·`_LyricRow`·`_LyricsCandidateList`(가사 후보 표)
 │   │   │   ├── text_format.py       # 설명·요약 렌더링 정규식(마크다운·타임스탬프·URL)과 요약 실패 안내 문구
+│   │   │   ├── text_zoom.py         # 요약·가사 글자 배율 — clamp·pt 계산·설정 저장(`detail_text_scale`). 두 영역이 한 배율을 공유한다
 │   │   │   ├── workers.py           # `_GeminiSummaryWorker`
 │   │   │   └── mixins/              # info(제목·태그·설명·메모)·summary·song·files(다운로드/클립)·player
 │   │   ├── album_panel.py           # 앨범 보기 부품 (진입은 툴바 보기 유형 💿 버튼) — `AlbumGrid`(자켓 카드 그리드, 폭에 맞춰 reflow)·`AlbumDetailPanel`(좌: 자켓·설명·▶앨범재생·빠진 곡 찾기 / 우: 수록곡 목록). 수록곡 행(`_TrackRow`)에 **출처 배지**(내 등록/자동 매핑/없음)를 그린다. 자켓은 `_ThumbLoader`(prefix="album")를 재사용해 URL에서 받아 캐시하고, 없으면 대표 영상 썸네일 → ♪ 자리표시자 순으로 폴백
@@ -287,6 +292,8 @@ online_video_clipper/
 │   │   │   ├── stream.py            # `_StreamWorker`·`_stream_playable`·`_FormatProbeWorker` — URL 확보와 사전 검증
 │   │   │   ├── controls.py          # `_ControlBar`·`_TrackSlider`(영상 위에서는 QSS가 안 먹어 직접 그린다)
 │   │   │   └── surfaces.py          # `_VideoArea`·`_VideoView`·`_PipWindow`·`_FullscreenWindow`
+│   │   ├── mini_player_bar.py       # 지금 재생 중 미니바 — 창 하단(상태바 위) 띠. 썸네일·제목·▶⏸·⏭·위치 슬라이더·✕. **재생 주체를 옮기지 않는다** — 라이브러리 상세의 InlinePlayer 상태를 비추고 조작만 되돌려 보낸다(그래서 다른 페이지로 가도 계속 보인다). 클릭하면 보던 상세로 복귀
+│   │   ├── subtitle_track.py        # 영상 자막 트랙 — `SubtitleCue`(시작·**끝**·텍스트)·`SubtitleTrack`(이분 탐색·오프셋). Qt 비의존. 가사(`LyricsTrack`)와 규칙이 다르다: **끝 시각이 있어** 대사가 없는 구간에는 아무것도 뜨지 않는다
 │   │   └── lyrics_overlay.py        # 가사 자막 — `LyricsTrack`(Qt 비의존 순수 로직: 이분 탐색 현재 줄 판정·오프셋 ±30초 clamp) + `LyricsOverlay(QWidget)`(배경 없이 QPainterPath 외곽선 텍스트, 글자 크기는 위젯 높이 비례라 전체화면에서 자동 확대). 폰트는 Pretendard→맑은 고딕→Noto Sans KR 순으로 설치된 것을 고름(`subtitle_font_family`). **`set_notice(text)`/`notice_text`는 조절 피드백 문구**를 위쪽 가운데에 그린다(자막은 아래라 안 겹침) — 전체화면·PiP에는 `InlinePlayer._status_lbl`이 안 보이므로 세 창이 다 가진 이 오버레이가 피드백을 책임진다. 자막이 꺼져 있거나 표시할 줄이 없어도 문구는 그린다. **자막 색(흰 글자/검은 외곽선)은 테마 토큰을 쓰지 않는 의도적 예외** — 앱 테마가 아니라 '어떤 영상 프레임 위에서도 읽히는가'가 기준
 │   ├── themes/
 │   │   ├── manager.py               # ThemeManager 싱글턴 — 전역 QSS 교체, theme_changed 시그널
@@ -578,6 +585,61 @@ online_video_clipper/
   `tests/unit/infrastructure/test_album_provider.py`(요청 파라미터·country 금지·실패 격리),
   `tests/integration/test_albums.py`(캐시·폴백·자동 채우기·앨범 추정),
   `tests/gui/test_album_view.py`(보기 버튼 노출 조건·배지·재생 배선·2장 앨범 행 갱신).
+- **지금 재생 중 미니바** — 상세 화면을 떠나도 **재생 중이면** 멈추지 않고 창 하단
+  띠(`MiniPlayerBar`)로 넘긴다. 멈춰 있었으면 예전처럼 정지한다 — 안 보이는 곳에서
+  소리도 없이 자원만 붙들 이유가 없다. 핵심은 **플레이어를 옮기지 않는다**는 것이다:
+  `VideoDetailWidget`은 `_nav_stack`에 살아 있는 위젯이라 화면을 목록(0)으로 바꿔도
+  `QMediaPlayer`는 계속 재생한다. 그래서 복귀(`mini_open`)는 **다시 불러오는 게 아니라
+  스택 인덱스만 1로 되돌리는 일**이고, 그 덕에 재생이 한 번도 끊기지 않는다(위치·화질·
+  자막 상태까지 그대로). 여기에 재로드가 끼면 그 장점이 통째로 사라지므로
+  `tests/gui/test_mini_player.py`가 "다시 불러오지 않는다"를 못박는다. 띠는 창 바닥
+  (상태바 위)에 두어 다운로드·설정 페이지에서도 보이며, 위치·재생 여부는 신호가 아니라
+  **0.5초 타이머로 훑는다**(`positionChanged`는 초당 수십 번 온다). 미니바로 듣는 중의
+  자동 다음곡은 `stay_on_list=True`로 **화면을 뺏지 않고** 다음 곡만 갈아 끼우며, 이때
+  연관 목록(재생목록)을 그대로 넘겨야 그다음 곡으로도 이어진다(`related=None`으로 열면
+  지금 보고 있는 카테고리 목록으로 갈아타 버린다).
+- **영상 자막 (언어 선택 · 자동 번역 · 두 줄 동시 표시)** — 영상에 딸린 YouTube 캡션을
+  컨트롤바 `CC` 메뉴에서 고른다. **가사 자막(💬)과는 별개 기능**이다(가사는 노래 정보에서
+  오고 자막은 그 영상의 캡션이다). 칸이 **둘**이라 원어와 모국어를 동시에 볼 수 있고,
+  칸마다 '자동 번역' 대상을 따로 고른다. 렌더는 기존 `LyricsOverlay`를 그대로 쓰되
+  `set_subtitle_texts(primary, secondary)`로 **한 번에** 세팅한다(따로 넣으면 짝이 어긋난
+  화면이 한 프레임 스친다). 가사와 동시에 켜면 가사가 위, 자막이 아래에 놓인다.
+  **번역은 우리가 문장을 번역하지 않고 YouTube의 번역 트랙을 받는다**(캡션 URL에
+  `tlang=<코드>`). 자막 한 편을 `deep-translator`로 돌리면 수백 번 왕복이 생기고 문맥이
+  끊겨 품질도 떨어진다 — 가사 번역(짧은 한 덩어리)과는 사정이 다르다. 번역본을 못 받으면
+  **원본으로 한 번 더 시도**한다(번역이 없다고 자막 자체를 잃을 이유는 없다).
+  **자동 자막 목록에서 번역본을 걸러 내는 것이 필수**다: 실측 결과 한 영상의
+  `automatic_captions`에 312개(번역 가능한 모든 언어)가 들어 있었고, 그대로 나열하면
+  원래 언어가 무엇인지도 알 수 없다 — URL에 `tlang=`이 있으면 번역본으로 보고 제외한다.
+  원본 자동 자막의 키는 `en-en`·`de-de` 꼴이라 `en`으로 정규화해야 수동 자막 `en`과
+  중복되지 않는다(실측으로 발견). 트랙 목록(yt-dlp)·파일 내려받기(HTTP)는 모두 QThread에서
+  하고 영상별로 캐시하며, 늦게 도착한 결과는 그 사이 다른 트랙·영상으로 넘어갔으면 버린다.
+  지난번에 고른 언어는 설정에 남아 **다음 영상에도 같은 언어가 있으면 이어서 켠다**
+  (영상마다 다시 고르게 하면 '늘 쓰는 설정'이 매번 사라진다). 회귀 테스트:
+  `tests/unit/infrastructure/test_subtitle_parsers.py`(자동 자막의 단어 타이밍 태그·반복 줄),
+  `tests/unit/infrastructure/test_youtube_subtitles.py`(번역본 제외·키 정규화·번역 폴백),
+  `tests/gui/test_video_subtitles.py`(두 칸 동시·빈 구간·늦은 결과 폐기).
+- **추천 영상 미리 받기(무한 스크롤)** — 스트립이 오른쪽 끝에 **닿기 전**(카드 두 장쯤 앞)
+  다음 묶음을 백그라운드로 받아 이어 붙인다. 끝까지 밀고 나서 받으면 빈 공백을 보며
+  기다리게 된다. **씨앗을 새로 뽑지 않는다** — `derive_seed_queries`는 목록당 최대 3개
+  (제목 키워드·최다 태그·최다 채널)뿐이라 더 뽑을 검색어가 없다. 대신 같은 검색어를
+  **더 깊이**(`per_query`를 페이지마다 늘려) 파고 이미 보여 준 URL을 `exclude_urls`로
+  걸러 새것만 남긴다. 결과가 하나도 없으면 그 씨앗은 바닥난 것으로 보고 더 요청하지
+  않는다(스크롤할 때마다 같은 검색을 반복하면 조용히 네트워크만 축낸다). 추가분 워커는
+  **본 조회와 분리**돼 있어 세대(`_gen`)를 올리지 않는다 — 올리면 진행 중인 첫 조회 결과가
+  버려진다. 결과가 도착하면 `_more_worker` 자리를 **즉시** 비운다: 스레드가 끝나기를
+  기다리면 그 사이 들어온 다음 요청이 '조회 중'으로 오인돼 조용히 버려진다(실제로 이
+  경합이 테스트를 간헐 실패시켰다).
+- **읽는 글(요약·가사) 글자 크기** — 요약과 가사는 읽으라고 있는 글인데 크기가 코드에
+  박혀 있었다. `Ctrl` + `+`/`-`로 조절하고 `Ctrl+0` 또는 각 헤더의 **배율 버튼**(현재 %를
+  표시하며 누르면 기본값)으로 되돌린다. 단일 키는 플레이어 몫이라 쓰지 않는다(입력 규칙).
+  배율은 **두 영역이 공유**하고(글자 크기는 화면 설정이지 영역별 취향이 아니다) 전역
+  설정(`detail_text_scale`)에 저장한다. 가사는 줄마다 스타일시트로 크기를 주므로 배율이
+  바뀌면 다시 그리되 **현재 강조 줄은 유지**한다. 0.1 누적이 `1.97000…2`로 저장되지 않도록
+  `clamp_scale`이 소수 둘째 자리에서 끊는다(자막 배율에서 겪은 문제).
+- **재생 컨트롤 아이콘 크기** — 글리프 13px/상자 24px은 큰 화면에서 알아보기 어려웠다.
+  26px/48px로 키우고 **바 높이도 72 → 96으로 함께 늘렸다** — 높이를 그대로 두면 진행
+  슬라이더와 버튼 행이 서로를 밀어낸다. 화질 배지·시간 라벨도 함께 키워 균형을 맞췄다.
 - **이어보기(재생 위치)** — `videos.last_position_ms`·`last_played_at`. **기기마다 보던
   지점이 다르므로 동기화 캡처 대상이 아니다**(view_count와 같은 취급). 판정은 도메인
   규칙(`VideoAggregate.update_playback_position`): 15초 미만은 기록하지 않고(잠깐 눌렀다 만 것),
@@ -685,6 +747,8 @@ online_video_clipper/
   다른 페이지를 볼 때 발동하지 않게 한다.
 - **툴팁에 적은 단축키는 실제로 동작해야 한다** — 상세 뒤로가기 버튼이 "(Esc)"라고
   적어 두고 Esc를 처리하지 않던 적이 있다.
+- **읽는 글의 크기는 사용자가 정한다.** 요약·가사 같은 '읽는 영역'에 글자 크기를 코드에
+  박지 말고 `gui/panels/detail/text_zoom.py`의 배율을 곱한다(Ctrl +/- · Ctrl+0 · 배율 버튼).
 - **마우스 ‹/›는 화면 단위가 아니라 창 단위로 받는다.** 위젯마다 이벤트 필터를 걸면 새 화면을
   추가할 때마다 조용히 죽는다 — 앱 전역 필터 + "같은 창인가" 판정으로 통일한다(모달 대화상자는 제외).
   대신 전역 필터에 붙는 다른 분기(Ctrl+휠 등)는 적용 범위를 명시적으로 좁힌다.
