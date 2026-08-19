@@ -38,7 +38,12 @@ from domain.song.album import (
     normalize_name,
     pick_official_audio,
 )
-from domain.song.album_repository import AlbumCacheRecord, AlbumTrackLink, IAlbumRepository
+from domain.song.album_repository import (
+    TRACK_LINK_REJECTED,
+    AlbumCacheRecord,
+    AlbumTrackLink,
+    IAlbumRepository,
+)
 from domain.song.ports import AlbumTrackInfo
 from domain.song.repositories import ISongRepository
 
@@ -71,6 +76,10 @@ class FillAlbumTracksCommand:
     category_ids: list[UUID] = field(default_factory=list)
     cookie_opts: dict = field(default_factory=dict)
     max_tracks: int = 30
+    # 사용자가 지운(거부한) 자리도 다시 찾을지. 앨범을 열 때 도는 자동 채우기는 False —
+    # 그러지 않으면 방금 지운 음원이 곧바로 되살아난다. '빠진 곡 찾기'를 직접 누른
+    # 경우에만 True로 다시 시도한다.
+    retry_rejected: bool = False
 
 
 @dataclass
@@ -468,6 +477,14 @@ class FillAlbumTracksHandler:
         if detail is None:
             return 0
         missing = [t for t in detail.tracks if t.origin == TRACK_ORIGIN_MISSING]
+        if not cmd.retry_rejected:
+            # 사용자가 지운 자리는 건너뛴다 — 그러지 않으면 앨범을 다시 열 때마다
+            # 같은 음원이 되살아나 '지우기'가 무력해진다(실측).
+            rejected = {
+                slot for slot, link in self._albums.get_track_links(cmd.album_key).items()
+                if link.origin == TRACK_LINK_REJECTED
+            }
+            missing = [t for t in missing if t.slot not in rejected]
         if not missing:
             return 0
         filled = 0
@@ -546,16 +563,21 @@ class RemoveAlbumTrackLinkHandler:
     """자동 매핑된 수록곡 연결을 지운다 — 그 수록곡은 다시 '없음'으로 돌아간다.
 
     앨범 상세의 수정 모드에서 잘못 붙은 음원(동명이곡·커버 등)을 사용자가 직접 지울 때
-    쓴다. DB 삭제 한 줄이라 네트워크 없이 즉시 처리된다.
+    쓴다. DB 한 줄 갱신이라 네트워크 없이 즉시 처리된다.
+
+    **행을 지우지 않고 '거부됨'으로 표시한다** — 그냥 지우면 앨범을 다시 열 때 도는
+    자동 채우기가 같은 영상을 도로 붙여 지우는 기능이 무력해진다(실측). 다시 찾고
+    싶으면 '빠진 곡 찾기'를 직접 누르면 된다.
     """
 
     def __init__(self, album_repo: IAlbumRepository) -> None:
         self._albums = album_repo
 
     def handle(self, cmd: RemoveAlbumTrackLinkCommand) -> None:
-        self._albums.delete_track_link(cmd.album_key, cmd.disc_no, cmd.track_no)
+        self._albums.reject_track_link(cmd.album_key, cmd.disc_no, cmd.track_no)
         logger.info(
-            "자동 매핑 삭제: %s (디스크%d-트랙%d)", cmd.album_key, cmd.disc_no, cmd.track_no
+            "자동 매핑 삭제(거부 표시): %s (디스크%d-트랙%d)",
+            cmd.album_key, cmd.disc_no, cmd.track_no,
         )
 
 

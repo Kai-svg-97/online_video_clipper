@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from domain.song.album_repository import (
+    TRACK_LINK_REJECTED,
     AlbumCacheRecord,
     AlbumTrackLink,
     IAlbumRepository,
@@ -190,11 +191,19 @@ class SqliteAlbumRepository(IAlbumRepository):
         with self._db.connection() as conn:
             conn.execute("DELETE FROM album_track_links WHERE album_key=?", (album_key,))
 
-    def delete_track_link(self, album_key: str, disc_no: int, track_no: int) -> None:
+    def reject_track_link(self, album_key: str, disc_no: int, track_no: int) -> None:
+        # 행을 지우지 않고 스트림 정보만 비운 채 origin을 rejected로 남긴다 —
+        # 지우면 다음 자동 채우기가 같은 영상을 도로 붙인다(album_repository 설명 참고).
         with self._db.connection() as conn:
             conn.execute(
-                "DELETE FROM album_track_links WHERE album_key=? AND disc_no=? AND track_no=?",
-                (album_key, int(disc_no), int(track_no)),
+                "INSERT INTO album_track_links(album_key, disc_no, track_no, track_title,"
+                " stream_url, stream_title, stream_channel, stream_yt_id, duration_sec,"
+                " origin, created_at)"
+                " VALUES (?,?,?,'','','','','',NULL,?,?)"
+                " ON CONFLICT(album_key, disc_no, track_no) DO UPDATE SET"
+                "  stream_url='', stream_title='', stream_channel='', stream_yt_id='',"
+                "  duration_sec=NULL, origin=excluded.origin",
+                (album_key, int(disc_no), int(track_no), TRACK_LINK_REJECTED, _now_iso()),
             )
 
     # ── 앨범 추정 조회 기록 ─────────────────────────────────────────

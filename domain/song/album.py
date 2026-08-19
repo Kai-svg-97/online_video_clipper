@@ -218,10 +218,47 @@ _REJECT_KEYWORDS = (
 )
 
 
+# ASCII 키워드는 **단어 경계**로 찾는다. 부분문자열로 찾으면 "Amrit"의 `mr`,
+# "Alive"의 `live`처럼 멀쩡한 제목이 걸려 정답 후보가 조용히 버려진다(실측).
+# 한글 키워드는 띄어쓰기 없이 붙는 일이 흔해("영상리액션") 경계를 쓰면 오히려 놓치므로
+# 그대로 부분문자열로 찾는다.
+_REJECT_PATTERNS = tuple(
+    (kw, re.compile(rf"\b{re.escape(kw)}\b" if kw.isascii() else re.escape(kw)))
+    for kw in _REJECT_KEYWORDS
+)
+
+
 def _has_extraneous_reject_keyword(candidate_title: str, target_title: str) -> bool:
     cand = (candidate_title or "").lower()
     target = (target_title or "").lower()
-    return any(kw in cand and kw not in target for kw in _REJECT_KEYWORDS)
+    return any(
+        pattern.search(cand) and not pattern.search(target)
+        for _kw, pattern in _REJECT_PATTERNS
+    )
+
+
+def _title_variants(title: str) -> list[str]:
+    """후보 제목과 견줄 대상 제목의 표기 변형들(정규화 상태).
+
+    외부(iTunes) 수록곡 제목에는 괄호로 감싸지 않은 꼬리표가 붙는다 — 예:
+    ``"Enemy (with JID) - from the series Arcane League of Legends"``. 정규화는
+    괄호만 걷어내므로(제목 속 하이픈을 지키기 위해 `" - "`는 자르지 않는다) 전체
+    문자열로 견주면 실제 공식 영상(``"Imagine Dragons, JID - Enemy"``)조차 **일치하지
+    않아 영영 '없음'으로 남는다**(실측). 그래서 `" - "` 앞부분도 후보로 함께 본다.
+    """
+    variants: list[str] = []
+    for raw in (title, (title or "").split(" - ")[0]):
+        norm = normalize_name(raw)
+        if norm and norm not in variants:
+            variants.append(norm)
+    return variants
+
+
+def _title_matches(candidate_norm: str, variants: list[str]) -> bool:
+    """후보 제목이 대상 곡을 가리키는지 — 완전 일치 또는 3글자 이상 포함."""
+    return any(
+        candidate_norm == v or (len(v) >= 3 and v in candidate_norm) for v in variants
+    )
 
 
 def _is_topic_channel(channel: str) -> bool:
@@ -251,8 +288,8 @@ def pick_official_audio(
     (공식 음원 채널임을 강하게 시사), 곡 길이가 얼마나 가까운지로 점수를 매겨 가장
     그럴듯한 것을 고른다.
     """
-    target = normalize_name(title)
-    if not target:
+    variants = _title_variants(title)
+    if not variants:
         return None
     artist_norm = normalize_name(primary_artist(artist)) if artist else ""
 
@@ -262,9 +299,7 @@ def pick_official_audio(
         if not entry.get("url") or _has_extraneous_reject_keyword(raw_title, title):
             continue
         cand_norm = normalize_name(raw_title)
-        if not cand_norm:
-            continue
-        if cand_norm != target and not (len(target) >= 3 and target in cand_norm):
+        if not cand_norm or not _title_matches(cand_norm, variants):
             continue
         duration = entry.get("duration_sec")
         if expected_duration_sec and duration:

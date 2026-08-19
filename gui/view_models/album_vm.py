@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
@@ -169,8 +170,13 @@ class AlbumViewModel(QObject):
 
     # ── 자동 채우기 ─────────────────────────────────────────────────
     def fill_missing_tracks(self, album_key: str, category_id=None, category_ids=None,
-                            cookie_opts=None) -> None:
-        """라이브러리에 없는 수록곡에 official 음원 영상을 붙인다(곡마다 검색 1회)."""
+                            cookie_opts=None, retry_rejected: bool = False) -> None:
+        """라이브러리에 없는 수록곡에 official 음원 영상을 붙인다(곡마다 검색 1회).
+
+        ``retry_rejected``는 사용자가 '빠진 곡 찾기'를 **직접 누른** 경우에만 True다 —
+        앨범을 열 때 자동으로 도는 채우기가 사용자가 방금 지운 음원을 도로 붙이면
+        지우는 기능이 무력해진다.
+        """
         if self._fill is None or not album_key:
             self.fill_finished.emit(0)
             return
@@ -182,6 +188,7 @@ class AlbumViewModel(QObject):
             category_id=category_id,
             category_ids=list(category_ids or []),
             cookie_opts=dict(cookie_opts or {}),
+            retry_rejected=retry_rejected,
         )
         worker = _FillWorker(lambda **kw: self._fill.handle(cmd, **kw), self)
         worker.track_filled.connect(self.track_filled)
@@ -285,6 +292,13 @@ class AlbumViewModel(QObject):
             artist=target.artist,
             duration_sec=target.duration_sec,
             origin=TRACK_ORIGIN_MISSING,
+        )
+        # 들고 있는 상세도 함께 갈아 끼운다 — 앨범 재생·수록곡 클릭이 `self.detail`을
+        # 그대로 쓰므로(mixins/album.py), 여기서 안 고치면 방금 지운 음원이 재생목록에
+        # 그대로 남아 재생된다.
+        self._detail = replace(
+            self._detail,
+            tracks=[missing if t.slot == missing.slot else t for t in self._detail.tracks],
         )
         self.track_removed.emit(missing)
 

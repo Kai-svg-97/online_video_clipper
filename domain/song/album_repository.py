@@ -35,6 +35,15 @@ class AlbumCacheRecord:
     fetched_at: str = ""
 
 
+# 자동 매핑 링크의 origin 값.
+TRACK_LINK_AUTO = "auto"          # 자동 검색으로 붙인 스트리밍 영상
+# 사용자가 "이 음원은 이 곡이 아니다"라고 지운 자리. 행을 지우지 않고 이 표시로 남기는
+# 이유는, 그냥 지우면 **앨범을 다시 열 때 자동 채우기가 같은 영상을 도로 붙이기**
+# 때문이다(실측 — 지우는 기능이 사실상 무력했다). 사용자가 '빠진 곡 찾기'를 직접
+# 누르면 그때만 다시 시도한다.
+TRACK_LINK_REJECTED = "rejected"
+
+
 @dataclass(slots=True)
 class AlbumTrackLink:
     """라이브러리에 없는 수록곡에 자동으로 붙인 스트리밍 영상.
@@ -83,11 +92,13 @@ class IAlbumRepository(ABC):
         ...
 
     @abstractmethod
-    def delete_track_link(self, album_key: str, disc_no: int, track_no: int) -> None:
-        """자동 매핑 1건만 지운다 — 잘못 붙은 음원을 사용자가 직접 제거할 때 쓴다.
+    def reject_track_link(self, album_key: str, disc_no: int, track_no: int) -> None:
+        """자동 매핑 1건을 '거부됨'으로 표시한다(잘못 붙은 음원을 사용자가 제거).
 
-        지우면 그 수록곡은 다시 '없음'으로 돌아가며, 다음에 '빠진 곡 찾기'를 누르면
-        재검색 대상이 된다.
+        스트림 정보를 비워 그 수록곡은 다시 '없음'으로 보이지만, 행 자체는
+        ``origin=rejected``로 남는다 — 행을 지워 버리면 앨범을 다시 열 때 자동
+        채우기가 같은 영상을 도로 붙인다. 사용자가 '빠진 곡 찾기'를 직접 누를 때만
+        다시 시도한다.
         """
         ...
 

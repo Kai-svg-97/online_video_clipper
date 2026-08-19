@@ -35,6 +35,7 @@ from domain.library.entities import Category
 from domain.library.value_objects import VideoUrl
 from domain.song.aggregates import SongInfoAggregate
 from domain.song.album import make_album_key
+from domain.song.album_repository import TRACK_LINK_AUTO, TRACK_LINK_REJECTED
 from domain.song.ports import AlbumMetadata, AlbumTrackInfo
 from infrastructure.persistence.database import Database
 from infrastructure.persistence.sqlite_album_repository import SqliteAlbumRepository
@@ -568,9 +569,63 @@ class TestRemoveTrackLink:
             RemoveAlbumTrackLinkCommand(album_key=key, disc_no=1, track_no=2)
         )
 
-        remaining = albums.get_track_links(key)
-        assert (1, 2) not in remaining
-        assert (1, 3) in remaining   # "이런 엔딩"은 그대로 남아 있다
+        links = albums.get_track_links(key)
+        # 지운 자리는 '거부됨' 표시로 남는다(행을 지우면 자동 채우기가 되살린다).
+        assert links[(1, 2)].origin == TRACK_LINK_REJECTED
+        assert links[(1, 2)].stream_url == ""
+        assert links[(1, 3)].origin == TRACK_LINK_AUTO   # "이런 엔딩"은 그대로다
+
+    def test_지운_곡은_앨범을_다시_열어도_되살아나지_않는다(self, repos):
+        """자동 채우기는 앨범을 열 때마다 도므로, 그냥 지우면 같은 음원이 곧바로
+        되돌아와 '지우기'가 사실상 무력했다(실측으로 확인한 결함)."""
+        videos, songs, albums = repos
+        cat = Category.create("Music")
+        videos.save_category(cat)
+        _add_song(videos, songs, "https://youtu.be/p1", "IU - Palette",
+                  artist="IU", album="Palette", song_title="Palette", category_id=cat.id)
+        detail_handler = GetAlbumDetailHandler(
+            videos, songs, albums, _StubProvider(album=_palette_meta())
+        )
+        key = make_album_key("IU", "Palette")
+        media = _StubMedia(unique=True)
+        filler = FillAlbumTracksHandler(detail_handler, albums, media)
+        filler.handle(FillAlbumTracksCommand(album_key=key, category_id=cat.id))
+        RemoveAlbumTrackLinkHandler(albums).handle(
+            RemoveAlbumTrackLinkCommand(album_key=key, disc_no=1, track_no=2)
+        )
+
+        # 앨범 재진입 = 자동 채우기 재실행(사용자 조작 없음)
+        filler.handle(FillAlbumTracksCommand(album_key=key, category_id=cat.id))
+
+        detail = detail_handler.handle(GetAlbumDetailQuery(album_key=key, category_id=cat.id))
+        by_slot = {t.slot: t for t in detail.tracks}
+        assert by_slot[(1, 2)].origin == TRACK_ORIGIN_MISSING
+
+    def test_빠진_곡_찾기를_직접_누르면_다시_시도한다(self, repos):
+        """사용자가 명시적으로 요청한 경우다 — 거부 표시를 넘어 재검색한다."""
+        videos, songs, albums = repos
+        cat = Category.create("Music")
+        videos.save_category(cat)
+        _add_song(videos, songs, "https://youtu.be/p1", "IU - Palette",
+                  artist="IU", album="Palette", song_title="Palette", category_id=cat.id)
+        detail_handler = GetAlbumDetailHandler(
+            videos, songs, albums, _StubProvider(album=_palette_meta())
+        )
+        key = make_album_key("IU", "Palette")
+        media = _StubMedia(unique=True)
+        filler = FillAlbumTracksHandler(detail_handler, albums, media)
+        filler.handle(FillAlbumTracksCommand(album_key=key, category_id=cat.id))
+        RemoveAlbumTrackLinkHandler(albums).handle(
+            RemoveAlbumTrackLinkCommand(album_key=key, disc_no=1, track_no=2)
+        )
+
+        filler.handle(
+            FillAlbumTracksCommand(album_key=key, category_id=cat.id, retry_rejected=True)
+        )
+
+        detail = detail_handler.handle(GetAlbumDetailQuery(album_key=key, category_id=cat.id))
+        by_slot = {t.slot: t for t in detail.tracks}
+        assert by_slot[(1, 2)].origin == TRACK_ORIGIN_AUTO
 
 
 class TestAddAlbumTracks:

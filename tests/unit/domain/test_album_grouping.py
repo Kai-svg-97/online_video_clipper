@@ -262,3 +262,34 @@ class TestPickOfficialAudio:
 
     def test_빈_후보_목록은_None이다(self):
         assert pick_official_audio([], title="밤편지") is None
+
+    def test_외부_제목의_꼬리표가_붙어도_찾는다(self):
+        """iTunes 수록곡 제목에는 괄호 밖 꼬리표가 붙는다 —
+        "Enemy (with JID) - from the series Arcane…". 전체 문자열로만 견주면 실제
+        공식 영상조차 일치하지 않아 영영 '없음'으로 남는다(실측)."""
+        target = "Enemy (with JID) - from the series Arcane League of Legends"
+        candidates = [self._entry("Imagine Dragons, JID - Enemy (from the series Arcane)",
+                                  channel="Imagine Dragons", duration_sec=173)]
+
+        assert pick_official_audio(candidates, title=target,
+                                   artist="Imagine Dragons") is not None
+
+    def test_배제_키워드는_단어_단위로_본다(self):
+        """부분문자열로 찾으면 "Amrit"의 `mr`, "Alive"의 `live`처럼 멀쩡한 제목이
+        걸려 정답 후보가 조용히 버려진다(실측)."""
+        amrit = [self._entry("Bones (Official Audio) | Amrit Records", duration_sec=174)]
+        assert pick_official_audio(amrit, title="Bones", artist="Imagine Dragons") is not None
+
+        alive = [self._entry("Stayin' Alive (Official Audio)", channel="Bee Gees - Topic")]
+        assert pick_official_audio(alive, title="Stayin' Alive", artist="Bee Gees") is not None
+
+    def test_단어_단위여도_진짜_라이브는_배제한다(self):
+        candidates = [self._entry("Bones - Live at Wembley", duration_sec=180)]
+
+        assert pick_official_audio(candidates, title="Bones", artist="Imagine Dragons") is None
+
+    def test_한글_키워드는_붙여_써도_잡는다(self):
+        """한글은 띄어쓰기 없이 붙는 일이 흔하다("영상리액션") — 경계로 찾으면 놓친다."""
+        candidates = [self._entry("IU - 밤편지 영상리액션", duration_sec=254)]
+
+        assert pick_official_audio(candidates, title="밤편지", artist="IU") is None

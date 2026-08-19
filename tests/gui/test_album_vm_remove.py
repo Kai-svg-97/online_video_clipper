@@ -66,6 +66,23 @@ class TestRemoveTrackLink:
         assert seen[0].duration_sec == 200
         assert seen[0].stream_url == ""   # 스트림 정보는 지워진다
 
+    def test_들고_있는_상세도_함께_갱신한다(self, qapp_instance):
+        """앨범 재생·수록곡 클릭이 `vm.detail`을 그대로 쓴다 — 여기서 갱신하지 않으면
+        방금 지운 음원이 재생목록에 그대로 남아 재생된다."""
+        vm = _vm(MagicMock())
+        vm._detail = _detail_with(
+            AlbumTrackDTO(track_no=1, title="A", origin=TRACK_ORIGIN_LIBRARY),
+            AlbumTrackDTO(track_no=2, title="B", origin=TRACK_ORIGIN_AUTO,
+                          stream_url="https://x/wrong"),
+        )
+
+        vm.remove_track_link(disc_no=1, track_no=2)
+
+        by_slot = {t.slot: t for t in vm.detail.tracks}
+        assert by_slot[(1, 2)].origin == TRACK_ORIGIN_MISSING
+        assert by_slot[(1, 2)].stream_url == ""
+        assert by_slot[(1, 1)].origin == TRACK_ORIGIN_LIBRARY   # 나머지는 그대로
+
     def test_해당_슬롯이_없으면_아무_일도_하지_않는다(self, qapp_instance):
         handler = MagicMock()
         vm = _vm(handler)

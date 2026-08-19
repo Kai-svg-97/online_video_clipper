@@ -584,7 +584,14 @@ online_video_clipper/
   위험 키워드가 있으면 배제(**대상 곡 제목 자체에 있는 표기는 예외** — 정식 발매곡이
   "Song (Remix)"면 후보도 당연히 그 표기를 담고 있어야 하므로) ② 정규화한 제목이 실제로
   그 곡을 가리키는지 확인(완전 일치 또는 3글자 이상 부분 포함) ③ iTunes가 준 곡 길이와
-  크게 다르면(다른 버전·컴필레이션 추정) 배제. 살아남은 후보 중에서는 가수 이름이
+  크게 다르면(다른 버전·컴필레이션 추정) 배제.
+  **①의 키워드 검사는 ASCII만 단어 경계(``)로 한다** — 부분문자열로 찾으면 "Amrit"의
+  `mr`, "Alive"의 `live`가 걸려 정답 후보가 조용히 버려진다(실측). 한글은 띄어쓰기 없이
+  붙는 일이 흔해("영상리액션") 경계를 쓰면 오히려 놓치므로 부분문자열 그대로 둔다.
+  **②는 제목 변형(`_title_variants`)을 함께 본다** — iTunes 수록곡 제목에는 괄호 밖
+  꼬리표가 붙어("Enemy (with JID) - from the series Arcane…") 전체 문자열로만 견주면
+  실제 공식 영상조차 일치하지 않아 영영 '없음'으로 남는다(실측). 정규화는 제목 속
+  하이픈을 지키려고 `" - "`를 자르지 않으므로, 여기서 `" - "` 앞부분을 변형으로 추가한다. 살아남은 후보 중에서는 가수 이름이
   보이는지, YouTube가 자동 생성하는 `<가수> - Topic` 채널인지(공식 음원임을 강하게
   시사), 곡 길이가 얼마나 가까운지로 점수를 매겨 가장 그럴듯한 것을 고른다. 검색
   풀은 검증으로 걸러질 것을 감안해 `_SEARCH_POOL`(8)로 넉넉히 받는다(한 번의
@@ -594,10 +601,17 @@ online_video_clipper/
   누르면(누르기 전엔 완전히 숨겨져 있다) **자동 매핑(AUTO) 행에만** 삭제(✕) 버튼이
   뜬다(`_TrackRow.set_edit_mode` — 내 라이브러리 영상은 훨씬 무거운 동작이라 대상이
   아니고, '없음'은 지울 게 없다). 클릭하면 `RemoveAlbumTrackLinkHandler`가
-  `album_track_links`에서 그 (disc_no, track_no) 한 줄만 지우고(`IAlbumRepository.
-  delete_track_link`) DB 삭제뿐이라 QThread 없이 즉시 처리되며(`AlbumViewModel.
-  remove_track_link`), 그 슬롯만 '없음'으로 되돌린 DTO를 실어 화면 한 자리만
-  갱신한다(전체 재조회 없음). 다른 앨범으로 넘어가면 수정 모드는 자동으로 꺼진다
+  그 (disc_no, track_no) 행을 **지우지 않고 `origin=rejected`로
+  표시**한다(`IAlbumRepository.reject_track_link`, 스트림 정보는 비운다). **행을 지우면
+  앨범을 다시 열 때 자동 채우기가 같은 영상을 도로 붙여 지우는 기능이 무력해진다**
+  (실측 — `_on_album_detail_ready`가 `missing_count > 0`이면 매번 채우기를 돌린다).
+  그래서 `FillAlbumTracksHandler`는 `retry_rejected=False`(앨범 열 때 도는 자동
+  채우기)면 거부된 슬롯을 건너뛰고, 사용자가 **'빠진 곡 찾기'를 직접 누른 경우에만**
+  `retry_rejected=True`로 다시 시도한다. DB 한 줄 갱신뿐이라 QThread 없이 즉시
+  처리되며(`AlbumViewModel.remove_track_link`), 그 슬롯만 '없음'으로 되돌린 DTO를 실어
+  화면 한 자리만 갱신한다(전체 재조회 없음). **VM이 들고 있는 `detail`도 함께 갈아
+  끼운다** — 앨범 재생·수록곡 클릭이 `vm.detail`을 그대로 쓰므로, 안 고치면 방금 지운
+  음원이 재생목록에 남아 그대로 재생된다. 다른 앨범으로 넘어가면 수정 모드는 자동으로 꺼진다
   (`AlbumDetailPanel.set_detail`) — 켜진 채로 남으면 새로 연 앨범에서 실수로 누를 수 있다.
   앨범 값이 빈 노래는 `ResolveUnknownAlbumsHandler`가 가수·제목으로 앨범을 추정해 `apply_fetched`로
   채우고(다음 조회부터 제 앨범으로 이동), 실패한 곡은 `album_lookup_state`에 남겨 **화면을 열

@@ -324,9 +324,10 @@ class AlbumViewMixin:
     def _on_album_fill_requested(self, album_key: str) -> None:
         if self._album_vm is None or not album_key:
             return
+        # 사용자가 직접 누른 경우다 — 지운(거부한) 자리도 다시 찾는다.
         self._album_vm.fill_missing_tracks(
             album_key, category_id=self._current_cat_id,
-            category_ids=self._album_category_ids(),
+            category_ids=self._album_category_ids(), retry_rejected=True,
         )
 
     def _album_related_items(self, detail) -> list:
