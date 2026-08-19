@@ -140,7 +140,7 @@ online_video_clipper/
 │       ├── entities.py              # SongInfo(가수·앨범·제목·발매년도·가사·is_song·manual_fields·`lyrics_offset_ms`(자막 싱크 보정)·`is_synced` 프로퍼티(시각 있는 줄 존재 여부)) + LyricsSource(출처 레지스트리)
 │       ├── aggregates.py            # SongInfoAggregate — apply_fetched(수동편집 보존)·edit_field·edit_lyrics(줄 수 같으면 기존 타이밍 유지)·set_lyrics_offset(±30초 clamp, 공개 상수 `MAX_LYRICS_OFFSET_MS`)
 │       ├── repositories.py          # ISongRepository (+ 가사 출처 CRUD)
-│       ├── album.py                 # 앨범 그루핑 순수 규칙 — normalize_name·make_album_key(자리표시자 "null" 제외)·group_songs_into_albums·match_track_to_songs·**earliest_registered**(앨범 식별의 앵커 = 가장 먼저 등록한 곡)·**pick_official_audio**(자동 채우기 후보 검증 — 커버·리액션·1시간 루프·동명이곡 배제 + Topic 채널/가수/길이 근접도 점수). I/O 없음
+│       ├── album.py                 # 앨범 그루핑 순수 규칙 — normalize_name·make_album_key(자리표시자 "null" 제외)·album_key_artist(키 형식을 아는 유일한 곳)·group_songs_into_albums·match_track_to_songs·**earliest_registered**(앨범 식별의 앵커 = 가장 먼저 등록한 곡)·**pick_official_audio**(자동 채우기 후보 검증 — 커버·리액션·1시간 루프·동명이곡 배제. **가수 일치는 점수가 아니라 통과 조건**)·link_artist_matches(저장된 매핑 재검증). I/O 없음
 │       ├── album_repository.py      # IAlbumRepository + AlbumCacheRecord·AlbumTrackLink (파생 캐시 저장소 인터페이스)
 │       ├── ports.py                 # ILyricsProvider(`fetch` 1건)·**ILyricsSearchProvider**(`search` 다건 — 후보 목록용 선택 확장)·ITranslator(Protocol) + LyricsResult(`popularity`=출처 조회수 0이면 지표 없음, `duration_sec`=곡 길이) + `DEFAULT_LYRICS_SEARCH_LIMIT`(출처당 후보 상한, 0=무제한)
 │       └── events.py                # SongInfoUpdated
@@ -583,7 +583,8 @@ online_video_clipper/
   순수 함수라 네트워크 없이 판정한다: ① 후보 제목에 커버·리믹스·라이브 등
   위험 키워드가 있으면 배제(**대상 곡 제목 자체에 있는 표기는 예외** — 정식 발매곡이
   "Song (Remix)"면 후보도 당연히 그 표기를 담고 있어야 하므로) ② 정규화한 제목이 실제로
-  그 곡을 가리키는지 확인(완전 일치 또는 3글자 이상 부분 포함) ③ iTunes가 준 곡 길이와
+  그 곡을 가리키는지 확인(완전 일치 또는 3글자 이상 부분 포함) ③ **가수를 알면 후보
+  제목이나 채널명에 그 가수가 보여야 한다** ④ iTunes가 준 곡 길이와
   크게 다르면(다른 버전·컴필레이션 추정) 배제.
   **①의 키워드 검사는 ASCII만 단어 경계(``)로 한다** — 부분문자열로 찾으면 "Amrit"의
   `mr`, "Alive"의 `live`가 걸려 정답 후보가 조용히 버려진다(실측). 한글은 띄어쓰기 없이
@@ -591,12 +592,31 @@ online_video_clipper/
   **②는 제목 변형(`_title_variants`)을 함께 본다** — iTunes 수록곡 제목에는 괄호 밖
   꼬리표가 붙어("Enemy (with JID) - from the series Arcane…") 전체 문자열로만 견주면
   실제 공식 영상조차 일치하지 않아 영영 '없음'으로 남는다(실측). 정규화는 제목 속
-  하이픈을 지키려고 `" - "`를 자르지 않으므로, 여기서 `" - "` 앞부분을 변형으로 추가한다. 살아남은 후보 중에서는 가수 이름이
-  보이는지, YouTube가 자동 생성하는 `<가수> - Topic` 채널인지(공식 음원임을 강하게
-  시사), 곡 길이가 얼마나 가까운지로 점수를 매겨 가장 그럴듯한 것을 고른다. 검색
+  하이픈을 지키려고 `" - "`를 자르지 않으므로, 여기서 `" - "` 앞부분을 변형으로 추가한다.
+  **③은 원래 점수 가산 요소였을 뿐이라 아무 후보도 막지 못했다** — 실측 사고: Mr.Children의
+  앨범 'HOME'을 채울 때 "Wake Me Up!"에 Avicii, "Piano Man"에 Billy Joel, "Houkiboshi"에
+  규현의 곡이 붙었다(셋 다 제목만 같고 가수가 다르다). 검색어가 `"<가수> <곡> official
+  audio"`라 정답 후보에는 가수가 제목이나 채널에 거의 항상 드러나므로, 근거가 하나도
+  없는 후보는 남의 곡으로 본다. **가수명 대조(`_name_visible`)는 ASCII면 낱말 단위**다
+  ("IU"가 "studious"에 걸리면 안 된다). 다만 **띄어쓰기를 지운 표기도 함께 본다** —
+  YouTube 채널 핸들은 붙여쓰기가 흔해("ImagineDragons") 낱말 경계만 보면 정작 그 가수의
+  공식 채널이 남의 채널로 판정된다(실측). 짧은 이름의 오탐을 막으려 붙여쓰기 대조는
+  4글자 이상일 때만 허용하고, 한글·일본어는 조사가 붙는 표기가 흔해 부분문자열로 둔다.
+  살아남은 후보 중에서는 **채널명에 가수가 있는지**(공식 채널 — 제목에만 가수를 적어 둔
+  팬 편집본과 갈라 준다), YouTube가 자동 생성하는 `<가수> - Topic` 채널인지(공식 음원임을
+  더 강하게 시사), 곡 길이가 얼마나 가까운지로 점수를 매겨 가장 그럴듯한 것을 고른다. 검색
   풀은 검증으로 걸러질 것을 감안해 `_SEARCH_POOL`(8)로 넉넉히 받는다(한 번의
   `ytsearchN:` 호출이라 늘려도 요청 수는 그대로다). **하나도 통과하지 못하면 그
-  수록곡은 계속 'missing'으로 남는다** — 틀린 음원을 붙이느니 '없음'이 낫다.
+  수록곡은 계속 'missing'으로 남는다** — 틀린 음원을 붙이느니 '없음'이 낫다(외부 수록곡
+  제목이 로마자인데 실제 영상은 원어인 경우 — 일본곡의 "Houkiboshi" ↔ 「箒星」 — 처럼
+  정답을 못 찾는 자리도 생기지만 그 자리는 비워 두는 것이 맞다).
+  **검증 규칙을 고쳐도 이미 저장된 연결은 그대로 남는다** — 사용자 화면은 아무것도
+  달라지지 않으므로 `migrate_album_links_reverify`가 1회 재판정한다. 저장된 행에 스트림
+  제목·채널이 있고 앨범 키 앞부분이 정규화된 가수명이라(`album_key_artist`) **네트워크
+  없이** `link_artist_matches`로 그 자리에서 판정할 수 있다. **전부 비우지 않고 틀린 것만
+  지운다** — 실측 라이브러리에서 잘못된 매핑은 42건 중 3건뿐이었고, 나머지를 함께 버리면
+  앨범을 열 때마다 곡마다 yt-dlp 검색이 다시 돈다. 사용자가 지운(`rejected`) 행은
+  손대지 않는다(캐시가 아니라 판단이라, 지우면 그 자리가 자동 채우기 대상으로 되살아난다).
   **수정 모드로 잘못 붙은 자동 매핑을 지운다**: 앨범 상세 우측 상단 "✎ 수정" 토글을
   누르면(누르기 전엔 완전히 숨겨져 있다) **자동 매핑(AUTO) 행에만** 삭제(✕) 버튼이
   뜬다(`_TrackRow.set_edit_mode` — 내 라이브러리 영상은 훨씬 무거운 동작이라 대상이

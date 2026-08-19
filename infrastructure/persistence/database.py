@@ -30,6 +30,7 @@ MIGRATION_IDS: tuple[str, ...] = (
     "migrate_album_tables",
     "migrate_album_disc_no",
     "migrate_playback_position",
+    "migrate_album_links_reverify",
 )
 
 
@@ -265,6 +266,49 @@ class Database:
             # (다음에 앨범을 열 때 외부에서 다시 받아 채운다).
             conn.execute("DELETE FROM album_cache")
         logger.info("앨범 자동 매핑 캐시를 디스크 번호 포함 스키마로 재생성했다")
+
+    def _migrate_album_links_reverify(self) -> None:
+        """저장된 자동 매핑을 새 검증 규칙으로 한 번 다시 판정해 틀린 것만 비운다.
+
+        예전 규칙은 가수를 **점수 가산 요소로만** 써서, 제목만 같으면 남의 곡이 그대로
+        붙었다(Mr.Children 'HOME'의 "Wake Me Up!"에 Avicii, "Piano Man"에 Billy Joel).
+        규칙을 고쳐도 **이미 저장된 잘못된 연결은 그대로 남아** 사용자 눈에는 아무것도
+        달라지지 않으므로, 가수가 맞지 않는 자동 매핑만 골라 비운다 — 앨범을 열면 새
+        규칙으로 다시 찾고, 이번엔 근거가 없으면 '없음'으로 남는다.
+
+        **전부 비우지는 않는다.** 실측한 라이브러리에서 잘못된 매핑은 45건 중 3건뿐이었고,
+        나머지를 함께 버리면 앨범을 열 때마다 곡마다 yt-dlp 검색이 다시 돈다. 저장된
+        행에 이미 스트림 제목·채널이 있고 앨범 키의 앞부분이 정규화된 가수명이라,
+        **네트워크 없이 그 자리에서 새 규칙으로 다시 판정**할 수 있다.
+
+        **사용자가 지운(rejected) 행은 손대지 않는다.** 그건 캐시가 아니라 '이건 아니다'라는
+        사용자의 판단이라, 지우면 그 자리가 자동 채우기 대상으로 되살아난다.
+        """
+        from domain.song.album import album_key_artist, link_artist_matches  # noqa: PLC0415
+
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT album_key, disc_no, track_no, stream_title, stream_channel"
+                " FROM album_track_links WHERE origin = 'auto'"
+            ).fetchall()
+            stale = [
+                (r[0], r[1], r[2])
+                for r in rows
+                if not link_artist_matches(
+                    album_key_artist(str(r[0])), r[3] or "", r[4] or ""
+                )
+            ]
+            for key in stale:
+                conn.execute(
+                    "DELETE FROM album_track_links"
+                    " WHERE album_key=? AND disc_no=? AND track_no=?",
+                    key,
+                )
+        if stale:
+            logger.info(
+                "가수가 맞지 않는 앨범 자동 매핑 %d/%d건을 비웠다(새 검증 규칙으로 재조회)",
+                len(stale), len(rows),
+            )
 
     def _migrate_song_tables(self) -> None:
         """노래 정보/가사 출처 테이블 시드 (idempotent).

@@ -102,6 +102,15 @@ def make_album_key(artist: str, album: str) -> str:
     return f"{normalize_name(primary_artist(artist))}{_KEY_SEP}{album_norm}"
 
 
+def album_key_artist(album_key: str) -> str:
+    """앨범 키에서 가수 부분(정규화된 주 아티스트)을 꺼낸다.
+
+    키 형식(``<가수><앨범>``)을 아는 곳은 여기 하나로 둔다 — 저장된 매핑을
+    재검증하는 마이그레이션처럼 키만 손에 쥔 호출부가 구분자를 알 필요는 없다.
+    """
+    return (album_key or "").split(_KEY_SEP)[0]
+
+
 @dataclass(frozen=True, slots=True)
 class SongRef:
     """앨범 그루핑 입력 — 영상 1건의 노래 정보(리포지토리가 채워 넘긴다)."""
@@ -266,6 +275,50 @@ def _is_topic_channel(channel: str) -> bool:
     return bool(channel) and normalize_name(channel).endswith(" topic")
 
 
+def _name_visible(name_norm: str, haystack_norm: str) -> bool:
+    """정규화된 문자열 안에 그 이름이 보이는가.
+
+    ASCII 이름은 **낱말 단위**로 본다 — 부분문자열로 찾으면 짧은 활동명("IU")이
+    엉뚱한 단어 속에 걸린다. 한글·일본어 이름은 띄어쓰기 없이 붙는 표기가 흔해
+    ("아이유의밤편지") 낱말 경계를 요구하면 오히려 정답을 놓치므로 부분문자열로 둔다
+    (배제 키워드 판정이 ASCII/비ASCII를 가르는 것과 같은 이유).
+    """
+    if not name_norm or not haystack_norm:
+        return False
+    if not name_norm.isascii():
+        return name_norm in haystack_norm
+    if f" {name_norm} " in f" {haystack_norm} ":
+        return True
+    # 채널 핸들은 띄어쓰기를 지운 표기가 흔하다("ImagineDragons", "MrChildren").
+    # 낱말 경계만 보면 정작 그 가수의 공식 채널을 남의 채널로 판정한다(실측).
+    squashed = name_norm.replace(" ", "")
+    return len(squashed) >= 4 and squashed in haystack_norm.replace(" ", "")
+
+
+def _artist_in_channel(artist_norm: str, channel: str) -> bool:
+    """채널명에 가수가 보이는가 — 그 가수의 공식 채널일 가능성이 높다는 신호."""
+    return _name_visible(artist_norm, normalize_name(channel))
+
+
+def _artist_visible(artist_norm: str, candidate_norm: str, channel: str) -> bool:
+    """후보가 그 가수의 음원이라는 근거(제목이나 채널에 가수명)가 있는가."""
+    return _name_visible(artist_norm, candidate_norm) or _artist_in_channel(
+        artist_norm, channel
+    )
+
+
+def link_artist_matches(artist_norm: str, stream_title: str, stream_channel: str) -> bool:
+    """저장된 자동 매핑이 정말 그 가수의 음원인가 — 규칙을 고친 뒤 기존 캐시 재검증용.
+
+    ``artist_norm``은 앨범 키의 가수 부분이라 이미 정규화된 주 아티스트다
+    (``make_album_key`` 참조). 가수를 모르는 앨범은 **판정하지 않는다** — 모르는
+    정보로 지우면 멀쩡한 매핑까지 대량으로 날아간다.
+    """
+    if not artist_norm:
+        return True
+    return _artist_visible(artist_norm, normalize_name(stream_title), stream_channel)
+
+
 def pick_official_audio(
     candidates: list[dict],
     title: str,
@@ -275,17 +328,27 @@ def pick_official_audio(
     """검색 후보 중 이 곡의 official 음원일 가능성이 높은 것만 고른다.
 
     yt-dlp 검색 결과를 그대로 믿으면 커버·리액션·1시간 루프·**동명이곡**(다른 가수의
-    같은 제목 곡)이 섞여 들어온다. 여기서 통과시키는 조건은 셋이다.
+    같은 제목 곡)이 섞여 들어온다. 여기서 통과시키는 조건은 넷이다.
 
     1. 제목에 커버·리믹스·라이브 등 위험 신호가 없다(대상 제목 자체에 있는 표기는 예외).
     2. 정규화한 제목이 실제로 그 곡을 가리킨다(완전 일치, 또는 3글자 이상 곡명이 포함).
-    3. 곡 길이를 알면(iTunes 수록곡 정보) 크게 다르지 않다(다른 버전·컴필레이션 배제).
+    3. **가수를 알면 후보에 그 가수가 보여야 한다**(제목이나 채널명).
+    4. 곡 길이를 알면(iTunes 수록곡 정보) 크게 다르지 않다(다른 버전·컴필레이션 배제).
+
+    3번이 없으면 **제목만 같은 남의 곡이 그대로 붙는다.** 실측한 사고: Mr.Children의
+    앨범 'HOME'을 채울 때 수록곡 "Wake Me Up!"에 Avicii의 곡이, "Piano Man"에 Billy
+    Joel의 곡이, "Houkiboshi"에 규현의 곡이 붙었다 — 셋 다 제목만 같고 가수가 다르다.
+    가수는 원래 점수 가산 요소일 뿐이라 아무도 그 후보를 막지 못했다. 검색어 자체가
+    ``"<가수> <곡> official audio"``라 정답 후보에는 가수가 제목이나 채널에 거의 항상
+    드러나므로, 근거가 하나도 없는 후보는 남의 곡으로 본다.
 
     하나도 통과하지 못하면 ``None`` — 틀린 음원을 붙이느니 '없음'으로 남기는 편이 낫다
-    (``FillAlbumTracksHandler``는 이 경우 그 수록곡을 계속 missing으로 둔다).
+    (``FillAlbumTracksHandler``는 이 경우 그 수록곡을 계속 missing으로 둔다). 외부
+    수록곡 제목이 로마자인데 실제 영상은 원어인 경우(일본곡의 "Houkiboshi" ↔ 「箒星」)
+    처럼 정답을 못 찾는 자리도 생기지만, 그 자리는 비워 두는 것이 맞다.
 
-    살아남은 후보 중에서는 가수 이름이 보이는지, YouTube의 '- Topic' 자동 채널인지
-    (공식 음원 채널임을 강하게 시사), 곡 길이가 얼마나 가까운지로 점수를 매겨 가장
+    살아남은 후보 중에서는 채널명에 가수가 있는지(공식 채널), YouTube의 '- Topic' 자동
+    채널인지(공식 음원임을 더 강하게 시사), 곡 길이가 얼마나 가까운지로 점수를 매겨 가장
     그럴듯한 것을 고른다.
     """
     variants = _title_variants(title)
@@ -307,8 +370,12 @@ def pick_official_audio(
             if abs(int(duration) - int(expected_duration_sec)) > tolerance:
                 continue   # 길이 차이가 커 다른 버전(루프·컴필레이션)일 가능성이 높다
         channel = entry.get("channel_name") or ""
+        if artist_norm and not _artist_visible(artist_norm, cand_norm, channel):
+            continue   # 제목만 같은 남의 곡 — 가수 근거가 없으면 붙이지 않는다
         score = 0.0
-        if artist_norm and (artist_norm in cand_norm or artist_norm in normalize_name(channel)):
+        if artist_norm and _artist_in_channel(artist_norm, channel):
+            # 가수 이름이 붙은 채널(공식 채널·Topic)은 이름 없는 재업로드 채널보다
+            # 훨씬 믿을 만하다 — 제목에만 가수가 보이는 팬 편집본과 갈라 준다.
             score += 2.0
         if _is_topic_channel(channel):
             score += 2.0

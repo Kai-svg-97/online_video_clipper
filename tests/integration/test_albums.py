@@ -709,3 +709,79 @@ class TestAddAlbumTracks:
         )
 
         assert count == 1     # 두 곡 중 하나만 실패
+
+
+class TestReverifyMigration:
+    """자동 매핑 재검증 마이그레이션 — 규칙을 고쳐도 저장된 잘못된 연결은 남는다.
+
+    실제 신고: Mr.Children 'HOME'의 수록곡에 Avicii·Billy Joel·규현의 동명이곡이 붙었다.
+    검증 규칙을 고쳐도 이미 DB에 들어간 연결은 그대로여서 사용자 화면은 아무것도
+    달라지지 않는다. 저장된 행에 스트림 제목·채널이 있고 앨범 키 앞부분이 정규화된
+    가수명이라, **네트워크 없이 그 자리에서** 새 규칙으로 다시 판정할 수 있다.
+    """
+
+    _KEY = make_album_key("Mr.Children", "HOME")
+
+    def _rows(self, db):
+        with db.connection() as conn:
+            return sorted(
+                (r[0], r[1]) for r in conn.execute(
+                    "SELECT track_no, origin FROM album_track_links"
+                )
+            )
+
+    def _add(self, db, track_no, stream_title, channel="", origin="auto", key=None):
+        with db.connection() as conn:
+            conn.execute(
+                "INSERT INTO album_track_links("
+                " album_key, disc_no, track_no, track_title, stream_url,"
+                " stream_title, stream_channel, origin, created_at)"
+                " VALUES (?,1,?,?,?,?,?,?, '2026-01-01T00:00:00+00:00')",
+                (key or self._KEY, track_no, f"T{track_no}", f"https://x/{track_no}",
+                 stream_title, channel, origin),
+            )
+
+    def _reset_flag(self, db):
+        with db.connection() as conn:
+            conn.execute(
+                "DELETE FROM schema_migrations WHERE id='migrate_album_links_reverify'"
+            )
+
+    def test_가수가_맞지_않는_자동_매핑만_비운다(self, db):
+        self._add(db, 1, "Mr.Children 「しるし」 MUSIC VIDEO", "Mr.Children Official Channel")
+        self._add(db, 2, "Avicii - Wake Me Up (Official Video)", "Avicii")
+        self._add(db, 6, "Billy Joel - Piano Man (Original Video)", "Billy Joel")
+
+        db._migrate_album_links_reverify()
+
+        assert self._rows(db) == [(1, "auto")]
+
+    def test_사용자가_지운_자리는_손대지_않는다(self, db):
+        """거부는 캐시가 아니라 '이건 아니다'라는 사용자의 판단이다 — 지우면 그 자리가
+        자동 채우기 대상으로 되살아나 지운 음원이 도로 붙는다."""
+        self._add(db, 2, "Avicii - Wake Me Up (Official Video)", "Avicii",
+                  origin=TRACK_LINK_REJECTED)
+
+        db._migrate_album_links_reverify()
+
+        assert self._rows(db) == [(2, TRACK_LINK_REJECTED)]
+
+    def test_가수를_모르는_앨범은_판정하지_않는다(self, db):
+        """모르는 정보로 지우면 멀쩡한 매핑까지 대량으로 날아간다."""
+        self._add(db, 1, "아무 곡", "아무 채널", key=make_album_key("", "HOME"))
+
+        db._migrate_album_links_reverify()
+
+        assert self._rows(db) == [(1, "auto")]
+
+    def test_최초_1회만_돈다(self, db):
+        """매 실행마다 돌면 새로 찾아 붙인 매핑까지 계속 재판정을 받는다."""
+        self._add(db, 2, "Avicii - Wake Me Up (Official Video)", "Avicii")
+        self._reset_flag(db)
+        db.initialize()
+        assert self._rows(db) == []
+
+        self._add(db, 9, "Aloe Blacc - Wake Me Up (Official)", "Aloe Blacc")
+        db.initialize()
+
+        assert self._rows(db) == [(9, "auto")]

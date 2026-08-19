@@ -236,6 +236,73 @@ class TestPickOfficialAudio:
 
         assert picked["url"] == "https://x/b"
 
+    def test_가수가_다른_동명이곡은_배제한다(self):
+        """실측 사고: Mr.Children 'HOME'의 수록곡에 남의 곡이 붙었다.
+
+        "Wake Me Up!"에 Avicii, "Piano Man"에 Billy Joel, "Houkiboshi"에 규현.
+        셋 다 제목만 같고 가수가 다르다 — 가수가 점수 가산 요소일 뿐이라 아무도
+        막지 못했다. 이제 가수 근거가 없으면 통과시키지 않는다.
+        """
+        candidates = [
+            self._entry("Avicii - Wake Me Up (Official Video)", channel="Avicii",
+                        duration_sec=273),
+            self._entry("Aloe Blacc - Wake Me Up (Official)", channel="Aloe Blacc",
+                        duration_sec=268),
+        ]
+
+        assert pick_official_audio(candidates, title="Wake Me Up!",
+                                   artist="Mr.Children") is None
+
+    def test_가수를_모르면_거르지_않는다(self):
+        """모르는 정보로 거르면 정상 후보까지 놓친다(길이 판정과 같은 원칙)."""
+        candidates = [self._entry("Avicii - Wake Me Up (Official Video)")]
+
+        assert pick_official_audio(candidates, title="Wake Me Up") is not None
+
+    def test_채널_핸들이_붙여쓰기여도_그_가수로_인정한다(self):
+        """YouTube 채널 핸들은 띄어쓰기를 지운 표기가 흔하다("ImagineDragons").
+
+        낱말 경계만 보면 정작 그 가수의 **공식 채널**을 남의 채널로 판정해,
+        진짜 음원이 '없음'으로 남는다.
+        """
+        candidates = [
+            self._entry("Enemy (from the series Arcane League of Legends)",
+                        channel="ImagineDragons", duration_sec=174, url="https://x/official"),
+        ]
+
+        picked = pick_official_audio(candidates, title="Enemy", artist="Imagine Dragons",
+                                     expected_duration_sec=173)
+
+        assert picked is not None and picked["url"] == "https://x/official"
+
+    def test_짧은_활동명은_다른_단어_속에_걸리지_않는다(self):
+        """ASCII 이름을 부분문자열로 찾으면 "IU"가 "studious"에 걸린다."""
+        candidates = [self._entry("밤편지 studious session", channel="누군가")]
+
+        assert pick_official_audio(candidates, title="밤편지", artist="IU") is None
+
+    def test_한글_가수명은_붙여쓴_표기도_인정한다(self):
+        """한국어·일본어는 조사가 붙어 띄어쓰기 없이 이어지는 표기가 흔하다."""
+        candidates = [self._entry("아이유의밤편지", channel="음악채널")]
+
+        picked = pick_official_audio(candidates, title="밤편지", artist="아이유")
+
+        assert picked is not None
+
+    def test_공식_채널_후보를_제목에만_가수가_있는_후보보다_우선한다(self):
+        """제목에 가수를 적어 둔 팬 편집본보다 그 가수의 채널이 훨씬 믿을 만하다."""
+        candidates = [
+            self._entry("Imagine Dragons - Enemy (without rap) Original Version",
+                        channel="shhro", duration_sec=174, url="https://x/fan"),
+            self._entry("Enemy (from the series Arcane League of Legends)",
+                        channel="ImagineDragons", duration_sec=174, url="https://x/official"),
+        ]
+
+        picked = pick_official_audio(candidates, title="Enemy", artist="Imagine Dragons",
+                                     expected_duration_sec=173)
+
+        assert picked["url"] == "https://x/official"
+
     def test_길이가_더_가까운_후보를_우선한다(self):
         candidates = [
             self._entry("IU 밤편지", duration_sec=180, url="https://x/far"),
@@ -277,14 +344,16 @@ class TestPickOfficialAudio:
     def test_배제_키워드는_단어_단위로_본다(self):
         """부분문자열로 찾으면 "Amrit"의 `mr`, "Alive"의 `live`처럼 멀쩡한 제목이
         걸려 정답 후보가 조용히 버려진다(실측)."""
-        amrit = [self._entry("Bones (Official Audio) | Amrit Records", duration_sec=174)]
+        amrit = [self._entry("Bones (Official Audio) | Amrit Records", duration_sec=174,
+                             channel="ImagineDragons")]
         assert pick_official_audio(amrit, title="Bones", artist="Imagine Dragons") is not None
 
         alive = [self._entry("Stayin' Alive (Official Audio)", channel="Bee Gees - Topic")]
         assert pick_official_audio(alive, title="Stayin' Alive", artist="Bee Gees") is not None
 
     def test_단어_단위여도_진짜_라이브는_배제한다(self):
-        candidates = [self._entry("Bones - Live at Wembley", duration_sec=180)]
+        candidates = [self._entry("Bones - Live at Wembley", duration_sec=180,
+                                  channel="ImagineDragons")]
 
         assert pick_official_audio(candidates, title="Bones", artist="Imagine Dragons") is None
 
