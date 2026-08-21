@@ -68,3 +68,33 @@ class TestSeedQueries:
         titles = ["A 리뷰 후기", "B 리뷰 후기", "C 리뷰"]
         first = derive_seed_queries(titles)
         assert all(derive_seed_queries(titles) == first for _ in range(5))
+
+
+class TestSearchText:
+    """검색창에 낱말이 있으면 짐작을 그만두고 그 낱말만 쓴다."""
+
+    def test_search_text_replaces_derived_queries(self):
+        queries = derive_seed_queries(
+            titles=["아이유 밤편지", "아이유 좋은날"],
+            channels=["1theK"],
+            tags=["발라드"],
+            search_text="뉴진스",
+        )
+        assert queries == ["뉴진스"]
+
+    def test_search_text_works_without_any_seed(self):
+        # 검색 결과가 0건이라 목록이 비어도 검색어는 유효하다.
+        assert derive_seed_queries([], search_text="파이썬 강의") == ["파이썬 강의"]
+
+    def test_search_text_is_trimmed(self):
+        assert derive_seed_queries([], search_text="  뉴진스  ") == ["뉴진스"]
+
+    def test_blank_search_text_falls_back_to_seeds(self):
+        # 공백만 입력한 상태는 '검색 안 함'과 같다.
+        assert derive_seed_queries([], channels=["침착맨"], search_text="   ") == ["침착맨"]
+
+    def test_search_text_ignores_max_queries_beyond_one(self):
+        queries = derive_seed_queries(
+            titles=["아이유 밤편지", "아이유 좋은날"], search_text="뉴진스", max_queries=3
+        )
+        assert queries == ["뉴진스"]

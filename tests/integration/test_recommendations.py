@@ -172,3 +172,43 @@ class TestRecommendationHandler:
         result = handler.handle(GetRecommendationsQuery(**seeds))
 
         assert [d.yt_video_id for d in result] == ["a1"]
+
+
+class TestSearchTextRecommendations:
+    """검색창 키워드가 있으면 그 키워드의 YouTube 검색 결과로 채운다."""
+
+    def test_search_text_is_used_as_the_only_query(self, seeds):
+        src = _FakeMediaSource({"뉴진스": [_entry("n1")], "아이유": [_entry("a1")]})
+        handler = GetRecommendationsHandler(src, _FakeVideoRepo())
+
+        result = handler.handle(GetRecommendationsQuery(**seeds, search_text="뉴진스"))
+
+        assert [d.yt_video_id for d in result] == ["n1"]
+        assert [q for q, _ in src.calls] == ["뉴진스"]   # 씨앗 검색어는 돌지 않는다
+
+    def test_search_text_works_with_no_seeds(self):
+        """로컬 검색 결과가 0건이어도 YouTube 결과는 채워야 한다."""
+        src = _FakeMediaSource({"뉴진스": [_entry("n1"), _entry("n2")]})
+        handler = GetRecommendationsHandler(src, _FakeVideoRepo())
+
+        result = handler.handle(GetRecommendationsQuery(search_text="뉴진스"))
+
+        assert [d.yt_video_id for d in result] == ["n1", "n2"]
+
+    def test_blank_search_text_falls_back_to_seeds(self, seeds):
+        src = _FakeMediaSource({"아이유": [_entry("a1")]})
+        handler = GetRecommendationsHandler(src, _FakeVideoRepo())
+
+        result = handler.handle(GetRecommendationsQuery(**seeds, search_text="   "))
+
+        assert [d.yt_video_id for d in result] == ["a1"]
+
+    def test_library_videos_still_excluded(self):
+        """이 스트립의 목적은 '아직 없는 영상 담기' — 검색 모드에서도 같다."""
+        src = _FakeMediaSource({"뉴진스": [_entry("n1"), _entry("n2")]})
+        repo = _FakeVideoRepo({"https://www.youtube.com/watch?v=n1"})
+        handler = GetRecommendationsHandler(src, repo)
+
+        result = handler.handle(GetRecommendationsQuery(search_text="뉴진스"))
+
+        assert [d.yt_video_id for d in result] == ["n2"]

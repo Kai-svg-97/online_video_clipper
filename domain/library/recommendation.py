@@ -4,6 +4,9 @@ YouTube Data API v3의 ``search.list(relatedToVideoId=...)``는 2023-08-07에
 제거되어 '관련 영상'을 API로 직접 받을 수 없다. 그래서 현재 목록의
 제목·태그·채널에서 **대표 검색어 몇 개**를 뽑아 YouTube 검색으로 후보를 모은다.
 
+단, 사용자가 검색창에 낱말을 입력한 상태라면 짐작을 그만두고 **그 낱말을 그대로**
+검색어로 쓴다(검색어를 결정하는 곳이 한 군데뿐이어야 두 경로가 어긋나지 않는다).
+
 규칙을 순수 함수로 고정해 QApplication·네트워크 없이 단위 테스트로 검증한다
 (``tests/unit/domain/test_recommendation.py``).
 """
@@ -82,10 +85,17 @@ def derive_seed_queries(
     channels: Iterable[str] = (),
     tags: Iterable[str] = (),
     max_queries: int = MAX_SEED_QUERIES,
+    search_text: str = "",
 ) -> list[str]:
     """현재 목록을 대표하는 YouTube 검색어를 최대 ``max_queries``개 만든다.
 
-    반환 순서는 대표성이 높은 순이다:
+    ``search_text``(사용자가 검색창에 직접 입력한 낱말)가 있으면 **그것만** 검색어로
+    쓴다. 사용자가 이미 무엇을 찾는지 말했으므로 목록에서 검색어를 짐작할 이유가
+    없고, 짐작한 검색어를 섞으면 그 키워드와 무관한 후보가 함께 올라온다. 검색
+    결과가 0건이어도(그래서 목록이 비어도) 이 검색어는 유효하다 — 애초에
+    "라이브러리에 없는 영상"을 찾는 것이 추천 스트립의 목적이다.
+
+    ``search_text``가 없을 때의 반환 순서는 대표성이 높은 순이다:
 
     1. 제목 대표 키워드 묶음 (목록 전체를 가장 잘 대표)
     2. 가장 많이 쓰인 태그 (사용자가 직접 붙인 분류라 신뢰도가 높다)
@@ -96,6 +106,9 @@ def derive_seed_queries(
     """
     if max_queries <= 0:
         return []
+    explicit = (search_text or "").strip()
+    if explicit:
+        return [explicit]
     title_list = [t for t in titles if t]
     queries: list[str] = []
 

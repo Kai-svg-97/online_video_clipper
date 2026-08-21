@@ -161,15 +161,33 @@ class RecommendStripMixin:
             return
         self._recommend_timer.start()
 
+    def _recommend_search_text(self) -> str:
+        """스트립을 채울 검색어 — 검색창에 입력된 낱말(없으면 빈 문자열).
+
+        검색어가 있으면 씨앗을 짐작하지 않고 **그 낱말의 YouTube 검색 결과**로
+        스트립을 채운다(사용자가 이미 무엇을 찾는지 말했다).
+        """
+        box = getattr(self, "_search_box", None)   # 화면 조립 중 호출 대비
+        return box.text().strip() if box is not None else ""
+
     def _refresh_recommendations(self, force: bool = False) -> None:
         if self._recommend_vm is None or not self._recommend_strip.is_expanded:
             return
-        titles, channels, tags = self._recommend_seeds()
-        if not titles and not channels and not tags:
-            self._recommend_strip.set_items([])
-            self._recommend_strip.set_status("목록이 비어 있어 추천할 기준이 없습니다.")
-            self._reveal_recommend_strip(False)
-            return
+        search_text = self._recommend_search_text()
+        if search_text:
+            # 검색 모드에서는 씨앗을 넘기지 않는다 — 검색어만이 조회를 결정하므로,
+            # 목록이 바뀌어도(예: 스트립에서 한 건 담아 목록이 늘어도) 캐시가
+            # 유지되어 같은 검색을 다시 돌리지 않는다.
+            titles, channels, tags = (), (), ()
+            self._recommend_strip.set_title(f'"{search_text}" YouTube 검색 결과')
+        else:
+            titles, channels, tags = self._recommend_seeds()
+            self._recommend_strip.set_title()
+            if not titles and not channels and not tags:
+                self._recommend_strip.set_items([])
+                self._recommend_strip.set_status("목록이 비어 있어 추천할 기준이 없습니다.")
+                self._reveal_recommend_strip(False)
+                return
         self._recommend_strip.set_status("")
         # 새 씨앗으로 조회를 시작한다 — 결과가 올 때까지 다시 감춘다(직전 카테고리의
         # 추천이 새 목록의 추천인 것처럼 남아 있지 않도록).
@@ -179,6 +197,7 @@ class RecommendStripMixin:
             seed_titles=titles,
             seed_channels=channels,
             seed_tags=tags,
+            search_text=search_text,
             limit=_RECOMMEND_COUNT,
             force=force,
         )
@@ -221,7 +240,12 @@ class RecommendStripMixin:
 
     def _on_recommend_items(self, items: list) -> None:
         self._recommend_strip.set_items(items)
-        self._recommend_strip.set_status("" if items else "추천할 영상을 찾지 못했습니다.")
+        if items:
+            self._recommend_strip.set_status("")
+        elif self._recommend_search_text():
+            self._recommend_strip.set_status("이 검색어로 YouTube에서 찾은 영상이 없습니다.")
+        else:
+            self._recommend_strip.set_status("추천할 영상을 찾지 못했습니다.")
         self._reveal_recommend_strip(bool(items))
         # 상세화면이 열려 있으면 우측 목록 아래 추천 구역도 함께 갱신한다.
         if self._nav_stack.currentIndex() == 1:

@@ -834,6 +834,13 @@ class RecommendStrip(QWidget):
     def set_status(self, text: str) -> None:
         self._status_lbl.setText(text)
 
+    # 검색어로 채워졌는지 목록 기반 추천인지 헤더에서 바로 알 수 있게 한다.
+    DEFAULT_TITLE = "추천 영상"
+
+    def set_title(self, text: str = "") -> None:
+        """헤더 제목을 바꾼다(빈 문자열이면 기본 제목으로 되돌린다)."""
+        self._title_lbl.setText(text or self.DEFAULT_TITLE)
+
     def set_loading(self, loading: bool) -> None:
         self._refresh_btn.setEnabled(not loading)
         if loading:

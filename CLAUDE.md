@@ -110,7 +110,7 @@ online_video_clipper/
 │   │   ├── aggregates.py            # VideoAggregate (root)
 │   │   ├── repositories.py          # IVideoRepository (interface)
 │   │   ├── services.py              # Domain services (e.g., duplicate detection)
-│   │   ├── recommendation.py        # derive_seed_queries() — 현재 목록(제목·태그·채널)에서 YouTube 추천 검색어를 뽑는 순수 함수(제목 키워드는 문서빈도 기준). I/O 없음
+│   │   ├── recommendation.py        # derive_seed_queries() — 현재 목록(제목·태그·채널)에서 YouTube 추천 검색어를 뽑는 순수 함수(제목 키워드는 문서빈도 기준). **`search_text`가 있으면 그 낱말만 검색어로 쓴다**(검색창 입력이 짐작을 대체한다). I/O 없음
 │   │   └── events.py                # VideoAdded, VideoUpdated, VideoDeleted
 │   │
 │   ├── download/                    # [Bounded Context] Download queue & history
@@ -460,6 +460,21 @@ online_video_clipper/
   (`tests/unit/domain/test_recommendation.py`). **이미 라이브러리에 있는 영상은 결과에서
   제외**한다(목적이 '아직 없는 영상 담기'). 검색어별 실패는 격리해 나머지 검색어로 계속한다.
   반환형은 피드와 같은 `FeedVideoDTO`라 카드 렌더링(`_FeedCard`)을 공유한다.
+  **검색창에 낱말이 입력돼 있으면 짐작을 그만두고 그 낱말의 YouTube 검색 결과로 스트립을
+  채운다** — 사용자가 이미 무엇을 찾는지 말했으므로 목록에서 검색어를 뽑을 이유가 없고,
+  뽑은 검색어를 섞으면 그 키워드와 무관한 후보가 함께 올라온다. 분기는 **검색어를 정하는
+  한 곳**(`derive_seed_queries(search_text=…)`)에만 두고, `GetRecommendationsQuery.search_text`
+  → `RecommendViewModel.load(search_text=…)`로 흘린다(두 경로가 갈라지면 "목록엔 검색어대로인데
+  스트립은 딴 것"이 된다). GUI(`_refresh_recommendations`)는 검색 모드에서 **씨앗을 넘기지
+  않는다** — 넘기면 목록이 바뀔 때마다(스트립에서 한 건 담기만 해도) 캐시 키가 달라져 같은
+  검색을 다시 돌린다. 또 이때는 **로컬 결과가 0건이어도 조회한다**(검색 결과가 없을 때가
+  오히려 'YouTube에는 뭐가 있나'를 가장 보고 싶은 순간이다 — 목록 기반 추천의
+  "목록이 비어 있어 추천할 기준이 없습니다" 가드를 검색 모드에는 걸지 않는다).
+  헤더 제목(`RecommendStrip.set_title`)이 `"<검색어>" YouTube 검색 결과`로 바뀌어 지금 뜬
+  카드가 무엇인지 알려 주고, 검색어를 지우면 기본 제목·목록 기반 추천으로 돌아온다.
+  회귀 테스트: `tests/gui/test_recommend_panel_wiring.py`(`TestSearchKeywordStrip`·
+  `TestViewModelSearchText`), `tests/integration/test_recommendations.py`,
+  `tests/unit/domain/test_recommendation.py`.
   **드롭 경로는 새로 만들지 않았다**: 카드 드래그가 `text/uri-list`+`text/plain`으로
   브라우저 URL 드래그와 동일한 MIME을 만들고, `_PlaylistTree`에 URL 드롭 처리를 추가해
   (`_url_drop_target` → `url_dropped(url, cat_id)` → `LibraryPanel._on_url_dropped` →

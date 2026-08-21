@@ -51,11 +51,15 @@ class GetRecommendationsQuery:
 
     씨앗(제목·채널·태그)은 GUI가 현재 화면의 영상들에서 그대로 넘기고,
     검색어 파생 규칙은 도메인 순수 함수가 담당한다.
+
+    ``search_text``가 있으면(검색창에 낱말이 입력된 상태) 씨앗 대신 그 낱말로
+    YouTube를 검색한다 — 목록이 0건이어도 조회한다.
     """
 
     seed_titles: tuple[str, ...] = ()
     seed_channels: tuple[str, ...] = ()
     seed_tags: tuple[str, ...] = ()
+    search_text: str = ""      # 사용자가 입력한 검색어(있으면 씨앗보다 우선)
     limit: int = 24            # 최종 반환 개수 상한
     per_query: int = 12        # 검색어 1개당 후보 수
     max_queries: int = 3
@@ -376,6 +380,9 @@ class GetRecommendationsHandler:
     이미 라이브러리에 있는 영상은 **결과에서 제외**한다 — 이 목록의 목적이
     '아직 없는 영상을 찾아 담기'이기 때문이다. 구독 피드 핸들러들과 같은
     ``FeedVideoDTO``를 반환해 카드 렌더링을 공유한다.
+
+    ``query.search_text``가 있으면 씨앗을 짐작하지 않고 그 낱말로만 검색한다
+    (검색창에 키워드를 넣으면 스트립이 그 키워드의 YouTube 검색 결과가 된다).
     """
 
     def __init__(
@@ -400,6 +407,7 @@ class GetRecommendationsHandler:
             channels=query.seed_channels,
             tags=query.seed_tags,
             max_queries=query.max_queries,
+            search_text=query.search_text,
         )
         if not queries:
             logger.debug("추천 씨앗 검색어가 없어 조회를 건너뛴다")

@@ -12,6 +12,8 @@ from uuid import uuid4
 import pytest
 
 from application.library.dtos import FeedVideoDTO, VideoDTO
+from gui.panels.feed_panel import RecommendStrip
+from gui.view_models.recommend_vm import RecommendViewModel
 from gui.panels.library_panel import (
     _QWIDGET_MAX_H,
     _RECOMMEND_DEBOUNCE_MS,
@@ -289,3 +291,136 @@ class TestDropWiring:
         panel._playlist_panel.url_dropped.emit("https://youtu.be/rec2", None)
 
         assert calls == [("https://youtu.be/rec2", None)]
+
+
+class TestSearchKeywordStrip:
+    """검색창에 낱말을 넣으면 스트립이 그 낱말의 YouTube 검색 결과가 된다.
+
+    씨앗(제목·태그·채널)을 함께 넘기면 목록이 바뀔 때마다(예: 스트립에서 한 건
+    담았을 때) 캐시 키가 달라져 같은 검색을 다시 돌게 되므로 넘기지 않는다.
+    """
+
+    def _type(self, panel, text: str) -> None:
+        # 검색 파이프라인(디바운스→VM 재조회)까지 태우지 않고 입력 상태만 만든다.
+        panel._search_box.blockSignals(True)
+        panel._search_box.setText(text)
+        panel._search_box.blockSignals(False)
+
+    def test_검색어가_있으면_그_낱말로_조회한다(self, panel, qtbot, library_vm, recommend_vm):
+        panel._recommend_strip.set_expanded(True, notify=False)
+        library_vm._videos = [_dto("파이썬 강의 1"), _dto("파이썬 강의 2")]
+        self._type(panel, "뉴진스")
+
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        kwargs = recommend_vm.load.call_args.kwargs
+        assert kwargs["search_text"] == "뉴진스"
+        assert kwargs["seed_titles"] == ()      # 검색어만이 조회를 결정한다
+        assert kwargs["seed_channels"] == ()
+        assert kwargs["seed_tags"] == ()
+
+    def test_검색_결과가_0건이어도_조회한다(self, panel, qtbot, library_vm, recommend_vm):
+        """로컬에 없을 때가 오히려 'YouTube에는 뭐가 있나'를 가장 보고 싶은 순간이다."""
+        panel._recommend_strip.set_expanded(True, notify=False)
+        library_vm._videos = []
+        self._type(panel, "뉴진스")
+
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        recommend_vm.load.assert_called_once()
+        assert recommend_vm.load.call_args.kwargs["search_text"] == "뉴진스"
+
+    def test_헤더_제목이_검색어를_알려준다(self, panel, qtbot, library_vm, recommend_vm):
+        panel._recommend_strip.set_expanded(True, notify=False)
+        library_vm._videos = [_dto()]
+        self._type(panel, "뉴진스")
+
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        assert "뉴진스" in panel._recommend_strip._title_lbl.text()
+
+    def test_검색어를_지우면_다시_목록_기반_추천이다(
+        self, panel, qtbot, library_vm, recommend_vm
+    ):
+        panel._recommend_strip.set_expanded(True, notify=False)
+        library_vm._videos = [_dto("파이썬 강의 1"), _dto("파이썬 강의 2")]
+        self._type(panel, "뉴진스")
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        self._type(panel, "")
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        kwargs = recommend_vm.load.call_args.kwargs
+        assert kwargs["search_text"] == ""
+        assert kwargs["seed_titles"] == ("파이썬 강의 1", "파이썬 강의 2")
+        assert panel._recommend_strip._title_lbl.text() == RecommendStrip.DEFAULT_TITLE
+
+    def test_공백만_입력한_상태는_검색이_아니다(self, panel, qtbot, library_vm, recommend_vm):
+        panel._recommend_strip.set_expanded(True, notify=False)
+        library_vm._videos = [_dto("파이썬 강의 1")]
+        self._type(panel, "   ")
+
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        kwargs = recommend_vm.load.call_args.kwargs
+        assert kwargs["search_text"] == ""
+        assert kwargs["seed_titles"] == ("파이썬 강의 1",)
+
+
+class TestViewModelSearchText:
+    """뷰모델이 검색어를 핸들러까지 전달하고, 씨앗 없이도 조회한다."""
+
+    def test_씨앗이_없어도_검색어만으로_조회한다(self, qtbot):
+        handler = MagicMock()
+        handler.handle.return_value = [_feed_dto()]
+        vm = RecommendViewModel(handler=handler)
+
+        with qtbot.waitSignal(vm.items_changed, timeout=3000):
+            vm.load(seed_titles=(), search_text="뉴진스")
+
+        assert handler.handle.call_args.args[0].search_text == "뉴진스"
+        vm.shutdown()
+
+    def test_검색어가_바뀌면_캐시를_쓰지_않는다(self, qtbot):
+        handler = MagicMock()
+        handler.handle.return_value = [_feed_dto()]
+        vm = RecommendViewModel(handler=handler)
+
+        for text in ("뉴진스", "아이유"):
+            with qtbot.waitSignal(vm.items_changed, timeout=3000):
+                vm.load(seed_titles=(), search_text=text)
+
+        assert handler.handle.call_count == 2
+        vm.shutdown()
+
+    def test_같은_검색어면_재조회하지_않는다(self, qtbot):
+        handler = MagicMock()
+        handler.handle.return_value = [_feed_dto()]
+        vm = RecommendViewModel(handler=handler)
+
+        for _ in range(2):
+            with qtbot.waitSignal(vm.items_changed, timeout=3000):
+                vm.load(seed_titles=(), search_text="뉴진스")
+
+        assert handler.handle.call_count == 1   # 캐시 재표시
+        vm.shutdown()
+
+    def test_더_받기도_같은_검색어를_쓴다(self, qtbot):
+        handler = MagicMock()
+        handler.handle.return_value = [_feed_dto("추천1", "rec00000001")]
+        vm = RecommendViewModel(handler=handler)
+        with qtbot.waitSignal(vm.items_changed, timeout=3000):
+            vm.load(seed_titles=(), search_text="뉴진스")
+
+        with qtbot.waitSignal(vm.more_ready, timeout=3000):
+            handler.handle.return_value = [_feed_dto("추천2", "rec00000002")]
+            vm.load_more()
+
+        assert handler.handle.call_args.args[0].search_text == "뉴진스"
+        vm.shutdown()

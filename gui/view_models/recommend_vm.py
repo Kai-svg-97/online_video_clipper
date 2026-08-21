@@ -77,6 +77,7 @@ class RecommendViewModel(QObject):
         # 미리 받기 상태 — 같은 씨앗으로 '더 깊이' 검색해 뒤에 덧붙인다.
         self._more_worker: _RecommendWorker | None = None
         self._seeds: tuple = ((), (), ())
+        self._search_text: str = ""   # 검색창 낱말(있으면 씨앗 대신 이것으로 검색)
         self._page: int = 0
         self._more_exhausted: bool = False
 
@@ -100,18 +101,24 @@ class RecommendViewModel(QObject):
         limit: int = 24,
         exclude_urls: frozenset[str] = frozenset(),
         force: bool = False,
+        search_text: str = "",
     ) -> None:
         """추천을 조회한다.
 
         ``force``가 False면 씨앗이 직전 조회와 같을 때 재조회하지 않는다 —
         목록 화면을 오갈 때마다 같은 검색을 반복하지 않기 위한 가드다.
+
+        ``search_text``가 있으면 씨앗 대신 그 낱말로 YouTube를 검색한다. 이때는
+        **씨앗이 비어 있어도 조회한다** — 검색 결과가 0건이라 목록이 텅 비었을 때가
+        오히려 "YouTube에는 뭐가 있나"를 가장 보고 싶은 순간이다.
         """
-        if not seed_titles and not seed_channels and not seed_tags:
+        search_text = (search_text or "").strip()
+        if not search_text and not seed_titles and not seed_channels and not seed_tags:
             self._items = []
             self._last_key = ""
             self.items_changed.emit([])
             return
-        key = repr((seed_titles, seed_channels, seed_tags, limit))
+        key = repr((search_text, seed_titles, seed_channels, seed_tags, limit))
         if not force and key == self._last_key and self._items:
             self.items_changed.emit(self._items)   # 캐시 재표시
             return
@@ -119,6 +126,7 @@ class RecommendViewModel(QObject):
         # 새 씨앗이면 미리 받기도 처음부터 — 이전 목록의 페이지 깊이를 물려받으면
         # 첫 '더 받기'가 엉뚱하게 깊은 결과부터 가져온다.
         self._seeds = (seed_titles, seed_channels, seed_tags)
+        self._search_text = search_text
         self._page = 0
         self._more_exhausted = False
 
@@ -127,6 +135,7 @@ class RecommendViewModel(QObject):
             seed_titles=seed_titles,
             seed_channels=seed_channels,
             seed_tags=seed_tags,
+            search_text=search_text,
             limit=limit,
             exclude_urls=exclude_urls,
             cookie_opts=cookie_opts,
@@ -160,13 +169,14 @@ class RecommendViewModel(QObject):
         if self._more_exhausted or self._more_worker is not None:
             return
         seed_titles, seed_channels, seed_tags = self._seeds
-        if not seed_titles and not seed_channels and not seed_tags:
+        if not self._search_text and not seed_titles and not seed_channels and not seed_tags:
             return
         self._page += 1
         query = GetRecommendationsQuery(
             seed_titles=seed_titles,
             seed_channels=seed_channels,
             seed_tags=seed_tags,
+            search_text=self._search_text,
             limit=_MORE_LIMIT,
             per_query=_BASE_PER_QUERY * (self._page + 1),
             exclude_urls=exclude_urls,
