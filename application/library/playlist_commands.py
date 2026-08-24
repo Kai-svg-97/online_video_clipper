@@ -19,6 +19,21 @@ from domain.shared.ports import IMediaSource
 logger = logging.getLogger(__name__)
 
 
+def _resolve_yt_api(yt_api, yt_api_provider: "Callable[[], object | None] | None"):
+    """저장된 yt_api가 있으면 그대로, 없으면 provider로 지연 해석한다.
+
+    composition root(main.py)가 시작 시 keyring에 접근하지 않도록 provider(예:
+    ``_get_youtube_api``)를 대신 넘기면, 실제로 이 핸들러가 호출되는 시점에만
+    YouTube 인증이 이뤄진다(lazy binding). yt_api를 직접 넘기는 기존 호출부·
+    테스트는 그대로 동작한다.
+    """
+    if yt_api is not None:
+        return yt_api
+    if yt_api_provider is not None:
+        return yt_api_provider()
+    return None
+
+
 # ── Command 데이터클래스 ─────────────────────────────────────────────────────
 
 @dataclass
@@ -93,9 +108,15 @@ class DeletePlaylistHandler:
 
 
 class RenamePlaylistHandler:
-    def __init__(self, playlist_repo: IPlaylistRepository, yt_api=None) -> None:
+    def __init__(
+        self,
+        playlist_repo: IPlaylistRepository,
+        yt_api=None,
+        yt_api_provider: "Callable[[], object | None] | None" = None,
+    ) -> None:
         self._repo = playlist_repo
         self._yt = yt_api  # YouTubeApiAdapter | None
+        self._yt_api_provider = yt_api_provider
 
     def handle(self, cmd: RenamePlaylistCommand) -> None:
         pl = self._repo.get_by_id(cmd.playlist_id)
@@ -104,9 +125,10 @@ class RenamePlaylistHandler:
         pl.title = cmd.new_title
         pl.updated_at = datetime.now(timezone.utc)
         self._repo.save(pl)
-        if self._yt is not None and getattr(pl, "yt_playlist_id", None):
+        yt = _resolve_yt_api(self._yt, self._yt_api_provider)
+        if yt is not None and getattr(pl, "yt_playlist_id", None):
             try:
-                self._yt.update_playlist_title(pl.yt_playlist_id, cmd.new_title)
+                yt.update_playlist_title(pl.yt_playlist_id, cmd.new_title)
             except Exception:
                 logger.exception("재생목록 제목 API 동기화 실패")  # 로컬은 이미 갱신됨; 온라인 실패는 무시
 
@@ -119,15 +141,18 @@ class AddVideoToPlaylistHandler:
         playlist_repo: IPlaylistRepository,
         video_repo: IVideoRepository | None = None,
         yt_adapter=None,   # YouTubeApiAdapter | None
+        yt_api_provider: "Callable[[], object | None] | None" = None,
     ) -> None:
         self._repo = playlist_repo
         self._video_repo = video_repo
         self._yt = yt_adapter
+        self._yt_api_provider = yt_api_provider
 
     def handle(self, cmd: AddVideoToPlaylistCommand) -> None:
         self._repo.add_video(cmd.playlist_id, cmd.video_id, cmd.position)
         # YouTube 재생목록이면 API 동기화
-        if self._yt is None or self._video_repo is None:
+        yt = _resolve_yt_api(self._yt, self._yt_api_provider)
+        if yt is None or self._video_repo is None:
             return
         pl = self._repo.get_by_id(cmd.playlist_id)
         if pl is None or pl.source != "youtube" or not pl.yt_playlist_id:
@@ -140,7 +165,7 @@ class AddVideoToPlaylistHandler:
         if not yt_vid_id:
             return
         try:
-            yt_item_id = self._yt.add_video(pl.yt_playlist_id, yt_vid_id)
+            yt_item_id = yt.add_video(pl.yt_playlist_id, yt_vid_id)
             self._repo.set_yt_item_id(cmd.playlist_id, cmd.video_id, yt_item_id)
         except Exception:
             logger.exception("재생목록 영상 추가 API 동기화 실패")  # API 실패 시 로컬 DB만 업데이트
@@ -153,18 +178,21 @@ class RemoveVideoFromPlaylistHandler:
         self,
         playlist_repo: IPlaylistRepository,
         yt_adapter=None,   # YouTubeApiAdapter | None
+        yt_api_provider: "Callable[[], object | None] | None" = None,
     ) -> None:
         self._repo = playlist_repo
         self._yt = yt_adapter
+        self._yt_api_provider = yt_api_provider
 
     def handle(self, cmd: RemoveVideoFromPlaylistCommand) -> None:
         # YouTube API 삭제 먼저 (item_id가 필요하므로 DB 삭제 전에)
-        if self._yt is not None:
+        yt = _resolve_yt_api(self._yt, self._yt_api_provider)
+        if yt is not None:
             pl = self._repo.get_by_id(cmd.playlist_id)
             if pl is not None and pl.source == "youtube":
                 yt_item_id = self._repo.get_yt_item_id(cmd.playlist_id, cmd.video_id)
                 if yt_item_id:
-                    self._yt.remove_video(yt_item_id)  # 실패 시 예외 전파 (호출자에서 처리)
+                    yt.remove_video(yt_item_id)  # 실패 시 예외 전파 (호출자에서 처리)
         self._repo.remove_video(cmd.playlist_id, cmd.video_id)
 
 
@@ -176,15 +204,18 @@ class ReorderPlaylistHandler:
         playlist_repo: IPlaylistRepository,
         video_repo: IVideoRepository | None = None,
         yt_api=None,   # YouTubeApiAdapter | None
+        yt_api_provider: "Callable[[], object | None] | None" = None,
     ) -> None:
         self._repo = playlist_repo
         self._video_repo = video_repo
         self._yt_api = yt_api
+        self._yt_api_provider = yt_api_provider
 
     def handle(self, cmd: ReorderPlaylistCommand) -> None:
         self._repo.set_items(cmd.playlist_id, cmd.ordered_video_ids)
 
-        if self._yt_api is None or self._video_repo is None:
+        yt_api = _resolve_yt_api(self._yt_api, self._yt_api_provider)
+        if yt_api is None or self._video_repo is None:
             return
         pl = self._repo.get_by_id(cmd.playlist_id)
         if pl is None or pl.source != "youtube" or not pl.yt_playlist_id:
@@ -202,7 +233,7 @@ class ReorderPlaylistHandler:
             if not yt_vid_id:
                 continue
             try:
-                self._yt_api.update_item_position(
+                yt_api.update_item_position(
                     yt_item_id, pl.yt_playlist_id, yt_vid_id, pos
                 )
             except Exception:
@@ -536,10 +567,12 @@ class MoveVideoToPlaylistHandler:
         playlist_repo: IPlaylistRepository,
         video_repo: IVideoRepository | None = None,
         yt_api=None,
+        yt_api_provider: "Callable[[], object | None] | None" = None,
     ) -> None:
         self._repo = playlist_repo
         self._video_repo = video_repo
         self._yt_api = yt_api
+        self._yt_api_provider = yt_api_provider
 
     def handle(self, cmd: MoveVideoToPlaylistCommand) -> None:
         src = cmd.source_playlist_id
@@ -547,22 +580,24 @@ class MoveVideoToPlaylistHandler:
         if src == tgt:
             return
 
+        yt_api = _resolve_yt_api(self._yt_api, self._yt_api_provider)
+
         # ── 소스에서 제거 ──────────────────────────────────────────────
         if src is not None:
-            if self._yt_api:
+            if yt_api:
                 src_pl = self._repo.get_by_id(src)
                 if src_pl and src_pl.source == "youtube":
                     yt_item_id = self._repo.get_yt_item_id(src, cmd.video_id)
                     if yt_item_id:
                         try:
-                            self._yt_api.remove_video(yt_item_id)
+                            yt_api.remove_video(yt_item_id)
                         except Exception:
                             logger.exception("재생목록 영상 제거 API 동기화 실패")
             self._repo.remove_video(src, cmd.video_id)
 
         # ── 대상에 추가 ────────────────────────────────────────────────
         self._repo.add_video(tgt, cmd.video_id)
-        if self._yt_api and self._video_repo:
+        if yt_api and self._video_repo:
             tgt_pl = self._repo.get_by_id(tgt)
             if tgt_pl and tgt_pl.source == "youtube" and tgt_pl.yt_playlist_id:
                 from domain.library.value_objects import extract_youtube_video_id as _extract_yt_video_id  # noqa: PLC0415
@@ -571,7 +606,7 @@ class MoveVideoToPlaylistHandler:
                     yt_vid_id = _extract_yt_video_id(agg.video.url)
                     if yt_vid_id:
                         try:
-                            yt_item_id = self._yt_api.add_video(tgt_pl.yt_playlist_id, yt_vid_id)
+                            yt_item_id = yt_api.add_video(tgt_pl.yt_playlist_id, yt_vid_id)
                             self._repo.set_yt_item_id(tgt, cmd.video_id, yt_item_id)
                         except Exception:
                             logger.exception("재생목록 영상 이동 API 동기화 실패")
@@ -588,21 +623,29 @@ class PushPlaylistToYouTubeHandler:
         self,
         playlist_repo: IPlaylistRepository,
         video_repo: IVideoRepository,
-        yt_adapter,   # YouTubeApiAdapter
+        yt_adapter=None,   # YouTubeApiAdapter | None
+        yt_api_provider: "Callable[[], object | None] | None" = None,
     ) -> None:
         self._repo = playlist_repo
         self._video_repo = video_repo
         self._yt = yt_adapter
+        self._yt_api_provider = yt_api_provider
 
     def handle(self, cmd: PushPlaylistToYouTubeCommand) -> PlaylistDTO:
         from domain.library.value_objects import extract_youtube_video_id as _extract_yt_video_id  # noqa: PLC0415
+
+        yt = _resolve_yt_api(self._yt, self._yt_api_provider)
+        if yt is None:
+            raise RuntimeError(
+                "YouTube API가 연결되지 않았습니다.\n설정 > YouTube API 연동에서 인증하세요."
+            )
 
         pl = self._repo.get_by_id(cmd.playlist_id)
         if pl is None:
             raise ValueError(f"Playlist {cmd.playlist_id} not found")
 
         # YouTube 재생목록 생성
-        yt_pl_id = self._yt.create_playlist(pl.title, privacy_status=cmd.privacy_status)
+        yt_pl_id = yt.create_playlist(pl.title, privacy_status=cmd.privacy_status)
 
         # 영상 추가
         items = self._repo.get_items(pl.id)
@@ -615,7 +658,7 @@ class PushPlaylistToYouTubeHandler:
             if not yt_vid_id:
                 continue
             try:
-                yt_item_id = self._yt.add_video(yt_pl_id, yt_vid_id)
+                yt_item_id = yt.add_video(yt_pl_id, yt_vid_id)
                 pushed.append((video_id, yt_item_id))
             except Exception:
                 logger.exception("YouTube 재생목록 영상 업로드 실패")

@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from uuid import UUID
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from application.library.dtos import FeedVideoDTO, PlaylistDTO, PlaylistFolderDTO, PlaylistItemDTO
 from domain.library.repositories import IPlaylistFolderRepository, IPlaylistRepository, IVideoRepository
@@ -16,6 +16,21 @@ if TYPE_CHECKING:
     from domain.monitoring.repositories import IChannelRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_yt_api(yt_api, yt_api_provider: "Callable[[], object | None] | None"):
+    """저장된 yt_api가 있으면 그대로, 없으면 provider로 지연 해석한다.
+
+    composition root(main.py)가 시작 시 keyring에 접근하지 않도록 provider(예:
+    ``_get_youtube_api``)를 대신 넘기면, 실제로 이 핸들러가 호출되는 시점에만
+    YouTube 인증이 이뤄진다(lazy binding). yt_api를 직접 넘기는 기존 호출부·
+    테스트는 그대로 동작한다.
+    """
+    if yt_api is not None:
+        return yt_api
+    if yt_api_provider is not None:
+        return yt_api_provider()
+    return None
 
 
 # ── Query 데이터클래스 ───────────────────────────────────────────────────────
@@ -135,16 +150,23 @@ class GetYouTubePlaylistsHandler:
     미설정 시 yt-dlp 브라우저 쿠키 fallback.
     """
 
-    def __init__(self, ytdlp: IMediaSource, yt_api=None) -> None:
+    def __init__(
+        self,
+        ytdlp: IMediaSource,
+        yt_api=None,
+        yt_api_provider: "Callable[[], object | None] | None" = None,
+    ) -> None:
         self._ytdlp = ytdlp
         self._yt_api = yt_api
+        self._yt_api_provider = yt_api_provider
 
     def handle(self, query: GetYouTubePlaylistsQuery) -> list[dict]:
         """반환: [{"id": "PLxxx", "title": "...", "count": N}, ...]"""
+        yt_api = _resolve_yt_api(self._yt_api, self._yt_api_provider)
         api_exc = None
-        if self._yt_api is not None:
+        if yt_api is not None:
             try:
-                return self._yt_api.list_playlists()
+                return yt_api.list_playlists()
             except Exception as e:
                 api_exc = e  # yt-dlp fallback 후 여전히 빈 결과면 이 에러를 전파
 
@@ -167,6 +189,7 @@ class GetSubscriptionFeedHandler:
         video_repo: IVideoRepository,
         channel_repo: "IChannelRepository | None" = None,
         yt_api=None,  # YouTubeApiAdapter | None
+        yt_api_provider: "Callable[[], object | None] | None" = None,
     ) -> None:
         self._ytdlp = ytdlp
         self._video_repo = video_repo
@@ -175,18 +198,20 @@ class GetSubscriptionFeedHandler:
         # API 미설정 시 구독 저장소의 channel_id→채널명 매핑으로 보강한다.
         self._channel_repo = channel_repo
         self._yt_api = yt_api
+        self._yt_api_provider = yt_api_provider
 
     def handle(
         self,
         query: GetSubscriptionFeedQuery,
         on_progress=None,  # Optional[Callable[[list[FeedVideoDTO]], None]]
     ) -> list[FeedVideoDTO]:
+        yt_api = _resolve_yt_api(self._yt_api, self._yt_api_provider)
         entries = self._ytdlp.fetch_subscription_feed(
             limit=query.limit,
             cookie_opts=query.cookie_opts,
         )
         # yt-dlp 쿠키 인증 없이 빈 결과인 경우 YouTube API로 fallback
-        if not entries and self._yt_api is not None and self._channel_repo is not None:
+        if not entries and yt_api is not None and self._channel_repo is not None:
             logger.debug("구독 피드 yt-dlp 결과 없음 — YouTube API로 fallback")
             try:
                 channel_ids = [
@@ -195,7 +220,7 @@ class GetSubscriptionFeedHandler:
                     if agg.subscription.channel_id
                 ]
                 if channel_ids:
-                    entries = self._yt_api.get_subscription_feed_via_api(
+                    entries = yt_api.get_subscription_feed_via_api(
                         channel_ids, per_channel=3, limit=query.limit
                     )
             except Exception:
@@ -232,12 +257,12 @@ class GetSubscriptionFeedHandler:
         # Phase 2: YouTube API 보강
         # 영상 ID → 채널 정보 (YouTube API 역조회)
         ch_by_vid: dict[str, dict] = {}
-        if self._yt_api is not None:
+        if yt_api is not None:
             vids = [e.get("yt_video_id") or e.get("id") or "" for e in entries]
             vids = [v for v in vids if v]
             if vids:
                 try:
-                    ch_by_vid = self._yt_api.get_videos_channels(vids)
+                    ch_by_vid = yt_api.get_videos_channels(vids)
                 except Exception:
                     logger.exception("피드 영상 채널 정보 조회 실패")
         # channel_id → 채널명 (구독 저장소 fallback)
@@ -295,16 +320,19 @@ class GetChannelVideosHandler:
         ytdlp: IMediaSource,
         video_repo: IVideoRepository,
         yt_api=None,  # YouTubeApiAdapter | None
+        yt_api_provider: "Callable[[], object | None] | None" = None,
     ) -> None:
         self._ytdlp = ytdlp
         self._video_repo = video_repo
         self._yt_api = yt_api
+        self._yt_api_provider = yt_api_provider
 
     def handle(
         self,
         query: GetChannelVideosQuery,
         on_progress=None,  # Optional[Callable[[list[FeedVideoDTO]], None]]
     ) -> list[FeedVideoDTO]:
+        yt_api = _resolve_yt_api(self._yt_api, self._yt_api_provider)
         entries = self._ytdlp.fetch_channel_videos(
             channel_url=query.channel_url,
             limit=query.limit,
@@ -332,12 +360,12 @@ class GetChannelVideosHandler:
 
         # Phase 2: 플랫 추출은 게시일/조회수를 비워 주므로 영상 ID로 API 메타를 보강한다.
         meta_by_vid: dict[str, dict] = {}
-        if self._yt_api is not None:
+        if yt_api is not None:
             vids = [e.get("yt_video_id") or e.get("id") or "" for e in entries]
             vids = [v for v in vids if v]
             if vids:
                 try:
-                    meta_by_vid = self._yt_api.get_videos_channels(vids)
+                    meta_by_vid = yt_api.get_videos_channels(vids)
                 except Exception:
                     logger.exception("채널 영상 메타데이터 조회 실패")
         result: list[FeedVideoDTO] = []
@@ -390,10 +418,12 @@ class GetRecommendationsHandler:
         ytdlp: IMediaSource,
         video_repo: IVideoRepository,
         yt_api=None,  # YouTubeApiAdapter | None
+        yt_api_provider: "Callable[[], object | None] | None" = None,
     ) -> None:
         self._ytdlp = ytdlp
         self._video_repo = video_repo
         self._yt_api = yt_api
+        self._yt_api_provider = yt_api_provider
 
     def handle(
         self,
@@ -449,12 +479,13 @@ class GetRecommendationsHandler:
 
         # Phase 2: 플랫 추출이 비워 둔 게시일/조회수를 영상 ID로 API 보강
         meta_by_vid: dict[str, dict] = {}
-        if self._yt_api is not None:
+        yt_api = _resolve_yt_api(self._yt_api, self._yt_api_provider)
+        if yt_api is not None:
             vids = [e.get("yt_video_id") or e.get("id") or "" for e in entries]
             vids = [v for v in vids if v]
             if vids:
                 try:
-                    meta_by_vid = self._yt_api.get_videos_channels(vids)
+                    meta_by_vid = yt_api.get_videos_channels(vids)
                 except Exception:
                     logger.exception("추천 영상 메타데이터 조회 실패")
 
@@ -501,8 +532,13 @@ class GetSubscribedChannelInfosHandler:
     API 미설정/실패 시에도 입력한 모든 채널을 이름·URL만으로 반환한다(graceful).
     """
 
-    def __init__(self, yt_api=None) -> None:  # YouTubeApiAdapter | None
+    def __init__(
+        self,
+        yt_api=None,  # YouTubeApiAdapter | None
+        yt_api_provider: "Callable[[], object | None] | None" = None,
+    ) -> None:
         self._yt_api = yt_api
+        self._yt_api_provider = yt_api_provider
 
     @staticmethod
     def _norm_channel_id(raw: str) -> str:
@@ -513,22 +549,24 @@ class GetSubscribedChannelInfosHandler:
     def handle(self, query: GetSubscribedChannelInfosQuery) -> list["ChannelInfoDTO"]:
         from application.library.dtos import ChannelInfoDTO  # noqa: PLC0415
 
+        yt_api = _resolve_yt_api(self._yt_api, self._yt_api_provider)
+
         # DB에 URL 형식으로 저장된 channel_id를 UCxxx 형식으로 정규화
         norm_map = {cid: self._norm_channel_id(cid) for cid, _, _ in query.channels}
 
         info_by_id: dict[str, dict] = {}
-        if self._yt_api is not None:
+        if yt_api is not None:
             ids = list({norm for norm in norm_map.values() if norm.startswith("UC")})
             if ids:
                 try:
-                    info_by_id = self._yt_api.list_channels(ids)
+                    info_by_id = yt_api.list_channels(ids)
                 except Exception:
                     logger.exception("구독 채널 정보 조회 실패")
                     info_by_id = {}
 
         # 채널별 최신 업로드 영상의 게시 시각(업로드 재생목록 첫 항목)
         latest_by_id: dict[str, str] = {}
-        if self._yt_api is not None and info_by_id:
+        if yt_api is not None and info_by_id:
             uploads = {
                 cid: v.get("uploads_playlist_id", "")
                 for cid, v in info_by_id.items()
@@ -536,7 +574,7 @@ class GetSubscribedChannelInfosHandler:
             }
             if uploads:
                 try:
-                    latest_by_id = self._yt_api.get_latest_upload_dates(uploads)
+                    latest_by_id = yt_api.get_latest_upload_dates(uploads)
                 except Exception:
                     logger.exception("채널 최신 업로드 시각 조회 실패")
 

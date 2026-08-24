@@ -406,29 +406,53 @@ def main() -> int:
     get_subs       = GetSubscriptionsHandler(channel_repo)
 
     # 13. Application handlers — Playlist & YouTube API
-    _yt_creds      = yt_oauth.get_credentials()
-    _yt_api        = None
-    if _yt_creds is not None:
-        _yt_api = YouTubeApiAdapter(_yt_creds)
+    # YouTube 인증(keyring 접근)은 시작 시 미루고, 실제로 YouTube 기능을 쓰는
+    # 시점(피드/채널 클릭, 재생목록 push 등)에만 수행한다(lazy binding, 200~300ms
+    # 단축). 한 번 해석되면(성공/실패 모두) 세션 내에서 재사용한다 — 기존에도
+    # 인증은 재시작 후에만 전 핸들러에 반영됐으므로(위 "번들 YouTube OAuth 로그인"
+    # 항목) 이 캐싱은 기존 동작과 동일하다.
+    _yt_api = None
+    _yt_api_resolved = False
+
+    def _get_youtube_api():
+        """필요할 때만 YouTube 인증·API를 초기화한다(lazy binding)."""
+        nonlocal _yt_api, _yt_api_resolved
+        if not _yt_api_resolved:
+            _creds = yt_oauth.get_credentials()
+            if _creds is not None:
+                _yt_api = YouTubeApiAdapter(_creds)
+            _yt_api_resolved = True
+        return _yt_api
 
     create_playlist_h  = CreatePlaylistHandler(playlist_repo)
     delete_playlist_h  = DeletePlaylistHandler(playlist_repo)
-    add_to_playlist_h  = AddVideoToPlaylistHandler(playlist_repo, video_repo, _yt_api)
-    remove_from_pl_h   = RemoveVideoFromPlaylistHandler(playlist_repo, _yt_api)
-    reorder_pl_h       = ReorderPlaylistHandler(playlist_repo, video_repo, _yt_api)
+    add_to_playlist_h  = AddVideoToPlaylistHandler(
+        playlist_repo, video_repo, yt_api_provider=_get_youtube_api
+    )
+    remove_from_pl_h   = RemoveVideoFromPlaylistHandler(
+        playlist_repo, yt_api_provider=_get_youtube_api
+    )
+    reorder_pl_h       = ReorderPlaylistHandler(
+        playlist_repo, video_repo, yt_api_provider=_get_youtube_api
+    )
     import_yt_pl_h     = ImportYouTubePlaylistHandler(
         playlist_repo, video_repo, ytdlp,
         add_video_handler=add_video,
-        yt_api=_yt_api,
         yt_oauth=yt_oauth,
         yt_api_factory=lambda creds: YouTubeApiAdapter(creds),
     )
     get_playlists_h    = GetPlaylistsHandler(playlist_repo)
     get_pl_items_h     = GetPlaylistItemsHandler(playlist_repo, video_repo)
-    get_feed_h         = GetSubscriptionFeedHandler(ytdlp, video_repo, channel_repo, _yt_api)
-    get_channel_vids_h = GetChannelVideosHandler(ytdlp, video_repo, _yt_api)
-    get_ch_infos_h     = GetSubscribedChannelInfosHandler(_yt_api)
-    get_recommend_h    = GetRecommendationsHandler(ytdlp, video_repo, _yt_api)
+    get_feed_h         = GetSubscriptionFeedHandler(
+        ytdlp, video_repo, channel_repo, yt_api_provider=_get_youtube_api
+    )
+    get_channel_vids_h = GetChannelVideosHandler(
+        ytdlp, video_repo, yt_api_provider=_get_youtube_api
+    )
+    get_ch_infos_h     = GetSubscribedChannelInfosHandler(yt_api_provider=_get_youtube_api)
+    get_recommend_h    = GetRecommendationsHandler(
+        ytdlp, video_repo, yt_api_provider=_get_youtube_api
+    )
 
     # 앨범 보기 — 외부 앨범 정보(iTunes, 무키)는 실패해도 라이브러리 곡으로 폴백한다.
     from application.song.album_queries import (  # noqa: PLC0415
@@ -453,17 +477,26 @@ def main() -> int:
     remove_album_link_h = RemoveAlbumTrackLinkHandler(album_repo)
     add_url_to_pl_h    = AddUrlToPlaylistHandler(add_video, playlist_repo)
 
-    rename_playlist_h  = RenamePlaylistHandler(playlist_repo, yt_api=_yt_api)
+    rename_playlist_h  = RenamePlaylistHandler(playlist_repo, yt_api_provider=_get_youtube_api)
     create_folder_h    = CreatePlaylistFolderHandler(folder_repo)
     rename_folder_h    = RenamePlaylistFolderHandler(folder_repo)
     delete_folder_h    = DeletePlaylistFolderHandler(folder_repo)
     move_to_folder_h   = MovePlaylistToFolderHandler(playlist_repo)
     copy_yt_to_local_h = CopyYouTubePlaylistToLocalHandler(playlist_repo, video_repo, ytdlp)
     get_folders_h      = GetPlaylistFoldersHandler(folder_repo)
-    push_to_yt_h       = PushPlaylistToYouTubeHandler(playlist_repo, video_repo, _yt_api) if _yt_api else None
-    move_video_pl_h    = MoveVideoToPlaylistHandler(playlist_repo, video_repo, _yt_api)
+    # 인증 여부와 무관하게 항상 생성한다 — 미인증이면 handle() 호출 시점에
+    # RuntimeError로 알려주고(push_to_youtube() 워커가 error_occurred로 표출),
+    # 시작 시점에 인증 유무를 미리 알 필요가 없다(lazy binding).
+    push_to_yt_h       = PushPlaylistToYouTubeHandler(
+        playlist_repo, video_repo, yt_api_provider=_get_youtube_api
+    )
+    move_video_pl_h    = MoveVideoToPlaylistHandler(
+        playlist_repo, video_repo, yt_api_provider=_get_youtube_api
+    )
 
-    import_yt_subs_h   = ImportYouTubeSubscriptionsHandler(subscribe_ch, ytdlp, _yt_api)
+    import_yt_subs_h   = ImportYouTubeSubscriptionsHandler(
+        subscribe_ch, ytdlp, yt_api_provider=_get_youtube_api
+    )
 
     # 14. Event bridge (translates domain events → application-level callbacks)
     dl_bridge = DownloadEventBridge(event_bus)
@@ -498,7 +531,7 @@ def main() -> int:
         enrich_video=enrich_video,
         get_downloaded_formats=get_dl_formats,
     )
-    get_yt_playlists_h = GetYouTubePlaylistsHandler(ytdlp, _yt_api)
+    get_yt_playlists_h = GetYouTubePlaylistsHandler(ytdlp, yt_api_provider=_get_youtube_api)
     playlist_vm = PlaylistViewModel(
         get_playlists=get_playlists_h,
         create_playlist=create_playlist_h,

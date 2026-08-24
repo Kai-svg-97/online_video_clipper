@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from typing import Callable
 from uuid import UUID
 
 from domain.monitoring.aggregates import ChannelMonitorAggregate
@@ -11,6 +12,20 @@ from domain.monitoring.value_objects import MonitoringRule
 from domain.shared.ports import IEventBus
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_yt_api(yt_api, yt_api_provider: "Callable[[], object | None] | None"):
+    """저장된 yt_api가 있으면 그대로, 없으면 provider로 지연 해석한다.
+
+    composition root(main.py)가 시작 시 keyring에 접근하지 않도록 provider(예:
+    ``_get_youtube_api``)를 대신 넘기면, 실제로 이 핸들러가 호출되는 시점에만
+    YouTube 인증이 이뤄진다(lazy binding).
+    """
+    if yt_api is not None:
+        return yt_api
+    if yt_api_provider is not None:
+        return yt_api_provider()
+    return None
 
 
 @dataclass
@@ -133,16 +148,19 @@ class ImportYouTubeSubscriptionsHandler:
         subscribe_handler: SubscribeChannelHandler,
         ytdlp_adapter=None,
         yt_api=None,   # YouTubeApiAdapter | None
+        yt_api_provider: "Callable[[], object | None] | None" = None,
     ) -> None:
         self._subscribe = subscribe_handler
         self._ytdlp = ytdlp_adapter
         self._yt_api = yt_api
+        self._yt_api_provider = yt_api_provider
 
     def handle(self, cmd: ImportYouTubeSubscriptionsCommand) -> int:
+        yt_api = _resolve_yt_api(self._yt_api, self._yt_api_provider)
         # OAuth API 우선
-        if self._yt_api is not None:
+        if yt_api is not None:
             try:
-                channels = self._yt_api.list_subscriptions()
+                channels = yt_api.list_subscriptions()
             except Exception:
                 logger.exception("구독 채널 목록 API 조회 실패")
                 channels = []
