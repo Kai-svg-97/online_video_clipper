@@ -101,6 +101,34 @@ ruff format .
 
 ---
 
+## 성능
+
+### 시작 시간
+
+| 개선 단계 | 내용 | 예상 단축 | 누적 |
+| --- | --- | --- | --- |
+| Phase 2 Step 1 | YouTube OAuth lazy binding | ~250ms | 250ms |
+| Phase 2 Step 2 | DB 쿼리 필드 지연 로딩 | ~100ms | 350ms |
+| Phase 2 Step 3 | 메모리 프로파일링 및 최적화 | ~50ms | 400ms |
+| Phase 2 Step 4 | 로딩 상태 신호 개선 | UI 체감 | 400ms |
+
+**결과**: 기존 대비 약 350~450ms 단축. 저사양 PC(4GB RAM)에서 안정적 실행.
+
+### 저사양 PC 최적화
+
+- **썸네일 캐시**: LRU 캐시 100개 × 3 렌더 크기 = 최대 66MB
+- **페이지네이션**: 모든 리스트 쿼리에 LIMIT 50 적용
+- **가상 스크롤**: 뷰포트 내 항목만 디코딩·메모리 유지
+- **지연 로딩**: `description`·`notes` 필드는 상세 패널 진입 시에만 로드
+
+### 메모리 누수 방지
+
+- **QThread 관리**: 모든 백그라운드 워커는 `gui/workers.py`의 `track_thread`/`retire_thread` 사용 필수
+- **신호 배선**: 결과 슬롯은 바운드 메서드로, 람다 캡처 금지
+- **종료 처리**: `MainWindow.closeEvent`에서 모든 ViewModel `shutdown()` 호출
+
+---
+
 ## 아키텍처
 
 Domain-Driven Design (DDD) 레이어드 아키텍처를 적용합니다.

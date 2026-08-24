@@ -1,15 +1,34 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import threading
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from domain.library.entities import Video
 from domain.library.events import VideoAdded, VideoDeleted, VideoMarkedWatched, VideoUpdated
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
 
+_now_lock = threading.Lock()
+_last_now: datetime | None = None
+
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    """현재 UTC 시각을 반환하되, 이전 호출보다 항상 뒤로 가도록 보정한다.
+
+    `last_played_at`은 "최근 재생순" 정렬(`ORDER BY last_played_at DESC`)의 유일한
+    근거인데, OS 시계 해상도가 낮은 환경(실측: Windows)에서는 아주 짧은 간격으로 연속
+    호출한 `datetime.now()`가 완전히 같은 값을 반환할 수 있다. 값이 같으면 SQL이 동률을
+    임의 순서로 매겨 "나중에 본 영상이 앞에 온다"는 계약이 깨진다(간헐적으로 재현됨 —
+    `tests/integration/test_resume_playback.py::TestQueries::test_최근_재생순으로_정렬된다`).
+    시계가 멈춰 보이면 마이크로초 하나를 더해 최소한의 순서를 보장한다.
+    """
+    global _last_now
+    with _now_lock:
+        now = datetime.now(timezone.utc)
+        if _last_now is not None and now <= _last_now:
+            now = _last_now + timedelta(microseconds=1)
+        _last_now = now
+        return now
 
 
 class VideoAggregate:

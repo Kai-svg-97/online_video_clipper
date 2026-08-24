@@ -158,13 +158,21 @@ class _ControlBar(QWidget):
         self._subtitle_on = True
         self._subtitle_offset_ms = 0
         self._subtitle_prefs_dirty = False
-        ThemeManager.instance().theme_changed.connect(
-            lambda _: self.setStyleSheet(_bar_style())
-        )
+        # 바운드 메서드로 연결한다 — 람다로 self를 캡처하면 PyQt가 "이 연결의
+        # 수신자가 이 위젯"이라는 것을 몰라 위젯이 파괴돼도 연결이 남는다.
+        # 전체화면·PiP는 열고 닫을 때마다 새 _ControlBar를 만들고 deleteLater()로
+        # 정리하는데(video_player.py의 `_exit_fullscreen`/`_exit_pip`), 람다 연결은
+        # 이때 끊기지 않아 다음 테마 전환에서 죽은 C++ 객체에 `setStyleSheet`를
+        # 호출해 RuntimeError가 났다(실제 재현). 바운드 메서드는 위젯이 파괴되면
+        # Qt가 자동으로 연결을 끊는다.
+        ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
         # Allow the bar to receive mouse events (needed for clicks on controls)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         self._dragging = False
         self._setup()
+
+    def _on_theme_changed(self, _tokens=None) -> None:
+        self.setStyleSheet(_bar_style())
 
     def _setup(self) -> None:
         outer = QVBoxLayout(self)

@@ -27,6 +27,25 @@ def _is_dpapi_error(exc: Exception) -> bool:
     return "dpapi" in msg or "failed to decrypt" in msg
 
 
+# 다운로드 시 시도할 YouTube 플레이어 클라이언트 순서(None = yt-dlp 기본/web).
+#
+# gui/widgets/player/stream.py의 _STREAM_CLIENTS와 동일한 원인·해결책이다: 기본
+# 클라이언트가 돌려주는 googlevideo URL이 간헐적으로 403을 낸다(PO token/SABR
+# 관련 서버측 거부로 추정, 실측 확인됨). 스트리밍 재생에는 이미 이 클라이언트
+# 폴백이 있었지만 다운로드 경로(YtDlpAdapter.download)에는 없어 다운로드가 403으로
+# 실패하고 조각난 .part 파일만 남는 사고가 있었다.
+_DOWNLOAD_CLIENTS: tuple[str | None, ...] = (None, "android", "ios", "tv")
+
+
+def _is_youtube_url(url: str) -> bool:
+    return "youtube.com" in url or "youtu.be" in url
+
+
+def _is_403_error(exc: Exception) -> bool:
+    msg = str(exc)
+    return "403" in msg or "Forbidden" in msg
+
+
 def _height_to_quality_label(height: int | None) -> str:
     """픽셀 높이를 사람이 읽기 쉬운 품질 레이블로 변환한다.
 
@@ -66,6 +85,8 @@ class YtDlpAdapter:
         on_progress: Callable[[DownloadProgress], None] | None = None,
     ) -> None:
         self._on_progress = on_progress
+        # 진행률 훅이 관찰한 임시(.part) 파일 경로 — 실패 시 정리용.
+        self._tmp_files_seen: set[str] = set()
 
     def fetch_metadata(self, url: str) -> dict:
         """Return video metadata without downloading."""
@@ -132,6 +153,9 @@ class YtDlpAdapter:
 
         If ffmpeg is not available, falls back to a single-stream format that
         requires no post-processing merging.
+
+        YouTube 기본(web) 클라이언트가 돌려주는 URL이 간헐적으로 403을 내는 문제가
+        있어(``_DOWNLOAD_CLIENTS`` 주석 참조) 여러 클라이언트를 순회하며 재시도한다.
         """
         import yt_dlp  # noqa: PLC0415
         out_dir = output_dir or DOWNLOAD_DIR
@@ -146,7 +170,7 @@ class YtDlpAdapter:
             else self._build_format_spec_no_ffmpeg(settings)
         )
 
-        opts: dict = {
+        base_opts: dict = {
             "format": format_spec,
             "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
             "quiet": True,
@@ -156,20 +180,20 @@ class YtDlpAdapter:
         }
 
         if has_ffmpeg:
-            opts["ffmpeg_location"] = ffmpeg
-            opts["merge_output_format"] = "mp4"  # 병합 출력을 항상 mp4로 고정
+            base_opts["ffmpeg_location"] = ffmpeg
+            base_opts["merge_output_format"] = "mp4"  # 병합 출력을 항상 mp4로 고정
 
             if settings.subtitle_langs:
-                opts["writesubtitles"] = True
-                opts["subtitleslangs"] = list(settings.subtitle_langs)
+                base_opts["writesubtitles"] = True
+                base_opts["subtitleslangs"] = list(settings.subtitle_langs)
 
             if settings.include_metadata:
-                opts.setdefault("postprocessors", [])
-                opts["postprocessors"].append({"key": "FFmpegMetadata"})
+                base_opts.setdefault("postprocessors", [])
+                base_opts["postprocessors"].append({"key": "FFmpegMetadata"})
 
             if settings.format in (MediaFormat.MP3, MediaFormat.M4A):
-                opts.setdefault("postprocessors", [])
-                opts["postprocessors"].append(
+                base_opts.setdefault("postprocessors", [])
+                base_opts["postprocessors"].append(
                     {
                         "key": "FFmpegExtractAudio",
                         "preferredcodec": settings.format.value,
@@ -177,31 +201,71 @@ class YtDlpAdapter:
                 )
 
         self._last_filepath: str = ""
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if info:
-                # requested_downloads contains the actual post-processed filepath
-                rd = (info.get("requested_downloads") or [{}])[0]
-                self._last_filepath = (
-                    rd.get("filepath")
-                    or info.get("filepath")
-                    or ydl.prepare_filename(info)
-                )
-                # 오디오 포맷이 아닐 때만 실제 다운로드 품질 레이블을 파일명에 삽입
-                if settings.format not in (MediaFormat.MP3, MediaFormat.M4A):
-                    actual_height = rd.get("height") or info.get("height")
-                    label = _height_to_quality_label(actual_height)
-                    if label:
-                        p = Path(self._last_filepath)
-                        new_path = p.with_name(f"{p.stem} [{label}]{p.suffix}")
-                        try:
-                            if p.exists() and not new_path.exists():
-                                p.rename(new_path)
-                                self._last_filepath = str(new_path)
-                        except OSError:
-                            pass  # 이름 변경 실패 시 원본 경로 유지
+        self._tmp_files_seen = set()
+        clients = _DOWNLOAD_CLIENTS if _is_youtube_url(url) else (None,)
+        last_exc: Exception | None = None
+        for i, client in enumerate(clients):
+            opts = dict(base_opts)
+            if client:
+                opts["extractor_args"] = {"youtube": {"player_client": [client]}}
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    if info:
+                        # requested_downloads contains the actual post-processed filepath
+                        rd = (info.get("requested_downloads") or [{}])[0]
+                        self._last_filepath = (
+                            rd.get("filepath")
+                            or info.get("filepath")
+                            or ydl.prepare_filename(info)
+                        )
+                        # 오디오 포맷이 아닐 때만 실제 다운로드 품질 레이블을 파일명에 삽입
+                        if settings.format not in (MediaFormat.MP3, MediaFormat.M4A):
+                            actual_height = rd.get("height") or info.get("height")
+                            label = _height_to_quality_label(actual_height)
+                            if label:
+                                p = Path(self._last_filepath)
+                                new_path = p.with_name(f"{p.stem} [{label}]{p.suffix}")
+                                try:
+                                    if p.exists() and not new_path.exists():
+                                        p.rename(new_path)
+                                        self._last_filepath = str(new_path)
+                                except OSError:
+                                    pass  # 이름 변경 실패 시 원본 경로 유지
+                if client:
+                    logger.info("대체 클라이언트로 다운로드 성공: client=%s", client)
+                # 이전 클라이언트 시도에서 남은 조각 파일(있다면)까지 함께 정리한다.
+                # 이번 시도가 만든 tmp 파일은 성공 시 yt-dlp가 이미 정리했으므로
+                # 안전하다(없는 경로는 missing_ok로 무시됨).
+                self._cleanup_partial_files()
+                return Path(self._last_filepath)
+            except Exception as exc:
+                last_exc = exc
+                is_last = i == len(clients) - 1
+                if _is_403_error(exc) and not is_last:
+                    logger.warning(
+                        "다운로드 403 — 다음 클라이언트로 재시도(client=%s): %s",
+                        client or "기본", str(exc)[:200],
+                    )
+                    continue
+                self._cleanup_partial_files()
+                raise
+        # clients는 항상 최소 1개 원소를 가지므로 이 지점에는 도달하지 않지만
+        # 정적 분석·방어적 코드로 남겨둔다.
+        self._cleanup_partial_files()
+        raise last_exc or RuntimeError("다운로드 실패")
 
-        return Path(self._last_filepath)
+    def _cleanup_partial_files(self) -> None:
+        """실패한 다운로드가 남긴 임시(``.part``) 파일을 정리한다.
+
+        진행률 훅(``_progress_hook``)이 관찰한 ``tmpfilename``만 지운다 —
+        완성돼 이미 이름이 바뀐 파일은 이 목록에 없으므로 잘못 지울 위험이 없다.
+        """
+        for tmp_path in self._tmp_files_seen:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except OSError:
+                logger.warning("부분 다운로드 파일 정리 실패: %s", tmp_path)
 
     # ------------------------------------------------------------------
     # YouTube 계정 연동 (브라우저 쿠키 인증)
@@ -596,6 +660,11 @@ class YtDlpAdapter:
         return f"best[height<={h}][ext=mp4]/best[height<={h}]/best"
 
     def _progress_hook(self, info: dict) -> None:
+        # tmpfilename은 실제로 쓰이고 있는 .part 파일 경로 — 실패 시 정리 대상으로
+        # 기록한다(콜백 등록 여부와 무관하게 항상 추적).
+        tmp_path = info.get("tmpfilename")
+        if tmp_path:
+            self._tmp_files_seen.add(tmp_path)
         if self._on_progress is None:
             return
         if info.get("status") != "downloading":

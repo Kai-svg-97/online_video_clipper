@@ -120,7 +120,7 @@ def main() -> int:
                 "YTContentManager.App.1.0"
             )
         except Exception:
-            pass
+            logger.debug("AppUserModelID 설정 실패 — 작업표시줄 아이콘 그룹화만 영향 받음")
 
     _icon_path = get_resource_path("assets/icon.ico")
     if _icon_path.exists():

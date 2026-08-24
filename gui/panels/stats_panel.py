@@ -202,7 +202,9 @@ class StatsPanel(QWidget):
         self._refresh()
         # 카드·차트 색은 위젯 스타일시트/QPainter로 직접 칠하므로 전역 QSS 교체만으로는
         # 갱신되지 않는다. 테마가 바뀌면 다시 그린다.
-        ThemeManager.instance().theme_changed.connect(lambda _=None: self._refresh())
+        # 바운드 메서드로 연결한다 — 람다로 self를 캡처하면 위젯이 파괴돼도 연결이
+        # 안 끊긴다(gui/widgets/player/controls.py에서 실제로 겪은 크래시와 같은 이유).
+        ThemeManager.instance().theme_changed.connect(self._refresh)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
