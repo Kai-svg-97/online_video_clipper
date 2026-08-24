@@ -373,6 +373,93 @@ class TestSearchKeywordStrip:
         assert kwargs["seed_titles"] == ("파이썬 강의 1",)
 
 
+class TestCollapsedStripSearchOverride:
+    """접힌 스트립도 **검색 결과가 0건일 때만** 임시로 펼쳐 검색어 결과를 채운다.
+
+    접혀 있으면 조회하지 않는 것이 기본이지만(네트워크 절약), 검색 결과가 없으면
+    화면에 아무것도 남지 않아 헤더 바만 있는 스트립이 '결과 없음'과 구분되지 않는다.
+    사용자가 접어 둔 설정은 저장값을 건드리지 않고, 검색어를 지우면 되돌린다.
+    """
+
+    def _type(self, panel, text: str) -> None:
+        panel._search_box.blockSignals(True)
+        panel._search_box.setText(text)
+        panel._search_box.blockSignals(False)
+
+    def test_접혀_있어도_검색_0건이면_조회한다(self, panel, qtbot, library_vm, recommend_vm):
+        panel._recommend_strip.set_expanded(False, notify=False)
+        library_vm._videos = []
+        self._type(panel, "뉴진스")
+
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        recommend_vm.load.assert_called_once()
+        assert recommend_vm.load.call_args.kwargs["search_text"] == "뉴진스"
+        assert panel._recommend_strip.is_expanded          # 임시로 펼쳤다
+        assert panel._recommend_forced_expand
+
+    def test_검색_결과가_있으면_접힘을_존중한다(self, panel, qtbot, library_vm, recommend_vm):
+        panel._recommend_strip.set_expanded(False, notify=False)
+        library_vm._videos = [_dto("뉴진스 무대")]
+        self._type(panel, "뉴진스")
+
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        recommend_vm.load.assert_not_called()
+        assert not panel._recommend_strip.is_expanded
+
+    def test_검색어를_지우면_원래_접힘으로_되돌린다(
+        self, panel, qtbot, library_vm, recommend_vm
+    ):
+        panel._recommend_strip.set_expanded(False, notify=False)
+        library_vm._videos = []
+        self._type(panel, "뉴진스")
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+        panel._recommend_strip.set_items([_feed_dto()])
+
+        self._type(panel, "")
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        assert not panel._recommend_strip.is_expanded
+        assert not panel._recommend_forced_expand
+        # 지운 검색어의 결과가 '추천 영상' 제목으로 남으면 안 된다.
+        assert panel._recommend_strip.count() == 0
+        assert panel._recommend_strip._title_lbl.text() == RecommendStrip.DEFAULT_TITLE
+
+    def test_임시_펼침은_설정에_저장하지_않는다(
+        self, panel, qtbot, library_vm, recommend_vm, monkeypatch
+    ):
+        import config.settings as settings
+        saved: list = []
+        monkeypatch.setattr(settings, "save_setting", lambda *a, **k: saved.append(a))
+        panel._recommend_strip.set_expanded(False, notify=False)
+        library_vm._videos = []
+        self._type(panel, "뉴진스")
+
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        assert not [a for a in saved if a and a[0] == "recommend_strip_expanded"]
+
+    def test_사용자가_직접_접으면_임시_펼침을_포기한다(
+        self, panel, qtbot, library_vm, recommend_vm
+    ):
+        panel._recommend_strip.set_expanded(False, notify=False)
+        library_vm._videos = []
+        self._type(panel, "뉴진스")
+        panel._on_videos_changed()
+        qtbot.wait(_RECOMMEND_DEBOUNCE_MS + 200)
+
+        panel._recommend_strip.toggle()      # 사용자가 다시 접는다(notify=True)
+
+        assert not panel._recommend_forced_expand
+        assert not panel._recommend_strip.is_expanded
+
+
 class TestViewModelSearchText:
     """뷰모델이 검색어를 핸들러까지 전달하고, 씨앗 없이도 조회한다."""
 

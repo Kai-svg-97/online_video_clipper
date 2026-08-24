@@ -211,8 +211,11 @@ class VideoListMixin:
             overlay.hide()
             return
         if self._search_box.text().strip():
+            # 로컬에 없을 때가 오히려 'YouTube에는 뭐가 있나'를 가장 보고 싶은
+            # 순간이다 — 아래 스트립이 그 낱말의 검색 결과로 채워지므로 알려 준다.
             overlay.show_message(
-                "검색 결과가 없습니다.\n다른 낱말로 찾거나 Esc로 검색어를 지워 보세요."
+                "검색 결과가 없습니다.\n"
+                "아래 '추천 영상' 띠에 이 낱말의 YouTube 검색 결과를 채웁니다."
             )
         elif self._active_tag_ids:
             overlay.show_message("이 태그에 해당하는 영상이 없습니다.")

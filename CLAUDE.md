@@ -473,7 +473,8 @@ online_video_clipper/
   헤더 제목(`RecommendStrip.set_title`)이 `"<검색어>" YouTube 검색 결과`로 바뀌어 지금 뜬
   카드가 무엇인지 알려 주고, 검색어를 지우면 기본 제목·목록 기반 추천으로 돌아온다.
   회귀 테스트: `tests/gui/test_recommend_panel_wiring.py`(`TestSearchKeywordStrip`·
-  `TestViewModelSearchText`), `tests/integration/test_recommendations.py`,
+  `TestCollapsedStripSearchOverride`·`TestViewModelSearchText`),
+  `tests/integration/test_recommendations.py`,
   `tests/unit/domain/test_recommendation.py`.
   **드롭 경로는 새로 만들지 않았다**: 카드 드래그가 `text/uri-list`+`text/plain`으로
   브라우저 URL 드래그와 동일한 MIME을 만들고, `_PlaylistTree`에 URL 드롭 처리를 추가해
@@ -484,7 +485,18 @@ online_video_clipper/
   (YouTube 루트·채널·재생목록 노드는 거부). 부수 효과로 구독 피드 카드도 드래그 가능해졌다
   (`_FeedGrid`가 `draggable=True`로 카드를 만든다). 자동 갱신은 900ms 디바운스이고
   **접혀 있으면 조회하지 않는다** — 기본값은 펼침(`RECOMMEND_STRIP_EXPANDED`)이지만
-  접어 두면 네트워크 조회가 완전히 멈춘다.
+  접어 두면 네트워크 조회가 완전히 멈춘다. **예외는 검색 결과가 0건일 때 하나뿐이다**
+  (`_search_needs_recommendations`): 검색어는 있는데 로컬 결과가 없으면 화면에 아무것도
+  남지 않아 헤더 바만 있는 접힌 스트립이 '결과 없음'과 구분되지 않는다 — 사용자가 이미
+  무엇을 찾는지 말했으므로 `_apply_search_expand`가 스트립을 **임시로 펼쳐**(설정값은
+  건드리지 않는다 — `set_expanded(notify=False)` + `_sync_recommend_sizes(save=False)`)
+  그 낱말의 YouTube 결과를 채운다. 검색어를 지우거나 결과가 생기면 원래 접힘으로
+  되돌리며 **그때 카드·헤더 제목도 함께 비운다** — 남겨 두면 나중에 사용자가 직접 펼쳤을
+  때 `count() > 0`이라 재조회가 걸리지 않아, 지운 검색어의 결과가 '추천 영상'이라는 제목으로
+  그대로 남는다. 사용자가 직접 토글하면(`_on_recommend_expanded`) 임시 펼침에서 손을 뗀다
+  (직접 조작이 우선이다). 검색 0건 안내판(`_refresh_list_overlay`)도 "아래 '추천 영상' 띠에
+  이 낱말의 YouTube 검색 결과를 채웁니다"로 스트립을 가리켜, 목록만 보고 있던 사용자가
+  결과를 놓치지 않게 한다.
   **목록이 다 준비되기 전에는 스트립을 감춘다**(`LibraryPanel._recommend_ready`) — 조회 중인
   빈 띠가 미리 자리를 차지하지 않도록, 최종 결과(`items_changed`)가 와야 노출한다.
   **부분 결과(`partial_ready`)는 채워만 두고 노출하지 않는다.** 노출은 `_animate_recommend_in`이

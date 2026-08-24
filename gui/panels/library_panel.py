@@ -544,6 +544,9 @@ class LibraryPanel(
         # 부드럽게 올라온다(_reveal_recommend_strip). 접혀 있으면 조회 자체를 하지
         # 않으므로(네트워크 절약) 헤더 바만 바로 띄워 다시 펼칠 수단을 남긴다.
         self._recommend_ready: bool = not expanded
+        # 검색 결과가 0건일 때만 임시로 펼친 상태인가 — 검색어를 지우거나 결과가
+        # 생기면 사용자가 접어 둔 상태로 되돌린다(설정은 건드리지 않는다).
+        self._recommend_forced_expand: bool = False
         self._recommend_anim: QVariantAnimation | None = None
         self._recommend_strip.setVisible(not expanded)
         if not expanded:

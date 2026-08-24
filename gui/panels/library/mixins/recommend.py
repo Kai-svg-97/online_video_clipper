@@ -154,10 +154,14 @@ class RecommendStripMixin:
 
     def _schedule_recommend_refresh(self) -> None:
         """목록 변경 후 추천 갱신을 예약한다(디바운스)."""
-        if self._recommend_vm is None or not self._recommend_strip.is_expanded:
+        if self._recommend_vm is None:
             return
         # 카드 그리드 뷰(폴더·피드·채널)는 라이브러리 목록이 아니라 씨앗이 어긋난다.
         if self._view_stack.currentIndex() in (_VIEW_FOLDER, _VIEW_FEED, _VIEW_CHANNELS):
+            return
+        # 접혀 있으면 조회하지 않는다(네트워크 절약) — 단 검색 결과가 0건이면
+        # 스트립만이 보여줄 것이 있으므로 예외로 통과시켜 임시로 펼친다.
+        if not self._recommend_strip.is_expanded and not self._search_needs_recommendations():
             return
         self._recommend_timer.start()
 
@@ -170,10 +174,47 @@ class RecommendStripMixin:
         box = getattr(self, "_search_box", None)   # 화면 조립 중 호출 대비
         return box.text().strip() if box is not None else ""
 
+    def _search_needs_recommendations(self) -> bool:
+        """검색어는 있는데 로컬 결과가 0건인가 — 스트립만이 보여줄 것이 있는 순간.
+
+        접힌 스트립은 원래 조회하지 않지만(네트워크 절약), 이때는 화면에 아무것도
+        없어서 헤더 바만 남은 스트립이 '결과 없음'과 구분되지 않는다. 사용자가
+        무엇을 찾는지 이미 말했으므로 그 낱말의 YouTube 결과를 채워 보여준다.
+        """
+        return bool(self._recommend_search_text()) and not self._vm.videos
+
+    def _apply_search_expand(self, needed: bool) -> None:
+        """검색 결과 0건일 때만 스트립을 임시로 펼친다(설정은 건드리지 않는다).
+
+        접어 둔 것은 사용자의 취향이라 저장된 값을 바꾸지 않고(`notify=False`),
+        검색어를 지우거나 결과가 생기면 원래 접힘 상태로 되돌린다. 그 사이 사용자가
+        직접 토글하면 `_on_recommend_expanded`가 강제 펼침을 포기한다(직접 조작이
+        우선이다).
+        """
+        strip = self._recommend_strip
+        if needed and not strip.is_expanded:
+            self._recommend_forced_expand = True
+            strip.set_expanded(True, notify=False)
+            self._sync_recommend_sizes(True, save=False)
+        elif not needed and self._recommend_forced_expand:
+            self._recommend_forced_expand = False
+            # 검색어로 채운 카드·제목은 함께 비운다 — 남겨 두면 나중에 사용자가 직접
+            # 펼쳤을 때 `count() > 0`이라 재조회가 걸리지 않아, 지운 검색어의 결과가
+            # '추천 영상'이라는 제목으로 그대로 남는다.
+            strip.set_items([])
+            strip.set_title()
+            strip.set_status("")
+            strip.set_expanded(False, notify=False)
+            self._sync_recommend_sizes(False, save=False)
+
     def _refresh_recommendations(self, force: bool = False) -> None:
-        if self._recommend_vm is None or not self._recommend_strip.is_expanded:
+        if self._recommend_vm is None:
             return
         search_text = self._recommend_search_text()
+        # 검색 결과가 0건이면 접혀 있어도 임시로 펼쳐 검색어 결과를 채운다.
+        self._apply_search_expand(bool(search_text) and not self._vm.videos)
+        if not self._recommend_strip.is_expanded:
+            return
         if search_text:
             # 검색 모드에서는 씨앗을 넘기지 않는다 — 검색어만이 조회를 결정하므로,
             # 목록이 바뀌어도(예: 스트립에서 한 건 담아 목록이 늘어도) 캐시가
@@ -229,6 +270,8 @@ class RecommendStripMixin:
         self._centre_splitter.setSizes([max(total - h, 0), h])
 
     def _on_recommend_expanded(self, expanded: bool) -> None:
+        # 사용자가 직접 토글했다 — 임시 펼침(검색 0건)은 여기서 손을 뗀다.
+        self._recommend_forced_expand = False
         _settings.save_setting("recommend_strip_expanded", expanded)
         self._sync_recommend_sizes(expanded)
         if expanded and self._recommend_strip.count() == 0:
