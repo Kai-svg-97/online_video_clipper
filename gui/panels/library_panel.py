@@ -286,6 +286,8 @@ class LibraryPanel(
         apply_smooth_scroll_tree(self)
         self._setup_shortcuts()
         QTimer.singleShot(0, vm.load)
+        # Phase 2 Step 2: categories를 백그라운드에서 로드 (시작 시간 단축)
+        QTimer.singleShot(100, vm.load_categories)
         if playlist_vm is not None:
             QTimer.singleShot(0, playlist_vm.load)
 

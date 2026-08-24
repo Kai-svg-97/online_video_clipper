@@ -394,6 +394,15 @@ class LibraryViewModel(QObject):
         """현재 트리 노드(카테고리/재생목록) 스코프로 집계된 인기 태그."""
         return self._scoped_tags
 
+    def load_categories(self) -> None:
+        """카테고리 트리 로드 (백그라운드에서 호출 가능)."""
+        try:
+            self._categories = self._get_categories.handle()
+            self.categories_changed.emit()
+        except Exception as exc:
+            logger.exception("카테고리 로드 실패: %s", exc)
+            self.error_occurred.emit(f"카테고리 로드 실패: {exc}")
+
     def refresh_scoped_tags(self) -> None:
         """현재 활성 필터(카테고리 서브트리 또는 재생목록 영상)에 맞춘 인기 태그를
         집계한다. 카테고리·재생목록 모두 없으면(로컬 루트) 라이브러리 전체.
@@ -419,11 +428,12 @@ class LibraryViewModel(QObject):
         self.scoped_tags_changed.emit()
 
     def load(self) -> None:
+        """초기 로드 (categories 제외 — 백그라운드로 이동)."""
         self._current_page = 0
         self._refresh_videos()
-        self._refresh_categories()
+        # _refresh_categories() 제거 — load_categories() 백그라운드 호출로 이동 (Phase 2 Step 2)
         self._refresh_tags()
-        self.refresh_scoped_tags()
+        # refresh_scoped_tags()는 categories가 로드된 후 호출됨
 
     def load_next_page(self) -> None:
         self._current_page += 1
