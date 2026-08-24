@@ -78,32 +78,66 @@ class TestEmptyState:
 
 
 class TestLoadingHint:
-    def test_조회가_길어지면_불러오는_중을_띄운다(self, panel, qtbot):
+    def test_조회가_길어지면_스켈레톤을_띄운다(self, panel, qtbot):
         panel._on_list_loading(True)
 
         qtbot.wait(_LOADING_HINT_DELAY_MS + 150)
 
-        assert "불러오는 중" in panel._list_overlay.text()
+        assert not panel._list_skeleton.isHidden()
+        # 기존 텍스트 안내("불러오는 중")는 스켈레톤이 대체한다 — 둘이 겹치면 안 된다.
+        # (텍스트 안내판은 이제 로딩 중에는 만들어지지도 않는다.)
+        assert getattr(panel, "_list_overlay", None) is None
 
     def test_짧은_조회에서는_깜빡이지_않는다(self, panel, library_vm, qtbot):
-        """캐시 히트처럼 즉시 끝나는 조회 — 안내가 번쩍이면 더 산만하다."""
+        """캐시 히트처럼 즉시 끝나는 조회 — 스켈레톤이 번쩍이면 더 산만하다."""
         library_vm._videos = [_dto()]
 
         panel._on_list_loading(True)
         panel._on_list_loading(False)      # 지연 시간 전에 끝났다
         qtbot.wait(_LOADING_HINT_DELAY_MS + 150)
 
-        assert panel._list_overlay.isHidden()
+        assert panel._list_skeleton.isHidden()
 
-    def test_조회가_끝나면_결과에_맞는_안내로_바뀐다(self, panel, library_vm, qtbot):
+    def test_조회가_끝나면_스켈레톤이_걷히고_결과에_맞는_안내가_뜬다(self, panel, library_vm, qtbot):
         library_vm._videos = []
         panel._on_list_loading(True)
         qtbot.wait(_LOADING_HINT_DELAY_MS + 150)
-        assert "불러오는 중" in panel._list_overlay.text()
+        assert not panel._list_skeleton.isHidden()
 
         panel._on_list_loading(False)
 
+        assert panel._list_skeleton.isHidden()
         assert "아직 영상이 없습니다" in panel._list_overlay.text()
+
+
+class TestSearchLoadingSignal:
+    """검색 조회에는 로딩 신호가 전혀 없었다 — `vm.loading_changed`로 메운다."""
+
+    def test_로딩_신호가_오면_스켈레톤을_띄운다(self, panel, qtbot):
+        panel._vm.loading_changed.emit(True)
+
+        qtbot.wait(_LOADING_HINT_DELAY_MS + 150)
+
+        assert not panel._list_skeleton.isHidden()
+
+        panel._vm.loading_changed.emit(False)
+
+        assert panel._list_skeleton.isHidden()
+
+    def test_카테고리_클릭_중인_트리_스피너는_이_스켈레톤을_직접_끄지_않는다(self, panel, qtbot):
+        """겹치는 조회 — 노드 키 신호(트리 스피너 전용)가 먼저 끝나도 스켈레톤은
+        `loading_changed`(깊이 카운터)가 0이 될 때까지 유지돼야 한다."""
+        panel._vm.loading_changed.emit(True)
+        qtbot.wait(_LOADING_HINT_DELAY_MS + 150)
+        assert not panel._list_skeleton.isHidden()
+
+        # 트리 노드별 신호만 끝난 상황(다른 조회가 아직 진행 중인 시나리오를 흉내)
+        panel._on_local_loading_key_changed("cat:x", False)
+
+        assert not panel._list_skeleton.isHidden()
+
+        panel._vm.loading_changed.emit(False)
+        assert panel._list_skeleton.isHidden()
 
 
 class TestOverlayGeometry:
@@ -138,6 +172,7 @@ def test_뷰모델_없이도_안내판이_만들어진다(qtbot, library_vm, mon
     qtbot.addWidget(p)
 
     assert p._ensure_overlay() is not None
+    assert p._ensure_skeleton() is not None
     assert isinstance(p._loading_timer, MagicMock) is False
     for worker in list(library_vm._list_workers):
         worker.wait(3000)

@@ -4,14 +4,14 @@ from dataclasses import dataclass
 from uuid import UUID
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LyricsLineDTO:
     original: str
     translation: str = ""
     start_ms: int | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SongInfoDTO:
     video_id: UUID
     is_song: bool
@@ -40,7 +40,7 @@ class SongInfoDTO:
         return any(line.start_ms is not None for line in self.lyrics_lines)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LyricsCandidateDTO:
     """가사 검색 후보 한 건 — 출처 하나가 돌려준 결과를 목록에 보여주기 위한 값.
 
@@ -67,7 +67,7 @@ class LyricsCandidateDTO:
     language: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LyricsSourceDTO:
     id: UUID
     name: str

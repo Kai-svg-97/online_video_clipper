@@ -75,6 +75,18 @@ class TestRowContainers:
         tab._toggle_lyrics_layout()
         assert len(_rows(tab)) == 2
 
+    def test_가사_내용이_같으면_행_위젯을_재사용한다(self, tab):
+        """헤더(가수 등)만 바뀌고 가사(원문·번역·타이밍)가 그대로면 _LyricRow를
+        다시 만들지 않는다 — 위젯 재생성 생략이 이 최적화의 목적이다."""
+        tab.set_info(_synced_dto())
+        before = _rows(tab)
+        same_lines_diff_artist = SongInfoDTO(
+            video_id=uuid4(), is_song=True, artist="다른 가수", song_title="제목",
+            lyrics_lines=_synced_dto().lyrics_lines,
+        )
+        tab.set_info(same_lines_diff_artist)
+        assert _rows(tab) == before
+
 
 class TestSyncedButton:
     def test_싱크_가사가_없으면_노출된다(self, tab):
@@ -117,10 +129,26 @@ class TestHighlight:
         tab.set_current_line(99)   # 예외 없이 아무것도 강조하지 않는다
         assert all(not r.is_current for r in _rows(tab))
 
-    def test_가사_재렌더_후_강조가_초기화된다(self, tab):
+    def test_같은_가사로_다시_설정해도_강조가_유지된다(self, tab):
+        """가사 내용(원문·번역·타이밍)이 그대로면 위젯을 다시 만들지 않으므로
+        강조도 풀리지 않는다 — 재생 중 필드 편집을 저장해도(song_info_changed 재방출)
+        강조가 사라지면 안 된다는 요구사항의 회귀 방지."""
         tab.set_info(_synced_dto())
         tab.set_current_line(0)
         tab.set_info(_synced_dto())
+        rows = _rows(tab)
+        assert rows[0].is_current is True
+
+    def test_다른_가사로_바뀌면_강조가_초기화된다(self, tab):
+        tab.set_info(_synced_dto())
+        tab.set_current_line(0)
+        other = _dto(
+            [
+                LyricsLineDTO(original="different", translation="다름", start_ms=2000),
+                LyricsLineDTO(original="lines", translation="가사", start_ms=6000),
+            ]
+        )
+        tab.set_info(other)
         assert all(not r.is_current for r in _rows(tab))
 
     def test_빈_줄이_있어도_line_index로_올바른_행을_강조한다(self, tab):

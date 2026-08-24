@@ -73,6 +73,37 @@ class TestAlbumGrid:
         assert got == ["iu\x1fpalette"]
 
 
+class TestAlbumGridLoadingSkeleton:
+    """조회 중에는 카드 자리에 셰이머 스켈레톤을 먼저 보여준다."""
+
+    def test_로딩중이면_실제_카드_대신_스켈레톤을_채운다(self, qtbot):
+        grid = AlbumGrid()
+        qtbot.addWidget(grid)
+        grid.set_albums([_card()])
+
+        grid.set_loading(True)
+
+        assert grid.count() == 0
+        assert len(grid._inner._skeletons) > 0
+
+    def test_로딩이_끝나면_스켈레톤을_모두_치운다(self, qtbot):
+        grid = AlbumGrid()
+        qtbot.addWidget(grid)
+        grid.set_loading(True)
+
+        grid.set_loading(False)
+
+        assert grid._inner._skeletons == []
+
+    def test_같은_값으로_다시_불러도_상태가_바뀌지_않는다(self, qtbot):
+        grid = AlbumGrid()
+        qtbot.addWidget(grid)
+
+        grid.set_loading(False)   # 초기값이 이미 False
+
+        assert grid._inner._skeletons == []
+
+
 class TestAlbumDetailPanel:
     def test_수록곡마다_출처_배지가_붙는다(self, qtbot):
         panel = AlbumDetailPanel()
@@ -136,6 +167,39 @@ class TestAlbumDetailPanel:
         panel._btn_play.click()
 
         assert got == [detail]
+
+
+class TestAlbumDetailLoadingSkeleton:
+    """조회 중에는 자켓 정사각형 + 수록곡 표 자리에 스켈레톤을 보여준다."""
+
+    def test_로딩중이면_자켓이_스켈레톤으로_바뀌고_행이_채워진다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+
+        panel.set_loading(True)
+
+        assert panel._jacket_stack.currentWidget() is panel._jacket_skeleton
+        assert len(panel._skeleton_rows) == AlbumDetailPanel._TRACK_SKELETON_ROWS
+
+    def test_로딩이_끝나면_자켓과_행이_원래대로_돌아온다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_loading(True)
+
+        panel.set_loading(False)
+
+        assert panel._jacket_stack.currentWidget() is panel._jacket
+        assert panel._skeleton_rows == []
+
+    def test_실제_상세가_도착하면_남은_스켈레톤_행을_치운다(self, qtbot):
+        panel = AlbumDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_loading(True)
+
+        panel.set_detail(_detail())
+
+        assert panel._skeleton_rows == []
+        assert len(panel._rows) == 3
 
 
 class TestEditModeDelete:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from functools import lru_cache
 from uuid import UUID
 
 from domain.song.aggregates import SongInfoAggregate
@@ -33,14 +34,24 @@ def _lyrics_to_json(lines: list[LyricsLine]) -> str:
     return json.dumps(out, ensure_ascii=False)
 
 
-def _lyrics_from_json(raw: str | None) -> list[LyricsLine]:
-    if not raw:
-        return []
+_LYRICS_PARSE_CACHE_MAX = 128
+
+
+@lru_cache(maxsize=_LYRICS_PARSE_CACHE_MAX)
+def _lyrics_parse_cached(raw: str) -> tuple[LyricsLine, ...]:
+    """가사 JSON 파싱 결과를 내용 주소 지정(키=원본 JSON 문자열)으로 캐시한다.
+
+    video_id가 아니라 원본 문자열을 키로 쓰는 이유: 가사가 바뀌면 문자열도 달라지므로
+    무효화 로직이 필요 없고, 동기화(MergeApplier)가 리포지토리를 우회해 song_info를
+    직접 UPDATE하는 경로에서도 video_id 키 캐시처럼 낡을 위험이 없다(`sqlite_video_
+    repository.py:_lyrics_text`와 같은 idiom). 반환값은 `LyricsLine`(frozen+slots)의
+    불변 tuple이라 호출자 간 공유해도 안전하다.
+    """
     try:
         data = json.loads(raw)
     except (ValueError, TypeError):
         logger.debug("가사 JSON 파싱 실패 — 빈 목록 사용")
-        return []
+        return ()
     out: list[LyricsLine] = []
     for item in data if isinstance(data, list) else []:
         if not isinstance(item, dict):
@@ -55,7 +66,15 @@ def _lyrics_from_json(raw: str | None) -> list[LyricsLine]:
                 start_ms=start_ms,
             )
         )
-    return out
+    return tuple(out)
+
+
+def _lyrics_from_json(raw: str | None) -> list[LyricsLine]:
+    if not raw:
+        return []
+    # 캐시는 불변 tuple을 돌려준다 — list()로 감싸 사본을 내줘야 호출자가
+    # append/sort 등으로 변형해도 캐시된 값이 오염되지 않는다(포인터 복사라 비용 무시 가능).
+    return list(_lyrics_parse_cached(raw))
 
 
 def _row_to_aggregate(row) -> SongInfoAggregate:

@@ -238,6 +238,10 @@ class LibraryViewModel(QObject):
     # 단일 영상 상세 정보 갱신(⟳) 완료 — (video_id, ok). ok=True면 DB가 갱신됨.
     video_metadata_refreshed = pyqtSignal(object, bool)
     loading_key_changed = pyqtSignal(str, bool)        # (node_key, loading) — 트리 노드별 스피너
+    # 목록 조회 진행 여부(노드 키 유무와 무관 — 검색 조회도 포함) — 목록 스켈레톤 전용.
+    # 겹치는 조회를 깊이 카운터(_list_inflight)로 관리해, 먼저 끝난 조회가
+    # 아직 진행 중인 다른 조회의 로딩 상태를 꺼버리지 않게 한다.
+    loading_changed = pyqtSignal(bool)
     # 등록 직후 자동 보강 — (url, kind) / (url, kind, ok, detail)
     enrich_started  = pyqtSignal(str, str)
     enrich_finished = pyqtSignal(str, str, bool, str)
@@ -311,6 +315,7 @@ class LibraryViewModel(QObject):
         self._thumb_workers: list[_RefreshThumbnailWorker] = []
         self._list_workers: list[_ListVideosWorker] = []
         self._list_gen: int = 0
+        self._list_inflight: int = 0  # loading_changed 깊이 카운터(겹치는 조회 안전)
 
         self._videos: list[VideoDTO] = []
         self._categories: list[CategoryDTO] = []
@@ -370,6 +375,7 @@ class LibraryViewModel(QObject):
         self._thumb_workers.clear()
         self._list_workers.clear()
         self._pending_list.clear()
+        self._list_inflight = 0
 
     @property
     def videos(self) -> list[VideoDTO]:
@@ -943,6 +949,9 @@ class LibraryViewModel(QObject):
             self._pending_list.append((fetch, append, gen, ck, on_done, node_key))
 
     def _run_list(self, fetch, append, gen, ck, on_done, node_key) -> None:
+        self._list_inflight += 1
+        if self._list_inflight == 1:
+            self.loading_changed.emit(True)
         if node_key:
             self.loading_key_changed.emit(node_key, True)
         worker = _ListVideosWorker(fetch, append, self)
@@ -975,6 +984,9 @@ class LibraryViewModel(QObject):
             self._list_workers.remove(worker)
         if node_key:
             self.loading_key_changed.emit(node_key, False)
+        self._list_inflight = max(0, self._list_inflight - 1)
+        if self._list_inflight == 0:
+            self.loading_changed.emit(False)
         while len(self._list_workers) < self._max_workers and self._pending_list:
             fetch, append, gen, ck, on_done, nk = self._pending_list.popleft()
             self._run_list(fetch, append, gen, ck, on_done, nk)

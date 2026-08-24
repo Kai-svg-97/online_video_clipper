@@ -587,6 +587,8 @@ class LibraryPanel(
         self._vm.tags_changed.connect(self._on_tags_changed)
         self._vm.scoped_tags_changed.connect(self._refresh_popular_tags)
         self._vm.loading_key_changed.connect(self._on_local_loading_key_changed)
+        # 노드 키 유무와 무관한 목록 로딩(검색 조회 포함) — 목록 스켈레톤 전용.
+        self._vm.loading_changed.connect(self._on_list_loading_any)
         ThemeManager.instance().theme_changed.connect(lambda _: self._apply_sidebar_tree_style())
 
         # 재생목록 탭 시그널
@@ -691,6 +693,8 @@ class LibraryPanel(
             self._on_album_track_delete_requested
         )
         if self._album_vm is not None:
+            self._album_vm.loading_changed.connect(self._album_grid.set_loading)
+            self._album_vm.loading_changed.connect(self._album_detail.set_loading)
             self._album_vm.albums_changed.connect(self._on_albums_changed)
             self._album_vm.detail_ready.connect(self._on_album_detail_ready)
             self._album_vm.track_filled.connect(self._on_album_track_filled)

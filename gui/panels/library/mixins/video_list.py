@@ -151,8 +151,9 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistPanel,
     _PlaylistTree,
 )
+from gui.panels.library.skeleton_list import ListSkeleton  # noqa: F401
 
-# 목록 조회가 이보다 오래 걸릴 때만 '불러오는 중'을 띄운다(빠른 조회에서 깜빡임 방지).
+# 목록 조회가 이보다 오래 걸릴 때만 스켈레톤을 띄운다(빠른 조회에서 깜빡임 방지).
 _LOADING_HINT_DELAY_MS = 250
 
 logger = logging.getLogger(__name__)
@@ -179,30 +180,58 @@ class VideoListMixin:
     # 툭 바뀌고, 0건이면 빈 화면이라 '없는 건지 못 불러온 건지' 알 수 없었다.
 
     def _ensure_overlay(self):
-        """목록 위 안내판을 필요할 때 만든다(레이아웃에 자리를 차지하지 않는다)."""
+        """목록 위 안내판(결과 없음 등)을 필요할 때 만든다(레이아웃에 자리를 차지하지 않는다)."""
         overlay = getattr(self, "_list_overlay", None)
         if overlay is None:
             from gui.panels.library.overlay import ListOverlay  # noqa: PLC0415
 
             overlay = ListOverlay(self._view_stack)
             self._list_overlay = overlay
-            # 짧은 조회에서 안내판이 깜빡이지 않도록 지연 후에만 띄운다.
+        return overlay
+
+    def _ensure_skeleton(self) -> ListSkeleton:
+        """목록 위 로딩 스켈레톤을 필요할 때 만든다."""
+        skeleton = getattr(self, "_list_skeleton", None)
+        if skeleton is None:
+            skeleton = ListSkeleton(self._view_stack)
+            self._list_skeleton = skeleton
+            # 짧은 조회에서 스켈레톤이 깜빡이지 않도록 지연 후에만 띄운다.
             self._loading_timer = QTimer(self)
             self._loading_timer.setSingleShot(True)
             self._loading_timer.setInterval(_LOADING_HINT_DELAY_MS)
-            self._loading_timer.timeout.connect(
-                lambda: self._list_overlay.show_message("불러오는 중…")
-            )
-        return overlay
+            self._loading_timer.timeout.connect(self._show_skeleton_now)
+        return skeleton
+
+    def _show_skeleton_now(self) -> None:
+        skeleton = self._ensure_skeleton()
+        skeleton.set_view(self._view_stack.currentIndex())
+        skeleton.set_loading(True)
 
     def _on_list_loading(self, loading: bool) -> None:
-        """목록 조회 시작/종료 — 조회가 길어질 때만 '불러오는 중'을 띄운다."""
-        self._ensure_overlay()
+        """목록 조회 시작/종료 — 조회가 길어질 때만 스켈레톤을 띄운다.
+
+        아이콘·리스트·표 뷰(실제 영상 목록)가 아닌 화면(폴더·피드·채널 카드
+        그리드)에서는 목록 스켈레톤을 띄우지 않는다 — 그 화면들은 별도 스켈레톤이
+        필요하다면 각자 담당한다(Step 4 등).
+        """
+        self._ensure_skeleton()
         if loading:
-            self._loading_timer.start()
+            if self._view_stack.currentIndex() in (_VIEW_ICON, _VIEW_LIST, _VIEW_DETAIL):
+                self._loading_timer.start()
         else:
             self._loading_timer.stop()
+            self._list_skeleton.set_loading(False)
             self._refresh_list_overlay()
+
+    def _on_list_loading_any(self, loading: bool) -> None:
+        """`vm.loading_changed` 전용 슬롯 — 노드 키가 없는 검색 조회도 포함한다.
+
+        예전에는 검색 조회(디바운스 300ms + 쿼리 시간)에 어떤 로딩 신호도 없어
+        화면이 아무 말도 하지 않았다. `LibraryViewModel.loading_changed`는 노드 키
+        유무와 무관하게(깊이 카운터로) 발행되므로, 이 슬롯 하나로 검색·카테고리
+        조회를 모두 포함한다. 실제 표시/숨김 로직은 `_on_list_loading`과 같다.
+        """
+        self._on_list_loading(loading)
 
     def _refresh_list_overlay(self) -> None:
         """결과가 0건이면 왜 비었는지와 무엇을 하면 되는지 알려 준다."""

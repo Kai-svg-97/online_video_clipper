@@ -801,9 +801,13 @@ class SidebarTreeMixin:
             self._vm.set_playlist_filter(src_pl_id)
 
     def _on_local_loading_key_changed(self, key: str, loading: bool) -> None:
-        # 트리 스피너와 함께 목록 안내판도 갱신한다(조회가 길면 '불러오는 중').
-        self._on_list_loading(loading)
-        """로컬 트리 노드(카테고리/재생목록) 스피너 즉시 전환."""
+        """로컬 트리 노드(카테고리/재생목록) 스피너 즉시 전환.
+
+        목록 스켈레톤(_on_list_loading_any)은 `vm.loading_changed`(깊이 카운터)에
+        직접 연결돼 있어 여기서 부르지 않는다 — 노드별 신호는 이 스피너 전용이다.
+        겹치는 조회에서 먼저 끝난 노드가 이 신호로 스켈레톤을 꺼버리면, 아직 진행
+        중인 다른 조회의 스켈레톤까지 사라지는 문제가 있었다.
+        """
         item = self._playlist_panel.find_local_item_by_key(key)
         self._playlist_panel.set_local_node_loading(key, item, loading)
 

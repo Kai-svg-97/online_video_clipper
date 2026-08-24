@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -38,6 +39,7 @@ from application.song.album_dtos import (
 from config.settings import THUMBNAIL_DIR
 from gui.anim import fade_in
 from gui.themes.manager import ThemeManager
+from gui.widgets.skeleton import ShimmerEffect, SkeletonRow
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +200,34 @@ class _AlbumCard(QFrame):
         super().mouseReleaseEvent(event)
 
 
+class _AlbumCardSkeleton(QWidget):
+    """앨범 카드 자리표시자 — 자켓 정사각형 + 제목줄 + 부제줄을 셰이머로 그린다.
+
+    실제 `_AlbumCard`와 같은 폭·구성을 흉내 내 로딩 중에도 그리드 구조가 미리
+    보이게 한다. 칸마다 위젯을 새로 만들지 않는 저사양 PC 규칙은 `SkeletonRow`가
+    (제목·부제 두 줄)로, 자켓은 `ShimmerEffect` 한 칸으로 충분해 위젯 3개로 끝낸다.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedWidth(_AlbumCard._W)
+        col = QVBoxLayout(self)
+        col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(4)
+        self._jacket = ShimmerEffect(radius=8.0)
+        self._jacket.setFixedSize(_AlbumCard.JACKET, _AlbumCard.JACKET)
+        col.addWidget(self._jacket, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._title = SkeletonRow(height=14)
+        col.addWidget(self._title)
+        self._sub = SkeletonRow(height=12, cell_count=2, cell_ratios=[1.0, 1.0])
+        col.addWidget(self._sub)
+        self._blocks = [self._jacket, self._title, self._sub]
+
+    def set_loading(self, loading: bool) -> None:
+        for block in self._blocks:
+            block.set_loading(loading)
+
+
 class AlbumGrid(QScrollArea):
     """앨범 자켓 그리드 — 창 폭에 맞춰 열 수를 다시 계산한다."""
 
@@ -217,6 +247,10 @@ class AlbumGrid(QScrollArea):
     def set_status(self, text: str) -> None:
         self._inner.set_status(text)
 
+    def set_loading(self, loading: bool) -> None:
+        """조회 중이면 카드 자리에 셰이머 스켈레톤을 채운다."""
+        self._inner.set_loading(loading)
+
     def count(self) -> int:
         return len(self._inner.cards)
 
@@ -225,6 +259,9 @@ class _AlbumGridInner(QWidget):
     album_clicked = pyqtSignal(str)
 
     _CARD_W = _AlbumCard._W + 16
+    # 로딩 중 채우는 자리표시자 카드 수 — 뷰포트 채우기보다 "구조가 있다"는 신호가
+    # 목적이라 고정 개수로 충분하다(스크롤이 필요하면 실제 데이터가 채운다).
+    _SKELETON_COUNT = 6
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -243,6 +280,8 @@ class _AlbumGridInner(QWidget):
         root.addWidget(holder)
         root.addStretch(1)
         self.cards: list[_AlbumCard] = []
+        self._skeletons: list[_AlbumCardSkeleton] = []
+        self._loading = False
         self._cols = 0
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802
@@ -255,6 +294,7 @@ class _AlbumGridInner(QWidget):
         self._status.setStyleSheet(f"color:{_t().text_secondary}; font-size:9pt;")
 
     def set_albums(self, albums: list[AlbumCardDTO]) -> None:
+        self._clear_skeleton()
         for card in self.cards:
             card.setParent(None)
             card.deleteLater()
@@ -266,14 +306,48 @@ class _AlbumGridInner(QWidget):
             self._grid.addWidget(card, i // self._cols, i % self._cols)
             self.cards.append(card)
 
+    def set_loading(self, loading: bool) -> None:
+        """조회 시작/종료 — 카드 자리에 셰이머 스켈레톤을 채우거나 치운다."""
+        loading = bool(loading)
+        if loading == self._loading:
+            return
+        self._loading = loading
+        if loading:
+            for card in self.cards:
+                card.setParent(None)
+                card.deleteLater()
+            self.cards.clear()
+            self._build_skeleton()
+        else:
+            self._clear_skeleton()
+
+    def _clear_skeleton(self) -> None:
+        for sk in self._skeletons:
+            sk.setParent(None)
+            sk.deleteLater()
+        self._skeletons.clear()
+
+    def _build_skeleton(self) -> None:
+        self._clear_skeleton()
+        self._cols = self._calc_cols()
+        for i in range(self._SKELETON_COUNT):
+            sk = _AlbumCardSkeleton()
+            sk.set_loading(True)
+            self._grid.addWidget(sk, i // self._cols, i % self._cols)
+            self._skeletons.append(sk)
+
     def _calc_cols(self) -> int:
         return max(1, (self.width() - 24) // self._CARD_W)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         cols = self._calc_cols()
-        if self.cards and cols != self._cols:
-            self._cols = cols
+        if cols == self._cols:
+            return
+        self._cols = cols
+        if self._loading:
+            self._build_skeleton()
+        elif self.cards:
             for i, card in enumerate(self.cards):
                 self._grid.addWidget(card, i // cols, i % cols)
 
@@ -401,12 +475,18 @@ class AlbumDetailPanel(QWidget):
     add_all_requested = pyqtSignal(object)      # AlbumDetailDTO — 현재 카테고리에 담기
 
     JACKET = 220
+    # 수록곡 표 로딩 스켈레톤 — 스크롤을 부르지 않을 정도로 넉넉히(요청 사양: 15줄).
+    _TRACK_SKELETON_ROWS = 15
+    # 번호·제목·가수·길이·배지 칸 폭 비율 근사(_TrackRow 레이아웃과 같은 순서).
+    _TRACK_SKELETON_RATIOS = [1, 6, 2, 1, 1]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._detail: AlbumDetailDTO | None = None
         self._loader = None
         self._rows: list[_TrackRow] = []
+        self._skeleton_rows: list[SkeletonRow] = []
+        self._loading = False
         # 수정 모드 — 켜져 있는 동안만 각 행에 삭제(✕) 버튼이 보인다. 잘못 붙은 음원을
         # 실수로 지우지 않도록 기본은 꺼져 있다("수정" 버튼을 눌러야 나타난다).
         self._edit_mode = False
@@ -439,7 +519,16 @@ class AlbumDetailPanel(QWidget):
         left = QVBoxLayout()
         left.setSpacing(8)
         self._jacket = _JacketLabel(self.JACKET)
-        left.addWidget(self._jacket, 0, Qt.AlignmentFlag.AlignHCenter)
+        # 로딩 중에는 자켓 자리에 정사각형 셰이머를 보여준다 — 두 위젯을 겹쳐 두지
+        # 않고 QStackedWidget으로 갈아 끼워야 실제 자켓 페인팅과 셰이머 애니메이션이
+        # 동시에 그려지며 서로를 가리는 일이 없다.
+        self._jacket_skeleton = ShimmerEffect(radius=8.0)
+        self._jacket_skeleton.setFixedSize(self.JACKET, self.JACKET)
+        self._jacket_stack = QStackedWidget()
+        self._jacket_stack.setFixedSize(self.JACKET, self.JACKET)
+        self._jacket_stack.addWidget(self._jacket)
+        self._jacket_stack.addWidget(self._jacket_skeleton)
+        left.addWidget(self._jacket_stack, 0, Qt.AlignmentFlag.AlignHCenter)
         self._title_lbl = QLabel("")
         self._title_lbl.setWordWrap(True)
         tf = QFont()
@@ -572,6 +661,21 @@ class AlbumDetailPanel(QWidget):
         self._btn_add_all.setEnabled(not busy)
         self._btn_add_all.setText("담는 중…" if busy else "＋ 현재 카테고리에 등록")
 
+    def set_loading(self, loading: bool) -> None:
+        """앨범 정보 조회 중 자켓·수록곡 표 자리에 스켈레톤을 보여준다."""
+        loading = bool(loading)
+        if loading == self._loading:
+            return
+        self._loading = loading
+        self._jacket_stack.setCurrentWidget(
+            self._jacket_skeleton if loading else self._jacket
+        )
+        self._jacket_skeleton.set_loading(loading)
+        if loading:
+            self._render_track_skeleton()
+        else:
+            self._clear_track_skeleton()
+
     def apply_filled_track(self, track: AlbumTrackDTO) -> None:
         """자동 매핑이 끝난 곡 하나를 제자리에서 갱신한다(전체 재조회 없이)."""
         if self._detail is None:
@@ -603,7 +707,25 @@ class AlbumDetailPanel(QWidget):
         )
 
     # ── 내부 ───────────────────────────────────────────────────────
+    def _render_track_skeleton(self) -> None:
+        self._clear_track_skeleton()
+        for i in range(self._TRACK_SKELETON_ROWS):
+            row = SkeletonRow(
+                cell_count=5, height=20, cell_ratios=self._TRACK_SKELETON_RATIOS,
+                parent=self._tracks_holder,
+            )
+            row.set_loading(True)
+            self._tracks_layout.insertWidget(i, row)
+            self._skeleton_rows.append(row)
+
+    def _clear_track_skeleton(self) -> None:
+        for row in self._skeleton_rows:
+            row.setParent(None)
+            row.deleteLater()
+        self._skeleton_rows.clear()
+
     def _render_tracks(self, tracks: list[AlbumTrackDTO]) -> None:
+        self._clear_track_skeleton()
         for row in self._rows:
             row.setParent(None)
             row.deleteLater()

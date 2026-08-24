@@ -367,6 +367,11 @@ class _SongTab(QWidget):
         self._side_by_side = False   # 번역 배치: False=원문 아래, True=원문 오른쪽
         self._rows: list[_LyricRow] = []
         self._current_row: _LyricRow | None = None
+        # 가사 위젯을 마지막으로 실제로 그렸을 때의 내용 키(원문·번역·타이밍).
+        # None은 "아직 한 번도 그리지 않음"이라 첫 호출은 항상 그린다. 빈 튜플은
+        # 실제 빈 가사 키와 겹칠 수 있지만, 빈 가사는 항상 다시 그리므로(아래
+        # _render_lyrics) 문제되지 않는다.
+        self._lyrics_render_key: tuple | None = None
         self._scroll_hold_until = 0.0   # 사용자 스크롤 후 자동 스크롤을 멈추는 시각(monotonic)
         self._build_ui()
 
@@ -646,13 +651,32 @@ class _SongTab(QWidget):
         ):
             self._lyrics_stack.setCurrentIndex(self._STACK_VIEW)
 
-    def _render_lyrics(self, dto: SongInfoDTO | None) -> None:
+    def _render_lyrics(self, dto: SongInfoDTO | None, force: bool = False) -> None:
+        """가사 영역을 다시 그린다.
+
+        필드 편집 저장·노래 토글처럼 가사와 무관한 변경에서도 ``song_info_changed``가
+        와 이 메서드가 매번 불린다. 가사 내용(원문·번역·타이밍)이 실제로 바뀌지
+        않았으면 위젯 트리를 파괴·재생성하지 않는다 — 재생 중 강조 줄(``_current_row``)
+        이 풀리지 않고, 40줄짜리 곡에서 매번 위젯 최대 120개를 새로 만드는 비용도
+        사라진다. ``force=True``(2열 배치 토글·글자 배율 변경)는 내용이 같아도 항상
+        다시 그린다 — 두 경우 모두 화면 표시가 바뀌어야 하기 때문이다.
+        """
+        bilingual = bool(dto and dto.is_bilingual)
+        # 번역 배치 전환 아이콘 가시성은 재생성을 생략해도 항상 갱신한다.
+        self._layout_btn.setVisible(bilingual)
+
+        lines = dto.lyrics_lines if dto else ()
+        # 내용 주소 지정 키 — 원문·번역·타이밍이 모두 같으면 같은 키다. 가사가 없는
+        # 경우(다른 사유로 문구가 달라질 수 있음 — 예: is_song 여부)는 최적화 대상에서
+        # 빼고 항상 다시 그린다(비용도 라벨 1개뿐이라 저렴하다).
+        key = tuple((line.original, line.translation, line.start_ms) for line in lines)
+        if not force and lines and key == self._lyrics_render_key:
+            return
+        self._lyrics_render_key = key
+
         _clear_layout(self._lyrics_layout)
         self._rows = []
         self._current_row = None
-        bilingual = bool(dto and dto.is_bilingual)
-        # 번역 배치 전환 아이콘은 병행(번역 있는) 가사일 때만 노출
-        self._layout_btn.setVisible(bilingual)
         if not dto or not dto.lyrics_lines:
             msg = (
                 "가사 정보가 없습니다.\n'가사' 옆 ⟳ 버튼으로 조회하거나 더블클릭하여 직접 입력하세요."
@@ -732,7 +756,9 @@ class _SongTab(QWidget):
         self._font_scale = scale
         self._zoom_btn.setText(scale_label(scale))
         current = self._current_row.line_index if self._current_row else None
-        self._render_lyrics(self._current_dto)
+        # 글자 크기는 라벨 스타일시트에 박혀 있어, 가사 내용이 그대로라도 다시 그려야
+        # 배율이 반영된다 — 반드시 강제 재생성.
+        self._render_lyrics(self._current_dto, force=True)
         if current is not None:
             self.set_current_line(current)
 
@@ -773,7 +799,8 @@ class _SongTab(QWidget):
         self._layout_btn.setToolTip(
             "번역을 아래에 표시" if self._side_by_side else "번역을 오른쪽에 표시"
         )
-        self._render_lyrics(self._current_dto)
+        # 배치(원문 아래↔오른쪽)가 바뀌면 가사 내용이 같아도 다시 그려야 한다.
+        self._render_lyrics(self._current_dto, force=True)
 
     # ── 편집 상호작용 ─────────────────────────────────────────────
     def lyrics_viewport(self):
