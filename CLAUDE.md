@@ -858,6 +858,7 @@ online_video_clipper/
   마지막 참조가 사라질 때 파이썬이 정리한다. `retire_thread`는 신호를 **이름으로** 받는다 —
   호출부에서 `worker.failed`를 꺼내는 순간 이미 정리된 객체면 거기서 터지기 때문이다.
 - 백그라운드 워커를 만드는 뷰모델은 `shutdown()`을 제공하고 `MainWindow.closeEvent`에서 호출해 종료 시 워커를 정리한다. yt-dlp 다운로드처럼 협조적 취소 훅이 없으면 `terminate()` 후 `wait()`로 종료를 보장한다.
+- **`track_thread` 없이 리스트 하나로만 QThread를 붙드는 것은 이 규칙을 지킨 게 아니다.** `MainWindow.closeEvent`의 `wait_all(3000)`은 `gui/workers.py`의 `_RUNNING` 레지스트리만 안다 — 자체 리스트(GC 방지용)에만 담아 둔 워커는 종료 시 기다려지지 않는다. `gui/panels/library/mixins/video_list.py:_start_thumb_preload`의 `_ThumbBgLoader`가 `_active_thumb_loaders`(취소용 리스트)에만 담겨 있어 이 구멍이 있었다(2026-08 메모리 최적화 점검에서 발견) — `track_thread(loader)`를 추가로 호출해 고쳤다. 자체 리스트로 다른 목적(취소·중복 방지)을 관리하더라도, **실행 중 QThread라면 반드시 `track_thread`도 함께 호출**한다. 회귀 테스트: `tests/gui/test_memory_cleanup.py::TestWorkerReferenceRelease`.
 
 ## 입력·움직임 규칙 (mandatory)
 

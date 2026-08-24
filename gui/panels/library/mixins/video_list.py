@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 from application.library.dtos import VideoDTO
 
+from gui.workers import track_thread
 
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
@@ -284,6 +285,12 @@ class VideoListMixin:
             old.cancel()
         loader = _ThumbBgLoader(items)
         self._active_thumb_loaders.append(loader)
+        # `_active_thumb_loaders`는 새 로더 시작 시 이전 로더를 cancel()하기 위한
+        # 목록일 뿐 `gui.workers.wait_all()`이 알지 못한다 — 앱 종료
+        # 시점에 이 로더가 아직 도는 채로 LibraryPanel이 파괴되면 실행 중인
+        # QThread 파괴로 프로세스가 죽는다(gui/workers.py). track_thread로도
+        # 등록해 closeEvent의 wait_all(3000)이 이 로더도 기다리게 한다.
+        track_thread(loader)
 
         def _on_loader_done(done=loader) -> None:
             try:
