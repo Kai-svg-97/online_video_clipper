@@ -4,7 +4,7 @@
 # application/library
 
 ## Purpose
-라이브러리 Bounded Context의 애플리케이션 레이어. 영상 CRUD, 카테고리 관리, 태그, 재생목록, 스마트 폴더, YouTube 재생목록 가져오기 등 모든 커맨드·쿼리 핸들러와 DTO를 제공한다.
+라이브러리 Bounded Context의 애플리케이션 레이어. 영상 CRUD, 카테고리 관리, 태그, 재생목록, YouTube 재생목록 가져오기 등 모든 커맨드·쿼리 핸들러와 DTO를 제공한다.
 
 ## Key Files
 
@@ -16,7 +16,6 @@
 | `playlist_queries.py` | `GetPlaylistsHandler`, `GetPlaylistItemsHandler`, `GetPlaylistFoldersHandler`, `GetSubscriptionFeedHandler`, `GetChannelVideosHandler`, `GetSubscribedChannelInfosHandler`, `GetYouTubePlaylistsHandler` |
 | `dtos.py` | `VideoDTO`, `VideoDetailDTO`, `CategoryDTO`, `TagDTO`, `LibraryStatsDTO`, `DownloadInfoDTO`, `CategoryStatDTO` |
 | `favorites.py` | 즐겨찾기 관련 헬퍼 |
-| `smart_folders.py` | 스마트 폴더 정의 (동적 필터 기반 가상 폴더) |
 
 ## For AI Agents
 

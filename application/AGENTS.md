@@ -18,7 +18,7 @@
 
 | Directory | Purpose |
 |-----------|---------|
-| `library/` | 영상·카테고리·태그·재생목록·스마트폴더 커맨드/쿼리 핸들러 (see `library/AGENTS.md`) |
+| `library/` | 영상·카테고리·태그·재생목록 커맨드/쿼리 핸들러 (see `library/AGENTS.md`) |
 | `download/` | 다운로드 시작·취소·이력 조회 핸들러 + 이벤트 브릿지 (see `download/AGENTS.md`) |
 | `clip/` | 클립 추출·삭제·조회 핸들러 (see `clip/AGENTS.md`) |
 | `monitoring/` | 채널 구독·규칙·구독 피드 핸들러 (see `monitoring/AGENTS.md`) |

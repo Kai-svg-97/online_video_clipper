@@ -247,14 +247,14 @@ online_video_clipper/
 │   │   │   ├── splitter.py          # 좌측 패널 접기 핸들
 │   │   │   ├── overlay.py           # 목록 위 상태 안내판(**결과 없음** 3종만) — 레이아웃 자리를 차지하지 않고 클릭을 통과시킨다. `_OverlayResizer`(부모 크기 추적)는 `skeleton_list.py`도 재사용. '조회 중' 표시는 v1.22.0부터 `skeleton_list.py`의 스켈레톤이 대신한다(텍스트와 스켈레톤이 동시에 뜨면 안 되므로 이 파일은 더 이상 로딩 상태를 그리지 않는다)
 │   │   │   ├── skeleton_list.py     # 영상 목록(그리드·리스트·표) 로딩 스켈레톤(`ListSkeleton`, v1.22.0 체감 성능 개선 Phase 1 Step 3) — `gui/widgets/skeleton.py`의 `SkeletonRow`를 뷰포트에 맞춰 카드/행 개수만큼(고정 상한 아님) 배치한다. `set_view(view_id)`로 아이콘(카드: 썸네일+제목+메타 블록 3개)/리스트(썸네일+텍스트줄 4개)/표(행 스트라이프 1개) 배치를 고르고 `set_loading(bool)`로 표시/숨김. 숨길 때 자식 블록을 전부 `deleteLater`(숨은 채 도는 타이머 없음)
-│   │   │   ├── tree.py              # `_PlaylistTree`·`_PlaylistPanel`·`_BreadcrumbBar` — 좌측 내비 트리(드래그앤드롭·컨텍스트 메뉴·스피너)
+│   │   │   ├── tree.py              # `_PlaylistTree`·`_PlaylistPanel`·`_BreadcrumbBar` — 좌측 내비 트리(드래그앤드롭·컨텍스트 메뉴·스피너). **`select_for_snapshot`은 선택 후 `scrollToItem(PositionAtCenter)`까지 한다** — `setCurrentItem`도 스크롤은 하지만 `EnsureVisible`이라 노드를 뷰포트 경계까지만 밀어 아래쪽 끝에 걸치게 둔다(실측: 340px 뷰포트에서 중심보다 145px 아래). 즐겨찾기 바·뒤로가기로 이동했을 때 트리의 어디로 갔는지 한눈에 보이도록 가운데 놓는다. 회귀 테스트 `tests/gui/test_favorites_tree_sync.py`가 "보이기만 하는 것"과 "가운데 오는 것"을 실제 픽셀로 구분한다
 │   │   │   └── mixins/              # LibraryPanel 동작 묶음 — 런타임 클래스는 하나(상태 공유 방식 불변)
 │   │   │       ├── album.py         # 앨범 보기(그리드·상세·담기·재생)
 │   │   │       ├── mini_player.py   # 지금 재생 중 미니바 상태(재생 유지·복귀·자동 다음곡)
 │   │   │       ├── recommend.py     # 추천 스트립(디바운스 조회·등장/퇴장 연출)
 │   │   │       ├── navigation.py    # 화면 히스토리(스냅샷 복원)·브레드크럼
 │   │   │       ├── detail.py        # 상세 진입/이탈·재생목록(자동 다음곡)
-│   │   │       ├── sidebar.py       # 좌측 트리 조작(카테고리·재생목록·폴더·즐겨찾기)
+│   │   │       ├── sidebar.py       # 좌측 트리 조작(카테고리·재생목록·폴더·즐겨찾기). **즐겨찾기 바 클릭은 트리 선택까지 동기화한다** — `_on_favorite_clicked`가 필터를 걸고 나서 `_playlist_panel.select_snapshot({"kind":…})`으로 대응 노드를 선택 표시한다(뒤로가기 복원과 **같은 경로**를 재사용하므로 강조·스크롤 규칙이 한 곳에만 있다). 예전엔 목록만 바뀌고 트리는 반응이 없어 지금 어느 카테고리를 보는지 트리에서 알 수 없었다(실제 신고). 태그 즐겨찾기는 트리 노드가 없고 현재 카테고리 안에서 거는 필터라 트리 선택을 건드리지 않는다
 │   │   │       ├── feed.py          # 구독 피드/채널 화면·YouTube 동기화
 │   │   │       ├── video_list.py    # 검색·정렬·뷰 전환·태그 패널·썸네일 프리로드. **목록 로딩 스켈레톤**: `_on_list_loading_any`(`vm.loading_changed` 전용, 검색 포함)와 `_on_list_loading`(노드 키 트리 스피너와 짝을 이루던 기존 경로)이 같은 스켈레톤 표시 로직을 공유한다 — 자세한 배경은 아래 "목록·검색 로딩 스켈레톤" 항목 참고
 │   │   │       ├── context_menu.py  # 영상 우클릭 메뉴(단일·다중)·삭제 확인

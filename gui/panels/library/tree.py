@@ -625,6 +625,10 @@ class _PlaylistTree(QTreeWidget):
             self.setCurrentItem(target)
         finally:
             self.blockSignals(False)
+        # setCurrentItem도 스크롤은 하지만 EnsureVisible이라 노드를 뷰포트 *경계까지만*
+        # 밀어 넣어 아래쪽 끝에 걸치게 둔다(실측: 340px 뷰포트에서 중심보다 145px 아래).
+        # 즐겨찾기 바에서 눌렀을 때 트리의 어디로 갔는지 한눈에 보여야 하므로 가운데 놓는다.
+        self.scrollToItem(target, QAbstractItemView.ScrollHint.PositionAtCenter)
         return True
 
     def _restore_selection(self, pl_id) -> None:

@@ -13,9 +13,6 @@ from uuid import UUID
 from PyQt6.QtCore import (
     Qt,
 )
-from PyQt6.QtGui import (
-    QAction,
-)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -24,8 +21,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QListWidgetItem,
-    QMenu,
     QMessageBox,
     QPushButton,
     QTreeWidget,
@@ -159,7 +154,7 @@ logger = logging.getLogger(__name__)
 
 
 class SidebarTreeMixin:
-    """좌측 트리(카테고리·재생목록·폴더·스마트폴더·즐겨찾기) 조작."""
+    """좌측 트리(카테고리·재생목록·폴더·즐겨찾기) 조작."""
 
     def _on_categories_changed(self) -> None:
         self._refresh_unified_tree()
@@ -252,15 +247,24 @@ class SidebarTreeMixin:
         self._playlist_panel.setStyleSheet(hdr_style)
 
     def _on_favorite_clicked(self, fav_type: str, fav_id: str) -> None:
-        """즐겨찾기 바 항목 클릭 — 해당 카테고리/재생목록/태그를 활성화한다."""
+        """즐겨찾기 바 항목 클릭 — 해당 카테고리/재생목록/태그를 활성화한다.
+
+        카테고리·재생목록은 좌측 트리에 대응 노드가 있으므로, 트리 노드를 직접
+        클릭했을 때와 똑같이 그 노드를 선택 표시하고 보이는 위치까지 스크롤한다
+        (`select_snapshot`이 시그널을 차단해 핸들러가 두 번 돌지 않는다).
+        태그는 트리 노드가 없고 현재 카테고리 안에서 거는 필터라 트리 선택을
+        그대로 둔다.
+        """
         try:
             uid = UUID(fav_id)
         except (ValueError, AttributeError):
             return
         if fav_type == "category":
             self._on_cat_filter_changed(uid)
+            self._playlist_panel.select_snapshot({"kind": "category", "cat_id": uid})
         elif fav_type == "playlist":
             self._on_playlist_selected_from_tree(uid)
+            self._playlist_panel.select_snapshot({"kind": "playlist", "playlist_id": uid})
         elif fav_type == "tag":
             if not self._is_restoring:
                 self._push_nav_state()
@@ -401,95 +405,6 @@ class SidebarTreeMixin:
             # 이력 소진 → 연관 영상 목록 복귀(상세는 진입 영상 그대로 유지)
             self._detail_widget.set_related(ctx["prev_related"], header="연관 영상")
             self._playlist_ctx = None
-
-    def _load_smart_folders_ui(self) -> None:
-        from application.library.smart_folders import load_smart_folders  # noqa: PLC0415
-        self._smart_folders = load_smart_folders()
-        self._sf_list.clear()
-        for sf in self._smart_folders:
-            item = QListWidgetItem(sf.name)
-            item.setData(Qt.ItemDataRole.UserRole, sf.id)
-            self._sf_list.addItem(item)
-
-    def _on_save_smart_folder(self) -> None:
-        from application.library.smart_folders import SmartFolder, load_smart_folders, save_smart_folders  # noqa: PLC0415
-        name, ok = QInputDialog.getText(self, "스마트 폴더 저장", "폴더 이름:")
-        if not ok or not name.strip():
-            return
-        sf = SmartFolder(
-            name=name.strip(),
-            tag_ids=[str(tid) for tid in self._active_tag_ids],
-            min_duration_sec=getattr(self._vm, "_min_duration_sec", None),
-            max_duration_sec=getattr(self._vm, "_max_duration_sec", None),
-        )
-        folders = load_smart_folders()
-        folders.append(sf)
-        save_smart_folders(folders)
-        self._load_smart_folders_ui()
-
-    def _on_smart_folder_clicked(self, item: QListWidgetItem) -> None:
-        sf_id = item.data(Qt.ItemDataRole.UserRole)
-        sf = next((f for f in self._smart_folders if f.id == sf_id), None)
-        if sf is None:
-            return
-        if not self._is_restoring:
-            self._push_nav_state()
-        self._active_tag_ids.clear()
-        self._tag_list.clearSelection()
-        if sf.tag_ids:
-            for tid_str in sf.tag_ids:
-                try:
-                    from uuid import UUID  # noqa: PLC0415
-                    tid = UUID(tid_str)
-                    self._active_tag_ids.add(tid)
-                    for i in range(self._tag_list.count()):
-                        tw_item = self._tag_list.item(i)
-                        if tw_item.data(Qt.ItemDataRole.UserRole) == tid:
-                            tw_item.setSelected(True)
-                            break
-                except Exception:
-                    logger.exception("스마트폴더 태그 선택 복원 실패")
-        self._vm.set_tag_filter(list(self._active_tag_ids))
-        self._vm.set_duration_filter(sf.min_duration_sec, sf.max_duration_sec)
-        self._vm.set_favorite_filter(sf.favorite_only)
-        self._refresh_active_tags_bar()
-
-    def _on_sf_context_menu(self, pos) -> None:
-        item = self._sf_list.itemAt(pos)
-        if item is None:
-            return
-        sf_id = item.data(Qt.ItemDataRole.UserRole)
-        menu = QMenu(self)
-        rename_act = QAction("이름 변경", self)
-        rename_act.triggered.connect(lambda: self._rename_smart_folder(sf_id))
-        delete_act = QAction("삭제", self)
-        delete_act.triggered.connect(lambda: self._delete_smart_folder(sf_id))
-        menu.addAction(rename_act)
-        menu.addAction(delete_act)
-        menu.exec(self._sf_list.viewport().mapToGlobal(pos))
-
-    def _rename_smart_folder(self, sf_id: str) -> None:
-        from application.library.smart_folders import load_smart_folders, save_smart_folders  # noqa: PLC0415
-        sf = next((f for f in self._smart_folders if f.id == sf_id), None)
-        if sf is None:
-            return
-        name, ok = QInputDialog.getText(self, "이름 변경", "새 폴더 이름:", text=sf.name)
-        if not ok or not name.strip():
-            return
-        sf.name = name.strip()
-        folders = load_smart_folders()
-        for i, f in enumerate(folders):
-            if f.id == sf_id:
-                folders[i] = sf
-                break
-        save_smart_folders(folders)
-        self._load_smart_folders_ui()
-
-    def _delete_smart_folder(self, sf_id: str) -> None:
-        from application.library.smart_folders import load_smart_folders, save_smart_folders  # noqa: PLC0415
-        folders = [f for f in load_smart_folders() if f.id != sf_id]
-        save_smart_folders(folders)
-        self._load_smart_folders_ui()
 
     def _on_add_category(self, parent_id) -> None:
         name, ok = QInputDialog.getText(self, "카테고리 추가", "카테고리 이름:")

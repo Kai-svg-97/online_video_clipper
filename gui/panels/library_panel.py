@@ -33,9 +33,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListView,
-    QListWidget,
     QProgressDialog,
-    QPushButton,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -347,32 +345,6 @@ class LibraryPanel(
 
         nav_layout.addWidget(self._tag_section, stretch=1)
         left_layout.addWidget(nav_container, stretch=1)
-
-        # ── 스마트 폴더 섹션 ──
-        sf_header_row = QHBoxLayout()
-        sf_header_row.setContentsMargins(4, 4, 4, 2)
-        sf_hdr_lbl = QLabel("스마트 폴더")
-        sf_hdr_lbl.setStyleSheet(f"font-size:8pt;color:{_t().text_muted};")
-        sf_header_row.addWidget(sf_hdr_lbl)
-        sf_header_row.addStretch()
-        sf_add_btn = QPushButton("+")
-        sf_add_btn.setFixedSize(18, 18)
-        sf_add_btn.setToolTip("현재 필터를 스마트 폴더로 저장")
-        sf_add_btn.setFlat(True)
-        sf_add_btn.clicked.connect(self._on_save_smart_folder)
-        sf_header_row.addWidget(sf_add_btn)
-        left_layout.addLayout(sf_header_row)
-
-        self._sf_list = QListWidget()
-        self._sf_list.setMaximumHeight(120)
-        self._sf_list.setStyleSheet("font-size:8pt;")
-        self._sf_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._sf_list.itemClicked.connect(self._on_smart_folder_clicked)
-        self._sf_list.customContextMenuRequested.connect(self._on_sf_context_menu)
-        left_layout.addWidget(self._sf_list)
-
-        self._smart_folders: list = []
-        self._load_smart_folders_ui()
 
         outer_splitter.addWidget(left)
 
