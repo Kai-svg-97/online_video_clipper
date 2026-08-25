@@ -327,14 +327,11 @@ class LibraryViewModel(QObject):
         # "로컬" 루트 뷰 — 카테고리에 속한 영상만 표시(미분류·재생목록 전용 제외). 기본 진입 뷰.
         self._filter_categorized_only: bool = True
         self._filter_tag_ids: list[UUID] = []
-        self._filter_favorite_only: bool = False
         self._filter_playlist_id: UUID | None = None
         self._filter_playlist_video_ids: list[UUID] = []
         self._add_workers: list[_AddVideoWorker] = []
         self._sort_by: str = "created_at"
         self._sort_asc: bool = False
-        self._min_duration_sec: int | None = None
-        self._max_duration_sec: int | None = None
         self._video_cache: OrderedDict[str, list[VideoDTO]] = OrderedDict()
         # 멀티워커 — 동시 로딩 워커 수를 제한하고 초과분은 큐에 보관(노드 연타 시 스레드 폭발 방지)
         self._pending_list: deque = deque()   # (fetch, append, gen, ck, on_done, node_key)
@@ -534,11 +531,6 @@ class LibraryViewModel(QObject):
 
     def set_tag_filter(self, tag_ids: list[UUID]) -> None:
         self._filter_tag_ids = tag_ids
-        self._current_page = 0
-        self._refresh_videos()
-
-    def set_favorite_filter(self, only: bool) -> None:
-        self._filter_favorite_only = only
         self._current_page = 0
         self._refresh_videos()
 
@@ -849,22 +841,14 @@ class LibraryViewModel(QObject):
         return (
             f"cat={cat}|tag={tag}|pl={pl}"
             f"|sort={self._sort_by}:{self._sort_asc}"
-            f"|q={self._search_text}|fav={self._filter_favorite_only}"
+            f"|q={self._search_text}"
             f"|cat_only={self._filter_categorized_only}"
-            f"|dur={self._min_duration_sec}-{self._max_duration_sec}"
         )
 
     def set_sort(self, sort_by: str, sort_asc: bool) -> None:
         """정렬 기준을 변경하고 영상 목록을 갱신한다."""
         self._sort_by = sort_by
         self._sort_asc = sort_asc
-        self._current_page = 0
-        self._refresh_videos()
-
-    def set_duration_filter(self, min_sec: int | None, max_sec: int | None) -> None:
-        """재생시간 필터를 변경하고 영상 목록을 갱신한다."""
-        self._min_duration_sec = min_sec
-        self._max_duration_sec = max_sec
         self._current_page = 0
         self._refresh_videos()
 
@@ -903,10 +887,8 @@ class LibraryViewModel(QObject):
         filter_playlist_id = self._filter_playlist_id
         explicit_video_ids = list(self._filter_playlist_video_ids)
         tag_ids = list(self._filter_tag_ids)
-        favorite_only = self._filter_favorite_only
         categorized_only_base = self._filter_categorized_only
         sort_by, sort_asc = self._sort_by, self._sort_asc
-        min_dur, max_dur = self._min_duration_sec, self._max_duration_sec
 
         def fetch() -> list:
             category_ids: list[UUID] = (
@@ -935,13 +917,10 @@ class LibraryViewModel(QObject):
                 tag_ids=tag_ids,
                 video_ids=video_ids,
                 categorized_only=categorized_only,
-                favorite_only=favorite_only,
                 limit=DEFAULT_PAGE_SIZE,
                 offset=offset,
                 sort_by=sort_by,
                 sort_asc=sort_asc,
-                min_duration_sec=min_dur,
-                max_duration_sec=max_dur,
             )
             if search_text:
                 return self._search_videos.handle(SearchVideosQuery(text=search_text, **common))
