@@ -7,7 +7,10 @@
 """
 from __future__ import annotations
 
+import ast
+import io
 import re
+import tokenize
 from pathlib import Path
 
 import pytest
@@ -127,17 +130,142 @@ class TestPresetCatalog:
         assert PRESETS["graphite"].is_light is True
 
 
-class TestNoHardcodedDarkColors:
-    """테마를 따르지 않는 색이 통계 화면에 되살아나지 않는지 지킨다."""
+# gui/ 전체에서 색 리터럴이 허용되는 파일 — 각각 CLAUDE.md '색상 규칙'의 예외다.
+# 여기 새 파일을 추가하려면 그 파일 안에 이유를 주석으로 남길 것.
+_COLOR_LITERAL_ALLOWLIST = {
+    # 색의 출처 자체
+    "gui/themes/tokens.py": "테마 프리셋 정의 — 모든 색이 여기서 나온다",
+    "gui/themes/colors.py": "_SEMANTIC(의미 색) 표",
+    "gui/panels/library/constants.py": "_TAG_PALETTE(태그 식별용 고정 32색)·_BADGE_EMPTY_BG·_YT_BRAND_RED",
+    # 영상 프레임 위 — 기준이 앱 테마가 아니라 '어떤 영상 위에서도 읽히는가'
+    "gui/widgets/player/surfaces.py": "영상 레터박스 검정",
+    "gui/widgets/player/controls.py": "컨트롤바 = 영상 위 스크림 + 흰 글자",
+    "gui/widgets/lyrics_overlay.py": "자막 흰 글자 + 검은 외곽선",
+    "gui/panels/library/delegates.py": "_PROGRESS_FG + 썸네일 위 배지 배경·흰 글자",
+    "gui/panels/library/cards.py": "썸네일 위 개수 배지",
+    "gui/panels/feed_panel.py": "썸네일 위 재생시간·채널명 배지",
+    "gui/panels/download_panel.py": "썸네일 위 딤·진행률 스크림",
+    # 태그 팔레트(고정색) 위의 흰 글자 — TestTagPaletteReadable이 대비를 보장한다
+    "gui/panels/library/tag_widgets.py": "태그 칩 흰 글자",
+    "gui/panels/library/tree.py": "태그 칩 흰 글자",
+    # 밝기 어느 쪽 배경에도 섞이는 중립 회색 틴트(교대 음영)
+    "gui/panels/detail/song_tab.py": "중립 회색 틴트",
+}
 
-    _PANEL = Path(__file__).resolve().parents[2] / "gui" / "panels" / "stats_panel.py"
-    # 예전에 박혀 있던 값들: 카드 배경·본문 회색·링크 파랑
-    _BANNED = re.compile(r"#(?:1e1e2e|2a2a3a|3a3a4a|34344a|8ab4ff|a9c6ff|cccccc|888)\b")
+_COLOR_LITERAL = re.compile(
+    r"#[0-9a-fA-F]{3}\b|#[0-9a-fA-F]{6}\b"      # "#fff" / "#1a2b3c"
+    r"|rgba?\(\s*\d+\s*,"                        # "rgb(1,..." / "rgba(1,..."
+    r"|QColor\(\s*\d+\s*,\s*\d+\s*,\s*\d+"       # QColor(30, 30, 30)
+)
 
-    def test_stats_panel_uses_theme_tokens(self) -> None:
-        src = self._PANEL.read_text(encoding="utf-8")
-        found = self._BANNED.findall(src)
-        assert not found, f"테마와 무관한 색이 남아 있다: {found}"
+
+def _code_literals(src: str) -> list[tuple[int, str]]:
+    """주석·독스트링을 뺀 코드에서 찾은 색 리터럴을 (줄번호, 값)으로 돌려준다.
+
+    **주석은 `tokenize`로 걷어낸다.** 줄을 `split("#")`으로 자르면 `"#dc2626"` 같은
+    hex 색의 `#`을 주석 시작으로 오해해 색이 통째로 사라진다(이 검사를 처음 쓸 때
+    실제로 그래서 hex 위반을 하나도 못 잡았다). 대신 COMMENT·독스트링 토큰이
+    차지한 자리를 공백으로 덮고 남은 코드만 훑는다.
+
+    주석 안의 색 언급("예전엔 #ddd가 박혀 있었다")은 위반이 아니라 설명이므로
+    세지 않는 것이 맞다.
+    """
+    try:
+        ast.parse(src)
+    except SyntaxError:   # 문법 오류는 다른 테스트가 잡는다
+        return []
+
+    lines = src.splitlines()
+    grid = [list(line) for line in lines]
+
+    def blank(srow: int, scol: int, erow: int, ecol: int) -> None:
+        for r in range(srow, erow + 1):
+            if not (1 <= r <= len(grid)):
+                continue
+            row = grid[r - 1]
+            lo = scol if r == srow else 0
+            hi = ecol if r == erow else len(row)
+            for c in range(lo, min(hi, len(row))):
+                row[c] = " "
+
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+            if tok.type == tokenize.COMMENT:
+                blank(tok.start[0], tok.start[1], tok.end[0], tok.end[1])
+    except (tokenize.TokenError, IndentationError):
+        return []
+
+    # 독스트링(모듈·클래스·함수의 첫 문자열)도 설명이므로 제외한다.
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                d = body[0].value
+                blank(d.lineno, d.col_offset, d.end_lineno, d.end_col_offset)
+
+    out: list[tuple[int, str]] = []
+    for i, row in enumerate(grid, 1):
+        for m in _COLOR_LITERAL.finditer("".join(row)):
+            out.append((i, m.group(0)))
+    return out
+
+
+class TestNoHardcodedColors:
+    """**gui/ 전체**에서 테마를 따르지 않는 색이 되살아나지 않는지 지킨다.
+
+    예전에는 이 검사가 `stats_panel.py` 한 파일의 특정 금지 목록(`#1e1e2e` 등)만
+    봤다. 그래서 라이브러리 화면 경로는 전혀 덮이지 않았고, 실제로 감사에서
+    하드코딩 20건이 나왔다 — 썸네일 자리표시자 검정, 브레드크럼 링크 하늘색(밝은
+    테마에서 약 2:1), 드롭 표시기 파랑, 상태 배지 Material 원색, 그리고 플레이어
+    컨트롤바 글자(밝은 테마 7종에서 1.10~1.90:1) 등이다.
+
+    이제 파일 단위 허용 목록만 예외로 두고 나머지는 전부 막는다.
+    색이 필요하면 `gui/themes/colors.py`의 `tok()`·`sem()`을 쓴다.
+    """
+
+    _GUI = Path(__file__).resolve().parents[2] / "gui"
+
+    def test_no_color_literals_outside_allowlist(self) -> None:
+        violations: dict[str, list[tuple[int, str]]] = {}
+        for path in sorted(self._GUI.rglob("*.py")):
+            rel = path.relative_to(self._GUI.parent).as_posix()
+            if "__pycache__" in rel or rel in _COLOR_LITERAL_ALLOWLIST:
+                continue
+            hits = _code_literals(path.read_text(encoding="utf-8"))
+            if hits:
+                violations[rel] = hits
+        detail = "\n".join(f"  {f}: {h}" for f, h in violations.items())
+        assert not violations, (
+            "테마 토큰을 쓰지 않은 색 리터럴이 있다. tok()/sem()을 쓰거나, 정당한 "
+            f"예외라면 이유 주석과 함께 _COLOR_LITERAL_ALLOWLIST에 등록할 것:\n{detail}"
+        )
+
+    def test_allowlist_entries_still_exist(self) -> None:
+        """허용 목록이 낡지 않게 — 파일이 사라지거나 이름이 바뀌면 알려준다."""
+        missing = [
+            rel for rel in _COLOR_LITERAL_ALLOWLIST
+            if not (self._GUI.parent / rel).exists()
+        ]
+        assert not missing, f"존재하지 않는 파일이 허용 목록에 등록돼 있다: {missing}"
+
+    def test_allowlist_entries_actually_need_exception(self) -> None:
+        """색 리터럴이 없어진 파일은 허용 목록에서 빼야 한다(예외가 굳는 것 방지)."""
+        unnecessary = []
+        for rel in _COLOR_LITERAL_ALLOWLIST:
+            path = self._GUI.parent / rel
+            if not path.exists():
+                continue
+            if not _code_literals(path.read_text(encoding="utf-8")):
+                unnecessary.append(rel)
+        assert not unnecessary, (
+            f"색 리터럴이 없는데 허용 목록에 남아 있다(제거할 것): {unnecessary}"
+        )
 
 
 class TestTagPaletteReadable:

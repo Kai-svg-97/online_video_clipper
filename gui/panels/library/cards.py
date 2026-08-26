@@ -73,6 +73,8 @@ class _PlaylistThumbLabel(QLabel):
             bw, bh = 46, 20
             bx = rect.right() - bw - 4
             by = rect.bottom() - bh - 4
+            # 개수 배지 — 썸네일 이미지 위에 얹는 색이라 기준이 앱 테마가 아니라
+            # '어떤 썸네일 위에서도 읽히는가'다(자막 오버레이와 같은 예외 계열).
             painter.fillRect(QRect(bx, by, bw, bh), QColor(0, 0, 0, 170))
             painter.setPen(QColor(255, 255, 255))
             f = QFont()

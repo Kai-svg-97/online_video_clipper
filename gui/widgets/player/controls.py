@@ -44,15 +44,38 @@ _ICON_PX = 28
 _ICON_BOX = 38
 
 
+# ── 영상 위 색 (의도된 테마 예외) ─────────────────────────────────────────────
+# 컨트롤바는 영상 프레임 위에 얹히므로 색의 기준이 '앱 테마'가 아니라 '어떤 영상
+# 위에서도 읽히는가'다 — 자막 오버레이와 같은 예외 계열이다.
+#
+# 예전에는 글자에 `tok.text_primary`를 썼는데, 바 배경은 테마와 무관하게 항상
+# 어두운 스크림이라 **밝은 테마 7종에서 어두운 글자가 어두운 바에 얹혔다**.
+# 실측 대비 1.10~1.90:1 — 재생·볼륨 버튼이 사실상 보이지 않았다.
+#
+# 스크림 농도는 순백 영상 프레임 위에서도 흰 글자가 AA를 넘기는 최소치(140/255)에
+# 여유를 둔 값이다. 이 조합의 실측 대비:
+#   흰 글자   — 순백 5.49 / 밝음 6.19 / 중간 12.27 / 어두움 20.03  (전부 AA)
+#   보조 글자 — 순백 4.82 / 밝음 5.44 / 중간 10.75 / 어두움 17.55  (전부 AA)
+_ON_VIDEO_SCRIM = "rgba(0,0,0,150)"
+_ON_VIDEO_FG = "#ffffff"
+_ON_VIDEO_FG_DIM = "#f0f0f0"
+_ON_VIDEO_TINT = "rgba(255,255,255,26)"        # 호버 배경
+_ON_VIDEO_TINT_STRONG = "rgba(255,255,255,48)"  # 눌림·활성 배경
+
+
 def _bar_style() -> str:
-    """현재 테마 토큰을 반영한 컨트롤바 QSS를 반환한다."""
-    tok = ThemeManager.instance().current()
+    """컨트롤바 QSS.
+
+    색은 테마 토큰을 쓰지 않는다(위 주석의 예외 사유 참고). 그래서 테마를 바꿔도
+    다시 계산할 것이 없지만, 나중에 누군가 토큰을 다시 넣더라도 색이 낡지 않도록
+    `_on_theme_changed`가 이 스타일과 화질 배지·버튼 스타일을 함께 재적용한다.
+    """
     return f"""
 QWidget#ctrlbar {{
-    background: rgba(0,0,0,115);
+    background: {_ON_VIDEO_SCRIM};
 }}
 QToolButton {{
-    color: {tok.text_primary};
+    color: {_ON_VIDEO_FG};
     background: transparent;
     border: none;
     font-size: {_ICON_PX}px;
@@ -60,17 +83,41 @@ QToolButton {{
     min-width: {_ICON_BOX}px;
     min-height: {_ICON_BOX}px;
 }}
-QToolButton:hover {{ color: {tok.accent_hover}; background: rgba(255,255,255,15); border-radius: 3px; }}
-QLabel {{ color: {tok.text_secondary}; background: transparent; font-size: 11pt; }}
+QToolButton:hover {{
+    color: {_ON_VIDEO_FG};
+    background: {_ON_VIDEO_TINT};
+    border-radius: 4px;
+}}
+QToolButton:pressed {{ background: {_ON_VIDEO_TINT_STRONG}; border-radius: 4px; }}
+QLabel {{ color: {_ON_VIDEO_FG_DIM}; background: transparent; font-size: 11pt; }}
 /* 슬라이더(_TrackSlider)는 QPainter로 직접 그린다 — 영상 오버레이 위에서
    QSlider::groove/add-page 서브컨트롤이 검게 렌더되는 문제를 회피하기 위함. */
 """
 
+
 def _quality_badge_style() -> str:
-    tok = ThemeManager.instance().current()
+    """현재 화질 배지 — 컨트롤바 위이므로 영상 위 색을 쓴다.
+
+    예전에는 `tok.badge_bg`·`tok.text_primary`를 썼는데, `_setup()`에서 한 번만
+    적용되고 `_on_theme_changed`가 재적용하지 않아 **테마를 바꿔도 영구히 옛 색으로
+    남았다**(위젯 단위 스타일시트라 전역 QSS가 덮지도 못한다).
+    """
     return (
-        f"color:{tok.text_primary}; background:{tok.badge_bg}; "
+        f"color:{_ON_VIDEO_FG}; background:{_ON_VIDEO_SCRIM}; "
         "font-size:10pt; padding:2px 7px; border-radius:4px;"
+    )
+
+
+def _quality_btn_style() -> str:
+    """화질 선택 버튼 — 예전엔 `color:#ddd`가 인라인으로 박혀 있었다.
+
+    같은 바의 다른 버튼은 토큰에서 색을 받는데 이 버튼만 리터럴이어서, 밝은 테마에서
+    다른 버튼과 글자색이 어긋났다. 지금은 바 전체가 영상 위 색을 쓰므로 통일된다.
+    """
+    return (
+        f"QToolButton{{font-size:10pt;padding:3px 9px;border-radius:4px;"
+        f"background:{_ON_VIDEO_TINT};color:{_ON_VIDEO_FG};}}"
+        f"QToolButton:hover{{background:{_ON_VIDEO_TINT_STRONG};}}"
     )
 
 class _TrackSlider(QSlider):
@@ -147,6 +194,12 @@ class _ControlBar(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("ctrlbar")
+        # **QWidget 서브클래스는 이 속성 없이는 스타일시트 `background`가 칠해지지
+        # 않는다.** 그래서 `QWidget#ctrlbar { background: ... }` 규칙이 지금까지 죽은
+        # CSS였고, 컨트롤바는 영상 위에 완전히 투명하게 떠 있었다(실측: 바 영역
+        # 픽셀이 뒤 배경색 그대로였다). 스크림이 없으면 어떤 글자색을 골라도 영상
+        # 밝기에 따라 묻히므로, 이 한 줄이 컨트롤바 가독성의 전제다.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(_bar_style())
         self.setFixedHeight(self._HEIGHT)
         self._heights: list[int] | None = None   # 이 영상이 제공하는 화질(미확인이면 None)
@@ -172,7 +225,13 @@ class _ControlBar(QWidget):
         self._setup()
 
     def _on_theme_changed(self, _tokens=None) -> None:
+        # 위젯 단위 스타일시트는 전역 QSS가 덮지 못하므로 여기서 모두 다시 적용한다.
+        # 예전엔 바 스타일만 갱신해 화질 배지·버튼이 옛 색으로 남았다.
         self.setStyleSheet(_bar_style())
+        if hasattr(self, "_quality_lbl"):
+            self._quality_lbl.setStyleSheet(_quality_badge_style())
+        if hasattr(self, "_btn_quality"):
+            self._btn_quality.setStyleSheet(_quality_btn_style())
 
     def _setup(self) -> None:
         outer = QVBoxLayout(self)
@@ -220,11 +279,7 @@ class _ControlBar(QWidget):
         self._btn_quality = QToolButton()
         self._btn_quality.setText("자동")
         self._btn_quality.setToolTip("재생 품질")
-        self._btn_quality.setStyleSheet(
-            "QToolButton{font-size:10pt;padding:3px 9px;border-radius:4px;"
-            "background:rgba(255,255,255,20);color:#ddd;}"
-            "QToolButton:hover{background:rgba(255,255,255,40);}"
-        )
+        self._btn_quality.setStyleSheet(_quality_btn_style())
         self._btn_quality.clicked.connect(self._show_quality_menu)
 
         self._btn_cc = btn("💬", "가사 자막  (C)", self._on_cc_clicked)

@@ -28,6 +28,7 @@ from gui.panels.monitoring_panel import MonitoringPanel
 from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
 from gui.panels.stats_panel import StatsPanel
 from gui.widgets.mini_player_bar import MiniPlayerBar
+from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.toast import KIND_ERROR, KIND_SUCCESS, show_toast
 from gui.workers import wait_all
@@ -150,7 +151,8 @@ class _NavButton(QPushButton):
             p = QPainter(self)
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(210, 55, 55))
+            # 주의를 끄는 알림 점 — 의미 색(danger)이 테마 밝기에 맞는 톤을 준다.
+            p.setBrush(QColor(sem("danger")))
             r = 5
             p.drawEllipse(self.width() - r * 2 - 2, 2, r * 2, r * 2)
             p.end()

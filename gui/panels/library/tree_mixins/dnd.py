@@ -10,7 +10,7 @@ import logging
 from uuid import UUID
 
 from PyQt6.QtCore import QByteArray, QMimeData, Qt
-from PyQt6.QtGui import QDrag, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QDrag, QPainter, QPixmap
 from PyQt6.QtWidgets import QTreeWidgetItem
 
 from gui.panels.library.constants import (
@@ -29,7 +29,7 @@ from gui.panels.library.constants import (
     _PLAYLIST_ID_ROLE,
     _SECTION_ROLE,
 )
-from gui.panels.library.formatting import _mime_may_contain_url, _url_from_mime
+from gui.panels.library.formatting import _mime_may_contain_url, _t, _url_from_mime
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,14 @@ class _TreeDragDropMixin:
             from PyQt6.QtWidgets import QFrame
             ind = QFrame(self.viewport())
             ind.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            # 드롭 대상 강조는 accent에서 파생한다. 예전엔 파란색을 박아 두어
+            # accent가 파랑이 아닌 테마(forest 녹·warm 금·rose 적·lavender 자)에서
+            # 드래그할 때마다 테마와 무관한 파란 테두리가 떴다.
+            c = QColor(_t().accent)
+            rgb = f"{c.red()},{c.green()},{c.blue()}"
             ind.setStyleSheet(
-                "QFrame { border: 2px solid rgba(100,160,255,220);"
-                " border-radius: 3px; background: rgba(100,160,255,45); }"
+                f"QFrame {{ border: 2px solid rgba({rgb},220);"
+                f" border-radius: 6px; background: rgba({rgb},45); }}"
             )
             ind.hide()
             self._drop_ind = ind

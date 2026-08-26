@@ -37,6 +37,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gui.themes.colors import sem
+
 _PAGE_LIST   = 0
 _PAGE_DETAIL = 1
 
@@ -346,6 +348,8 @@ class _HistoryCardDelegate(QStyledItemDelegate):
                     painter.setClipPath(clip_path)
                     painter.drawPixmap(tx, ty, color_pm)
                     if split_x < CARD_W:
+                        # 썸네일 위 딤 — 썸네일 이미지 위에 얹는 색이라 기준이 앱 테마가 아니라
+                        # '어떤 썸네일 위에서도 읽히는가'다(자막 오버레이와 같은 예외 계열).
                         painter.fillRect(
                             QRect(tx + split_x, ty, CARD_W - split_x, THUMB_H),
                             QColor(0, 0, 0, 160),
@@ -382,6 +386,8 @@ class _HistoryCardDelegate(QStyledItemDelegate):
             pct_text = f"{int(pct)}%"
             mid_y = ty + THUMB_H // 2 - 14
             painter.save()
+            # 진행률 글자 뒤 스크림 — 썸네일 이미지 위에 얹는 색이라 기준이 앱 테마가 아니라
+            # '어떤 썸네일 위에서도 읽히는가'다(자막 오버레이와 같은 예외 계열).
             painter.fillRect(QRect(tx, mid_y, CARD_W, 28), QColor(0, 0, 0, 120))
             painter.setFont(QFont("", 14, QFont.Weight.Bold))
             painter.setPen(QColor("white"))
@@ -394,14 +400,16 @@ class _HistoryCardDelegate(QStyledItemDelegate):
 
         # ── 상태 배지 (진행 중은 퍼센트로 대체) ─────────────────────────
         if not is_active:
+            # 의미 색은 테마 밝기에 따라 톤이 갈린다 — Material 원색을 박으면
+            # 밝은 테마에서 앱 나머지와 톤이 어긋난다.
             if status == "completed":
-                badge_bg = QColor("#4caf50")
+                badge_bg = QColor(sem("success"))
                 badge_ch = "✓"
             elif status == "failed":
-                badge_bg = QColor("#ff9800")   # 주황 = 재시도 가능
+                badge_bg = QColor(sem("warning"))   # 경고 = 재시도 가능
                 badge_ch = "↺"
             else:
-                badge_bg = QColor("#888888")
+                badge_bg = QColor(tok.text_muted)   # 같은 메서드의 tok = _t()
                 badge_ch = "–"
 
             bx, by, br = tx + CARD_W - 22, ty + 4, 9

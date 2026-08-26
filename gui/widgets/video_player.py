@@ -34,6 +34,7 @@ from application.library.dtos import DownloadInfoDTO
 from config import settings
 from domain.download.value_objects import DownloadSettings
 from gui.workers import retire_thread, track_thread
+from gui.themes.colors import tok
 from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
 
 
@@ -250,7 +251,9 @@ class InlinePlayer(QWidget):
 
         self._thumb_label = QLabel()
         self._thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._thumb_label.setStyleSheet("background:#1a1a1a;")
+        # 포스터 자리 — 재생 전 정지 화면이라 레터박스 검정이 아니라 테마 배경을
+        # 따라 창과 이어 보이게 한다.
+        self._thumb_label.setStyleSheet(f"background:{tok().bg_base};")
 
         self._visual_stack = QStackedWidget()
         self._visual_stack.setMouseTracking(True)
@@ -270,7 +273,11 @@ class InlinePlayer(QWidget):
         # Status label (below video area, shown only while fetching stream)
         self._status_lbl = QLabel("")
         self._status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_lbl.setStyleSheet("color:#aaa;font-size:8pt;background:#111;")
+        # 이 라벨은 영상 영역 *아래*에 별도로 붙는 위젯이라 레터박스 검정 예외가
+        # 적용되지 않는다 — 밝은 테마에서 창 하단에 검은 띠가 생기던 원인이었다.
+        self._status_lbl.setStyleSheet(
+            f"color:{tok().text_secondary};font-size:8pt;background:{tok().bg_surface};"
+        )
         self._status_lbl.setFixedHeight(18)
         self._status_lbl.hide()
         outer.addWidget(self._status_lbl)

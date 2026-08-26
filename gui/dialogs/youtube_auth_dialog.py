@@ -265,7 +265,9 @@ class YouTubeAuthDialog(QDialog):
 
         # 계정 목록
         profile_lbl = QLabel("Google 계정 / 브라우저 프로필:")
-        profile_lbl.setStyleSheet("font-size: 9pt; color: #aaa; font-weight: 600;")
+        profile_lbl.setStyleSheet(
+            f"font-size: 9pt; color: {tok().text_secondary}; font-weight: 600;"
+        )
         layout.addWidget(profile_lbl)
 
         self._profile_list = QListWidget()

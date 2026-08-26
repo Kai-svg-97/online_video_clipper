@@ -356,6 +356,8 @@ class _RoundedThumbLabel(QWidget):
         if self._dur_text:
             dur_tw = fm.horizontalAdvance(self._dur_text) + 8
             bx, by = self._w - dur_tw - 4, self._h - th - 4
+            # 재생시간 배지 배경 — 썸네일 이미지 위에 얹는 색이라 기준이 앱 테마가 아니라
+            # '어떤 썸네일 위에서도 읽히는가'다(자막 오버레이와 같은 예외 계열).
             painter.fillRect(bx, by, dur_tw, th, QColor(0, 0, 0, 180))
             painter.drawText(bx + 4, by + th - 4, self._dur_text)
 

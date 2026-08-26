@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 
 from application.library.dtos import CategoryStatDTO, ChannelStatDTO, LibraryStatsDTO
 from application.library.queries import LibraryStatsHandler
+from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 
 
@@ -31,9 +32,14 @@ def _card_qss(tokens) -> str:
     )
 
 
-def _danger_color(tokens) -> str:
-    """오류 문구 색 — 밝은 테마에서 연한 빨강은 읽히지 않으므로 톤을 나눈다."""
-    return "#dc2626" if tokens.is_light else "#f87171"
+def _danger_color(_tokens=None) -> str:
+    """오류 문구 색 — `sem('danger')`에 위임한다.
+
+    예전에는 `"#dc2626" if is_light else "#f87171"`을 직접 반환했는데, 이 두 값은
+    `gui/themes/colors.py`의 `_SEMANTIC["danger"]`와 글자 하나까지 같았다. 의미 색을
+    복제해 둔 것이라 앞으로 톤을 조정하면 두 곳이 갈라진다.
+    """
+    return sem("danger")
 
 
 class _FlowLayout(QLayout):

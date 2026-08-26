@@ -66,13 +66,13 @@ class UpdateDialog(QDialog):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #2a2a2a;")
+        sep.setStyleSheet(f"color: {tok().border};")
         layout.addWidget(sep)
         layout.addSpacing(14)
 
         size_mb = self._dto.size_bytes / (1024 * 1024)
         size_lbl = QLabel(f"다운로드 크기  {size_mb:.1f} MB")
-        size_lbl.setStyleSheet("font-size: 11px; color: #aaa;")
+        size_lbl.setStyleSheet(f"font-size: 11px; color: {tok().text_secondary};")
         layout.addWidget(size_lbl)
         layout.addSpacing(16)
 
