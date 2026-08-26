@@ -5,6 +5,11 @@ QApplication.instance().setStyleSheet(qss) 에 직접 적용된다.
 
 디자인 방향 — **조밀한 프로 툴**(Linear·Arc 계열):
 - 반지름은 컨트롤 6px, 작은 항목 4px로 통일한다(예전엔 3·4·6px가 섞여 있었다).
+- **툴바 한 줄의 컨트롤 높이를 명시한다.** 보기 전환 버튼은 코드에서
+  `setFixedSize(28, 28)`로 고정돼 있는데, 옆의 검색창·정렬 콤보 높이는 폰트 메트릭에서
+  emergent하게 나온다. Windows 기본 폰트에서는 우연히 28px로 맞지만 폰트·플랫폼이
+  바뀌면 어긋난다(실측: `offscreen` 플랫폼에서는 26px로 2px 내려갔다). 그래서
+  `min-height`로 행 높이를 못박아 환경에 무관하게 같은 줄로 맞춘다.
 - 툴바성 버튼은 평소 배경이 없고(ghost) 호버에서만 반응한다. 대화상자의 실행
   버튼처럼 눌러야 하는 것은 배경을 유지해 위계를 만든다.
 - **호버는 배경 틴트만으로는 부족하다.** 11개 프리셋에서 `bg_overlay`와 배경의
@@ -110,6 +115,7 @@ QLineEdit {{
     border: 1px solid {border};
     border-radius: 6px;
     padding: 4px 8px;
+    min-height: 18px;   /* +패딩8 +테두리2 = 28px — 보기전환 버튼과 같은 행 높이 */
     selection-background-color: {accent};
     selection-color: {text_on_accent};
 }}
@@ -154,6 +160,7 @@ QComboBox {{
     border: 1px solid {border};
     border-radius: 6px;
     padding: 4px 8px;
+    min-height: 18px;   /* 툴바 정렬 — QLineEdit과 동일 */
 }}
 QComboBox:hover {{
     border-color: {border_muted};
