@@ -58,14 +58,16 @@ class _PlaylistThumbLabel(QLabel):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
-        painter.fillRect(rect, QColor(30, 30, 30))
+        # 썸네일이 아직 없을 때의 바탕 — 테마 카드 배경을 따라간다. 예전엔 검정을
+        # 박아 두어 기본(밝은) 테마 그리드에 검은 사각형이 뚫려 보였다.
+        painter.fillRect(rect, QColor(_t().bg_elevated))
         if self._thumb:
             sw, sh = self._thumb.width(), self._thumb.height()
             sx = max(0, (sw - self._W) // 2)
             sy = max(0, (sh - self._H) // 2)
             painter.drawPixmap(rect, self._thumb, QRect(sx, sy, self._W, self._H))
         else:
-            painter.setPen(QColor(90, 90, 90))
+            painter.setPen(QColor(_t().text_muted))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "No thumbnail")
         if self._count > 0:
             bw, bh = 46, 20
@@ -160,7 +162,11 @@ class _UnfiledCard(_BaseCard):
         layout.addWidget(icon_lbl)
         name_lbl = QLabel(f"미분류  ({count})" if count else "미분류")
         name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name_lbl.setStyleSheet("font-size:9pt; font-weight:600; color:#aaa;")
+        # 옆 _FolderCard의 같은 라벨은 색을 지정하지 않아 전역 QSS 색을 물려받는다 —
+        # 여기만 회색을 박아 두어 같은 그리드 안에서 두 카드의 글자색이 어긋났다.
+        name_lbl.setStyleSheet(
+            f"font-size:9pt; font-weight:600; color:{_t().text_secondary};"
+        )
         layout.addWidget(name_lbl)
 
     def mousePressEvent(self, event) -> None:

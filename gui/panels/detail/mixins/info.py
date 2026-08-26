@@ -291,10 +291,13 @@ class DetailInfoMixin:
             btn = QPushButton(name)
             btn.setFlat(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            # 링크 색은 accent가 담당하는 자리다. 예전엔 연한 하늘색(#5a9fd4)을 박아
+            # 두어 밝은 테마의 흰 계열 카드 배경 위에서 대비가 2:1대로 떨어졌다.
+            _tk = _t()
             btn.setStyleSheet(
-                "QPushButton { color:#5a9fd4; font-size:9pt; border:none; padding:0;"
-                " text-decoration:underline; background:transparent; }"
-                " QPushButton:hover { color:#8dc4f0; }"
+                f"QPushButton {{ color:{_tk.accent}; font-size:9pt; border:none; padding:0;"
+                f" text-decoration:underline; background:transparent; }}"
+                f" QPushButton:hover {{ color:{_tk.accent_hover}; }}"
             )
             btn.clicked.connect(lambda _, cid=cat_id: self.category_path_clicked.emit(cid))
             self._crumb_layout.addWidget(btn)

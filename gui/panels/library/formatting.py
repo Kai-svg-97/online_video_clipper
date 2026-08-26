@@ -65,11 +65,31 @@ def tag_color(name: str) -> str:
     return _TAG_PALETTE[digest % len(_TAG_PALETTE)]
 
 
+def _mix(fg: str, bg: str, ratio: float) -> str:
+    """두 색을 비율로 섞는다(칩 테두리처럼 '토큰 사이' 값이 필요한 자리용).
+
+    토큰을 새로 만들지 않는 이유는 값이 기존 토큰에서 기계적으로 나오기 때문이다 —
+    프리셋마다 손으로 적으면 원본 토큰을 바꿀 때 같이 고치는 것을 잊는다.
+    """
+    f, b = (c.lstrip("#") for c in (fg, bg))
+    parts = (
+        round(int(f[i : i + 2], 16) * ratio + int(b[i : i + 2], 16) * (1 - ratio))
+        for i in (0, 2, 4)
+    )
+    return "#" + "".join(f"{p:02x}" for p in parts)
+
+
 def chip_colors(tokens, selected: bool, data_color: str | None = None) -> dict[str, str]:
     """칩(인기 태그 버튼·태그 리스트 항목)의 색상을 테마 토큰에서 파생한다.
 
-    미선택은 카드 표면(bg_elevated) + 약한 테두리로 배경에서 떠 보이게 하고,
+    미선택은 카드 표면(bg_elevated) + 테두리로 배경에서 떠 보이게 하고,
     선택은 accent(또는 태그 고유 색)로 채운다.
+
+    **테두리를 `border_muted`로 두면 칩에 경계가 없다.** 칩 채움색은 배경 바
+    대비가 11개 테마에서 1.05~1.19:1뿐이라 채움만으로는 절대 구분되지 않는데,
+    `border_muted`도 채움 대비 1.20~1.68:1이어서 전 테마가 WCAG 1.4.11(3:1)에
+    미달했다(실측 — 다크 테마에서 칩이 사라지고 카운트 배지만 떠 보였다).
+    `text_muted`를 채움 쪽으로 80% 섞어 3.37~4.24:1을 확보한다.
     """
     if selected:
         return {
@@ -81,7 +101,7 @@ def chip_colors(tokens, selected: bool, data_color: str | None = None) -> dict[s
         }
     return {
         "bg": tokens.bg_elevated,
-        "border": tokens.border_muted,
+        "border": _mix(tokens.text_muted, tokens.bg_elevated, 0.8),
         "text": tokens.text_secondary,
         "badge_bg": tokens.bg_overlay,
         "badge_text": tokens.text_secondary,

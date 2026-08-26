@@ -25,8 +25,20 @@ class TestChipColors:
     def test_unselected_uses_elevated_surface(self):
         c = chip_colors(MIST, selected=False)
         assert c["bg"] == MIST.bg_elevated
-        assert c["border"] == MIST.border_muted
         assert c["text"] == MIST.text_secondary
+
+    def test_unselected_border_is_visible_not_border_muted(self):
+        """테두리는 `border_muted`가 아니라 `text_muted`에서 파생한다.
+
+        `border_muted`는 칩 채움색 대비가 11개 테마에서 1.20~1.68:1이라 3:1에
+        미달했다 — 다크 테마에서 칩 경계가 사라져 카운트 배지만 떠 보였다.
+        실제 대비 수치는 `tests/gui/test_theme_contrast.py`가 전 프리셋에 걸쳐
+        고정한다. 여기서는 "옛 값으로 되돌아가지 않았는가"만 지킨다.
+        """
+        for tokens in (MIST, SLATE):
+            border = chip_colors(tokens, selected=False)["border"]
+            assert border != tokens.border_muted, "칩 테두리가 옛 값으로 되돌아갔다"
+            assert border.startswith("#") and len(border) == 7
 
     def test_selected_uses_accent(self):
         c = chip_colors(MIST, selected=True)

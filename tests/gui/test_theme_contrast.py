@@ -138,3 +138,50 @@ class TestNoHardcodedDarkColors:
         src = self._PANEL.read_text(encoding="utf-8")
         found = self._BANNED.findall(src)
         assert not found, f"테마와 무관한 색이 남아 있다: {found}"
+
+
+class TestTagPaletteReadable:
+    """태그 칩은 흰 글자를 고정으로 쓰므로 팔레트 전 색이 그 대비를 만족해야 한다.
+
+    칩 배경은 테마 토큰이 아니라 `_TAG_PALETTE`(식별용 고정 팔레트)에서 오고 글자는
+    항상 흰색이다. 감사에서 "지금은 우연히 맞다"고 본 지점이 실제로는 2색(`#4a8a4a`
+    4.18:1, `#1a8a8a` 4.16:1)이 AA 미달이었다 — 각 채널을 6 낮춰 4.5:1로 올렸다.
+    칩 글자는 7pt(작은 텍스트)라 AA Large(3:1)가 아니라 본문 기준이 적용된다.
+    """
+
+    def test_white_text_on_every_tag_color(self) -> None:
+        from gui.panels.library.constants import _TAG_PALETTE
+
+        failures = [
+            (color, round(contrast("#ffffff", color), 2))
+            for color in _TAG_PALETTE
+            if contrast("#ffffff", color) < _AA_NORMAL
+        ]
+        assert not failures, f"흰 글자 대비 미달 태그 색: {failures}"
+
+    def test_palette_has_no_duplicates(self) -> None:
+        """중복이 있으면 서로 다른 태그가 같은 색으로 보여 식별 목적이 깨진다."""
+        from gui.panels.library.constants import _TAG_PALETTE
+
+        dupes = {c for c in _TAG_PALETTE if _TAG_PALETTE.count(c) > 1}
+        assert not dupes, f"팔레트에 중복 색: {sorted(dupes)}"
+
+
+@pytest.mark.parametrize("preset", sorted(PRESETS))
+def test_unselected_chip_has_visible_border(preset: str) -> None:
+    """칩(인기 태그·태그 목록·즐겨찾기)은 클릭 대상이라 경계가 식별돼야 한다.
+
+    칩 채움색(`bg_elevated`)은 배경 바(`bg_surface`) 대비가 11개 테마에서
+    1.05~1.19:1뿐이므로 채움만으로는 절대 구분되지 않는다. 예전 테두리
+    (`border_muted`)도 채움 대비 1.20~1.68:1이라 **전 테마가 3:1에 미달**했다 —
+    다크 테마에서 칩이 사라지고 카운트 배지만 떠 보이는 원인이었다.
+    """
+    from gui.panels.library.formatting import chip_colors
+
+    tokens = PRESETS[preset]
+    c = chip_colors(tokens, selected=False)
+    ratio = contrast(c["border"], c["bg"])
+    assert ratio >= _AA_NON_TEXT, (
+        f"{preset}: 칩 테두리({c['border']}) 대비 채움({c['bg']}) {ratio:.2f} "
+        f"< {_AA_NON_TEXT} — 칩 경계가 보이지 않는다"
+    )

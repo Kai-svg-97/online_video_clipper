@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
 
@@ -306,11 +307,17 @@ class _ActiveTagsBar(QWidget):
 
             chip = QPushButton(label)
             chip.setFixedHeight(22)
+            # 호버는 "이 태그를 제거한다"는 뜻이라 의미 색(danger)을 쓴다 — 예전엔
+            # `#b03030`을 박아 두었고, 그 값은 '영상 없음' 경고 뱃지 상수와 같아
+            # 서로 다른 의미가 같은 색을 공유하고 있었다.
+            # 글자는 흰색 고정 — 배경이 테마 색이 아니라 `_TAG_PALETTE`의 식별용
+            # 고정 팔레트이기 때문이다(전 32색이 흰 글자 대비 4.5:1 이상임을
+            # tests/gui/test_theme_contrast.py 가 고정한다).
             chip.setStyleSheet(
                 f"QPushButton{{border:none;border-radius:10px;"
                 f"background:{color};color:#fff;"
                 f"padding:1px 9px;font-size:7pt;}}"
-                f"QPushButton:hover{{background:#b03030;border-radius:10px;}}"
+                f"QPushButton:hover{{background:{sem('danger')};border-radius:10px;}}"
             )
             chip.setCursor(Qt.CursorShape.PointingHandCursor)
             chip.clicked.connect(lambda _, i=tid: self.tag_removed.emit(i))

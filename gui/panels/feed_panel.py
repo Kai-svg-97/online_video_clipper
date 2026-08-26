@@ -38,7 +38,7 @@ from gui.workers import track_thread
 from gui.view_models.feed_vm import FeedViewModel
 
 from typing import TYPE_CHECKING
-from gui.themes.colors import sem
+from gui.themes.colors import sem, tok
 if TYPE_CHECKING:
     from gui.view_models.library_vm import LibraryViewModel
     from gui.view_models.playlist_vm import PlaylistViewModel
@@ -340,7 +340,9 @@ class _RoundedThumbLabel(QWidget):
             dy = max(0, (px.height() - self._h) // 2)
             painter.drawPixmap(0, 0, px, dx, dy, self._w, self._h)
         else:
-            painter.fillRect(0, 0, self._w, self._h, QColor("#1a1a2e"))
+            # 썸네일 도착 전 바탕 — 이 위젯은 피드·추천 카드와 상세 화면 연관영상 행에서
+            # 함께 쓰이므로, 남색을 박아 두면 두 화면 모두 테마와 어긋난 블록이 뜬다.
+            painter.fillRect(0, 0, self._w, self._h, QColor(tok().bg_elevated))
 
         f = QFont()
         f.setPointSize(8)
