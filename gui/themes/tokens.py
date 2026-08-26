@@ -288,7 +288,9 @@ GRAPHITE = ThemeTokens(
     border_muted="#b5bac1",
     text_primary="#14171c",
     text_secondary="#3a3f47",
-    text_muted="#565c66",
+    # bg_base(#c9ccd1) 위에서 4.18:1이라 AA에 못 미쳤다 — 5단위 어둡게 해 4.52:1로 올린다.
+    # graphite는 bg_base가 다른 밝은 테마보다 어두워(중간 회색) 유일하게 걸렸다.
+    text_muted="#515761",
     accent="#0b4b99",
     accent_hover="#083a78",
     selected_border="#0b4b99",

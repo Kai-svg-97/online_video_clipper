@@ -42,10 +42,21 @@ _TEXT_ON_BG = [
     ("text_secondary", "bg_elevated"),
     ("text_muted", "bg_surface"),
     ("text_muted", "bg_elevated"),
+    # bg_base 위 조합이 빠져 있어 graphite의 text_muted가 4.18:1로 미달인 채 통과했다.
+    # 창 전체 배경이 bg_base이므로 그 위에 얹히는 글자가 오히려 가장 흔하다.
+    ("text_secondary", "bg_base"),
+    ("text_muted", "bg_base"),
     # accent 는 링크·강조 문구로도 쓰이므로 본문 기준을 적용한다.
     ("accent", "bg_surface"),
     ("accent", "bg_base"),
+    ("accent", "bg_elevated"),
+    # bg_overlay는 호버·선택 배경이다 — 그 위에서도 글자가 읽혀야 한다.
+    ("text_primary", "bg_overlay"),
+    ("text_secondary", "bg_overlay"),
 ]
+
+# WCAG 2.1 1.4.11 — 텍스트가 아닌 UI 요소(조작 가능한 컨트롤)의 식별 기준
+_AA_NON_TEXT = 3.0
 
 
 @pytest.mark.parametrize("preset", sorted(PRESETS))
@@ -65,6 +76,38 @@ def test_text_on_accent_is_readable(preset: str) -> None:
     tokens = PRESETS[preset]
     ratio = contrast(tokens.text_on_accent, tokens.accent)
     assert ratio >= _AA_NORMAL, f"{preset}: text_on_accent 대비 {ratio:.2f}"
+
+
+@pytest.mark.parametrize("preset", sorted(PRESETS))
+def test_scrollbar_handle_is_findable(preset: str) -> None:
+    """스크롤바 손잡이는 '잡아야 하는' 컨트롤이라 트랙과 구분돼야 한다.
+
+    예전에는 손잡이가 `bg_overlay`였는데 트랙(`bg_surface`) 대비가 11개 테마에서
+    1.08~1.32:1이라 사실상 보이지 않았다(실측). 손잡이 색을 `text_muted`로 올려
+    전 테마 3:1 이상(4.55~6.23)을 확보한다.
+    """
+    tokens = PRESETS[preset]
+    ratio = contrast(tokens.text_muted, tokens.bg_surface)
+    assert ratio >= _AA_NON_TEXT, (
+        f"{preset}: 스크롤바 손잡이(text_muted) 대비 트랙(bg_surface) {ratio:.2f} "
+        f"< {_AA_NON_TEXT} — 손잡이가 보이지 않는다"
+    )
+
+
+@pytest.mark.parametrize("preset", sorted(PRESETS))
+def test_focus_ring_is_visible(preset: str) -> None:
+    """키보드 포커스 표시(accent 테두리)가 입력 배경 위에서 식별돼야 한다.
+
+    예전 QSS는 포커스 시 테두리를 `border_muted`로만 바꿨는데 기본 `border`와
+    거의 같은 톤이라 지금 어디에 포커스가 있는지 알 수 없었다. accent 링으로 바꾸면
+    전 테마 5.22:1 이상이 나온다(실측).
+    """
+    tokens = PRESETS[preset]
+    for bg in ("bg_elevated", "bg_surface"):
+        ratio = contrast(tokens.accent, getattr(tokens, bg))
+        assert ratio >= _AA_NON_TEXT, (
+            f"{preset}: 포커스 링(accent) 대비 {bg} {ratio:.2f} < {_AA_NON_TEXT}"
+        )
 
 
 class TestPresetCatalog:
