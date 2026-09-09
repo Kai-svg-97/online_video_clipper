@@ -173,6 +173,21 @@ class SidebarTreeMixin:
             self._playlist_panel.refresh([], [], self._vm.categories, subscriptions=subs)
         self._favorites_bar.refresh(self._get_fav_counts())
 
+    def _on_theme_changed(self, _tokens) -> None:
+        """`ThemeManager.theme_changed` 수신 — 인자를 버리고 스타일만 다시 입힌다.
+
+        **바운드 메서드여야 한다.** `ThemeManager`는 싱글턴이라 이 패널보다 오래
+        살고, 위젯을 캡처한 람다는 Qt의 자동 연결 해제 보호를 받지 못해 패널이
+        파괴된 뒤에도 연결이 남는다(죽은 `_PlaylistTree`를 건드려 터지고, 게다가
+        싱글턴이 람다를 붙들어 **패널 자체가 회수되지 않는다**).
+
+        수신자가 QObject의 바운드 메서드면 Qt가 그 객체 파괴 시 연결을 끊는다 —
+        `gui/workers.py`가 워커 신호에 요구하는 것과 같은 규칙이고, 오래 사는
+        신호원(싱글턴)에는 더 강하게 적용된다. 람다를 쓴 이유가 신호 인자 하나였으므로
+        그 인자를 받아 버리는 메서드를 두어 해결한다.
+        """
+        self._apply_sidebar_tree_style()
+
     def _apply_sidebar_tree_style(self) -> None:
         tok = _t()
         # 행 배경·선택 표시·셰브론은 모두 _TreeRowDelegate와 _PlaylistTree.drawBranches()가

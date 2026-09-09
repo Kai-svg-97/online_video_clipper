@@ -20,41 +20,30 @@ RuntimeError: wrapped C/C++ object of type _PlaylistTree has been deleted
 쓰는 이유를 문서에 이렇게 적어 두었다 — "여러 패널이 앱 수명 동안 살아있다고
 가정하고 연결한 뒤 해제하지 않는 기존 코드… 그 신호를 실제로 emit하면 이미 죽은
 다른 테스트의 위젯을 건드려" 실패한다. 전수 조사 결과 싱글턴 신호에 남은 람다
-연결은 아래 **한 곳**뿐이고, 나머지 20여 곳은 전부 바운드 메서드다.
+연결은 `LibraryPanel` 한 곳뿐이었고(나머지 20여 곳은 전부 바운드 메서드), 지금은
+그것도 바운드 메서드로 고쳤다.
 
-## 왜 그 한 곳을 고치지 않았나 (실측 A/B)
+한때 이 수정을 적용하면 패널 파괴 시 프로세스가 죽어서 되돌린 적이 있다. 원인은
+바운드 메서드가 아니라 **별개 결함**이었다 — 실행 중인 `QVariantAnimation`이 패널의
+자식이어서 소멸자가 그것을 함께 지우며 죽었다. 그 결함을 고치자
+(`gui/anim.py:track_animation`) 이 수정도 성립했다. 조사 기록은
+`tests/gui/test_panel_teardown.py` 문서에 있다.
 
-`LibraryPanel`의 좌측 트리 스타일 연결을 바운드 메서드로 바꾸자, **패널이 파괴될 때
-access violation으로 프로세스가 죽었다.** 인자를 받아 버리는 슬롯을 mixin에 두든
-패널 본체에 두든 같았다:
+## 왜 여기서는 소스를 검사하나
 
-| 연결 방식 | 패널 생성/`deleteLater()` 반복 |
-| --- | --- |
-| 람다(현재) | 4회 완주 |
-| 바운드 메서드 | 1회에서 즉시 프로세스 사망 |
+**런타임 검증은 `tests/gui/test_panel_teardown.py`가 자식 프로세스에서 한다** —
+패널을 실제로 파괴한 뒤 싱글턴 `theme_changed`를 emit해 죽은 위젯을 건드리지 않는지
+본다. 그걸 이 파일에서 하지 않는 이유는 두 가지다:
 
-전체 테스트 스위트에서도 같은 신호가 났다(`tests/gui/test_album_view.py`가
-패널을 여러 번 만들고 버린다). 같은 싱글턴에 바운드 메서드로 연결한 다른 위젯들
-(`ListOverlay._apply_theme` 등)은 정상이라 이 패널 특유의 문제로 보이지만 원인은
-아직 밝히지 못했다.
-
-**조용한 누수보다 프로세스 사망이 나쁘므로 현재는 람다를 유지한다.** 그 한 줄만
-`_KNOWN_EXCEPTIONS`로 허용하고, 원인을 밝히는 일은 별도 과제로 남긴다. 배경은
-`docs/architecture/design-decisions.md`의 "ThemeManager 싱글턴 람다 연결" 항목.
-
-## 왜 런타임 검증이 아니라 소스 검사인가
-
-세 가지를 시도했고 전부 접었다:
-
-* `ThemeManager.apply()`로 테마를 바꾸는 것 — **실사용 `data/config.yaml`에
-  저장한다**(테스트가 사용자 설정을 건드리면 안 된다는 규칙).
-* 싱글턴의 `theme_changed`를 직접 emit — 그 순간 다른 테스트 파일이 만든 위젯까지
+* `ThemeManager.apply()`는 **실사용 `data/config.yaml`에 저장한다**(테스트가 사용자
+  설정을 건드리면 안 된다는 규칙).
+* 싱글턴의 `theme_changed`를 이 프로세스에서 emit하면 다른 테스트 파일이 만든 위젯까지
   전부 발화해, 실패가 이 테스트와 무관한 곳에서 튀어나온다.
-* 패널을 파괴한 뒤 `receivers()`로 구독자 수를 세는 것 — 이벤트 루프 없이
-  `deleteLater()`와 GC를 섞으면 access violation으로 죽는다(위 표와 같은 문제).
 
-검사하려는 성질은 애초에 소스 수준의 것이라, `tests/gui/test_vm_worker_contract.py`
-와 같은 방식으로 AST로 본다 — 새로 추가되는 코드까지 함께 막아 준다.
+이 파일이 맡는 것은 **규칙 자체**다 — "싱글턴 신호에 위젯 캡처 람다를 연결하지
+않는다"는 소스 수준의 성질이므로, `tests/gui/test_vm_worker_contract.py`와 같은
+방식으로 AST로 훑어 **새로 추가되는 코드까지** 막는다(런타임 테스트는 이미 만들어진
+`LibraryPanel` 한 경로만 본다).
 """
 
 from __future__ import annotations
@@ -66,11 +55,12 @@ import pytest
 
 GUI_DIR = Path(__file__).resolve().parents[2] / "gui"
 
-# 위 "왜 그 한 곳을 고치지 않았나" 참조. 크래시 원인이 밝혀지면 이 항목을 지우고
-# 바운드 메서드로 바꾼다 — `test_known_exceptions_are_still_real`이 낡은 항목을 알려 준다.
-_KNOWN_EXCEPTIONS = {
-    ("panels/library_panel.py", "theme_changed"),
-}
+# 예외 없음. 한때 `LibraryPanel`의 좌측 트리 스타일 연결이 여기 있었는데, 바운드
+# 메서드로 바꾸면 패널 파괴 시 프로세스가 죽어서(실제 원인은 **다른 결함**이었다 —
+# 실행 중 애니메이션이 패널의 자식이었다) 예외로 두었다. 그 결함을 고친 뒤 예외가
+# 필요 없어졌다. 배경은 `tests/gui/test_panel_teardown.py`와
+# `docs/architecture/design-decisions.md` 참고.
+_KNOWN_EXCEPTIONS: set[tuple[str, str]] = set()
 
 
 def _singleton_signal_lambda_connections(path: Path) -> list[tuple[int, str]]:

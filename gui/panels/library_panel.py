@@ -563,17 +563,10 @@ class LibraryPanel(
         self._vm.loading_key_changed.connect(self._on_local_loading_key_changed)
         # 노드 키 유무와 무관한 목록 로딩(검색 조회 포함) — 목록 스켈레톤 전용.
         self._vm.loading_changed.connect(self._on_list_loading_any)
-        # ⚠ 이 람다는 **알려진 누수**다 — ThemeManager는 싱글턴이라 이 패널보다 오래
-        # 살고, 위젯을 캡처한 람다는 Qt의 자동 연결 해제 보호를 받지 못해 패널이
-        # 파괴된 뒤에도 연결이 남는다. 그런데 바운드 메서드로 바꾸면 이 스택
-        # (Python 3.14 + PyQt6)에서 패널 파괴 시 **access violation으로 프로세스가
-        # 죽는다**(실측: 패널 생성/파괴 1회로 재현, 슬롯을 mixin이 아니라 패널 본체에
-        # 정의해도 동일). 조용한 누수보다 프로세스 사망이 나쁘므로 현재는 람다를
-        # 유지한다. 배경과 재현 방법은 docs/architecture/design-decisions.md의
-        # "ThemeManager 싱글턴 람다 연결" 항목에 있다.
-        # 새로 쓰는 코드에는 이 패턴을 쓰지 말 것 —
-        # tests/gui/test_theme_signal_lifetime.py가 이 한 곳만 예외로 허용한다.
-        ThemeManager.instance().theme_changed.connect(lambda _: self._apply_sidebar_tree_style())
+        # 바운드 메서드로 연결한다 — ThemeManager는 싱글턴이라 이 패널보다 오래
+        # 살고, 람다로 연결하면 패널이 파괴된 뒤에도 연결이 남아 죽은 위젯을 건드린다
+        # (`_on_theme_changed` 문서 참조).
+        ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
 
         # 재생목록 탭 시그널
         # playlist_selected → 뷰 전환 포함 통합 핸들러 (폴더 뷰 → 목록 뷰 복귀 버그 수정)

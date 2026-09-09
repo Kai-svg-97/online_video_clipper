@@ -152,12 +152,16 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
   has been deleted`로 터진다. `ThemeManager.instance()`처럼 **싱글턴**이 가장 위험하다
   (앱 수명 내내 살아 있다). 신호가 인자를 넘겨서 람다를 쓰고 싶다면, 그 인자를 받아
   버리는 바운드 메서드를 두고 그것을 연결한다. `tests/gui/test_theme_signal_lifetime.py`
-  가 `gui/` 전역을 AST로 훑어 **새 위반을 막는다**.
-  **알려진 예외 한 곳**: `gui/panels/library_panel.py`의 좌측 트리 스타일 연결은
-  람다로 남아 있다 — 바운드 메서드로 바꾸면 이 스택(Python 3.14 + PyQt6)에서 패널
-  파괴 시 access violation으로 프로세스가 죽는다(실측). 조용한 누수보다 프로세스
-  사망이 나쁘므로 유지하며, 그 한 줄만 테스트에서 예외로 허용한다. 배경은
-  `docs/architecture/design-decisions.md` 참조.
+  가 `gui/` 전역을 AST로 훑어 **새 위반을 막고**, `tests/gui/test_panel_teardown.py`가
+  런타임(패널 파괴 후 테마 변경)을 지킨다.
+- **실행 중인 애니메이션을 위젯의 자식으로 두지 않는다.** `QVariantAnimation(self)`처럼
+  부모를 주고 `start()`하면, 그 위젯이 파괴될 때 C++ 소멸자가 **실행 중인 자식
+  애니메이션까지 지우며 프로세스가 죽는다**(access violation). QThread와 같은 함정이라
+  해결도 같다 — `gui/anim.py`의 `track_animation(anim)`으로 부모를 떼고 멈출 때까지
+  레지스트리가 붙든다. 대가로 애니메이션이 대상 위젯보다 오래 살 수 있으므로 **콜백은
+  `RuntimeError`를 가드한다**(잡을 수 있는 예외가 access violation보다 낫다).
+  `destroyed`에서 `stop()`이나 `disconnect()`를 부르는 것은 **소용없다**(그 시점엔 이미
+  늦다 — 실측).
 - **위젯이 띄우는 QThread는 절대 위젯에 매달지 않는다.** 부모로 주거나 위젯 속성 하나로만
   붙들면, 그 위젯이 지워질 때 실행 중인 스레드가 파괴돼 **Qt가 프로세스를 즉시 종료**한다
   (`QThread: Destroyed while thread '' is still running`). `quit()`+`deleteLater()`도 안전하지

@@ -15,6 +15,7 @@ from PyQt6.QtCore import (
 )
 
 import config.settings as _settings
+from gui.anim import track_animation
 
 
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
@@ -379,8 +380,11 @@ class RecommendStripMixin:
         strip.setVisible(True)
 
         def _done() -> None:
-            strip.setMaximumHeight(_QWIDGET_MAX_H)
-            splitter.setSizes([max(total - target, 0), target])
+            try:
+                strip.setMaximumHeight(_QWIDGET_MAX_H)
+                splitter.setSizes([max(total - target, 0), target])
+            except RuntimeError:
+                logger.debug("추천 스트립이 이미 정리됨 — 등장 마무리 생략")
             self._recommend_anim = None
 
         self._start_recommend_anim(start, target, total, _done)
@@ -397,8 +401,11 @@ class RecommendStripMixin:
             return
 
         def _done() -> None:
-            strip.setVisible(False)
-            strip.setMaximumHeight(_QWIDGET_MAX_H)
+            try:
+                strip.setVisible(False)
+                strip.setMaximumHeight(_QWIDGET_MAX_H)
+            except RuntimeError:
+                logger.debug("추천 스트립이 이미 정리됨 — 퇴장 마무리 생략")
             self._recommend_anim = None
 
         self._start_recommend_anim(start, 0, total, _done)
@@ -408,12 +415,28 @@ class RecommendStripMixin:
         strip = self._recommend_strip
         splitter = self._centre_splitter
 
-        def _step(value) -> None:
-            h = int(value)
-            strip.setMaximumHeight(h)
-            splitter.setSizes([max(total - h, 0), h])
+        # 아래 클로저가 참조할 애니메이션 — 생성 뒤에 채운다. `self`를 캡처하지 않으려고
+        # 한 칸짜리 목록을 쓴다(패널을 붙드는 클로저를 늘리지 않는다).
+        holder: list = []
 
-        anim = QVariantAnimation(self)
+        def _step(value) -> None:
+            # 애니메이션은 **부모가 없어** 위젯보다 오래 살 수 있다(그래야 실행 중
+            # 파괴로 프로세스가 죽지 않는다 — `gui/anim.py:track_animation` 참고).
+            # 그 대가로 대상 위젯이 먼저 사라질 수 있으므로 여기서 막는다. 이건
+            # 잡을 수 있는 RuntimeError이고, 대안(실행 중 파괴)은 access violation이다.
+            h = int(value)
+            try:
+                strip.setMaximumHeight(h)
+                splitter.setSizes([max(total - h, 0), h])
+            except RuntimeError:
+                if holder:
+                    holder[0].stop()   # 대상이 사라졌으니 더 돌 이유가 없다
+
+        # **부모를 주지 않는다.** 실행 중인 애니메이션을 패널의 자식으로 두면, 패널이
+        # 파괴될 때 C++ 소멸자가 자식 애니메이션까지 지우면서 프로세스가 죽는다
+        # (access violation — `gui/anim.py:track_animation` 문서에 실측 표가 있다).
+        # 붙드는 일은 레지스트리가 한다.
+        anim = QVariantAnimation()
         anim.setStartValue(int(start))
         anim.setEndValue(int(end))
         anim.setDuration(_RECOMMEND_REVEAL_MS)
@@ -421,6 +444,8 @@ class RecommendStripMixin:
         anim.valueChanged.connect(_step)
         anim.finished.connect(on_done)
         self._recommend_anim = anim
+        holder.append(anim)
+        track_animation(anim)
         anim.start()
 
     def _stop_recommend_anim(self) -> None:
@@ -428,7 +453,10 @@ class RecommendStripMixin:
         self._recommend_anim = None
         if anim is not None:
             anim.stop()
-            self._recommend_strip.setMaximumHeight(_QWIDGET_MAX_H)
+            try:
+                self._recommend_strip.setMaximumHeight(_QWIDGET_MAX_H)
+            except RuntimeError:
+                logger.debug("추천 스트립이 이미 정리됨 — 높이 복원 생략")
 
     def _recommend_related_items(self) -> list:
         """현재 추천 결과를 상세화면 우측 목록용 RelatedItem으로 변환한다.
