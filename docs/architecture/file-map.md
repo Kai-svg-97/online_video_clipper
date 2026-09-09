@@ -1,0 +1,301 @@
+# 파일 맵 — 레이어 구조와 파일별 책임
+
+> `CLAUDE.md`에서 분리됐다. 세션 시작 시 **이 파일을 1차 참조**하고, 여기 없는
+> 파일만 탐색한다. `gui/` 파일을 추가·삭제·이름 변경하면 **이 파일을 즉시**
+> 고친다(CLAUDE.md의 필수 갱신 규칙).
+
+## Architecture (DDD Layered)
+
+```text
+online_video_clipper/
+├── main.py                          # 진입점 — **조립 목록이 아니라 순서만** 있다(127줄). 상단 임포트는 가벼운 것만 두고, 인프라·GUI를 끌어오는 `bootstrap`은 **스플래시를 띄운 뒤** 임포트한다(시작 체감 성능). 순서: Qt로그억제 → QApplication → 스플래시 → 데이터디렉터리·로깅 → 중복실행가드(**DB 열기 전**) → 클라우드 스냅샷 부트스트랩(**DB 열기 전**) → DB → `build_app_graph` → MainWindow → 업데이트 컨트롤러 → exec → **종료 후** 업데이트 설치
+│
+├── bootstrap/                       # 조립 루트(composition root) — 예전 609줄 `main()`의 내용물
+│   ├── __init__.py                  # `build_app_graph(db) -> AppGraph`. `db`를 **인자로 받는다**(테스트가 임시 DB로 그래프 전체를 만들어 볼 수 있어야 한다). 스냅샷 부트스트랩은 DB 열기 전이라 여기 포함되지 않는다
+│   ├── context.py                   # frozen dataclass — `Repositories`·`Services`·컨텍스트별 `*Handlers`·`Handlers`·`AppGraph`. `ViewModels`는 GUI가 소유하므로 `gui/view_models/bundle.py`에서 재수출만 한다(조립 루트가 GUI를 의존하는 건 정상, 반대는 레이어 역전)
+│   ├── runtime.py                   # 시작·종료 **절차**(조립이 아니다) — `create_qt_app`·`show_splash`(`processEvents` 필수: 없으면 이어지는 무거운 임포트가 이벤트 루프를 막아 빈 창만 남는다)·`build_splash_pixmap`·`suppress_av_log`·`install_qt_message_filter`·`install_pending_update`(실행 중엔 설치 불가라 배치로 5초 지연 → 무인 설치 → 재실행. **재실행 주체는 배치 하나로 고정**)
+│   ├── persistence.py               # `bootstrap_cloud_snapshot()`(DB 열기 전)·`open_database()`·`build_repositories(db, sync_service)`. 동기화 연결 시 `Recording*`로 교체하는 판단이 **여기 한 곳**에만 있다(`album`은 파생 캐시라 감싸지 않는다)
+│   ├── services.py                  # `build_services(db)`·`build_youtube_oauth(db)`. **YouTube 비밀 저장소는 전용 키**(`online-video-clipper.youtube-oauth` + `DATA_DIR/secrets/youtube_oauth.json`)를 쓴다 — `infrastructure.sync.build_secret_store()`는 동기화 provider용이라 그걸 쓰면 기존 사용자 토큰을 못 찾는다. `Services.youtube_api`는 어댑터가 아니라 **콜백**이고 첫 호출에서만 해석해 성공·실패 모두 캐시한다(시작 시 keyring 200~300ms 회피)
+│   ├── handlers/                    # 컨텍스트별 유스케이스 조립. `__init__.py:build_handlers()`가 **의존 순서를 함수 인자로** 드러낸다: `song → library → {download, playlist, album}`
+│   │   ├── song.py                  # 가장 먼저 — `SongHandlers.fetch`를 라이브러리 등록 경로가 쓴다
+│   │   ├── library.py               # 영상·카테고리·태그 + `cleanup_fns`(중복찾기·끊긴파일찾기·일괄삭제)
+│   │   ├── download.py              # 진행률 훅이 작업마다 달라 `make_downloader` 팩토리 콜백을 주입
+│   │   ├── clip.py · monitoring.py · transfer.py · updater.py
+│   │   ├── playlist.py              # 재생목록·폴더 + **피드·채널·추천**(셋 다 YouTube API lazy provider를 공유해 한곳에 모았다)
+│   │   └── album.py                 # 앨범 보기 — 목록 조회는 네트워크를 쓰지 않는다
+│   └── view_models.py               # 뷰모델 배선 → `ViewModels`
+├── requirements.txt
+├── requirements-dev.txt             # PyInstaller, ruff, pytest (not bundled)
+├── config/
+│   └── settings.py                  # User preferences; uses platformdirs for data paths
+├── utils/
+│   ├── resources.py                 # get_resource_path() — handles dev vs. PyInstaller bundle
+│   └── logging_config.py            # setup_logging() — 회전 파일(LOG_DIR/app.log)+콘솔 로거 (진입점에서 1회 호출)
+│
+├── bin/                             # Bundled binaries (not in VCS — downloaded by build script)
+│   ├── ffmpeg.exe                   # Windows build
+│   └── ffmpeg                       # Linux build
+│
+├── assets/                          # Icons, images bundled into the package
+│   └── icon.ico
+│
+├── packaging/
+│   ├── online_video_clipper.spec    # PyInstaller spec (Windows + Linux)
+│   ├── installer.iss                # Inno Setup script (Windows .exe installer)
+│   └── appimage/                    # AppImage recipe (Linux)
+│
+├── scripts/
+│   ├── build_windows.ps1            # PowerShell: runs PyInstaller → Inno Setup
+│   └── build_linux.sh               # Bash: runs PyInstaller → appimagetool
+│
+├── domain/                          # Pure domain layer — NO external dependencies
+│   ├── shared/                      # 교차 컨텍스트 공유 추상화
+│   │   └── ports.py                 # IEventBus·IMediaSource·IClipExtractor·ILibraryPackageWriter·ILibraryPackageReader(Protocol) — application이 의존하는 포트
+│   ├── library/                     # [Bounded Context] Core: video library management
+│   │   ├── entities.py              # Video, Category, Tag
+│   │   ├── value_objects.py         # VideoUrl, Duration, Timestamp, ChannelInfo
+│   │   ├── aggregates.py            # VideoAggregate (root)
+│   │   ├── repositories.py          # IVideoRepository (interface)
+│   │   ├── services.py              # Domain services (e.g., duplicate detection)
+│   │   ├── recommendation.py        # derive_seed_queries() — 현재 목록(제목·태그·채널)에서 YouTube 추천 검색어를 뽑는 순수 함수(제목 키워드는 문서빈도 기준). **`search_text`가 있으면 그 낱말만 검색어로 쓴다**(검색창 입력이 짐작을 대체한다). I/O 없음
+│   │   └── events.py                # VideoAdded, VideoUpdated, VideoDeleted
+│   │
+│   ├── download/                    # [Bounded Context] Download queue & history
+│   │   ├── entities.py              # DownloadJob
+│   │   ├── value_objects.py         # DownloadSettings, DownloadProgress, Format, Quality
+│   │   ├── aggregates.py            # DownloadQueueAggregate (root)
+│   │   ├── repositories.py          # IDownloadRepository
+│   │   ├── services.py
+│   │   └── events.py                # DownloadStarted, DownloadCompleted, DownloadFailed
+│   │
+│   ├── clip/                        # [Bounded Context] Clip extraction
+│   │   ├── entities.py              # Clip
+│   │   ├── value_objects.py         # TimeRange
+│   │   ├── aggregates.py            # ClipAggregate (root)
+│   │   ├── repositories.py          # IClipRepository
+│   │   └── events.py                # ClipCreated
+│   │
+│   ├── monitoring/                  # [Bounded Context] Channel subscription & monitoring
+│   │   ├── entities.py              # ChannelSubscription
+│   │   ├── value_objects.py         # MonitoringRule (keyword/duration filter)
+│   │   ├── aggregates.py            # ChannelMonitorAggregate (root)
+│   │   ├── repositories.py          # IChannelRepository
+│   │   └── events.py                # NewVideoDetected
+│   │
+│   └── song/                        # [Bounded Context] 노래 정보 (Video와 1:1)
+│       ├── value_objects.py         # LyricsLine(원문+한글번역+`start_ms: int | None` — LRC 타이밍, 없으면 자막 비활성), SongSourceRef
+│       ├── entities.py              # SongInfo(가수·앨범·제목·발매년도·가사·is_song·manual_fields·`lyrics_offset_ms`(자막 싱크 보정)·`is_synced` 프로퍼티(시각 있는 줄 존재 여부)) + LyricsSource(출처 레지스트리)
+│       ├── aggregates.py            # SongInfoAggregate — apply_fetched(수동편집 보존)·edit_field·edit_lyrics(줄 수 같으면 기존 타이밍 유지)·set_lyrics_offset(±30초 clamp, 공개 상수 `MAX_LYRICS_OFFSET_MS`)
+│       ├── repositories.py          # ISongRepository (+ 가사 출처 CRUD)
+│       ├── album.py                 # 앨범 그루핑 순수 규칙 — normalize_name·make_album_key(자리표시자 "null" 제외)·album_key_artist(키 형식을 아는 유일한 곳)·group_songs_into_albums·match_track_to_songs·**earliest_registered**(앨범 식별의 앵커 = 가장 먼저 등록한 곡)·**pick_official_audio**(자동 채우기 후보 검증 — 커버·리액션·1시간 루프·동명이곡 배제. **가수 일치는 점수가 아니라 통과 조건**)·link_artist_matches(저장된 매핑 재검증). I/O 없음
+│       ├── album_repository.py      # IAlbumRepository + AlbumCacheRecord·AlbumTrackLink (파생 캐시 저장소 인터페이스)
+│       ├── ports.py                 # ILyricsProvider(`fetch` 1건)·**ILyricsSearchProvider**(`search` 다건 — 후보 목록용 선택 확장)·ITranslator(Protocol) + LyricsResult(`popularity`=출처 조회수 0이면 지표 없음, `duration_sec`=곡 길이) + `DEFAULT_LYRICS_SEARCH_LIMIT`(출처당 후보 상한, 0=무제한)
+│       └── events.py                # SongInfoUpdated
+│   │
+│   └── sync/                        # [Bounded Context] 클라우드 동기화 (레코드 단위 oplog CRDT) — 구현 중
+│       ├── value_objects.py         # Op·OpKind·EntityKey·ClockEntry(lamport,install)·SnapshotManifest (NDJSON 직렬화) + FileEntry(rel_path·size·mtime·sha256 — 미디어 파일 동기화 메타)
+│       └── services.py              # OpLogMerger(결정적 필드 LWW+tombstone)·NaturalKey 함수군·topo_order + plan_file_sync(순수 파일 동기화 계획: 로컬만→upload/원격만→download/sha다름→prefer정책, 삭제 전파 안 함)·FileSyncAction·FileSyncItem
+│
+├── application/                     # Application layer — use cases (commands & queries)
+│   ├── library/
+│   │   ├── commands.py              # AddVideo, UpdateVideo, DeleteVideo, ImportPlaylist
+│   │   └── queries.py               # GetVideos, SearchVideos, GetVideoById
+│   ├── download/
+│   │   ├── commands.py              # StartDownload, CancelDownload, RetryDownload
+│   │   └── queries.py               # GetDownloadQueue, GetDownloadHistory
+│   ├── clip/
+│   │   ├── commands.py              # ExtractClip, DeleteClip
+│   │   └── queries.py               # GetClips
+│   ├── monitoring/
+│   │   ├── commands.py              # SubscribeChannel, UnsubscribeChannel, SetMonitoringRule
+│   │   └── queries.py               # GetSubscriptions
+│   └── song/
+│       ├── dtos.py                  # SongInfoDTO, LyricsLineDTO, LyricsSourceDTO, **LyricsCandidateDTO**(가사 검색 후보 1건 — 출처·가수·제목·첫 줄·싱크여부 + 채택용 lines/timings 동봉)
+│       ├── commands.py              # FetchSongInfo(출처 체인+번역), **SearchLyricsCandidates**(전 출처 훑기, 도착 순 콜백)·**ApplyLyricsCandidate**(고른 후보 반영), UpdateSongField/Lyrics, SetSongFlag, 가사출처 CRUD. 공용 헬퍼 `resolve_search_basis`(검색 기준값)·`artist_search_candidates`(전체→주 아티스트)·`build_lyrics_lines`(번역 포함 줄 생성)를 체인/후보 양쪽이 공유
+│       ├── album_dtos.py            # AlbumCardDTO·AlbumTrackDTO·AlbumDetailDTO + TRACK_ORIGIN_LIBRARY/AUTO/MISSING
+│       ├── album_queries.py         # GetAlbums(네트워크 없음)·GetAlbumDetail(외부 조회+캐시)·FillAlbumTracks(빠진 곡 yt-dlp 검색)·ResolveUnknownAlbums(앨범 추정)
+│       └── queries.py               # GetSongInfo, ListLyricsSources
+│   └── sync/                        # 클라우드 동기화 유스케이스 — 구현 중
+│       ├── ports.py                 # ICloudSyncProvider·IOplogStore·ISnapshotStore·ISecretStore (Protocol) + RemoteFile
+│       ├── commands.py              # Push·Pull·SyncNow·ConnectProvider·DisconnectProvider·Compact 핸들러(스키마 게이트 포함). CompactHandler=DB→스냅샷 export→provider 업로드(snapshot/library.db+snapshot.json covered)+선택적 세그먼트 GC(기본 off)
+│       └── queries.py               # GetSyncStatus → SyncStatusDTO
+│   └── transfer/                    # 라이브러리 가져오기/내보내기(카테고리 단위 zip 패키지)
+│       ├── dtos.py                  # ImportCategoryOptionDTO·ImportPreviewDTO·ImportFieldDiffDTO·ImportConflictDTO(s)·ImportResultDTO·ExportResultDTO
+│       └── commands.py              # ExportLibraryHandler·PreviewImportHandler·DetectImportConflictsHandler·ImportLibraryHandler — 값 해석(zip)은 domain.shared.ports의 ILibraryPackageWriter/Reader에 위임
+│   └── updater/                     # 자동 업데이트 유스케이스
+│       ├── dtos.py                  # UpdateDTO(frozen+slots)
+│       ├── queries.py               # CheckForUpdateQuery/Handler — IUpdateChecker로 최신 릴리스 조회
+│       ├── commands.py              # DownloadUpdateCommand/Handler — 자산 내려받기
+│       └── version_compare.py       # parse_semver·is_newer — I/O 없는 순수 비교(v 접두사 없는 'x.y.z')
+│
+├── infrastructure/                  # Concrete implementations (invert dependencies)
+│   ├── persistence/
+│   │   ├── database.py              # SQLite 연결 + WAL 설정 + 스키마 마이그레이션
+│   │   ├── sqlite_video_repository.py
+│   │   ├── sqlite_download_repository.py
+│   │   ├── sqlite_clip_repository.py
+│   │   ├── sqlite_channel_repository.py
+│   │   ├── sqlite_playlist_repository.py  # 재생목록 + 폴더 저장소
+│   │   ├── sqlite_song_repository.py      # song_info(가사 JSON) + lyrics_sources 저장소
+│   │   └── sqlite_album_repository.py     # album_cache·album_track_links·album_lookup_state (앨범 파생 캐시 — 동기화 대상 아님)
+│   ├── downloader/
+│   │   └── ytdlp_adapter.py         # yt-dlp 래퍼 — domain.shared.ports.IMediaSource를 구조적으로 만족
+│   ├── ffmpeg/
+│   │   └── ffmpeg_adapter.py        # ffmpeg wrapper for clip extraction
+│   ├── browser/
+│   │   └── gemini_extractor.py      # Playwright 기반 YouTube Gemini AI 요약 추출기 (QThread에서만 호출)
+│   ├── auth/
+│   │   └── youtube_auth.py          # 브라우저 프로필 탐지 + Netscape 쿠키 추출 (playwright 로그인)
+│   ├── youtube/
+│   │   ├── oauth_adapter.py         # OAuth 2.0 Desktop/PKCE 인증 플로우(무인자 `run_auth_flow()`) + keyring 우선 토큰 저장(레거시 SQLite 1회 마이그레이션) + 정상 TLS 검증 리프레시
+│   │   ├── oauth_client_config.py   # 번들/로컬 Desktop OAuth 클라이언트 JSON 탐색·검증(`find_youtube_oauth_config`) — 값은 절대 반환/로그하지 않음
+│   │   └── youtube_api_adapter.py   # YouTube Data API v3 래퍼 (requests.Session)
+│   ├── song/
+│   │   ├── lyrics_providers.py      # LRCLIB(무키)·Genius·멜론·벅스·지니 가사 제공자 + build_default_providers (QThread에서만 호출). **모든 제공자가 `search()`(다건)를 구현**하고 `fetch()`는 `search(limit=1)` 위임이다 — 두 경로의 폴백 범위가 어긋나 "후보 목록엔 뜨는데 체인 검색은 못 찾는" 일이 없게. LRCLIB은 `/api/get`(정확)→`/api/search`(가수+제목)→`/api/search`(제목만) 순으로 훑어 **다른 가수의 같은 제목 곡**까지 모으고, Genius·국내 3사는 검색 페이지에서 곡 id를 `_first_id`로 **전부** 뽑아(예전엔 `re.search`로 첫 개만) 곡마다 상세 페이지를 긁는다(요청 수 = limit이라 상한이 성능을 좌우). 국내 3사 상세 파서는 가사뿐 아니라 **가수·제목도 뽑는다** — 안 뽑으면 후보 행이 전부 같은 값으로 보여 고를 수가 없다. 곡 하나가 실패해도 나머지 후보는 계속 모으고, 중복은 `_dedupe_key`(가수·제목·첫 줄)로 제거한다. **정렬**: Genius는 검색 응답의 `stats.pageviews`로 **조회수 내림차순 정렬을 페이지 요청 *전에*** 한다(limit이 곧 요청 수라, 나중에 정렬하면 인기 곡이 상한 밖으로 밀려 조회조차 안 된다). LRCLIB은 인기 지표가 없어 **영상 길이에 가까운 순**(`_sort_by_duration_match`)으로 정렬하며, 자르기는 정렬 뒤에 한다(먼저 자르면 정답이 날아간다 — 목록 API라 다 모아도 추가 요청이 없어 공짜다). 국내 3사는 **검색 결과 순서 자체가 그 사이트의 랭킹**이므로 재정렬하지 않고 `popularity=0`으로 둔다. 네트워크 오류(타임아웃·연결실패)는 트레이스백 없이 WARNING으로만 남기고 None 반환→다음 출처로(`_log_provider_error`); 타임아웃 (connect 5s, read 8s)로 짧게 잡아 느린 출처를 빨리 건너뜀
+│   │   ├── album_providers.py       # ITunesAlbumProvider(무키) — 앨범 자켓·발매일·장르·수록곡. **lookup에 country를 붙이면 수록곡이 통째로 빠진다**(실측)
+│   │   ├── translator.py            # deep-translator 래퍼(ITranslator) — 미설치/실패 시 원문 그대로(graceful)
+│   │   └── lrc.py                   # LRC(가사 타이밍) 파서 — `parse_lrc(text) -> [(시작ms|None, 가사)]`. 다중 타임스탬프 전개·`[offset:]` 반영·메타 태그 제거. 순수 함수라 단위 테스트로 규칙을 고정
+│   ├── subtitle/                    # 영상 자막(YouTube 캡션) — QThread에서만 호출
+│   │   ├── parsers.py               # json3·WebVTT → (시작ms, 끝ms, 텍스트). 순수 함수. 자동 자막의 단어 타이밍 태그 제거 + **밀려 올라가며 반복되는 같은 문장 합치기**(안 하면 화면에 겹쳐 보인다)
+│   │   └── youtube_subtitles.py     # 트랙 목록(`list_tracks`)·내려받기(`fetch_cues`)·자동 번역(`translated` → URL에 `tlang=`). **자동 자막 목록에서 번역본(`tlang=` 있는 항목)을 걸러 낸다** — 안 걸러 내면 수백 개가 나열돼 메뉴를 쓸 수 없다(실측 312개). 원본 자동 자막 키는 `en-en` 꼴이라 `en`으로 정규화해 수동 자막과 중복되지 않게 한다
+│   ├── event_bus.py                 # In-process event dispatcher
+│   └── sync/                        # 클라우드 동기화 인프라 (Phase 2~) — 구현 중
+│       ├── keyring_secret_store.py  # ISecretStore (Windows Credential Manager, 백엔드 부재 시 파일 폴백)
+│       ├── device.py                # install_id 영속 + LamportClock(tick/observe)
+│       ├── local_oplog_store.py     # IOplogStore 로컬 구현 — <base>/<install>/NNNNNN.ndjson 세그먼트 append/read
+│       ├── cloud_oplog_store.py     # IOplogStore 원격 — provider 위 oplog/<install>/*.ndjson + installs.json 레지스트리
+│       ├── sync_state.py            # SyncState(consumed·pushed_head·provider_key)·SyncStateStore(DATA_DIR/sync/sync_state.json)
+│       ├── snapshot_store.py        # ISnapshotStore — VACUUM INTO export / 검증·백업·교체 import + 스키마 게이트(SyncSchemaError)
+│       ├── recorder.py              # OplogRecorder — 변경 필드 diff→op append + sync_* 레지스터 갱신. record_change/record_delete(엔티티)·record_link/record_unlink(조인 행, presence-aware)
+│       ├── recording_repository.py  # 캡처 데코레이터 전 엔티티: RecordingVideoRepository(video + category[origin-id] + video_tag + category_video_order 링크)·RecordingSongRepository(nkey=영상URL)·RecordingClipRepository(origin-id, source_video ref)·RecordingDownloadRepository(origin-id)·RecordingPlaylistFolderRepository(origin-id)·RecordingPlaylistRepository(origin-id, folder ref + playlist_item 멤버십 링크). 경로 필드는 DB 상대경로 그대로 캡처(이식성)
+│       ├── merge_applier.py         # MergeApplier — OpLogMerger로 승자 계산 후 자연키→UUID 해석·FK 재작성·위상 순서로 라이브 DB 직접 반영(FTS 트리거 정상 발화). 핸들러 registry: Category(origin-identity, name+parent ref, rename=필드변경, 동명충돌 병합)·Video·Song(nkey=영상URL)·VideoTag(link)·Clip·Download·PlaylistFolder·Playlist(folder ref)·PlaylistItem(link, 멤버십만-순서는 append)·CategoryVideoOrder(link) ApplyHandler + resolve_video/tag/category/playlist/folder. **배치 내 부모/자식 순서 무관**: 자식이 부모를 resolve할 때 sync_identity가 아직 persist 전이므로, 부모 핸들러가 `_register_identity`로 즉시 등록(category/tag는 resolve_*가 stub 생성). **링크 자연키는 `_LINK_SEP`(\x1e)로 조합** — 부모가 origin_key(내부 \x1f)여도 split이 안전
+│       ├── file_syncer.py           # FileSyncer — 미디어/썸네일 바이트 동기화 엔진. scan_media_dirs(DATA_DIR 기준 rel_path·size+mtime 캐시로 sha256 재해시 회피·.part/DATA_DIR밖 제외) → plan_file_sync → provider로 upload/download. 원격 레이아웃 media/manifest.json(진실원천 sha256)+media/files/<rel>. 다운로드는 .part→os.replace 원자 확정, 원격 매니페스트 read-merge-write(동시추가 보존). on_progress(MediaSyncProgress)·should_cancel 콜백만 노출(QThread 배선은 Phase 5)
+│       ├── rest_client.py           # RestClient — Bearer+verify=False+401 강제refresh 후 1회 재시도(youtube_api_adapter 패턴 추출). token_provider/force_refresh 콜백 주입, 세션 주입 가능(테스트)
+│       ├── gdrive_provider.py       # GoogleDriveProvider(ICloudSyncProvider) — google-auth-oauthlib InstalledAppFlow(scope drive.file), 토큰 keyring(gdrive.token). Drive는 ID모델이라 remote_path를 앱루트 폴더트리(경로→id 캐시)로 에뮬레이션, resumable 업로드 세션(청크 PUT). **실계정 왕복 검증은 로컬 전용(미완)**
+│       ├── onedrive_provider.py     # OneDriveProvider(ICloudSyncProvider) — msal PublicClientApplication+SerializableTokenCache(keyring, scope Files.ReadWrite+offline_access). Graph v1.0 경로주소지정(/me/drive/root:/<path>), 소형 PUT/대형 createUploadSession. msal 지연 import(미설치여도 모듈 import OK). **실계정 왕복 검증은 로컬 전용(미완)**
+│       ├── folder_provider.py       # FolderProvider(ICloudSyncProvider) — **로컬 폴더를 클라우드 백엔드로**(OneDrive/Drive 데스크톱 동기화 폴더 지정 → OS 클라이언트가 실제 왕복). OAuth·API키 불필요라 **기본/권장 옵션**. 쓰기는 tmp→os.replace 원자 확정. 실 스택 end-to-end 테스트에도 사용(실계정 없이 전 경로 검증 가능)
+│       ├── bootstrap.py             # bootstrap_if_fresh(pre-DB) — 신규 install(로컬 DB 미존재)만 스냅샷 다운로드→sha256 검증→import_snapshot(게이트+교체)→consumed=covered. 기존 DB 있으면 증분 pull에 맡김(스냅샷 교체로 로컬 상태 손실 방지)
+│       └── sync_service.py          # SyncService — sync 스택 조립(secret·device·clock·store·applier·snapshot·recorder·provider) + 고수준 동작(sync_now·sync_media·compact·connect_folder/gdrive/onedrive·disconnect·status·make_recording_repos). pre_db_bootstrap()·build_secret_store()·build_provider(folder/gdrive/onedrive) 모듈 함수. **캡처 게이팅**: is_connected일 때만 make_recording_repos가 Recording* dict 반환(미연결이면 None→repo 무래핑)
+│   └── transfer/
+│       └── portable_package.py      # ZipLibraryPackageWriter·ZipLibraryPackageReader — manifest.json+data.json+thumbnails/ zip. 값 해석(THUMBNAIL_DIR 절대경로 결합)은 여기서만 한다
+│   └── updater/
+│       └── update_checker.py        # GithubUpdateChecker(IUpdateChecker) — GitHub Releases API. **다운로드는 신뢰 경계다**: `_validate_url`이 `_ALLOWED_HOSTS`(github.com·objects.githubusercontent.com) 밖 URL을 거부하고 `_validate_asset_name`이 `_ASSET_NAME_RE`로 경로 조작 자산명을 막으며, 받은 파일은 sha256을 대조한다. 130MB 자산이라 타임아웃은 `_DL_TIMEOUT=(10,60)`이고 끊기면 `Range`로 이어받아 `_DL_MAX_ATTEMPTS`(4)회 재시도(백오프 3초×시도) — 이어받기 때문에 sha256은 스트리밍 누적이 아니라 완료된 `.part`에서 한 번에 계산한다(`_sha256_of`)
+│
+├── gui/                             # Presentation layer (PyQt6, MVVM)
+│   ├── anim.py                      # 짧은 등장 연출 — `fade_in`(비동기 도착 썸네일)·`fade_switch`(화면 전환). **영상이 있는 화면에는 걸지 않는다**(QGraphicsOpacityEffect는 픽스맵 합성이라 비디오 서피스가 검게 비거나 깜빡인다). 효과는 끝나면 반드시 떼어 낸다
+│   ├── toast.py                     # 오른쪽 아래 토스트 알림 — 완료 소식만(진행 중은 상태바 담당). 위로 쌓기·클릭 닫기·자동 소멸·상한 4개
+│   ├── smooth_scroll.py             # 휠 스크롤 부드럽게 — 픽셀 스크롤 + 180ms 보간. **수정키 휠은 가로채지 않는다**(Ctrl+휠=뷰 전환, Ctrl+Shift+휠=자막 조절). **가로 전용 띠(추천 스트립 등) 판정은 "세로 스크롤 범위가 있는가"가 아니라 "세로 스크롤바 정책이 `ScrollBarAlwaysOff`인가"로 한다**(`_SmoothScroller._pick_bar`) — 카드 높이가 뷰포트보다 몇 px만 커도(폰트 렌더링 차이 등) 숨은 세로 막대에 근소한 범위가 생겨, 예전엔 휠마다 그 막대가 움직이며 화면이 위아래로 덜거덕거렸다(실제 신고 — 추천 영상 스트립). 정책이 꺼져 있으면 범위와 무관하게 가로로 고정한다. `apply_smooth_scroll_tree(panel)`을 화면 조립 뒤 한 번 호출
+│   ├── workers.py                   # 실행 중 QThread 안전 보유/은퇴 — `track_thread`(부모 분리 + 레지스트리 보유)·`retire_thread`(**신호 이름**으로 해제 후 끝까지 보유)·`wait_all`(종료 시 대기). 끝난 워커는 참조만 놓는다(deleteLater 금지 — 들고 있는 쪽에서 RuntimeError). **실행 중인 QThread가 파괴되면 Qt가 프로세스를 죽인다**(실측: exit 0xC0000409)
+│   ├── single_instance.py           # SingleInstanceGuard — QLocalServer 기반 중복 실행 방지(main.py가 DB 열기 전 호출, 두 번째 인스턴스는 기존 창을 앞으로 부르고 종료)
+│   ├── main_window.py               # 루트 윈도우, 사이드바 네비게이션(라이브러리·다운로드·채널 모니터링·통계), 패널 스택 — 구독 피드는 라이브러리 좌측 트리로 통합됨. **통계 채널 섹션 → 카테고리 드릴다운**: `StatsPanel.category_selected` → `_on_stats_category_selected`가 라이브러리로 전환·`navigate_to_category` 후 `_return_to_page=_PAGE_STATS` 예약. 라이브러리 뒤로가기를 소진하면(`LibraryPanel.back_exhausted`) `_on_library_back_exhausted`가 통계로 복귀(라이브러리 자체 히스토리를 먼저 되짚고 소진 시 통계). 다른 페이지로 이동하면 `_on_page_changed`가 예약을 무효화. **등록 후 자동 보강 상태 표시**: `enrich_started`→상태바 "가사 조회 중"/"요약 생성 중"(`_ENRICH_LABEL`), `enrich_finished`→완료(5초)/실패(8초). `kind="skipped"`+ok이면 메시지를 지운다. **사이드바 배경은 `_SideBar.paintEvent`에서 직접 칠한다** — 앱 레벨 QSS의 `QWidget { background-color }`가 위젯 레벨 스타일시트(ID 선택자 포함)를 덮어써 `bg_surface`가 적용되지 않았다(slate에서는 base/surface 차이가 3단위라 미발견). 따라서 사이드바 배경·우측 경계선 색을 바꿀 땐 QSS가 아니라 `paintEvent`를 수정할 것. **상단 ▶ 로고와 계정(인증) 버튼은 제거됨** — 로고는 기능 없는 장식이고, 계정 버튼은 클릭 동작이 바로 아래 기어 버튼과 완전히 동일한 중복이었다(`update_account_status()`도 호출처 없는 죽은 코드여서 함께 삭제, `_SVG_ACCOUNT` 상수도 제거)
+│   ├── panels/
+│   │   ├── library_panel.py         # **화면 조립(`_setup_ui`)·배선(`_connect_signals`)만** 담당하고 나머지는 아래 `library/` 패키지로 나뉘었다(7,593→863줄). 썸네일 그리드 + 카테고리/재생목록 트리 + 상세뷰 + YouTube 트리의 "구독 채널"/"전체 구독 피드" 노드. 영상 카드 **단일 클릭→상세화면**(미리보기 패널 제거됨, Ctrl/Shift 클릭은 다중선택 유지). 피드/채널 카드 단일 클릭→`_open_stream_detail`(스트리밍 상세). `_open_detail`/`_open_stream_detail`이 컨텍스트별 연관영상(RelatedItem)을 구성해 상세화면에 전달, 연관영상 클릭은 `_on_related_item_selected`로 재진입. **인기/전체 태그 패널(`_tag_section`)은 트리 하단에 일반 세로 레이아웃(`nav_container`)으로 쌓고 카테고리 선택 시에만 표시**(`_set_popular_tags_visible(True/False)`가 섹션 전체를 토글). 재생목록·폴더·섹션루트·피드·채널 선택 시엔 숨겨 트리가 그 공간을 차지한다. (QSplitter로 묶으면 자식 가시성 토글이 레이아웃 thrash→프리징을 유발해 일반 레이아웃으로 교체함.) **트리 노드 클릭 시 상세 화면이면 먼저 목록으로 복귀**(`_leave_detail_if_open`). **뒤로/앞으로 가기는 화면 단위 스냅샷 기반**(`_capture_screen`→`_nav_history`(뒤로)/`_nav_future`(앞으로), `_go_back`/`_go_forward`/`_restore_screen`): kind(category/playlist/folder/feed_all/channel/channels_root)+상세 payload까지 저장해 직전/다음 화면을 정확히 복원(분류 간 교차·상세→상세 연관영상 체인 포함). **마우스 ‹/›는 화면이 보이는 동안 앱 전역 이벤트 필터가 받는다**(`NavigationMixin.showEvent`/`hideEvent`+`_handle_history_mouse`) — 예전엔 목록 뷰·앨범 위젯에만 필터를 걸어 좌측 트리·피드 카드·태그 패널·빈 공간에서는 조용히 죽었다(위젯을 추가할 때마다 배선을 잊으면 또 죽는다). 판정 기준은 위젯 목록이 아니라 **같은 창 안의 클릭인가**이며, 모달 대화상자가 떠 있으면 넘기지 않는다. 상세 화면(`_nav_stack` 1) 위에서의 ‹는 `_on_detail_back_requested`로 보낸다 — 상세 위젯도 자체 앱 필터로 같은 곳에 보내므로 **어느 필터가 먼저 도느냐와 무관하게** 결과가 같다(›는 상세 위젯이 처리하지 않아 여기서 받는다). 목록·앨범 위젯의 위젯 단위 필터는 **Ctrl+휠 뷰 전환** 때문에 남아 있고, 그래서 휠 분기는 `_is_list_surface(obj)`로 범위를 좁힌다 — 전역 필터가 된 채로 두면 트리·플레이어의 Ctrl+휠(자막 크기)까지 뷰를 바꾼다. 새 분기 이동 시 `_push_nav_state`가 `_nav_future` 비움. 복원 시 `_PlaylistPanel.select_snapshot`로 좌측 트리 강조·브레드크럼을 동기화(시그널 차단해 재실행 방지). 상세 뒤로가기 버튼도 `_on_detail_back_requested`→히스토리 복원. "전체 구독 피드"/개별 채널 클릭→피드 카드 그리드(_VIEW_FEED), "구독 채널" 노드 클릭→채널 아바타 카드 그리드(_VIEW_CHANNELS). **"구독 채널" 노드 우클릭 컨텍스트 메뉴 맨 위에 "⟳ 새로고침 (YouTube 구독 재동기화)"**(`_PlaylistTree.sync_subs_req`→`_PlaylistPanel.sync_subs_req`→`LibraryPanel._on_sync_subscriptions`): `_monitoring_vm.import_from_youtube()`로 YouTube 구독을 로컬 DB에 재동기화한다(구독 목록은 로컬 DB 스냅샷이라 유튜브에서 새로 구독한 채널은 이 새로고침 전엔 안 뜸). 완료 시 `subscriptions_changed`→`_refresh_unified_tree`(트리)와 `import_yt_finished`→`_on_subs_synced`(그리드가 열려 있으면 `_populate_channels_grid` 재구성)로 갱신, 실패는 `error_occurred`→`_on_subs_sync_error`가 상태 라벨에 표기. 그리드 채우기 로직은 `_populate_channels_grid`로 추출돼 노드 클릭·재동기화 완료 양쪽에서 재사용(뷰 전환·nav 히스토리는 `_on_channels_root_selected`만 담당). **좌측 채널 노드는 이름 오름차순 정렬**, 채널 카드는 핸들러가 최신 업로드 내림차순으로 정렬해 전달. 연관영상 meta에도 `_relative_time`으로 등록 시점 표기(로컬 ISO·피드 ISO/YYYYMMDD 모두). **좌측 트리 패널(`_PlaylistPanel`)은 로컬 섹션(상단 고정) + 접을 수 있는 YouTube 섹션 구조**: 이전 수직 `QSplitter`를 제거하고, 로컬 트리 아래에 **삼각형 토글 바(`_yt_bar`: `_yt_toggle_btn`▸/▾ + 빨간 "YouTube" 헤더 + ⟳동기화 + 📂+폴더)**를 두어 그 아래 `_yt_tree`(구독 트리)를 펼치거나 접는다(`_toggle_yt_section`). **YouTube 구독 트리는 기본 접힘(숨김)**. **모든 트리는 로드 후 `collapseAll()`로 최상위(1레벨) 항목만 보이고 하위는 접힌다**(`_PlaylistTree.load`). **트리 행은 `_TreeRowDelegate`가 그린다** — 둥근 pill 행·accent 14% 틴트 선택·카테고리 색상 점·우측 개수 뱃지·즐겨찾기 ★·행 높이 30px. **개수 뱃지가 최우측 고정, ★은 그 왼쪽**이다 — 예전엔 ★이 최우측이라 즐겨찾기 행만 뱃지가 밀려 숫자 열이 들쑥날쑥했다(`tests/gui/test_tree_rows.py::TestBadgeAlignment`가 실제 픽셀로 고정). 항목 팩토리(`_make_category`/`_make_folder`/`_make_unfiled`/`_make_root`/`_make_playlist`/`_make_channel`)가 `_NAME_ROLE`·`_COUNT_ROLE`·`_GLYPH_ROLE`·`_COLOR_ROLE`·`_STAR_ROLE`을 심고 델리게이트는 **롤만 읽는다**(로딩 스피너가 `setText`로 텍스트 뒤에 `⠋`를 덧붙이고 카테고리 이름에 괄호가 들어갈 수 있어 텍스트 파싱은 깨진다). **셰브론·들여쓰기 가이드선은 `drawBranches()` 오버라이드**에 그린다 — 델리게이트(아이템 영역)에 그리면 `QTreeView`가 branch 영역 클릭만 확장으로 처리하므로 펼침이 동작하지 않는다(`tests/gui/test_tree_rows.py`의 QTest 클릭 테스트가 이를 지킨다). 즐겨찾기는 `setBackground` 틴트가 델리게이트에 가려지므로 ★로 표시한다. **칩 색은 `chip_colors(tokens, selected, data_color)`로 토큰에서 파생**한다(과거 `paintEvent`에 `#2a3a4a` 등이 하드코딩돼 어떤 테마를 골라도 칩만 어두웠다 — 인기태그 버튼·태그목록·즐겨찾기 바 3곳). `count == 0` 경고 뱃지(`_BADGE_EMPTY_BG`)와 YouTube 강조색(`_YT_BRAND_RED`)은 의미·브랜드 색이라 테마와 무관하게 고정한다. **태그·카테고리 색상은 `tag_color(name)`**(zlib.crc32 기반) — 이전 `hash(name)`은 PYTHONHASHSEED로 프로세스마다 무작위화돼 앱을 켤 때마다 색이 바뀌었다. **"로컬" 루트 활성 표시**: `_PlaylistPanel.set_local_root_active()`가 `local_hdr`의 체크 상태(QSS `:checked`)를 관리하고, 헤더 클릭 시 두 트리 선택을 `blockSignals`로 감싸 해제한다(이중 실행 방지). 트리 노드 선택 시 비활성(`_connect_tree`가 `currentItemChanged` 배선), `select_snapshot` 복원 시 `matched is None`이면 활성. **검색 일치 속성 배지**는 `_paint_match_badges`가 그리드·리스트 델리게이트 양쪽에서 그린다(`MatchFieldsRole` → `MATCH_FIELD_LABELS`). **검색창 입력은 `_search_timer`로 디바운스**하고(`_on_search_text_changed`/`_apply_search_text`, Enter·지우기는 즉시), **표(상세) 뷰 `_refresh_table`은 그 뷰가 보일 때만** 채운다(`_table_dirty` + `_switch_view` 지연 갱신, 배지는 `_vm.get_downloaded_flags` 일괄 조회). 자세한 배경은 아래 "검색 입력 응답성" 항목 참조. **영상 목록 아래에 추천 영상 스트립**(`_centre_splitter` = 수직 `QSplitter`, 위=`_view_stack` 아래=`RecommendStrip`) — 핸들을 끌어 높이 조절, 스트립 헤더 삼각형으로 본문만 접기. 스플리터 **자식 자체를 숨기지 않으므로** 과거 태그 섹션에서 겪은 레이아웃 thrash가 없다. `setChildrenCollapsible(False)`라 본문을 숨겨도 배분된 높이는 남으므로 `_sync_recommend_sizes(expanded)`가 접을 때 헤더 높이만 남기고 펼칠 때 직전 높이를 복원한다(접힘 상태·높이는 `recommend_strip_expanded`/`recommend_strip_height` 설정에 저장). 자동 갱신은 `_on_videos_changed`→`_schedule_recommend_refresh`(`_recommend_timer`, `_RECOMMEND_DEBOUNCE_MS`=900ms 디바운스)이며 **접혀 있으면 조회하지 않는다**(네트워크 절약). 씨앗은 `_recommend_seeds()`가 현재 페이지 앞 `_RECOMMEND_SEED_LIMIT`(20)건의 제목·채널·태그로 구성한다. `_on_view_stack_changed`가 카드 그리드 뷰(폴더·피드·채널)에서 스트립을 숨기며, 이때 가시성 비교는 `isVisible()`이 아니라 **`isHidden()`**으로 해야 한다(조상이 아직 표시되지 않았으면 `isVisible()`은 항상 False라 첫 전환이 건너뛰어진다). **스트립은 추천 목록이 준비되기 전까지 감춰져 있다**(`_recommend_ready`) — 최종 결과가 오면 `_reveal_recommend_strip`→`_animate_recommend_in`이 높이 0→목표로 키워 아래에서 올라오게 하고, 새 조회가 시작되면 `_hide_recommend_strip`→`_animate_recommend_out`이 다시 접어 감춘다. 목록 뷰로 돌아올 때의 표시 판정에도 `_recommend_ready`가 함께 걸린다(자세한 배경은 아래 "추천 영상 스트립" 항목). 상세화면을 열 때는 `_recommend_related_items()`로 같은 결과를 `VideoDetailWidget.set_recommendations`에 넘겨 우측 목록 아래에 붙인다(FeedVideoDTO→RelatedItem 변환은 피드 목록과 공유하는 `_related_from_feed`)
+│   │   ├── library/                 # ⬆ library_panel의 부품·동작 (분할 결과)
+│   │   │   ├── constants.py         # 뷰 인덱스(_VIEW_*)·MIME·아이템 롤·썸네일 크기·의미 색. **로직 없음**(부품끼리 서로 임포트하지 않게 하는 허브)
+│   │   │   ├── formatting.py        # `_relative_time`·`_fmt_views`·`tag_color`(zlib.crc32 — 실행마다 색이 바뀌지 않게)·`chip_colors`·`_url_from_mime`(브라우저별 URL MIME 흡수)
+│   │   │   ├── thumbnails.py        # `_ThumbnailCache`(표시 크기별 LRU)·`_load_thumb`·`_ThumbBgLoader`. 전역 캐시 인스턴스가 여기 있다
+│   │   │   ├── models.py            # `VideoListModel`(가상 스크롤)·`_VideoListView`
+│   │   │   ├── delegates.py         # 그리드·리스트·트리 행·태그 칩 페인팅(`_IconDelegate`·`_ListDelegate`·`_TreeRowDelegate`·`_paint_match_badges`)
+│   │   │   ├── tag_widgets.py       # 인기 태그 버튼·즐겨찾기 바·태그 목록·활성 태그 바
+│   │   │   ├── cards.py             # 폴더 안 재생목록 카드 그리드(`_FolderContentsView` 등)
+│   │   │   ├── splitter.py          # 좌측 패널 접기 핸들
+│   │   │   ├── overlay.py           # 목록 위 상태 안내판(**결과 없음** 3종만) — 레이아웃 자리를 차지하지 않고 클릭을 통과시킨다. `_OverlayResizer`(부모 크기 추적)는 `skeleton_list.py`도 재사용. '조회 중' 표시는 v1.22.0부터 `skeleton_list.py`의 스켈레톤이 대신한다(텍스트와 스켈레톤이 동시에 뜨면 안 되므로 이 파일은 더 이상 로딩 상태를 그리지 않는다)
+│   │   │   ├── skeleton_list.py     # 영상 목록(그리드·리스트·표) 로딩 스켈레톤(`ListSkeleton`, v1.22.0 체감 성능 개선 Phase 1 Step 3) — `gui/widgets/skeleton.py`의 `SkeletonRow`를 뷰포트에 맞춰 카드/행 개수만큼(고정 상한 아님) 배치한다. `set_view(view_id)`로 아이콘(카드: 썸네일+제목+메타 블록 3개)/리스트(썸네일+텍스트줄 4개)/표(행 스트라이프 1개) 배치를 고르고 `set_loading(bool)`로 표시/숨김. 숨길 때 자식 블록을 전부 `deleteLater`(숨은 채 도는 타이머 없음)
+│   │   │   ├── tree.py              # **위젯 조립·시그널·행 그리기·선택/탐색만** 담당하고 부피가 큰 동작은 아래 `tree_mixins/`로 나뉘었다(1,490→683줄). `_PlaylistTree`·`_PlaylistPanel`·`_BreadcrumbBar` — 좌측 내비 트리. **`select_for_snapshot`은 선택 후 `scrollToItem(PositionAtCenter)`까지 한다** — `setCurrentItem`도 스크롤은 하지만 `EnsureVisible`이라 노드를 뷰포트 경계까지만 밀어 아래쪽 끝에 걸치게 둔다(실측: 340px 뷰포트에서 중심보다 145px 아래). 즐겨찾기 바·뒤로가기로 이동했을 때 트리의 어디로 갔는지 한눈에 보이도록 가운데 놓는다. 회귀 테스트 `tests/gui/test_favorites_tree_sync.py`가 "보이기만 하는 것"과 "가운데 오는 것"을 실제 픽셀로 구분한다
+│   │   │   ├── tree_mixins/        # ⬆ tree.py의 동작 묶음 (분할 결과) — 런타임 클래스는 하나(mixin 합성)라 상태 공유 방식은 분할 전과 같다
+│   │   │   │   ├── spinner.py       # 노드 로딩 스피너. 원래 텍스트는 `_ORIG_TEXT_ROLE`에 보관한다(델리게이트가 텍스트를 파싱하지 않는 이유)
+│   │   │   │   ├── items.py         # 트리 로드(로컬·YouTube 섹션) + 아이템 팩토리(`_make_category`/`_make_playlist`/…). 팩토리가 롤을 심고 델리게이트는 롤만 읽는다
+│   │   │   │   ├── dnd.py           # 드래그앤드롭(영상·재생목록·폴더 이동 + 브라우저 URL 드롭). 가장 컸던 덩어리(`dropEvent` 145줄)
+│   │   │   │   └── context_menu.py  # 우클릭 메뉴 — 동작을 직접 하지 않고 `_PlaylistTree` 시그널만 방출한다
+│   │   │   └── mixins/              # LibraryPanel 동작 묶음 — 런타임 클래스는 하나(상태 공유 방식 불변)
+│   │   │       ├── album.py         # 앨범 보기(그리드·상세·담기·재생)
+│   │   │       ├── mini_player.py   # 지금 재생 중 미니바 상태(재생 유지·복귀·자동 다음곡)
+│   │   │       ├── recommend.py     # 추천 스트립(디바운스 조회·등장/퇴장 연출)
+│   │   │       ├── navigation.py    # 화면 히스토리(스냅샷 복원)·브레드크럼
+│   │   │       ├── detail.py        # 상세 진입/이탈·재생목록(자동 다음곡)
+│   │   │       ├── sidebar.py       # 좌측 트리 조작(카테고리·재생목록·폴더·즐겨찾기). **즐겨찾기 바 클릭은 트리 선택까지 동기화한다** — `_on_favorite_clicked`가 필터를 걸고 나서 `_playlist_panel.select_snapshot({"kind":…})`으로 대응 노드를 선택 표시한다(뒤로가기 복원과 **같은 경로**를 재사용하므로 강조·스크롤 규칙이 한 곳에만 있다). 예전엔 목록만 바뀌고 트리는 반응이 없어 지금 어느 카테고리를 보는지 트리에서 알 수 없었다(실제 신고). 태그 즐겨찾기는 트리 노드가 없고 현재 카테고리 안에서 거는 필터라 트리 선택을 건드리지 않는다
+│   │   │       ├── feed.py          # 구독 피드/채널 화면·YouTube 동기화
+│   │   │       ├── video_list.py    # 검색·정렬·뷰 전환·태그 패널·썸네일 프리로드. **목록 로딩 스켈레톤**: `_on_list_loading_any`(`vm.loading_changed` 전용, 검색 포함)와 `_on_list_loading`(노드 키 트리 스피너와 짝을 이루던 기존 경로)이 같은 스켈레톤 표시 로직을 공유한다 — 자세한 배경은 아래 "목록·검색 로딩 스켈레톤" 항목 참고
+│   │   │       ├── context_menu.py  # 영상 우클릭 메뉴(단일·다중)·삭제 확인
+│   │   │       └── shortcuts.py     # 키보드 단축키 — Ctrl+F(검색)·Esc(덮인 화면부터 걷기)·Alt+←/→(히스토리)·F5(새로고침)·Ctrl+1~4(보기 전환). 범위는 `WidgetWithChildrenShortcut`이라 다른 페이지에서는 발동하지 않는다
+│   │   ├── download_panel.py        # 다운로드 큐 + 완료 이력 탭 (영상 파일만 표시·완료/실패 배지). **이 패널의 상세 위젯에는 song_vm이 배선돼 있지 않아** 노래 탭·가사 자막이 동작하지 않는다(기존 상태 — 가사 자막 기능은 라이브러리 패널로 범위가 한정됨)
+│   │   ├── feed_panel.py            # 피드 카드 부품(_FeedGrid·_FeedCard: 썸네일 좌하단 채널 배지·리사이즈 reflow, **단일 클릭→`video_clicked`(FeedVideoDTO) 방출**, 인라인 추가버튼 제거·우클릭 메뉴로 일원화) + 채널 카드 부품(_ChannelGrid·_ChannelCard: 아바타·구독자/영상수에 더해 **"최근 영상 N일 전"** 라벨=`latest_video_published_at`) + 연관영상 행에서 재사용하는 `_RoundedThumbLabel`·`_ThumbLoader` 정의 — library_panel/video_detail_panel이 재사용. `_FeedCard`·`_ChannelCard`는 `_relative_time`(YYYYMMDD·ISO·`Z` 처리)로 등록 시점을 상대시간 표기. **`_FeedCard`는 `thumb_size`(작은 카드)·`draggable`(URL 드래그) 옵션을 받는다** — 드래그는 `text/uri-list`+`text/plain`으로 브라우저 URL 드래그와 **완전히 같은 MIME**을 만들어 카테고리 트리의 기존 URL 드롭 경로를 그대로 재사용한다(받는 쪽에 추천 전용 처리가 없다). 드래그가 시작되면 `_dragged` 플래그로 릴리스 시 클릭(상세 진입)을 억제한다. 카드가 드래그 이벤트를 받으려면 `mousePressEvent`가 `event.accept()`해야 한다(수락하지 않으면 move/release가 부모로 전파돼 드래그가 조용히 죽는다). + **`RecommendStrip`(추천 영상 스트립)**: 헤더 바(▾/▸ 접기 토글 + '추천 영상' + 상태 라벨 + ⟳ 다시 받기)와 가로 스크롤 카드 행. `set_items`/`append_items`/`set_loading`/`set_status`/`set_expanded(notify=False)`/`count()` 제공. 접으면 본문(`_scroll`)만 숨기고 헤더는 남긴다(= 다시 펼칠 수 있는 split bar). library_panel이 수직 `QSplitter`의 아래쪽 자식으로 넣는다. (구버전 FeedPanel 컨테이너는 더 이상 사이드바 메뉴로 노출되지 않음)
+│   │   ├── monitoring_panel.py      # 채널 구독 & 모니터링 규칙 관리
+│   │   ├── stats_panel.py           # 라이브러리 통계 대시보드 + **채널별 카테고리 섹션**(`_make_channel_row`: 채널명·총 영상수 + 카테고리 경로 링크를 `_FlowLayout`으로 흐름 배치, 예 "IT > News (3)"). 링크 클릭 시 `category_selected(category_id)` 방출 → `MainWindow._on_stats_category_selected`가 라이브러리 해당 카테고리로 전환. **채널명은 URL이 있으면 클릭 시 브라우저로 열리는 링크(`_open_url`→`QDesktopServices`) + `📋` URL 복사 버튼(`_copy_url`, 복사 후 ✓ 잠깐 표시)**을 둔다. 데이터는 `LibraryStatsDTO.channel_stats`(list[`ChannelStatDTO`]→`ChannelCategoryStatDTO`); `ChannelStatDTO.channel_url`은 리포지토리 `get_channel_category_stats`가 반환한 channel_url 대표값(없으면 channel_id로 `youtube.com/channel/{id}` 구성). **모든 색은 테마 토큰에서 온다**(`_card_qss`·`_BarChart(tokens)`·`_danger_color`) — 예전엔 카드 배경이 `#1e1e2e`로 박혀 있어 밝은 테마에서 어두운 카드 위에 어두운 글씨가 얹혀 아무것도 안 보였다. 카드·차트는 위젯 스타일시트/QPainter로 직접 칠하므로 전역 QSS 교체만으로는 안 바뀐다 → `theme_changed`에 `_refresh()`를 연결해 다시 그린다(`_clear_content`가 중첩 레이아웃까지 재귀 제거)
+│   │   ├── video_detail_panel.py    # **화면 뼈대와 로드 진입점만** 담당하고 나머지는 아래 `detail/` 패키지로 나뉘었다(2,999→693줄). YouTube 시청 페이지형 상세화면 — 좌(상단 행: `‹`뒤로+브레드크럼(`_crumb_bar`) 같은 줄 → **상단 고정 플레이어**(stretch 없이 16:9 자연 높이라 여백 없음; 창이 넓어지면 커지고 탭이 남는 공간 흡수) → **제목 행**(제목 `_title_lbl` + 우측 정렬 아이콘 `📁`카테고리 지정·`⟳`상세갱신·`🌐`브라우저) → **메타 행**(`_meta_layout`: 채널·조회수·등록일·재생시간 + 상태) → **하단 탭 3개**(stretch=1)) | 우(`_RelatedList` 연관영상). 탭: `_TAB_INFO`(설명)·`_TAB_SUMMARY`(요약, 헤더 행에 `⟳` 아이콘 갱신 버튼)·`_TAB_FILES`(다운로드/클립 병합 — 수직 `QSplitter`, 위=`_dl_tab` 아래=`_clip_tab_widget`). **설명 탭 레이아웃**(탭 자체 스크롤 없음 — 영속 위젯 세로 스택 `info_col`): `_tags_header`+`_tags_scroll`(태그) → `_tag_add_container`(태그 추가) → `_desc_header`+`_desc_view`(설명) → `_notes_header`+`_notes_edit`(메모) → 맨 아래 `addStretch(1)`. **태그**는 `_TagChip`(글자 길이만큼 Fixed 폭) + `_FlowLayout`(폭에 맞춰 줄바꿈하는 실제 `QLayout` 서브클래스)로 흐르고 `_tags_scroll`(QScrollArea)로 감싸 **최대 3줄까지만 보이고 초과분은 스크롤**한다(`_fit_tags_scroll`이 내용 높이에 맞추되 3줄로 상한). **설명**(`_desc_view` = `_AutoHeightBrowser`)은 내용 높이를 `sizeHint`로 노출해 **남는 세로 공간을 최대로 활용**(설명이 길수록 넓게)하고 공간이 부족할 때만 자체 스크롤한다 — 짧으면 내용 높이에 딱 맞고(맨 아래 stretch가 여백 흡수) 길면 영역을 최대로 차지(그때만 스크롤)하므로 스크롤이 최소화된다. **메모**(`_notes_edit` = `_AutoHeightPlainEdit`)는 설명 바로 아래에서 1~5줄 자동 높이로 **최소 높이가 항상 보장**된다(고정 높이라 설명이 아무리 길어도 안 밀림). `load`(로컬)/`load_stream`(스트리밍: 요약 탭+제목행 `⟳` 비활성) + `set_related`. `_build_info`는 `_meta_layout`만 `_clear_layout`로 재빌드하고 나머지(태그·설명·메모)는 **영속 위젯을 갱신**한다(`_tags_holder_layout`·`_tag_add_layout` clear 후 재구성, `_desc_view.setHtml`, 없으면 `setVisible(False)`). 제목은 `_title_lbl.setText()`, 메모는 `_notes_edit`로 세팅. 설명·요약은 `_render_timestamped_html`로 **마크다운 서식**(제목 `#`, 굵게 `**`/`__`, 기울임 `*`, 불릿 `-`/`*`/`•`/`·`, 번호 `1.`/`1)`, 선행 공백 들여쓰기)을 HTML로 렌더하며 타임스탬프(MM:SS/HH:MM:SS) seek 링크·URL 링크도 유지한다(`_on_summary_anchor_clicked`→`InlinePlayer.seek_to_ms` / 브라우저). URL은 escape/서식 적용 전에 분리해 보존한다. **`line_gap`(px) 인자로 줄마다 하단 여백을 준다** — 설명은 원문에 빈 줄 단락 구분이 있어 0(조밀)이지만, Gemini 요약은 개행이 촘촘해 `_SUMMARY_LINE_GAP`(=8)을 줘 단락·개행 간격을 벌려 읽기 편하게 한다(요약 렌더 3곳 모두 적용). **별도 "챕터" 섹션은 설명 속 타임라인과 중복되므로 제거하고 설명 하나로 병합**(기존 `_parse_chapters`·`_on_chapter_clicked` 삭제됨). `RelatedItem` dataclass + `item_selected` 시그널. **우측 `_RelatedList`는 두 구역**(위=연관 영상, 아래=`set_recommendations`로 채우는 "추천 영상")을 한 스크롤에 쌓으며, 구역마다 전용 컨테이너(`_rel_box`/`_rec_box`)를 둔다 — 예전처럼 한 레이아웃에 헤더·행·스트레치를 늘어놓고 인덱스로 지우면 구역이 둘이 되는 순간 삽입/삭제 위치가 어긋난다. **추천은 `_playlist`에 넣지 않는다**(자동 다음곡은 연관 영상 안에서만 이어진다). **연관영상 행(`_RelatedRow`)**은 제목을 최대 3줄까지 표시(9pt, `AlignTop`, `maximumHeight=lineSpacing*3`)하고 채널명·조회수·등록시기는 7pt로 1pt 줄여 title과 사이에 stretch를 둬 **행 아래쪽에 배치**(제목 가림 최소화). 요약 탭은 `gemini_summary`를 표시(`_summary_edit`)/편집(`_summary_editor`) **`QStackedWidget`(`_summary_stack`)** 2단으로 두고 **표시 영역 더블클릭→편집 모드**(`eventFilter`가 `_summary_edit.viewport()`의 `MouseButtonDblClick` 감지→`_enter_summary_edit`), **편집기 포커스 아웃→저장**(`_commit_summary_edit`이 변경 시 `_summary_raw` 갱신·재렌더 후 `gemini_summary_saved` 방출). ⟳ 버튼으로 `_GeminiSummaryWorker`(QThread) → `GeminiExtractor` 호출 → `gemini_summary_saved` 방출. 요약 원문은 `_summary_raw`에 보관(편집 대상). 제목행 `⟳`(상세 정보 갱신)는 `detail_refresh_requested(video_id)` 방출 → `LibraryPanel._on_detail_refresh_requested`가 `_vm.refresh_video_metadata(video_id)`로 **YouTube(yt-dlp)에서 메타데이터를 백그라운드 재수집**하고 `set_refresh_busy(True)`(⟳ 비활성). 완료 시 VM이 `video_metadata_refreshed(video_id, ok)` 방출 → `_on_video_metadata_refreshed`가 현재 그 영상 상세가 열려 있으면(`current_detail_id()` 일치) `_reload_detail_in_place`로 DB 최신 상세를 재로드(nav 히스토리 미변경). **과거에는 `get_video_detail`로 DB만 재조회해 저장된 오래된/부실(예: `extract_flat` 캡처) 메타데이터가 그대로여서 유튜브 웹과 달랐음** — 이제 실제 재수집으로 제목·설명·조회수·게시일·태그·썸네일을 웹 기준으로 갱신한다. **탭3 `_TAB_SONG`("노래")**는 `_SongTab` 위젯: 가수/앨범/제목/발매년도(`_EditableField` — 더블클릭 시 QLineEdit 인라인 편집, Enter/포커스아웃 저장→`field_edited`; 레이블·값 모두 세로 중앙 정렬, 값은 **PlainText 렌더**라 `'`·`&`·`<` 등이 `&#x27;`처럼 엔티티로 오표기되지 않음), 가사는 줄마다 `_LyricRow` 컨테이너로 표시(원문+한글 병행; 표시 영역 더블클릭→편집 모드 QPlainTextEdit, 포커스아웃 저장→`lyrics_edited`)하며 재생 중인 줄을 accent 틴트로 강조하고 자동 스크롤한다(사용자가 직접 스크롤하면 3초간 멈춘다 — `sliderPressed`/`actionTriggered`로 감지, `valueChanged`는 자동 스크롤 자신의 변화까지 잡아 영구 억제되므로 쓰지 않는다). `SongInfo.is_synced`가 아니면(시각 있는 줄이 없으면) 가사 검색 버튼 옆에 `⏱`(싱크 가사 찾기 — `FetchSongInfoCommand.synced_only`, 타이밍 없는 출처는 건너뛰고 전 출처 실패해도 기존 가사는 지우지 않음)가 대신 뜬다. **`is_synced`면 그 자리에 대신 가사 시작 시각 보정 입력 필드(`_offset_spin`, ±30초·0.25초 단위, `offset_changed(ms)` 발행)가 뜬다** — 영상 위 자막(💬)의 `[`/`]`·`,`/`.` 단축키·우클릭 메뉴와 값을 공유하며, `VideoDetailWidget`가 `offset_changed`를 `InlinePlayer.set_subtitle_offset_ms()`(공개 setter)에 그대로 연결해 기존 디바운스 저장 경로를 재사용한다(탭이 직접 저장하지 않음). 플레이어 쪽에서 바뀐 값은 `set_offset_ms()`로 탭에 되돌아와 표시만 갱신한다(`blockSignals`로 되돌림 방지). **번역 배치 전환 아이콘**(`_layout_btn` — "(더블클릭하여 편집)" 문구 오른쪽; 원문 아래↔원문 오른쪽 2열 토글, 비한국어 병행 가사일 때만 노출·세션 내 유지, **오른쪽 2열 배치는 행마다 교대 음영으로 경계 구분**), 출처 링크, **가사 검색 버튼(`_lyrics_refresh_btn` = `_SpinRefreshButton`) + 번역 버튼(`_translate_btn`, 가사 있을 때만 노출)** — 검색 버튼은 항상 **후보 목록 검색**을 요청한다(`_on_lyrics_search_clicked`→`candidates_requested`→`SongViewModel.search_lyrics_candidates`). 결과는 가사 영역 자리(`_lyrics_stack` index 2 = `_LyricsCandidateList`)에 |출처|가수|제목|가사 첫째 줄|싱크| 표로 뜨고, 고른 행만 `candidate_chosen`으로 반영한다. 번역 버튼은 현재 가사를 한글로 재번역(`translate_requested`→`translate_lyrics`, 조회와 분리된 독립 동작), "노래로 표시" 토글(`flag_toggled` — 켜면 **영상 제목 기준으로 가수·앨범·제목·발매년도만 채우고 가사는 조회하지 않음**), **가수·앨범 값 오른쪽 `»` 필터 아이콘**(`_EditableField` with_action — 값 있을 때만 노출, 클릭 시 `filter_requested(field,value)`→`song_filter_requested`→`LibraryPanel._on_song_filter_requested`가 `get_videos_by_song`으로 같은 가수/앨범 영상을 연관 목록 대신 나열하고 헤더를 "가수/앨범: XXX"로 교체). 스트리밍은 편집·조회 불가(안정적 id 없음)지만 **탭은 비활성화하지 않고** `_LockedNotice` 안내판(`_lyrics_stack` index 3 = `_STACK_LOCKED`, 요약은 `_summary_stack` index 2 = `_SUMMARY_LOCKED`)을 띄운다 — 아래 "라이브러리 밖 영상의 카테고리 지정" 항목 참고. 데이터는 위젯이 직접 조회하지 않고 `LibraryPanel`이 `SongViewModel`로 로드해 `set_song_info(dto)`/`set_song_busy(busy)`로 주입, 편집 신호는 `song_field_saved`/`song_lyrics_saved`/`song_refresh_requested`/`song_flag_toggled`로 재방출→`SongViewModel`이 저장. 가사 더블클릭 편집·편집기 포커스아웃은 요약과 동일하게 앱 레벨 `eventFilter`로 감지. **진입 시 재생 전 포스터**: `load`/`load_stream`에 `poster`(목록과 동일한 QPixmap, LibraryPanel이 `_load_thumb(thumbnail_path,…)`로 생성) + `autoplay` 인자 → `InlinePlayer.load(thumbnail_pixmap=…)`. **우측 목록은 재생목록**: `set_related(items, header=None)`이 payload 순서를 `_playlist`에 저장하고 현재 항목(`_current_key`)을 `_RelatedRow(is_current=…)`로 ▶+배경 강조. `InlinePlayer.playback_finished`(EndOfMedia) → `_on_playback_finished`가 다음 payload로 `play_next_requested` 방출 → `LibraryPanel._on_play_next`가 `_open_detail(autoplay=True)`로 자동재생(마지막이면 정지). 현재 영상도 목록에 포함(제외 조건 제거). **가사 자막**: 노래이고 `is_synced`면 `player.subtitle`(`LyricsOverlay`)에 `LyricsTrack.from_lines(...)`을 채우고, `InlinePlayer.current_line_changed`로 재생 중인 `_LyricRow`를 강조·스크롤한다. `InlinePlayer.subtitle_offset_changed`(`C`/`[`/`]`/`\` 단축키나 `💬` 우클릭 메뉴로 변경)는 **500ms 디바운스 후 조정 시점의 video_id를 캡처해 저장**한다(`SongViewModel.set_lyrics_offset`) — 디바운스 대기 중 다른 영상으로 넘어가도 원래 영상에 저장되도록 하는 레이스 수정이다.
+│   │   ├── detail/                  # ⬆ video_detail_panel의 부품·동작 (분할 결과)
+│   │   │   ├── widgets.py           # `_TagChip`·`_FlowLayout`·`_AutoHeight*`·`_EditableField`·`_LockedNotice` 등 소형 위젯
+│   │   │   ├── related.py           # `RelatedItem`·`_RelatedRow`·`_RelatedList`(연관 영상 + 그 아래 추천 구역)
+│   │   │   ├── song_tab.py          # `_SongTab`·`_LyricRow`·`_LyricsCandidateList`(가사 후보 표)
+│   │   │   ├── text_format.py       # 설명·요약 렌더링 정규식(마크다운·타임스탬프·URL)과 요약 실패 안내 문구
+│   │   │   ├── text_zoom.py         # 요약·가사 글자 배율 — clamp·pt 계산·설정 저장(`detail_text_scale`). 두 영역이 한 배율을 공유한다
+│   │   │   ├── workers.py           # `_GeminiSummaryWorker`
+│   │   │   └── mixins/              # info(제목·태그·설명·메모)·summary·song·files(다운로드/클립)·player
+│   │   ├── album_panel.py           # 앨범 보기 부품 (진입은 툴바 보기 유형 💿 버튼) — `AlbumGrid`(자켓 카드 그리드, 폭에 맞춰 reflow)·`AlbumDetailPanel`(좌: 자켓·설명·▶앨범재생·빠진 곡 찾기 / 우: 수록곡 목록). 수록곡 행(`_TrackRow`)에 **출처 배지**(내 등록/자동 매핑/없음)를 그린다. **수록곡 헤더의 '✎ 수정' 토글(`_btn_edit`)을 켜야만 행마다 삭제(✕) 버튼이 보이고**, 그것도 자동 매핑(AUTO) 행에만 붙는다(`_TrackRow.set_edit_mode` — 내 라이브러리 영상 삭제는 훨씬 무거운 동작이라 여기서 다루지 않고 '없음'은 지울 게 없다). `set_detail`은 앨범이 바뀌면 수정 모드를 끈다(켜진 채 남으면 새 앨범에서 실수로 누른다). 자켓은 `_ThumbLoader`(prefix="album")를 재사용해 URL에서 받아 캐시하고, 없으면 대표 영상 썸네일 → ♪ 자리표시자 순으로 폴백
+│   │   ├── settings_panel.py        # **섹션 배치만** 담당한다 — 520줄짜리 `_build_ui`를 섹션 빌더 10개로 쪼갰고 큰 섹션 위젯은 `settings/` 패키지에 있다(1,744→1,014줄). 전체 설정 패널 (다운로드 경로, 테마 등) + **가사 출처 관리**(`_LyricsSourcesSection`: `song_vm` 주입 시에만 표시) + **클라우드 동기화**(`_CloudSyncSection`: **폴더 방식이 기본**(안내 문구 + 폴더 경로 입력·찾아보기, OneDrive 환경변수 감지 시 `<OneDrive>/ovc-sync` 자동 채움) — 로그인·개발자설정 불필요. **"고급: 클라우드 API로 직접 연결(OAuth)" 체크박스**로 API provider(Google Drive/OneDrive) 드롭다운+Client ID/Secret을 펼침(`_advanced_check` 토글, 기본 숨김). 연결/해제/지금 동기화 버튼·상태 라벨. `sync_vm` 주입 시에만 표시) + **YouTube API 연동**(`yt_oauth` 주입 시에만 표시 — 위 클라우드 동기화의 "Client ID/Secret"과는 **별개 기능**이다. Client ID/Secret 입력란 없이 단일 버튼 `_yt_auth_btn`("Google 계정으로 연결"/"연결 중…"/"Google 계정 다시 연결") + `_yt_disconnect_btn`("연결 해제")만 노출한다. `YouTubeOAuthAdapter.has_client_config()`가 False면(번들 클라이언트 미포함) 버튼을 비활성화하고 "배포자에게 문의하세요" 안내를, 연결 성공 시 채널명 + "앱을 다시 시작하면…" 재시작 안내를 `_yt_status_lbl`에 표시한다. 인증 플로우는 `_AuthWorker`(QThread)가 무인자 `run_auth_flow()`를 호출한다 — Client ID/Secret 문자열을 UI가 갖고 있지 않다. 아래의 구독 피드용 브라우저 쿠키 섹션과는 시각적으로 분리된 별도 섹션이다) + **라이브러리 가져오기/내보내기**(`_ImportExportSection` — `transfer_vm` 주입 시에만 표시. 내보내기: `get_categories_fn`(=`library_vm.categories`)로 로컬 카테고리 체크트리(`CategorySelectDialog`) 노출 → `QFileDialog.getSaveFileName`으로 `.ovcpkg` 경로 선택 → `transfer_vm.export_library`. 가져오기: `QFileDialog.getOpenFileName` → `preview_import`로 패키지 안의 카테고리 체크트리 노출 → `detect_conflicts` → 값이 다른 영상이 있으면 `ImportConflictResolutionDialog`로 필드별 선택 → `import_library`. 각 단계는 이전 다이얼로그가 취소되면 그다음 단계로 넘어가지 않는다). **숨김 태그 관리 섹션은 맨 아래**(긴 목록이 다른 설정 접근을 방해하지 않도록 재배치). **업데이트 UI는 헤더('설정' 라벨) 우측 컴팩트 위젯**(`_build_update_header`: 자동확인 토글 + 상태 라벨 `_upd_status_lbl` + 준비 시 `_upd_install_btn`)로 이동 — 기존 하단 큰 섹션 제거. `set_update_ready(dto)`가 상태를 '준비됨'으로 바꾸고 설치 버튼 노출, `_on_install_update`→`install_update_requested`. 일반 섹션에 **"등록 시 요약·가사 자동 채우기"** 체크박스(`_auto_enrich_check` → `auto_enrich_on_add`) + 안내 문구(요약은 YouTube 쿠키 필요·일괄 임포트 제외)
+│   │   ├── settings/                # ⬆ settings_panel의 부품 (분할 결과)
+│   │   │   ├── helpers.py           # `_t`(현재 토큰)·`open_folder`(탐색기 열기)
+│   │   │   ├── theme_cards.py       # 테마 프리셋 카드·미리보기
+│   │   │   ├── hidden_tags.py       # 숨김 태그 관리(드래그로 표시/숨김 이동)
+│   │   │   └── sections.py          # 가사 출처·클라우드 동기화·가져오기/내보내기 섹션(각자 뷰모델하고만 대화)
+│   │   └── settings_dialog.py       # 간략 설정 다이얼로그 (레거시, 42줄)
+│   ├── dialogs/
+│   │   ├── youtube_auth_dialog.py   # `YouTubeAuthDialog` — Gemini 요약용 YouTube 쿠키 인증. "브라우저 계정"(기존 브라우저 프로필 선택)·"쿠키 파일"(직접 지정) 탭 + "새 계정으로 로그인…"(Playwright로 자체 브라우저 창을 띄워 로그인시키고 쿠키 직접 캡처 — 기존 브라우저 쿠키 DB 무관). 설정 화면 "브라우저 열어서 로그인 (권장)" 버튼(`SettingsPanel._on_open_auth_dialog`)으로 연결됨
+│   │   ├── batch_download_dialog.py # 일괄 다운로드 URL 입력 다이얼로그
+│   │   ├── quick_open_dialog.py     # 빠른 이동(Ctrl+K) — 카테고리·재생목록·영상을 한 입력창에서. 결과 구성은 순수 함수 `build_hits`(장소 먼저·접두 일치 우선·종류별 상한)라 GUI 없이 테스트한다
+│   │   ├── library_cleanup_dialog.py # 라이브러리 정리 — 중복 영상·사라진 파일. **자동 삭제 없음**(확실한 중복만 첫 항목 남기고 기본 선택, '비슷함'은 선택 안 함)
+│   │   └── library_transfer_dialogs.py  # 가져오기/내보내기 — `CategorySelectDialog`(체크트리, 부모 체크 시 하위도 함께 체크/해제 — 내보내기의 로컬 `CategoryDTO`·가져오기의 패키지 `ImportCategoryOptionDTO` 양쪽에서 재사용, 둘 다 id/name/parent_id/video_count 필드만 덕타이핑으로 씀) + `ImportConflictResolutionDialog`(좌: 값이 다른 영상 목록, 우: 선택한 영상의 필드별 `_FieldChoiceRow` — 기존값/가져올값을 "(비어있음)" 표시로 채워짐 여부까지 보이고 라디오로 선택. 기본 선택은 `ImportFieldDiffDTO.default_choice`. "전체 가져오기값 사용"/"전체 기존값 유지" 일괄 버튼)
+│   ├── widgets/
+│   │   ├── video_player.py          # **InlinePlayer 조립만** 담당하고 스트림·컨트롤·표시면은 `player/` 패키지에 있다(2,223→1,276줄). 인라인 비디오 플레이어 위젯 (QMediaPlayer 기반). **스트림 확보는 실패를 전제로 설계**한다 — `_STREAM_CLIENTS`(기본→android→ios→tv) 순회 + `_stream_playable` 사전 검증 + 재생 오류 시 1회 재조회. 자세한 배경은 아래 "스트리밍 재생 실패 → 브라우저 튕김" 항목 참조. **하이브리드 스트리밍 화질**: YouTube 고화질은 영상+오디오 분리(DASH)라 QMediaPlayer 단일 URL로는 360p가 한계 → `_StreamWorker`가 두 모드 운용. "자동(빠른 재생)"·360p·240p는 muxed URL 즉시 스트리밍(merge=False); 1080p/720p/480p는 `bestvideo[avc1]+bestaudio[mp4a]`를 번들 ffmpeg로 임시 mp4에 병합 후 로컬 재생(merge=True, `ovc_stream_*` 임시 디렉터리는 stop/load/품질전환 시 정리). WMF 호환 위해 avc1(H.264)+m4a 우선. 화질 변경 시 `_on_quality_changed`가 현재 위치 저장→`mediaStatusChanged`(LoadedMedia/BufferedMedia·seekable)에서 이어보기 seek(고정 지연 seek 폐기로 네트워크 스트림에서도 견고). **컨트롤바 배경**은 `_bar_style()`의 `#ctrlbar` 반투명 그라디언트(영상이 비쳐 보임). **재생·볼륨 슬라이더는 `_TrackSlider(QSlider)`로 트랙·핸들을 `paintEvent`에서 QPainter로 직접 그린다** — 영상(`QGraphicsVideoItem`) 위에 겹쳐진 컨트롤바에서는 `QSlider::groove`/`::add-page` 서브컨트롤이 스타일시트 색을 무시하고 검게 렌더되는 Qt 제약이 있어(불투명 지정·정지 프레임에서도 재현; 위젯 배경·`sub-page` 등 직접 채움만 정상), 스타일시트 대신 직접 페인팅으로 라이트 트랙을 보장한다. 따라서 슬라이더 색을 바꿀 땐 `_bar_style`의 QSS가 아니라 `_TrackSlider`(`_TRACK_BG`·`progress_fg`·`text_primary`)를 수정할 것. **전체화면(`_FullscreenWindow`)·화면 속 화면(`_PipWindow`)은 공유 `QMediaPlayer`의 `setVideoOutput` 대상만 자기 `_VideoView`로 바꿔 분리 재생**한다(하나의 player라 위치·볼륨·상태 유지). **`_VideoView`(QGraphicsView)는 `FocusPolicy.NoFocus`** — QGraphicsView가 기본적으로 포커스를 쥐고 방향키(↑/↓/←/→)를 스크롤용으로 소비해 전체화면·PiP 창의 `keyPressEvent`가 볼륨(↑/↓)·탐색(←/→) 단축키를 못 받던 문제를 막는다(상위 창이 모든 키 처리). **키보드 포커스는 InlinePlayer(`StrongFocus`)가 단독으로 받는다** — `_VideoView`는 `NoFocus`, 컨트롤바 버튼(`QToolButton`)은 `TabFocus`라 자신은 포커스를 갖지 않고, 플레이어 안 어디를 클릭하든 포커스가 `InlinePlayer`로 올라와 `keyPressEvent`가 단축키(Space/J/K/L/M/F/P·자막 `C`/`[`/`]`/`\`)를 처리한다. 이 위임이 깨지면 **단축키 전체가 조용히 죽으므로**(핸들러는 멀쩡하니 기존 테스트는 통과한다) `tests/gui/test_subtitle_player.py::TestShortcutReachability`가 실제 클릭+키 입력으로 도달성을 고정한다 — 포커스 정책을 바꿀 땐 이 테스트를 먼저 통과시킬 것. 두 창 모두 컨트롤바를 공개 속성 `bar`(`_ControlBar` 인스턴스)로 노출하며, **`bar` 신호는 외부(InlinePlayer)에서 반드시 배선**해야 버튼이 동작한다 — `_enter_fullscreen`/`_enter_pip`가 각각 `bar.play_toggled`~`quality_changed`를 인라인과 동일한 핸들러에 연결하고 초기 상태(재생시간·위치·재생여부·볼륨·음소거·화질)를 1회 반영하며, `_exit_fullscreen`/`_exit_pip`가 `durationChanged` 연결을 해제한다. 플레이어→분리창 바 동기화는 `_on_position`/`_on_playback_state`(위치·재생상태)와 `_change_volume`/`_toggle_mute`(볼륨·음소거)가 `_fs_win`/`_pip_win` 존재 시 팬아웃한다. PiP는 컨트롤바에 `_btn_pip`(⧉, `pip_toggled` 시그널, 단축키 `P`)로, 전체화면은 `_btn_fs`(⛶, `fullscreen_toggled` 시그널, 단축키 `F`)로 진입하며 `_enter_pip`/`_enter_fullscreen`은 서로 동시 분리를 허용하지 않아 진입 시 상대 창을 먼저 종료한다. PiP 활성 시 인라인은 `_show_pip_placeholder`로 "화면 속 화면으로 재생 중" 표시. `_PipWindow`는 프레임리스·항상 위, 영상 영역 드래그 이동(영상 `WA_TransparentForMouseEvents`)+`QSizeGrip` 리사이즈, 닫기/Esc/더블클릭/`_btn_pip`로 복귀. **분리 창 정리는 `stop()`/`load()`/`closeEvent`에서 출력 인라인 복귀 후 수행**(상세 이탈 시 `stop_player`→`stop` 경로로 자동 정리). **`load(...)`는 `thumbnail_pixmap` 포스터를 지원**(재생 전 index 0 `_thumb_label` 표시). **`playback_finished` 시그널**: `_on_media_status`에서 `EndOfMedia`(수동 stop과 구분되는 유일한 종료 지표)일 때 방출 → 상세화면 재생목록 자동 다음곡용. **화질 메뉴는 그 영상이 실제로 제공하는 해상도만 나열한다** — 다운로드 포맷이 `height<=N` 이라 최대치를 넘는 선택지는 같은 파일을 받아 무의미했다(최대 1080p인 영상에 4K가 뜨던 문제). ⬇ 클릭은 바로 메뉴를 열지 않고 `download_menu_requested`를 방출 → `InlinePlayer._on_download_menu_requested`가 `_FormatProbeWorker`(QThread, yt-dlp `extract_info`)로 높이 목록을 구한 뒤 `bar.set_available_heights()`+`bar.open_download_menu()`로 연다(조회 중 ⬇ 비활성, 결과는 `_HEIGHT_CACHE`에 URL 단위로 캐시, 실패하면 전체 목록으로 폴백해 다운로드를 막지 않는다). 재생 화질 메뉴도 같은 목록으로 걸러진다. 세로 영상은 높이가 1920처럼 잡히므로 '정확히 존재하는 값'이 아니라 **최대치 이하**로 판정한다(`tests/gui/test_quality_menu.py`). 일괄 다운로드 다이얼로그는 대상이 여러 개라 이 필터를 적용하지 않는다. **가사 자막**(`LyricsOverlay`)은 영상 위에 겹쳐 인라인·전체화면·PiP 3창 모두에서 재생되며, `bar`와 마찬가지로 `subtitle` 속성도 외부(상세화면)가 내용을 채워야 한다 — 단축키 `C`(자막 on/off)·`[`/`]`(오프셋 ∓250ms, `_OFFSET_STEP_MS`, `,`/`.`도 동일 동작의 별칭)·`\`(현재 위치를 그 줄에 맞춤)는 `subtitle_offset_changed`·`current_line_changed` 시그널로 상세화면에 통지된다. **`set_subtitle_offset_ms(ms)`는 절대값 지정용 공개 메서드**로, 노래 탭처럼 플레이어 밖(단축키·메뉴가 아닌 경로)에서 오프셋을 바꿀 때 이 메서드로 진입하면 내부 조정과 동일하게 바·오버레이 갱신 + `subtitle_offset_changed` 발행까지 그대로 이어진다.
+│   │   ├── player/                  # ⬆ video_player의 부품 (분할 결과)
+│   │   │   ├── constants.py         # `_STREAM_CLIENTS`·`_PROBE_*`(ffmpeg와 동일한 검증 요청)·화질 목록
+│   │   │   ├── stream.py            # `_StreamWorker`·`_stream_playable`·`_FormatProbeWorker` — URL 확보와 사전 검증
+│   │   │   ├── controls.py          # `_ControlBar`·`_TrackSlider`(영상 위에서는 QSS가 안 먹어 직접 그린다)
+│   │   │   └── surfaces.py          # `_VideoArea`·`_VideoView`·`_PipWindow`·`_FullscreenWindow`. **`_VideoArea` 높이는 16:9를 지향하되 창 높이의 `_MAX_WINDOW_RATIO`(0.62)를 넘지 않는다** — 컨트롤바가 이 영역 바닥에 얹히므로 영역이 배정된 공간보다 커지면 바가 창 밖으로 밀려 보이지도 눌리지도 않는다(실측: 2200×900 창에서 바 하단이 창 아래로 335px). 넘칠 땐 영상이 좌우로 레터박스될 뿐이고 자동 숨김은 그대로다. 제한은 `heightForWidth`에 걸어 레이아웃 배정과 실제 배치가 어긋나지 않게 하고, **창 resize도 이벤트 필터로 지켜본다**(세로만 줄이면 폭이 그대로라 자기 resizeEvent가 오지 않아 제한값이 낡는다). 회귀 테스트 `tests/gui/test_player_geometry.py`는 창을 `setFixedSize`로 고정한다 — `resize`만 쓰면 Qt가 창을 키워 넘침이 재현되지 않는다
+│   │   ├── mini_player_bar.py       # 지금 재생 중 미니바 — 창 하단(상태바 위) 띠. 썸네일·제목·▶⏸·⏭·위치 슬라이더·✕. **재생 주체를 옮기지 않는다** — 라이브러리 상세의 InlinePlayer 상태를 비추고 조작만 되돌려 보낸다(그래서 다른 페이지로 가도 계속 보인다). 클릭하면 보던 상세로 복귀
+│   │   ├── subtitle_track.py        # 영상 자막 트랙 — `SubtitleCue`(시작·**끝**·텍스트)·`SubtitleTrack`(이분 탐색·오프셋). Qt 비의존. 가사(`LyricsTrack`)와 규칙이 다르다: **끝 시각이 있어** 대사가 없는 구간에는 아무것도 뜨지 않는다
+│   │   ├── lyrics_overlay.py        # 가사 자막 — `LyricsTrack`(Qt 비의존 순수 로직: 이분 탐색 현재 줄 판정·오프셋 ±30초 clamp) + `LyricsOverlay(QWidget)`(배경 없이 QPainterPath 외곽선 텍스트, 글자 크기는 위젯 높이 비례라 전체화면에서 자동 확대). 폰트는 Pretendard→맑은 고딕→Noto Sans KR 순으로 설치된 것을 고름(`subtitle_font_family`). **`set_notice(text)`/`notice_text`는 조절 피드백 문구**를 위쪽 가운데에 그린다(자막은 아래라 안 겹침) — 전체화면·PiP에는 `InlinePlayer._status_lbl`이 안 보이므로 세 창이 다 가진 이 오버레이가 피드백을 책임진다. 자막이 꺼져 있거나 표시할 줄이 없어도 문구는 그린다. **자막 색(흰 글자/검은 외곽선)은 테마 토큰을 쓰지 않는 의도적 예외** — 앱 테마가 아니라 '어떤 영상 프레임 위에서도 읽히는가'가 기준
+│   │   └── skeleton.py              # 로딩 중 화면 구조를 먼저 보여주는 공유 스켈레톤 프리미티브(v1.22.0 체감 성능 개선 Phase 1) — `ShimmerEffect(QWidget)`(블록 하나에 흐르는 좌→우 그래디언트, `SHIMMER_CYCLE_MS`=300ms 무한 반복)·`SkeletonRow(QWidget)`(높이·칸 개수·칸별 상대폭(`cell_ratios`) 커스터마이징 가능한 스켈레톤 한 행). **칸마다 위젯을 따로 만들지 않고 한 번의 `paintEvent`에서 전부 그린다**(카드/행마다 위젯을 만들지 않는 저사양 PC 메모리 규칙 — 목록에 이 행이 수십 개 늘어서도 위젯 수가 늘지 않는다). 색은 `tok()`(테마 토큰)에서만 파생하고(`bg_overlay`를 바탕으로 채널별 델타(`_HIGHLIGHT_DELTA`)만큼 밝힌 색이 반짝임 톤 — 근검정 톤에서도 `.lighter()` 곱셈 보정보다 확실히 밝아지도록 덧셈으로 계산), 색 하드코딩 금지 규칙을 지킨다. `set_loading(bool)`로 애니메이션을 시작/중단하며, **위젯이 숨겨지면(`hideEvent`) 로딩 중이어도 타이머를 자동으로 멈추고** 다시 보일 때만 재개한다(보이지 않는 곳에서 타이머가 도는 것 방지). 목록·앨범 등 여러 화면의 스켈레톤이 이 모듈 하나를 공유해 모양·색·애니메이션 규칙을 일원화하는 것이 목적이라, 실제 화면별 스켈레톤(목록·앨범 그리드/상세)은 이 프리미티브 위에 별도 파일로 얹힌다. 회귀 테스트: `tests/gui/test_skeleton.py`
+│   ├── themes/
+│   │   ├── manager.py               # ThemeManager 싱글턴 — 전역 QSS 교체, theme_changed 시그널
+│   │   ├── tokens.py                # ThemeTokens dataclass + PRESETS(11종) — **기본 테마는 `mist`**(밝은 중간 톤): `bg_base #d9dee6` → `bg_surface #e7ebf1` → `bg_elevated #f8fafc`로 계층차를 12~18단위 확보한다. 기존 `slate`는 계층차가 3~7단위뿐이라 레이어 경계가 보이지 않았다. 어두운 4종(slate·zinc·warm·**forest**) + 밝은 7종(cloud·rose·sand·mist·**sage**·**lavender**·**graphite**). **모든 텍스트 토큰은 배경 대비 WCAG AA(4.5:1)를 만족**하도록 값이 정해져 있고 `tests/gui/test_theme_contrast.py`가 이를 강제한다 — 새 프리셋을 추가하거나 색을 바꾸면 이 테스트를 먼저 통과시킬 것. `is_light` 프로퍼티(배경 휘도 판정)는 의미 색 톤 선택에 쓴다
+│   │   ├── colors.py                # 인라인 스타일시트용 색 헬퍼 — `tok()`(현재 토큰)·`sem('success'|'danger'|'warning')`(밝기별 톤). **위젯 `setStyleSheet`에 색을 하드코딩하지 말 것** — 밝은 테마에서 글자가 배경에 묻힌다
+│   │   └── stylesheet.py            # build_qss(tokens) → QSS 문자열 생성
+│   ├── updater/                     # 자동 업데이트 UI — 동작 규칙은 아래 "자동 업데이트" 항목 참조
+│   │   ├── update_controller.py     # UpdateController — 확인·다운로드 조율. 시그널 `update_ready`(자동 설치 준비 완료)·`update_notification`(발견했으나 준비 실패)·`check_started`/`check_finished`(설정 화면 버튼 잠금). `_CHECK_INTERVAL_SEC`(1시간)은 **성공했을 때만** `_mark_checked`로 소진한다
+│   │   ├── update_checker_worker.py # UpdateCheckWorker(found/none_found/failed)·UpdateDownloadWorker(progress/done/failed) — 둘 다 QThread
+│   │   ├── update_dialog.py         # UpdateDialog — 수동 다운로드 경로(자동 준비 실패 시 폴백)
+│   │   └── pending.py               # write_pending_update·pending_marker_path — `<tempdir>/ovc_pending_update.txt`(2줄: 인스톨러·exe). **실제 설치는 main.py 종료 tail**이 이 마커를 읽어 수행한다(실행 중 설치 불가)
+│   └── view_models/                 # UI 상태 — Application 레이어와 View 사이 브릿지
+│       ├── base.py                  # **워커 수명 공용 규약** — `WorkerOwnerMixin`(`_start_worker`로 붙들고 시작, `shutdown()`·`wait_for_workers()`·공개 `tracked_workers`)·`shutdown_all(owner)`(정리 대상을 **발견**한다 — 손으로 적던 목록이 뷰모델 셋을 빠뜨려 종료 시 프로세스가 죽는 경로를 만들었다)·`CallWorker`(핸들러 호출 1건용 공용 워커). 믹스인은 `_tracked_workers`라는 자기 이름만 써서 각 뷰모델의 취소·중복 판정 자료구조(`download_vm`의 job_id dict, `feed_vm`의 동시 실행 상한 리스트)를 건드리지 않는다
+│       ├── bundle.py                # `ViewModels` frozen dataclass — `MainWindow`가 뷰모델을 **묶음 하나로** 받는다(예전엔 낱개 13개, 절반이 타입 힌트 없는 `song_vm=None`). **`LibraryPanel`은 묶음을 받지 않는다** — 테스트가 `LibraryPanel(vm=library_vm)`처럼 최소 구성으로 만드는 성질을 지킨다. 정의를 `gui/`가 소유하는 이유는 GUI가 `bootstrap`을 의존하면 레이어가 뒤집히기 때문
+│       ├── library_vm.py            # LibraryViewModel — 영상 목록, 카테고리, 검색, 같은 가수/앨범 영상 조회(`get_videos_by_song` — `FindSongVideoIdsHandler`+`GetVideos(video_ids=)`). **등록 직후 자동 보강**: `_EnrichWorker`(QThread)로 `EnrichVideoHandler` 실행, `_pending_enrich` 큐로 **동시 1건** 직렬화(`_maybe_enrich`/`_drain_enrich`/`_release_enrich`), `enrich_started`/`enrich_finished` 시그널 방출. `_AddVideoWorker.finished_ok`이 `video_id`를 실어 보낸다. URL→ID 조회는 `get_video_id_by_url`
+│       ├── download_vm.py           # DownloadViewModel — 다운로드 큐/이력 + 진행률
+│       ├── feed_vm.py               # FeedViewModel — 전체 구독 피드(refresh) + 채널별 영상(load_channel) + 구독 채널 카드 정보(load_channel_infos) 로딩, shutdown() 워커 정리
+│       ├── monitoring_vm.py         # MonitoringViewModel — 채널 구독 목록
+│       ├── clip_vm.py               # ClipViewModel — 클립 목록 + 추출 작업
+│       ├── playlist_vm.py           # PlaylistViewModel — 재생목록 관리
+│       ├── recommend_vm.py          # RecommendViewModel — 추천 스트립 상태. `_RecommendWorker`(QThread) + 세대 카운터로 이전 조회 결과 폐기, 씨앗 캐시(`_last_key`)로 같은 목록 재조회 방지(`force=True`면 무시, 실패 시 캐시 비움), shutdown(). **FeedViewModel을 재사용하지 않는다** — FeedViewModel의 `_gen`은 키별 캐시가 있어도 전역 하나라, 추천 조회가 세대를 올리면 동시에 진행 중인 구독 피드/채널 조회 결과가 버려진다(추천은 목록이 바뀔 때마다 돌아 그 충돌이 상시 발생)
+│       ├── album_vm.py              # AlbumViewModel — 앨범 목록/상세/빠진 곡 채우기를 QThread로. 세대 카운터로 늦게 온 결과 폐기, `cancel_fill()`로 앨범 이동 시 진행 중 검색 중단, shutdown(). `remove_track_link(disc_no, track_no)`는 **QThread 없이 즉시** 처리한다(DB 삭제 한 줄이라 네트워크가 없다) — 성공하면 그 슬롯을 '없음'으로 되돌린 DTO를 `track_removed`로 실어 화면 한 자리만 갱신한다(전체 재조회 없음)
+│       ├── song_vm.py               # SongViewModel — 노래 탭 상태(load/refresh를 `_SongFetchWorker`(QThread) 백그라운드 조회, 필드·가사 편집, 노래 토글, 가사 출처 관리). **가사 후보 목록**: `search_lyrics_candidates`(`_CandidateSearchWorker` — `candidates_started`/`candidate_ready`/`candidates_finished` 방출, 새 검색 시 이전 워커 `cancel()`+신호 disconnect)·`apply_lyrics_candidate`(`_ApplyCandidateWorker` — 번역이 네트워크라 백그라운드). `translate_lyrics`(현재 가사 재번역, `_TranslateWorker`). **같은 영상 중복 조회 방지**(`_in_flight`), shutdown()
+│       ├── sync_vm.py                # SyncViewModel — 클라우드 동기화 UI 상태(설정 패널). SyncService를 `_SyncWorker`(push/pull+미디어)·`_ConnectWorker`(OAuth) QThread로 감쌈. 연결 시 QTimer로 주기 자동 동기화(start_auto_sync=기동 후 1회+주기). 시그널: status_changed·busy_changed·sync_finished·connection_changed·error_occurred. shutdown()
+│       └── transfer_vm.py            # LibraryTransferViewModel — 가져오기/내보내기 UI 상태(설정 패널). 네 핸들러(export/preview/conflicts/import)가 전부 `handle(cmd)->DTO` 한 메서드짜리라 워커 클래스 하나(`_CommandWorker`)를 공유. 시그널: export_finished·preview_ready·conflicts_ready·import_finished·busy_changed·error_occurred. shutdown()
+│
+├── db/
+│   └── schema.sql                   # SQLite schema (FTS5 for search)
+│
+└── tests/
+    ├── unit/
+    │   └── domain/                  # Pure domain logic tests (no I/O)
+    └── integration/                 # Tests hitting SQLite, yt-dlp, ffmpeg
+```
+
+---
+
+> **어디를 열어야 하나 (2026-08 분할 이후)**
+> 화면 *배치*를 바꾸려면 `*_panel.py`(조립부)를, *동작*을 바꾸려면 그 옆 패키지의
+> `mixins/`를, *부품의 모양*을 바꾸려면 패키지의 위젯 모듈을 연다. 파일을 나눴을 뿐
+> 런타임 클래스는 그대로라(mixin 합성) 상태 공유·시그널 배선 방식은 이전과 같다.
+> 테스트에서 `monkeypatch`할 때는 **쓰는 쪽 모듈**을 패치해야 한다(재수출 이름을
+> 바꿔도 소용없다 — 분할 과정에서 실제로 3건이 이 이유로 깨졌다).
+

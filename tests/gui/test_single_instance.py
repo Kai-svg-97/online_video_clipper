@@ -78,9 +78,10 @@ class TestInstallerFlags:
 
         installer.iss 에 skipifsilent 를 넣었으므로 재실행 주체는 이 배치 하나뿐이다.
         """
-        main_src = Path("main.py").read_text(encoding="utf-8", errors="replace")
-        bat_lines = [ln for ln in main_src.splitlines() if "_bat_content" in ln]
-        assert any("start" in ln for ln in bat_lines), (
+        # 종료 tail은 `bootstrap/runtime.py:install_pending_update()`로 옮겨졌다
+        # (main.py는 조립 목록이 아니라 순서만 담는다).
+        src = Path("bootstrap/runtime.py").read_text(encoding="utf-8", errors="replace")
+        assert 'start ""' in src, (
             "종료 tail 배치에서 앱을 재실행하는 start 줄이 사라졌다 — "
             "installer.iss 의 skipifsilent 와 함께라면 앱이 아예 실행되지 않는다"
         )

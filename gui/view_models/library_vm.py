@@ -4,8 +4,6 @@ import logging
 from collections import OrderedDict, deque
 from uuid import UUID
 
-_VIDEO_CACHE_MAX = 20  # 최대 20개 쿼리 결과를 LRU 캐시에 보관
-
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from gui.view_models.base import WorkerOwnerMixin
@@ -61,6 +59,8 @@ from application.library.queries import (
 from config.settings import DEFAULT_PAGE_SIZE
 
 logger = logging.getLogger(__name__)
+
+_VIDEO_CACHE_MAX = 20  # 최대 20개 쿼리 결과를 LRU 캐시에 보관
 
 
 class _AddVideoWorker(QThread):

@@ -178,69 +178,69 @@ class _FakeSecretStore:
 
 
 def test_build_youtube_oauth_uses_expected_service_and_fallback_path(tmp_path, monkeypatch) -> None:
-    import main as main_module
+    import bootstrap.services as svc
 
     monkeypatch.setattr(
-        "infrastructure.youtube.oauth_client_config.find_youtube_oauth_config",
+        "bootstrap.services.find_youtube_oauth_config",
         lambda explicit_path=None: None,
     )
     monkeypatch.setattr(
-        "infrastructure.sync.keyring_secret_store.KeyringSecretStore",
+        "bootstrap.services.KeyringSecretStore",
         _FakeSecretStore,
     )
     monkeypatch.setattr(
-        "infrastructure.youtube.oauth_adapter.YouTubeOAuthAdapter",
+        "bootstrap.services.YouTubeOAuthAdapter",
         _FakeAdapter,
     )
-    monkeypatch.setattr("config.settings.DATA_DIR", tmp_path)
+    monkeypatch.setattr("bootstrap.services.DATA_DIR", tmp_path)
 
-    adapter = main_module._build_youtube_oauth(db=object())
+    adapter = svc.build_youtube_oauth(db=object())
 
     assert adapter.secret_store.service == "online-video-clipper.youtube-oauth"
     assert adapter.secret_store.fallback_path == tmp_path / "secrets" / "youtube_oauth.json"
 
 
 def test_build_youtube_oauth_missing_client_config_does_not_stop_startup(tmp_path, monkeypatch) -> None:
-    import main as main_module
+    import bootstrap.services as svc
 
     monkeypatch.setattr(
-        "infrastructure.youtube.oauth_client_config.find_youtube_oauth_config",
+        "bootstrap.services.find_youtube_oauth_config",
         lambda explicit_path=None: None,
     )
     monkeypatch.setattr(
-        "infrastructure.sync.keyring_secret_store.KeyringSecretStore",
+        "bootstrap.services.KeyringSecretStore",
         _FakeSecretStore,
     )
     monkeypatch.setattr(
-        "infrastructure.youtube.oauth_adapter.YouTubeOAuthAdapter",
+        "bootstrap.services.YouTubeOAuthAdapter",
         _FakeAdapter,
     )
-    monkeypatch.setattr("config.settings.DATA_DIR", tmp_path)
+    monkeypatch.setattr("bootstrap.services.DATA_DIR", tmp_path)
 
-    adapter = main_module._build_youtube_oauth(db=object())
+    adapter = svc.build_youtube_oauth(db=object())
 
     assert adapter.has_client_config() is False
 
 
 def test_build_youtube_oauth_passes_resolved_client_config_path(tmp_path, monkeypatch) -> None:
-    import main as main_module
+    import bootstrap.services as svc
 
     client_path = tmp_path / "OAuth2.json"
     monkeypatch.setattr(
-        "infrastructure.youtube.oauth_client_config.find_youtube_oauth_config",
+        "bootstrap.services.find_youtube_oauth_config",
         lambda explicit_path=None: client_path,
     )
     monkeypatch.setattr(
-        "infrastructure.sync.keyring_secret_store.KeyringSecretStore",
+        "bootstrap.services.KeyringSecretStore",
         _FakeSecretStore,
     )
     monkeypatch.setattr(
-        "infrastructure.youtube.oauth_adapter.YouTubeOAuthAdapter",
+        "bootstrap.services.YouTubeOAuthAdapter",
         _FakeAdapter,
     )
-    monkeypatch.setattr("config.settings.DATA_DIR", tmp_path)
+    monkeypatch.setattr("bootstrap.services.DATA_DIR", tmp_path)
 
-    adapter = main_module._build_youtube_oauth(db=object())
+    adapter = svc.build_youtube_oauth(db=object())
 
     assert adapter.client_config_path == client_path
     assert adapter.has_client_config() is True

@@ -34,6 +34,7 @@ from gui.toast import KIND_ERROR, KIND_SUCCESS, show_toast
 from gui.workers import wait_all
 
 from gui.view_models.base import shutdown_all
+from gui.view_models.bundle import ViewModels
 from gui.themes.tokens import ThemeTokens
 from gui.view_models.clip_vm import ClipViewModel
 from gui.view_models.download_vm import DownloadViewModel
@@ -437,36 +438,40 @@ class _LibraryPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(
         self,
-        library_vm: LibraryViewModel,
-        download_vm: DownloadViewModel,
-        clip_vm: ClipViewModel,
-        monitoring_vm: MonitoringViewModel,
+        vms: ViewModels,
+        *,
         stats_handler=None,
-        playlist_vm: PlaylistViewModel | None = None,
-        feed_vm: FeedViewModel | None = None,
-        recommend_vm=None,   # RecommendViewModel | None
-        album_vm=None,       # AlbumViewModel | None
         auth_service: YouTubeAuthService | None = None,
-        yt_oauth=None,   # YouTubeOAuthAdapter | None
-        song_vm=None,    # SongViewModel | None
-        sync_vm=None,    # SyncViewModel | None
-        transfer_vm=None,   # LibraryTransferViewModel | None
+        yt_oauth=None,      # YouTubeOAuthAdapter | None
         cleanup_fns=None,   # 라이브러리 정리 콜백 3종 | None
     ) -> None:
+        """뷰모델은 **묶음 하나로** 받는다.
+
+        예전에는 뷰모델을 낱개로 13개 받았고 절반이 타입 힌트 없는 `song_vm=None`
+        꼴이었다. 뷰모델을 하나 추가하면 `main()`·여기·`LibraryPanel` 세 곳의
+        시그니처를 고쳐야 했고, 한 곳을 잊으면 그 기능이 화면에서 조용히 죽었다
+        (예외도 나지 않는다 — 그냥 `None`이라 비활성된다). 지금은 이 시그니처가
+        `gui/view_models/bundle.py`의 `ViewModels` 묶음 하나라 여기는 손댈 필요가
+        없다(`LibraryPanel`은 테스트가 최소 구성으로 만들 수 있도록 낱개 인자를
+        일부러 유지했으므로, 뷰모델 추가 시 그쪽은 여전히 고친다).
+
+        뷰모델이 아닌 것(통계 핸들러·정리 콜백·인증 서비스)은 성격이 달라 낱개로
+        남긴다 — 묶음에 섞으면 "이게 뷰모델인가" 하는 혼란이 생긴다.
+        """
         super().__init__()
         QPixmapCache.setCacheLimit(PIXMAP_CACHE_LIMIT_KB)
-        self._library_vm = library_vm
-        self._download_vm = download_vm
-        self._clip_vm = clip_vm
-        self._monitoring_vm = monitoring_vm
+        self._library_vm = vms.library
+        self._download_vm = vms.download
+        self._clip_vm = vms.clip
+        self._monitoring_vm = vms.monitoring
         self._stats_handler = stats_handler
-        self._playlist_vm = playlist_vm
-        self._feed_vm = feed_vm
-        self._recommend_vm = recommend_vm
-        self._album_vm = album_vm
-        self._song_vm = song_vm
-        self._sync_vm = sync_vm
-        self._transfer_vm = transfer_vm
+        self._playlist_vm = vms.playlist
+        self._feed_vm = vms.feed
+        self._recommend_vm = vms.recommend
+        self._album_vm = vms.album
+        self._song_vm = vms.song
+        self._sync_vm = vms.sync
+        self._transfer_vm = vms.transfer
         # 라이브러리 정리 콜백(중복찾기·사라진파일찾기·삭제) — composition root가 준다.
         self._cleanup_fns = cleanup_fns
         self._yt_oauth = yt_oauth
