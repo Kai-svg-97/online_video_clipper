@@ -46,6 +46,8 @@ from application.library.playlist_queries import (
     GetYouTubePlaylistsQuery,
 )
 
+from gui.view_models.base import WorkerOwnerMixin
+
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from infrastructure.auth.youtube_auth import YouTubeAuthService
@@ -60,9 +62,9 @@ class _AddUrlWorker(QThread):
         handler: AddUrlToPlaylistHandler,
         url: str,
         playlist_id: UUID,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._url = url
         self._playlist_id = playlist_id
@@ -85,9 +87,9 @@ class _FetchYTPlaylistsWorker(QThread):
         self,
         handler: GetYouTubePlaylistsHandler,
         cookie_opts: dict,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._cookie_opts = cookie_opts
 
@@ -109,9 +111,9 @@ class _ImportWorker(QThread):
         handler: ImportYouTubePlaylistHandler,
         yt_playlist_id: str,
         cookie_opts: dict,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._yt_playlist_id = yt_playlist_id
         self._cookie_opts = cookie_opts
@@ -194,7 +196,7 @@ class _CopyYTWorker(QThread):
             self.finished_err.emit(str(exc))
 
 
-class PlaylistViewModel(QObject):
+class PlaylistViewModel(WorkerOwnerMixin, QObject):
     playlists_changed = pyqtSignal()
     folders_changed   = pyqtSignal()
     error_occurred    = pyqtSignal(str)
@@ -247,11 +249,6 @@ class PlaylistViewModel(QObject):
         self._auth             = auth_service
         self._playlists:  list[PlaylistDTO]       = []
         self._folders:    list[PlaylistFolderDTO] = []
-        self._import_workers:    list[_ImportWorker]          = []
-        self._add_url_workers:   list[_AddUrlWorker]          = []
-        self._fetch_yt_workers:  list[_FetchYTPlaylistsWorker] = []
-        self._copy_yt_workers:   list[_CopyYTWorker]          = []
-        self._push_yt_workers:   list[_PushToYTWorker]        = []
 
     @property
     def playlists(self) -> list[PlaylistDTO]:
@@ -318,12 +315,11 @@ class PlaylistViewModel(QObject):
 
     def import_youtube_playlist(self, yt_playlist_id: str) -> None:
         cookie_opts = self._auth.get_ytdlp_opts() if self._auth else {}
-        worker = _ImportWorker(self._import_yt, yt_playlist_id, cookie_opts, self)
+        worker = _ImportWorker(self._import_yt, yt_playlist_id, cookie_opts)
         worker.progress.connect(self.import_progress)
         worker.finished_ok.connect(self._on_import_ok)
-        worker.finished_err.connect(lambda err: self.error_occurred.emit(err))
-        worker.finished.connect(lambda: self._import_workers.remove(worker))
-        self._import_workers.append(worker)
+        worker.finished_err.connect(self.error_occurred)
+        self._adopt_worker(worker)
         worker.start()
 
     def add_url_to_playlist(self, url: str, playlist_id: UUID) -> None:
@@ -331,11 +327,10 @@ class PlaylistViewModel(QObject):
         if self._add_url_handler is None:
             self.error_occurred.emit("AddUrlToPlaylistHandler가 주입되지 않았습니다.")
             return
-        worker = _AddUrlWorker(self._add_url_handler, url, playlist_id, self)
+        worker = _AddUrlWorker(self._add_url_handler, url, playlist_id)
         worker.finished_ok.connect(self._refresh_playlists)
         worker.finished_err.connect(self.error_occurred)
-        worker.finished.connect(lambda: self._add_url_workers.remove(worker))
-        self._add_url_workers.append(worker)
+        self._adopt_worker(worker)
         worker.start()
 
     def get_ytdlp_cookie_opts(self) -> dict:
@@ -348,12 +343,10 @@ class PlaylistViewModel(QObject):
             self.error_occurred.emit("YouTube 재생목록 핸들러가 초기화되지 않았습니다.")
             return
         cookie_opts = self._auth.get_ytdlp_opts() if self._auth else {}
-        worker = _FetchYTPlaylistsWorker(self._get_yt_playlists, cookie_opts, self)
+        worker = _FetchYTPlaylistsWorker(self._get_yt_playlists, cookie_opts)
         worker.finished_ok.connect(self.yt_playlists_ready)
-        worker.finished_ok.connect(lambda _: self._fetch_yt_workers.remove(worker))
         worker.finished_err.connect(self.error_occurred)
-        worker.finished_err.connect(lambda _: self._fetch_yt_workers.remove(worker))
-        self._fetch_yt_workers.append(worker)
+        self._adopt_worker(worker)
         worker.start()
 
     # ── 폴더 관리 ──────────────────────────────────────────────────────────────
@@ -416,11 +409,10 @@ class PlaylistViewModel(QObject):
         if self._push_yt_h is None:
             self.error_occurred.emit("YouTube API가 연결되지 않았습니다.\n설정 > YouTube API 연동에서 인증하세요.")
             return
-        worker = _PushToYTWorker(self._push_yt_h, playlist_id, move, privacy, self)
-        worker.finished_ok.connect(lambda _: self._refresh_playlists())
+        worker = _PushToYTWorker(self._push_yt_h, playlist_id, move, privacy)
+        worker.finished_ok.connect(self._on_push_yt_ok)
         worker.finished_err.connect(self.error_occurred)
-        worker.finished.connect(lambda: self._push_yt_workers.remove(worker))
-        self._push_yt_workers.append(worker)
+        self._adopt_worker(worker)
         worker.start()
 
     def move_video_to_playlist(
@@ -454,14 +446,25 @@ class PlaylistViewModel(QObject):
             self.error_occurred.emit("CopyYouTubePlaylistToLocalHandler가 초기화되지 않았습니다.")
             return
         cookie_opts = self._auth.get_ytdlp_opts() if self._auth else {}
-        worker = _CopyYTWorker(self._copy_yt_h, yt_playlist_id, folder_id, cookie_opts, self)
-        worker.finished_ok.connect(lambda _: self._refresh_playlists())
+        worker = _CopyYTWorker(self._copy_yt_h, yt_playlist_id, folder_id, cookie_opts)
+        worker.finished_ok.connect(self._on_copy_yt_ok)
         worker.finished_err.connect(self.error_occurred)
-        worker.finished.connect(lambda: self._copy_yt_workers.remove(worker))
-        self._copy_yt_workers.append(worker)
+        self._adopt_worker(worker)
         worker.start()
 
     # ── 내부 갱신 ──────────────────────────────────────────────────────────────
+
+    def _on_push_yt_ok(self, _result: object) -> None:
+        """YouTube 푸시 완료 — 신호 인자를 버리고 목록만 새로 읽는다.
+
+        예전에는 `lambda _: self._refresh_playlists()`였다. 결과 슬롯은 **바운드
+        메서드**여야 수신 뷰모델이 사라질 때 Qt가 연결을 끊어 준다(`gui/workers.py`).
+        """
+        self._refresh_playlists()
+
+    def _on_copy_yt_ok(self, _result: object) -> None:
+        """YouTube → 로컬 복사 완료 — 위와 같은 이유로 바운드 메서드로 둔다."""
+        self._refresh_playlists()
 
     def _on_import_ok(self, _dto: PlaylistDTO) -> None:
         self._refresh_playlists()

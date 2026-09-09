@@ -8,6 +8,8 @@ _VIDEO_CACHE_MAX = 20  # 최대 20개 쿼리 결과를 LRU 캐시에 보관
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.view_models.base import WorkerOwnerMixin
+
 from application.library.commands import (
     AddVideoCommand,
     AddVideoHandler,
@@ -69,9 +71,9 @@ class _AddVideoWorker(QThread):
         self,
         handler: AddVideoHandler,
         cmd: AddVideoCommand,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._cmd = cmd
 
@@ -91,8 +93,9 @@ class _EnrichWorker(QThread):
     """
     finished_result = pyqtSignal(str, str, bool, str)   # url, kind, ok, detail
 
-    def __init__(self, handler, cmd, url: str, parent: QObject | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, handler, cmd, url: str) -> None:
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._cmd = cmd
         self._url = url
@@ -115,9 +118,9 @@ class _ImportYTToCatWorker(QThread):
         self,
         handler: ImportYouTubePlaylistToCategoryHandler,
         cmd: ImportYouTubePlaylistToCategoryCommand,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._cmd = cmd
 
@@ -135,8 +138,9 @@ class _ListVideosWorker(QThread):
     finished_ok  = pyqtSignal(list, bool)   # (videos, append)
     finished_err = pyqtSignal(str)
 
-    def __init__(self, fetch_fn, append: bool, parent: QObject | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, fetch_fn, append: bool) -> None:
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._fetch = fetch_fn
         self._append = append
 
@@ -157,9 +161,9 @@ class _RefreshThumbnailWorker(QThread):
         self,
         handler: RefreshVideoThumbnailHandler,
         cmd: RefreshVideoThumbnailCommand,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._cmd = cmd
 
@@ -181,9 +185,9 @@ class _RefreshMetadataWorker(QThread):
         self,
         handler: RefreshCategoryMetadataHandler,
         cmd: RefreshCategoryMetadataCommand,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._cmd = cmd
 
@@ -207,9 +211,9 @@ class _RefreshVideoMetaWorker(QThread):
         self,
         handler: RefreshVideoMetadataHandler,
         cmd: RefreshVideoMetadataCommand,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._cmd = cmd
 
@@ -222,7 +226,7 @@ class _RefreshVideoMetaWorker(QThread):
             self.finished_err.emit(self._cmd.video_id, str(exc))
 
 
-class LibraryViewModel(QObject):
+class LibraryViewModel(WorkerOwnerMixin, QObject):
     videos_changed = pyqtSignal()
     categories_changed = pyqtSignal()
     tags_changed = pyqtSignal()
@@ -373,6 +377,7 @@ class LibraryViewModel(QObject):
         self._list_workers.clear()
         self._pending_list.clear()
         self._list_inflight = 0
+        super().shutdown()   # 공용 추적 목록 정리
 
     @property
     def videos(self) -> list[VideoDTO]:
@@ -536,12 +541,12 @@ class LibraryViewModel(QObject):
 
     def add_video(self, url: str, category_id: UUID | None = None) -> None:
         cmd = AddVideoCommand(url=url, category_id=category_id)
-        worker = _AddVideoWorker(self._add_video, cmd, self)
+        worker = _AddVideoWorker(self._add_video, cmd)
         worker.finished_ok.connect(lambda vid: self._on_add_ok(url, vid))
         worker.finished_err.connect(lambda err: self._on_add_err(url, err))
         worker.finished.connect(lambda: self._add_workers.remove(worker))
         self._add_workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
         self.video_add_started.emit(url)
 
     def get_playlist_first_item(self, playlist_id: "UUID"):
@@ -943,7 +948,7 @@ class LibraryViewModel(QObject):
             self.loading_changed.emit(True)
         if node_key:
             self.loading_key_changed.emit(node_key, True)
-        worker = _ListVideosWorker(fetch, append, self)
+        worker = _ListVideosWorker(fetch, append)
 
         def _on_ok(videos: list, app: bool) -> None:
             # 항상 캐시에 저장 — gen 불일치(구 노드 로딩)여도 결과는 보관해
@@ -966,7 +971,7 @@ class LibraryViewModel(QObject):
         worker.finished_err.connect(self.error_occurred)
         worker.finished.connect(lambda w=worker, k=node_key: self._drain_list(w, k))
         self._list_workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def _drain_list(self, worker, node_key) -> None:
         if worker in self._list_workers:
@@ -1048,13 +1053,13 @@ class LibraryViewModel(QObject):
             else []
         )
         cmd = RefreshCategoryMetadataCommand(category_ids=category_ids)
-        worker = _RefreshMetadataWorker(self._refresh_metadata, cmd, self)
+        worker = _RefreshMetadataWorker(self._refresh_metadata, cmd)
         worker.progress.connect(self.metadata_refresh_progress)
         worker.finished_ok.connect(self._on_refresh_metadata_ok)
         worker.finished_err.connect(self._on_refresh_metadata_err)
         worker.finished.connect(lambda: self._refresh_metadata_workers.remove(worker))
         self._refresh_metadata_workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def _on_refresh_metadata_ok(self, count: int) -> None:
         self._refresh_videos(bust_cache=True)
@@ -1080,13 +1085,13 @@ class LibraryViewModel(QObject):
             category_id=category_id,
             cookie_opts=cookie_opts,
         )
-        worker = _ImportYTToCatWorker(self._import_yt_to_category, cmd, self)
+        worker = _ImportYTToCatWorker(self._import_yt_to_category, cmd)
         worker.progress.connect(self.yt_import_progress)
         worker.finished_ok.connect(self._on_yt_import_ok)
         worker.finished_err.connect(self._on_yt_import_err)
         worker.finished.connect(lambda: self._yt_import_workers.remove(worker))
         self._yt_import_workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def _on_yt_import_ok(self, count: int) -> None:
         self._refresh_videos(bust_cache=True)
@@ -1141,12 +1146,12 @@ class LibraryViewModel(QObject):
             kind = "summary"
 
         worker = _EnrichWorker(
-            self._enrich_video, EnrichVideoCommand(video_id=video_id), url, self
+            self._enrich_video, EnrichVideoCommand(video_id=video_id), url
         )
         worker.finished_result.connect(self._on_enrich_done)
         worker.finished.connect(lambda: self._release_enrich(worker))
         self._enrich_workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
         self.enrich_started.emit(url, kind)
 
     def _release_enrich(self, worker) -> None:
@@ -1165,7 +1170,7 @@ class LibraryViewModel(QObject):
         if self._refresh_thumbnail_handler is None:
             return
         cmd = RefreshVideoThumbnailCommand(video_id=video_id, video_url=video_url)
-        worker = _RefreshThumbnailWorker(self._refresh_thumbnail_handler, cmd, self)
+        worker = _RefreshThumbnailWorker(self._refresh_thumbnail_handler, cmd)
 
         def _on_ok(vid_id: object, new_path: str) -> None:
             self.thumbnail_refreshed.emit(vid_id, new_path)
@@ -1175,7 +1180,7 @@ class LibraryViewModel(QObject):
         worker.finished_err.connect(lambda err: logger.debug("썸네일 갱신 실패(무시): %s", err))
         worker.finished.connect(lambda: self._thumb_workers.remove(worker) if worker in self._thumb_workers else None)
         self._thumb_workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def refresh_video_metadata(self, video_id: UUID) -> None:
         """상세화면 ⟳ — 단일 영상 메타데이터를 YouTube에서 재수집해 DB를 갱신한다.
@@ -1188,7 +1193,7 @@ class LibraryViewModel(QObject):
             self.video_metadata_refreshed.emit(video_id, False)
             return
         cmd = RefreshVideoMetadataCommand(video_id=video_id)
-        worker = _RefreshVideoMetaWorker(self._refresh_video_meta, cmd, self)
+        worker = _RefreshVideoMetaWorker(self._refresh_video_meta, cmd)
 
         def _on_ok(vid_id: object, updated: bool) -> None:
             if updated:
@@ -1206,4 +1211,4 @@ class LibraryViewModel(QObject):
             if worker in self._video_meta_workers else None
         )
         self._video_meta_workers.append(worker)
-        worker.start()
+        self._start_worker(worker)

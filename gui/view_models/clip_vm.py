@@ -7,6 +7,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from application.clip.commands import DeleteClipCommand, DeleteClipHandler, ExtractClipCommand, ExtractClipHandler
 from application.clip.dtos import ClipDTO
 from application.clip.queries import GetClipsHandler, GetClipsQuery
+from gui.view_models.base import WorkerOwnerMixin
 
 
 class _ExtractWorker(QThread):
@@ -19,9 +20,10 @@ class _ExtractWorker(QThread):
         self,
         handler: ExtractClipHandler,
         cmd: ExtractClipCommand,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 소유 뷰모델이 사라질 때 실행 중 스레드가 파괴되면
+        # Qt가 프로세스를 죽인다(gui/workers.py). 붙드는 일은 track_thread가 한다.
+        super().__init__(None)
         self._handler = handler
         self._cmd = cmd
 
@@ -43,7 +45,7 @@ class _ExtractWorker(QThread):
             self.finished_err.emit(str(exc))
 
 
-class ClipViewModel(QObject):
+class ClipViewModel(WorkerOwnerMixin, QObject):
     clips_changed = pyqtSignal()
     error_occurred = pyqtSignal(str)
 
@@ -87,10 +89,12 @@ class ClipViewModel(QObject):
             start_sec=start_sec,
             end_sec=end_sec,
         )
-        self._worker = _ExtractWorker(self._extract, cmd, self)
-        self._worker.finished_ok.connect(self._on_extract_ok)
-        self._worker.finished_err.connect(self._on_extract_err)
-        self._worker.start()
+        worker = _ExtractWorker(self._extract, cmd)
+        worker.finished_ok.connect(self._on_extract_ok)
+        worker.finished_err.connect(self._on_extract_err)
+        self._worker = worker
+        self._adopt_worker(worker)
+        worker.start()
 
     def delete_clip(self, clip_id: UUID, delete_file: bool = False) -> None:
         try:

@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.view_models.base import WorkerOwnerMixin
+
 from application.library.dtos import FeedVideoDTO
 from application.library.playlist_queries import (
     GetRecommendationsHandler,
@@ -36,8 +38,9 @@ class _RecommendWorker(QThread):
     finished_err  = pyqtSignal(str)
     partial_ready = pyqtSignal(list)
 
-    def __init__(self, fetch: Callable, parent: QObject | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, fetch: Callable) -> None:
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._fetch = fetch
 
     def run(self) -> None:
@@ -49,7 +52,7 @@ class _RecommendWorker(QThread):
             self.finished_err.emit(str(exc))
 
 
-class RecommendViewModel(QObject):
+class RecommendViewModel(WorkerOwnerMixin, QObject):
     """현재 목록 기반 추천 후보를 백그라운드로 조회한다."""
 
     items_changed   = pyqtSignal(list)   # list[FeedVideoDTO] — 최종 결과
@@ -146,14 +149,13 @@ class RecommendViewModel(QObject):
         self.loading_changed.emit(True)
         worker = _RecommendWorker(
             lambda on_progress=None: self._handler.handle(query, on_progress=on_progress),
-            self,
         )
         worker.finished_ok.connect(lambda items, g=gen: self._on_ok(items, g))
         worker.finished_err.connect(lambda msg, g=gen: self._on_err(msg, g))
         worker.partial_ready.connect(lambda batch, g=gen: self._on_partial(batch, g))
         worker.finished.connect(lambda w=worker, g=gen: self._on_worker_done(w, g))
         self._worker = worker
-        worker.start()
+        self._start_worker(worker)
 
     def load_more(self, exclude_urls: frozenset[str] = frozenset()) -> None:
         """지금 목록 뒤에 덧붙일 추가분을 백그라운드로 받는다.
@@ -185,13 +187,13 @@ class RecommendViewModel(QObject):
         gen = self._gen
         self.more_loading_changed.emit(True)
         worker = _RecommendWorker(
-            lambda on_progress=None: self._handler.handle(query), self
+            lambda on_progress=None: self._handler.handle(query)
         )
         worker.finished_ok.connect(lambda items, g=gen: self._on_more_ok(items, g))
         worker.finished_err.connect(lambda msg, g=gen: self._on_more_err(msg, g))
         worker.finished.connect(lambda w=worker: self._on_more_done(w))
         self._more_worker = worker
-        worker.start()
+        self._start_worker(worker)
 
     def _on_more_ok(self, items: list, gen: int) -> None:
         # 결과가 도착한 시점에 자리를 비운다 — 스레드가 완전히 끝나기(finished)를
@@ -255,3 +257,4 @@ class RecommendViewModel(QObject):
             setattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.wait(3000)
+        super().shutdown()   # 공용 추적 목록 정리

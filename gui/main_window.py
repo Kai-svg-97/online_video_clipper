@@ -32,6 +32,8 @@ from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.toast import KIND_ERROR, KIND_SUCCESS, show_toast
 from gui.workers import wait_all
+
+from gui.view_models.base import shutdown_all
 from gui.themes.tokens import ThemeTokens
 from gui.view_models.clip_vm import ClipViewModel
 from gui.view_models.download_vm import DownloadViewModel
@@ -820,15 +822,12 @@ class MainWindow(QMainWindow):
         # 실행 중인 QThread가 파괴되면 Qt가 프로세스를 죽인다(gui/workers.py).
         wait_all(3000)
         # 백그라운드 QThread 워커를 정리한 뒤 종료한다.
-        for vm in (self._download_vm, self._library_vm, self._feed_vm,
-                   self._recommend_vm, self._album_vm, self._song_vm, self._sync_vm,
-                   self._transfer_vm, self._update_controller):
-            if vm is None:
-                continue
-            shutdown = getattr(vm, "shutdown", None)
-            if callable(shutdown):
-                try:
-                    shutdown()
-                except Exception:
-                    logger.exception("뷰모델 shutdown 실패")
+        #
+        # 정리 대상을 **손으로 나열하지 않는다.** 예전에는 뷰모델을 여기 직접
+        # 적었고, 그 목록에서 clip·monitoring·playlist 세 개가 빠져 있었다 —
+        # 뷰모델을 추가할 때 이 목록 갱신을 잊는 것이 기본값이기 때문이다. 그
+        # 셋은 워커 7개를 띄우면서도 종료 시 아무도 기다려 주지 않아, 재생목록
+        # 가져오기·YouTube 푸시·클립 추출 중에 창을 닫으면 실행 중 QThread가
+        # 파괴되며 프로세스가 죽었다(gui/workers.py 문서의 exit 0xC0000409).
+        shutdown_all(self)
         event.accept()

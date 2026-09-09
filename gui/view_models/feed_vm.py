@@ -5,6 +5,8 @@ from collections.abc import Callable
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.view_models.base import WorkerOwnerMixin
+
 from application.library.dtos import ChannelInfoDTO, FeedVideoDTO
 from application.library.playlist_queries import (
     GetChannelVideosHandler,
@@ -33,9 +35,9 @@ class _FeedWorker(QThread):
     def __init__(
         self,
         fetch: Callable[[], list[FeedVideoDTO]],
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._fetch = fetch
         self._key: str = ""   # _run()에서 설정
 
@@ -49,7 +51,7 @@ class _FeedWorker(QThread):
             self.finished_err.emit(str(exc))
 
 
-class FeedViewModel(QObject):
+class FeedViewModel(WorkerOwnerMixin, QObject):
     # ── 하위 호환 시그널 ──────────────────────────────────────────────────────
     feed_changed = pyqtSignal()
     feed_batch_appended = pyqtSignal(list)   # list[FeedVideoDTO] — 부분 결과 배치
@@ -123,7 +125,7 @@ class FeedViewModel(QObject):
         if not silent:
             self.loading_changed.emit(True)
             self.loading_key_changed.emit(key, True)
-        worker = _FeedWorker(fetch, self)
+        worker = _FeedWorker(fetch)
         worker._key = key
         worker.finished_ok.connect(
             lambda items, _g=gen, _ok=on_ok, _k=key: self._finish_ok(items, _ok, _g, _k)
@@ -134,7 +136,7 @@ class FeedViewModel(QObject):
             lambda batch, _g=gen, _k=key, _s=silent: self._on_partial(batch, _g, _k, _s)
         )
         self._workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def _finish_ok(self, items, on_ok, gen: int, key: str) -> None:
         if gen == self._gen:
@@ -227,3 +229,4 @@ class FeedViewModel(QObject):
         self._pending_queue.clear()
         for worker in list(self._workers):
             worker.wait(3000)
+        super().shutdown()   # 공용 추적 목록 정리

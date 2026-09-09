@@ -17,6 +17,7 @@ from application.monitoring.commands import (
 from domain.monitoring.value_objects import MonitoringRule
 from application.monitoring.dtos import SubscriptionDTO
 from application.monitoring.queries import GetSubscriptionsHandler
+from gui.view_models.base import WorkerOwnerMixin
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -31,9 +32,9 @@ class _ImportYTSubsWorker(QThread):
         self,
         handler: ImportYouTubeSubscriptionsHandler,
         cookie_opts: dict,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._cookie_opts = cookie_opts
 
@@ -47,7 +48,7 @@ class _ImportYTSubsWorker(QThread):
             self.finished_err.emit(str(exc))
 
 
-class MonitoringViewModel(QObject):
+class MonitoringViewModel(WorkerOwnerMixin, QObject):
     subscriptions_changed = pyqtSignal()
     error_occurred = pyqtSignal(str)
     import_yt_finished = pyqtSignal(int)   # 가져온 채널 수
@@ -70,7 +71,6 @@ class MonitoringViewModel(QObject):
         self._import_yt = import_yt_handler
         self._auth = auth_service
         self._subscriptions: list[SubscriptionDTO] = []
-        self._import_workers: list[_ImportYTSubsWorker] = []
 
     @property
     def subscriptions(self) -> list[SubscriptionDTO]:
@@ -109,14 +109,13 @@ class MonitoringViewModel(QObject):
         if self._import_yt is None:
             self.error_occurred.emit("YouTube 구독 가져오기 기능이 초기화되지 않았습니다.")
             return
-        if self._import_workers:
+        if self._tracked_workers:
             return  # 이미 실행 중
         cookie_opts = self._auth.get_ytdlp_opts() if self._auth else {}
-        worker = _ImportYTSubsWorker(self._import_yt, cookie_opts, self)
+        worker = _ImportYTSubsWorker(self._import_yt, cookie_opts)
         worker.finished_ok.connect(self._on_import_ok)
         worker.finished_err.connect(self.error_occurred)
-        worker.finished.connect(lambda: self._import_workers.remove(worker))
-        self._import_workers.append(worker)
+        self._adopt_worker(worker)
         worker.start()
 
     def _on_import_ok(self, count: int) -> None:

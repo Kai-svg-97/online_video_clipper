@@ -14,6 +14,8 @@ from dataclasses import replace
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.view_models.base import WorkerOwnerMixin
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,8 +25,9 @@ class _CallWorker(QThread):
     finished_ok = pyqtSignal(object)
     finished_err = pyqtSignal(str)
 
-    def __init__(self, fn: Callable, parent: QObject | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, fn: Callable) -> None:
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._fn = fn
 
     def run(self) -> None:
@@ -42,8 +45,9 @@ class _FillWorker(QThread):
     finished_ok = pyqtSignal(int)
     finished_err = pyqtSignal(str)
 
-    def __init__(self, fn: Callable, parent: QObject | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, fn: Callable) -> None:
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._fn = fn
         self._cancel = False
 
@@ -69,8 +73,9 @@ class _AddTracksWorker(QThread):
     finished_ok = pyqtSignal(int)
     finished_err = pyqtSignal(str)
 
-    def __init__(self, fn: Callable, parent: QObject | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, fn: Callable) -> None:
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._fn = fn
         self._cancel = False
 
@@ -89,7 +94,7 @@ class _AddTracksWorker(QThread):
             self.finished_err.emit(str(exc))
 
 
-class AlbumViewModel(QObject):
+class AlbumViewModel(WorkerOwnerMixin, QObject):
     """앨범 그리드/상세 화면의 상태."""
 
     albums_changed = pyqtSignal(list)      # list[AlbumCardDTO]
@@ -121,7 +126,6 @@ class AlbumViewModel(QObject):
         self._add = add_tracks
         self._remove_link = remove_track_link
         self._add_worker: _AddTracksWorker | None = None
-        self._workers: list[QThread] = []
         self._fill_worker: _FillWorker | None = None
         self._gen = 0
         self._albums: list = []
@@ -190,13 +194,12 @@ class AlbumViewModel(QObject):
             cookie_opts=dict(cookie_opts or {}),
             retry_rejected=retry_rejected,
         )
-        worker = _FillWorker(lambda **kw: self._fill.handle(cmd, **kw), self)
+        worker = _FillWorker(lambda **kw: self._fill.handle(cmd, **kw))
         worker.track_filled.connect(self.track_filled)
         worker.finished_ok.connect(self.fill_finished)
         worker.finished_err.connect(self.error_occurred)
-        worker.finished.connect(lambda w=worker: self._retire(w))
         self._fill_worker = worker
-        self._workers.append(worker)
+        self._adopt_worker(worker)
         worker.start()
 
     def cancel_fill(self) -> None:
@@ -225,13 +228,12 @@ class AlbumViewModel(QObject):
             tracks=list(detail.tracks),
         )
         self.cancel_add()
-        worker = _AddTracksWorker(lambda **kw: self._add.handle(cmd, **kw), self)
+        worker = _AddTracksWorker(lambda **kw: self._add.handle(cmd, **kw))
         worker.progress.connect(self.add_progress)
         worker.finished_ok.connect(self.tracks_added)
         worker.finished_err.connect(self.error_occurred)
-        worker.finished.connect(lambda w=worker: self._retire(w))
         self._add_worker = worker
-        self._workers.append(worker)
+        self._adopt_worker(worker)
         worker.start()
 
     def cancel_add(self) -> None:
@@ -304,16 +306,12 @@ class AlbumViewModel(QObject):
 
     # ── 내부 ───────────────────────────────────────────────────────
     def _run(self, fn: Callable, on_ok: Callable) -> None:
-        worker = _CallWorker(fn, self)
+        worker = _CallWorker(fn)
         worker.finished_ok.connect(on_ok)
         worker.finished_err.connect(self._on_err)
-        worker.finished.connect(lambda w=worker: self._retire(w))
-        self._workers.append(worker)
+        self._adopt_worker(worker)
         worker.start()
 
-    def _retire(self, worker: QThread) -> None:
-        if worker in self._workers:
-            self._workers.remove(worker)
         if worker is self._fill_worker:
             self._fill_worker = None
         if worker is self._add_worker:
@@ -341,7 +339,4 @@ class AlbumViewModel(QObject):
         """종료 시 워커 정리 (MainWindow.closeEvent → LibraryPanel)."""
         self.cancel_fill()
         self.cancel_add()
-        for worker in list(self._workers):
-            if worker.isRunning():
-                worker.wait(3000)
-        self._workers.clear()
+        super().shutdown()   # 남은 워커 대기·정리는 공용 믹스인이 한다

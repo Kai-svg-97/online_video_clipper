@@ -11,6 +11,8 @@ import logging
 
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
+from gui.view_models.base import WorkerOwnerMixin
+
 logger = logging.getLogger(__name__)
 
 _AUTO_INTERVAL_MS = 5 * 60 * 1000  # 5분
@@ -67,7 +69,7 @@ class _ConnectWorker(QThread):
             self.failed.emit(str(exc))
 
 
-class SyncViewModel(QObject):
+class SyncViewModel(WorkerOwnerMixin, QObject):
     status_changed = pyqtSignal(object)   # SyncStatusDTO
     busy_changed = pyqtSignal(bool)
     sync_finished = pyqtSignal(int, int)  # (pushed, pulled)
@@ -109,11 +111,11 @@ class SyncViewModel(QObject):
         if self._busy or not self._service.is_connected():
             return
         self._set_busy(True)
-        worker = _SyncWorker(self._service, self)
+        worker = _SyncWorker(self._service)
         worker.done.connect(self._on_sync_done)
         worker.failed.connect(self._on_sync_failed)
         self._track(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def _on_sync_done(self, pushed: int, pulled: int) -> None:
         self._set_busy(False)
@@ -129,11 +131,11 @@ class SyncViewModel(QObject):
         if self._busy:
             return
         self._set_busy(True)
-        worker = _ConnectWorker(self._service, provider_key, creds, self)
+        worker = _ConnectWorker(self._service, provider_key, creds)
         worker.done.connect(self._on_connect_done)
         worker.failed.connect(self._on_sync_failed)
         self._track(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def _on_connect_done(self, ok: bool) -> None:
         self._set_busy(False)
@@ -175,3 +177,4 @@ class SyncViewModel(QObject):
             except RuntimeError:
                 pass
         self._workers.clear()
+        super().shutdown()   # 공용 추적 목록 정리

@@ -11,6 +11,8 @@ from uuid import UUID
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.view_models.base import WorkerOwnerMixin
+
 from application.transfer.commands import (
     DetectImportConflictsCommand,
     DetectImportConflictsHandler,
@@ -45,7 +47,7 @@ class _CommandWorker(QThread):
             self.failed.emit(str(exc))
 
 
-class LibraryTransferViewModel(QObject):
+class LibraryTransferViewModel(WorkerOwnerMixin, QObject):
     """설정 패널의 내보내기/가져오기 버튼·다이얼로그가 호출하는 뷰모델."""
 
     export_finished   = pyqtSignal(object)   # ExportResultDTO
@@ -93,7 +95,7 @@ class LibraryTransferViewModel(QObject):
     # ── 내부 ────────────────────────────────────────────────────────────
 
     def _run(self, handler, cmd, done_signal: pyqtSignal) -> None:
-        worker = _CommandWorker(handler, cmd, self)
+        worker = _CommandWorker(handler, cmd)
 
         def _on_done(result) -> None:
             self.busy_changed.emit(False)
@@ -109,7 +111,7 @@ class LibraryTransferViewModel(QObject):
         worker.failed.connect(_on_failed)
         self._workers.append(worker)
         self.busy_changed.emit(True)
-        worker.start()
+        self._start_worker(worker)
 
     def _cleanup(self, worker: QThread) -> None:
         if worker in self._workers:
@@ -119,3 +121,4 @@ class LibraryTransferViewModel(QObject):
         """종료 시 실행 중인 워커를 정리한다(MainWindow.closeEvent에서 호출)."""
         for worker in list(self._workers):
             worker.wait(3000)
+        super().shutdown()   # 공용 추적 목록 정리

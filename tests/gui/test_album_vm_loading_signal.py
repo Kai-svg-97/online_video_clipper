@@ -12,8 +12,13 @@ from gui.view_models.album_vm import AlbumViewModel
 
 
 def _drain(vm: AlbumViewModel) -> None:
-    for worker in list(vm._workers):
-        worker.wait(3000)
+    """진행 중인 워커가 끝나기를 기다린다.
+
+    사설 목록을 직접 들여다보지 않고 `WorkerOwnerMixin`의 공개 경로를 쓴다 —
+    뷰모델마다 목록 이름이 달라(`_workers`·`_list_workers`…) 그때마다 테스트가
+    깨졌다.
+    """
+    vm.wait_for_workers()
 
 
 def _vm(get_albums=None, get_detail=None) -> AlbumViewModel:

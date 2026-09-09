@@ -4,6 +4,8 @@ from uuid import UUID
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.view_models.base import WorkerOwnerMixin
+
 from application.download.commands import CancelDownloadCommand, CancelDownloadHandler, StartDownloadCommand, StartDownloadHandler
 from application.download.dtos import DownloadJobDTO
 from domain.download.value_objects import DownloadSettings
@@ -16,9 +18,9 @@ class _DownloadWorker(QThread):
         self,
         handler: StartDownloadHandler,
         job_id: UUID,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
+        # 부모를 주지 않는다 — 붙드는 일은 track_thread가 한다(gui/workers.py).
+        super().__init__(None)
         self._handler = handler
         self._job_id = job_id
 
@@ -26,7 +28,7 @@ class _DownloadWorker(QThread):
         self._handler.execute_job(self._job_id)
 
 
-class DownloadViewModel(QObject):
+class DownloadViewModel(WorkerOwnerMixin, QObject):
     queue_changed = pyqtSignal()
     history_changed = pyqtSignal()
     error_occurred = pyqtSignal(str)
@@ -63,10 +65,10 @@ class DownloadViewModel(QObject):
     ) -> None:
         try:
             job = self._start.handle(StartDownloadCommand(url=url, title=title, settings=settings))
-            worker = _DownloadWorker(self._start, job.id, self)
+            worker = _DownloadWorker(self._start, job.id)
             worker.finished.connect(lambda: self._cleanup_worker(job.id))
             self._workers[job.id] = worker
-            worker.start()
+            self._start_worker(worker)
             self.queue_changed.emit()
         except Exception as exc:
             self.error_occurred.emit(str(exc))
@@ -110,3 +112,4 @@ class DownloadViewModel(QObject):
                 worker.terminate()
                 worker.wait(3000)
         self._workers.clear()
+        super().shutdown()   # 공용 추적 목록 정리

@@ -5,6 +5,8 @@ from uuid import UUID
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.view_models.base import WorkerOwnerMixin
+
 from application.song.commands import (
     AddLyricsSourceCommand,
     AddLyricsSourceHandler,
@@ -147,7 +149,7 @@ class _ApplyCandidateWorker(QThread):
             self.failed.emit(self._cmd.video_id, str(exc))
 
 
-class SongViewModel(QObject):
+class SongViewModel(WorkerOwnerMixin, QObject):
     """상세화면 '노래' 탭의 상태를 관리한다.
 
     - ``load``: DB의 노래 정보를 즉시 방출하고, 가사가 없으면 백그라운드로 조회한다.
@@ -249,7 +251,7 @@ class SongViewModel(QObject):
             self.candidates_finished.emit(video_id, 0)
             return
         worker = _CandidateSearchWorker(
-            self._search_candidates, SearchLyricsCandidatesCommand(video_id), self
+            self._search_candidates, SearchLyricsCandidatesCommand(video_id)
         )
         worker.found.connect(
             lambda name, dto, vid=video_id: self.candidate_ready.emit(vid, name, dto)
@@ -266,7 +268,7 @@ class SongViewModel(QObject):
         )
         self._cand_worker = worker
         self._workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def _cancel_candidate_search(self) -> None:
         worker = self._cand_worker
@@ -297,7 +299,6 @@ class SongViewModel(QObject):
         worker = _ApplyCandidateWorker(
             self._apply_candidate,
             ApplyLyricsCandidateCommand(video_id=video_id, candidate=candidate),
-            self,
         )
         worker.done.connect(self._on_fetch_done)
         worker.failed.connect(self._on_fetch_failed)
@@ -305,7 +306,7 @@ class SongViewModel(QObject):
             lambda: self._workers.remove(worker) if worker in self._workers else None
         )
         self._workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def translate_lyrics(self, video_id: UUID) -> None:
         """'번역' — 현재 등록된 가사를 한글로 (재)번역해 저장한다(조회와 분리)."""
@@ -314,14 +315,14 @@ class SongViewModel(QObject):
         self._current = video_id
         self._in_flight.add(video_id)
         self.busy_changed.emit(True)
-        worker = _TranslateWorker(self._translate, TranslateSongLyricsCommand(video_id), self)
+        worker = _TranslateWorker(self._translate, TranslateSongLyricsCommand(video_id))
         worker.done.connect(self._on_fetch_done)
         worker.failed.connect(self._on_fetch_failed)
         worker.finished.connect(
             lambda: self._workers.remove(worker) if worker in self._workers else None
         )
         self._workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def fetch_synced_lyrics(self, video_id: UUID) -> None:
         """'싱크 가사 찾기' — 시간 정보가 있는 가사만 채택해 교체한다.
@@ -358,14 +359,14 @@ class SongViewModel(QObject):
             return
         self._in_flight.add(cmd.video_id)
         self.busy_changed.emit(True)
-        worker = _SongFetchWorker(self._fetch, cmd, self)
+        worker = _SongFetchWorker(self._fetch, cmd)
         worker.done.connect(self._on_fetch_done)
         worker.failed.connect(self._on_fetch_failed)
         worker.finished.connect(
             lambda: self._workers.remove(worker) if worker in self._workers else None
         )
         self._workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     def _on_fetch_done(self, video_id: object, ok: bool) -> None:
         self._in_flight.discard(video_id)
@@ -465,3 +466,4 @@ class SongViewModel(QObject):
             except RuntimeError:
                 pass
         self._workers.clear()
+        super().shutdown()   # 공용 추적 목록 정리
