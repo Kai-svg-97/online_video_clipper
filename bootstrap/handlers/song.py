@@ -21,6 +21,7 @@ from application.song.commands import (
     UpdateSongFieldHandler,
     UpdateSongLyricsHandler,
 )
+from application.song.tagging import SongTagWriter
 from application.song.queries import (
     FindSongVideoIdsHandler,
     GetSongInfoHandler,
@@ -58,4 +59,5 @@ def build(repos: Repositories, services: Services) -> SongHandlers:
         update_source=UpdateLyricsSourceHandler(song),
         delete_source=DeleteLyricsSourceHandler(song),
         reorder_sources=ReorderLyricsSourcesHandler(song),
+        tag_writer=SongTagWriter(bus, video, song, services.audio_tagger),
     )

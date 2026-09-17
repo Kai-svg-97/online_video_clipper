@@ -102,7 +102,8 @@ online_video_clipper/
 │   │   └── queries.py               # GetVideos, SearchVideos, GetVideoById
 │   ├── download/
 │   │   ├── commands.py              # StartDownload, CancelDownload, RetryDownload
-│   │   └── queries.py               # GetDownloadQueue, GetDownloadHistory
+│   │   ├── queries.py               # GetDownloadQueue, GetDownloadHistory
+│   │   └── defaults.py              # 굽기(embed)·자막 언어 기본값을 `config.settings`에서 채우는 **유일한 곳**. 이 값들은 `download_history`에 남지 않으므로 새 작업과 재시도 모두 `StartDownloadHandler.handle`이 `apply_user_defaults`로 다시 채운다 — 호출부가 각자 config를 읽으면 한 곳만 빠져도 굽기가 조용히 꺼진다
 │   ├── clip/
 │   │   ├── commands.py              # ExtractClip, DeleteClip
 │   │   └── queries.py               # GetClips
@@ -114,7 +115,8 @@ online_video_clipper/
 │       ├── commands.py              # FetchSongInfo(출처 체인+번역), **SearchLyricsCandidates**(전 출처 훑기, 도착 순 콜백)·**ApplyLyricsCandidate**(고른 후보 반영), UpdateSongField/Lyrics, SetSongFlag, 가사출처 CRUD. 공용 헬퍼 `resolve_search_basis`(검색 기준값)·`artist_search_candidates`(전체→주 아티스트)·`build_lyrics_lines`(번역 포함 줄 생성)를 체인/후보 양쪽이 공유
 │       ├── album_dtos.py            # AlbumCardDTO·AlbumTrackDTO·AlbumDetailDTO + TRACK_ORIGIN_LIBRARY/AUTO/MISSING
 │       ├── album_queries.py         # GetAlbums(네트워크 없음)·GetAlbumDetail(외부 조회+캐시)·FillAlbumTracks(빠진 곡 yt-dlp 검색)·ResolveUnknownAlbums(앨범 추정)
-│       └── queries.py               # GetSongInfo, ListLyricsSources
+│       ├── queries.py               # GetSongInfo, ListLyricsSources
+│       └── tagging.py               # `SongTagWriter` — `DownloadCompleted`를 **구독**해 받은 음원에 노래 정보를 태그로 쓴다(download 컨텍스트가 song을 모르게 두는 방법). 싱크 가사는 LRC(`[mm:ss.xx]`)로 직렬화하고 `lyrics_offset_ms`는 넣지 않는다(그 영상 전용 보정값이라 다른 플레이어에선 뜻이 없다). 조립은 `SongHandlers.tag_writer` 필드가 **붙들기만** 한다 — 참조를 놓으면 GC돼 구독이 사라진다
 │   └── sync/                        # 클라우드 동기화 유스케이스 — 구현 중
 │       ├── ports.py                 # ICloudSyncProvider·IOplogStore·ISnapshotStore·ISecretStore (Protocol) + RemoteFile
 │       ├── commands.py              # Push·Pull·SyncNow·ConnectProvider·DisconnectProvider·Compact 핸들러(스키마 게이트 포함). CompactHandler=DB→스냅샷 export→provider 업로드(snapshot/library.db+snapshot.json covered)+선택적 세그먼트 GC(기본 off)
@@ -153,6 +155,7 @@ online_video_clipper/
 │   ├── song/
 │   │   ├── lyrics_providers.py      # LRCLIB(무키)·Genius·멜론·벅스·지니 가사 제공자 + build_default_providers (QThread에서만 호출). **모든 제공자가 `search()`(다건)를 구현**하고 `fetch()`는 `search(limit=1)` 위임이다 — 두 경로의 폴백 범위가 어긋나 "후보 목록엔 뜨는데 체인 검색은 못 찾는" 일이 없게. LRCLIB은 `/api/get`(정확)→`/api/search`(가수+제목)→`/api/search`(제목만) 순으로 훑어 **다른 가수의 같은 제목 곡**까지 모으고, Genius·국내 3사는 검색 페이지에서 곡 id를 `_first_id`로 **전부** 뽑아(예전엔 `re.search`로 첫 개만) 곡마다 상세 페이지를 긁는다(요청 수 = limit이라 상한이 성능을 좌우). 국내 3사 상세 파서는 가사뿐 아니라 **가수·제목도 뽑는다** — 안 뽑으면 후보 행이 전부 같은 값으로 보여 고를 수가 없다. 곡 하나가 실패해도 나머지 후보는 계속 모으고, 중복은 `_dedupe_key`(가수·제목·첫 줄)로 제거한다. **정렬**: Genius는 검색 응답의 `stats.pageviews`로 **조회수 내림차순 정렬을 페이지 요청 *전에*** 한다(limit이 곧 요청 수라, 나중에 정렬하면 인기 곡이 상한 밖으로 밀려 조회조차 안 된다). LRCLIB은 인기 지표가 없어 **영상 길이에 가까운 순**(`_sort_by_duration_match`)으로 정렬하며, 자르기는 정렬 뒤에 한다(먼저 자르면 정답이 날아간다 — 목록 API라 다 모아도 추가 요청이 없어 공짜다). 국내 3사는 **검색 결과 순서 자체가 그 사이트의 랭킹**이므로 재정렬하지 않고 `popularity=0`으로 둔다. 네트워크 오류(타임아웃·연결실패)는 트레이스백 없이 WARNING으로만 남기고 None 반환→다음 출처로(`_log_provider_error`); 타임아웃 (connect 5s, read 8s)로 짧게 잡아 느린 출처를 빨리 건너뜀
 │   │   ├── album_providers.py       # ITunesAlbumProvider(무키) — 앨범 자켓·발매일·장르·수록곡. **lookup에 country를 붙이면 수록곡이 통째로 빠진다**(실측)
+│   │   ├── audio_tagger.py          # `MutagenAudioTagger` — mp3(ID3)·m4a/mp4·flac/ogg/opus(Vorbis) 태그 기록. `File(easy=True)`는 가사·표지를 못 써서 포맷별 저수준 API를 직접 쓴다. USLT·APIC은 쓰기 전에 지운다(누적되면 플레이어가 아무거나 고른다). webp 표지는 대부분의 플레이어가 못 읽어 넣지 않는다. **예외를 밖으로 내지 않는다** — 태그는 부가 산출물이라 여기서 터지면 다운로드가 실패로 보고된다
 │   │   ├── translator.py            # deep-translator 래퍼(ITranslator) — 미설치/실패 시 원문 그대로(graceful)
 │   │   └── lrc.py                   # LRC(가사 타이밍) 파서 — `parse_lrc(text) -> [(시작ms|None, 가사)]`. 다중 타임스탬프 전개·`[offset:]` 반영·메타 태그 제거. 순수 함수라 단위 테스트로 규칙을 고정
 │   ├── subtitle/                    # 영상 자막(YouTube 캡션) — QThread에서만 호출

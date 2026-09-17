@@ -108,6 +108,38 @@ class IUpdateChecker(Protocol):
     ) -> Path: ...
 
 
+@dataclass(frozen=True, slots=True)
+class AudioTags:
+    """음원 파일에 기록할 태그 — 도메인 값객체.
+
+    ``lyrics``는 평문(줄바꿈 구분)과 LRC(``[mm:ss.xx]`` 접두) 두 형태를 모두 받는다.
+    싱크 가사가 있으면 LRC로 넣어야 다른 플레이어에서도 줄이 따라 흐른다.
+    """
+
+    title: str = ""
+    artist: str = ""
+    album: str = ""
+    year: str = ""
+    lyrics: str = ""
+    cover_path: Path | None = None
+
+    def is_empty(self) -> bool:
+        """기록할 값이 하나도 없으면 True — 빈 태그로 파일을 건드리지 않기 위해."""
+        return not any((self.title, self.artist, self.album, self.year, self.lyrics, self.cover_path))
+
+
+class IAudioTagger(Protocol):
+    """음원 파일 태그(ID3/MP4) 기록 추상화.
+
+    구현체: infrastructure.song.audio_tagger.MutagenAudioTagger
+
+    태깅 실패는 다운로드 결과를 무효화하지 않는다 — 구현체는 예외를 밖으로 던지지
+    않고 ``False``를 돌려준다(호출부는 로그만 남기고 넘어간다).
+    """
+
+    def write_tags(self, file_path: Path, tags: AudioTags) -> bool: ...
+
+
 class IClipExtractor(Protocol):
     """ffmpeg 기반 클립/썸네일 추출 추상화.
 

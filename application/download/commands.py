@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
+from application.download.defaults import apply_user_defaults
 from domain.download.aggregates import DownloadQueueAggregate
 from domain.download.entities import DownloadJob
 from domain.download.repositories import IDownloadRepository
@@ -58,10 +59,14 @@ class StartDownloadHandler:
         self._gemini = gemini_extractor
 
     def handle(self, cmd: StartDownloadCommand) -> DownloadJob:
+        # 부가 옵션(굽기·자막 언어·노래 태그)은 이력에 남지 않으므로, 호출부가 무엇을
+        # 넘겼든 **여기서** 현재 사용자 설정으로 채운다. 호출부가 3곳 이상이라
+        # 각자 config를 읽게 두면 한 곳만 빠져도 조용히 꺼진 채로 동작한다.
+        settings = apply_user_defaults(cmd.settings or DownloadSettings())
         job = DownloadJob.create(
             url=cmd.url,
             title=cmd.title,
-            settings=cmd.settings,
+            settings=settings,
         )
         self._queue.enqueue(job)
         self._repo.save(job)

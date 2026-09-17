@@ -66,6 +66,69 @@ def _height_to_quality_label(height: int | None) -> str:
     return f"{height}p"
 
 
+# 자막을 컨테이너에 구울 수 있는 확장자 — 그 외(mp3·m4a 등 음원)는 트랙을 담지
+# 못해 FFmpegEmbedSubtitle 이 경고만 남기고 지나간다. 애초에 붙이지 않는다.
+_SUBTITLE_EMBED_CONTAINERS = frozenset(("mp4", "mkv", "webm"))
+
+
+def _apply_sidecar_and_embed_opts(opts: dict, settings: DownloadSettings) -> None:
+    """부가 정보를 **곁에 저장**(sidecar)하고 **파일에 굽는**(embed) yt-dlp 옵션 구성.
+
+    후처리기 **순서가 결과를 바꾼다**. yt-dlp CLI와 같은 순서로 붙인다 —
+    ``ExtractAudio → EmbedSubtitle → Metadata(+chapters) → EmbedThumbnail``.
+    yt-dlp는 주어진 리스트 순서대로 실행할 뿐 재정렬하지 않으므로, 음원 추출이
+    뒤에 오면 앞에서 넣은 태그·표지가 새 파일로 옮겨지지 않는다(이전 코드는
+    Metadata 를 ExtractAudio 보다 먼저 넣고 있었다).
+    """
+    pps: list[dict] = opts.setdefault("postprocessors", [])
+    is_audio = settings.is_audio
+
+    # ── 자막: 받아야 굽든 남기든 할 수 있다 ──
+    if settings.subtitle_langs:
+        opts["writesubtitles"] = True
+        # 사람이 단 자막이 없는 영상이 대부분이라 자동 생성 자막까지 받는다.
+        # 이게 없으면 "자막을 켰는데 아무것도 안 생긴다"는 결과가 흔하다.
+        opts["writeautomaticsub"] = True
+        opts["subtitleslangs"] = list(settings.subtitle_langs)
+        opts["subtitlesformat"] = "srt/vtt/best"
+
+    # ── 썸네일: 굽으려면 일단 받아야 한다 ──
+    want_thumb_file = bool(settings.include_thumbnail)
+    if settings.embed_thumbnail or want_thumb_file:
+        opts["writethumbnail"] = True
+
+    # 1) 음원 추출 — 반드시 가장 먼저.
+    if settings.format in (MediaFormat.MP3, MediaFormat.M4A):
+        pps.append(
+            {"key": "FFmpegExtractAudio", "preferredcodec": settings.format.value}
+        )
+
+    # 2) 자막 굽기 — 음원 컨테이너는 자막 트랙을 담지 못한다.
+    if (
+        settings.embed_subtitles
+        and settings.subtitle_langs
+        and not is_audio
+        and settings.format.value in _SUBTITLE_EMBED_CONTAINERS
+    ):
+        # already_have_subtitle=False → 구운 뒤 .srt 를 지운다. 파일까지 남기면
+        # 플레이어가 같은 자막을 두 번 잡아 중복 표시되는 일이 잦다.
+        pps.append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
+
+    # 3) 메타데이터·챕터 — 굽기 설정이 하나라도 켜져 있을 때만.
+    if settings.include_metadata or settings.embed_chapters:
+        pps.append(
+            {
+                "key": "FFmpegMetadata",
+                "add_metadata": bool(settings.include_metadata),
+                "add_chapters": bool(settings.embed_chapters),
+            }
+        )
+
+    # 4) 표지 굽기 — mp3·m4a·mp4·mkv·flac·opus 만 지원한다(webm 은 조용히 건너뛴다).
+    if settings.embed_thumbnail:
+        pps.append({"key": "EmbedThumbnail", "already_have_thumbnail": want_thumb_file})
+
+
 def _find_ffmpeg() -> str | None:
     """Return path to ffmpeg executable, or None if not found."""
     try:
@@ -182,23 +245,7 @@ class YtDlpAdapter:
         if has_ffmpeg:
             base_opts["ffmpeg_location"] = ffmpeg
             base_opts["merge_output_format"] = "mp4"  # 병합 출력을 항상 mp4로 고정
-
-            if settings.subtitle_langs:
-                base_opts["writesubtitles"] = True
-                base_opts["subtitleslangs"] = list(settings.subtitle_langs)
-
-            if settings.include_metadata:
-                base_opts.setdefault("postprocessors", [])
-                base_opts["postprocessors"].append({"key": "FFmpegMetadata"})
-
-            if settings.format in (MediaFormat.MP3, MediaFormat.M4A):
-                base_opts.setdefault("postprocessors", [])
-                base_opts["postprocessors"].append(
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": settings.format.value,
-                    }
-                )
+            _apply_sidecar_and_embed_opts(base_opts, settings)
 
         self._last_filepath: str = ""
         self._tmp_files_seen = set()

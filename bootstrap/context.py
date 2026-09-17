@@ -77,6 +77,7 @@ class Services:
     event_bus: Any
     media_source: Any            # YtDlpAdapter — domain.shared.ports.IMediaSource
     clip_extractor: Any          # FfmpegAdapter — IClipExtractor
+    audio_tagger: Any            # MutagenAudioTagger — IAudioTagger
     youtube_oauth: Any
     youtube_api: Callable[[], Any | None]
     auth_service: Any
@@ -213,6 +214,9 @@ class SongHandlers:
     update_source: Any
     delete_source: Any
     reorder_sources: Any
+    # 다운로드 완료 이벤트 구독자 — 호출되지 않고 **살아 있기만** 하면 된다.
+    # 필드로 붙들지 않으면 조립이 끝나는 순간 GC돼 구독이 조용히 사라진다.
+    tag_writer: Any
 
 
 @dataclass(frozen=True, slots=True)

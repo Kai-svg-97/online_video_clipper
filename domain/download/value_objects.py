@@ -30,6 +30,18 @@ AUDIO_FORMAT_VALUES = frozenset(
 
 
 class DownloadSettings:
+    """다운로드 1건의 방식 — 품질·포맷과 **부가 정보를 파일에 어떻게 남길지**.
+
+    ``include_*``는 **곁에 파일로 저장**(썸네일 .jpg, 자막 .vtt)을, ``embed_*``는
+    **미디어 파일 안에 굽기**를 뜻한다. 둘은 독립이다 — 자막을 굽고 .vtt는 남기지
+    않는 조합이 기본값이다(앱 밖에서 파일 하나만 옮겨도 자막이 따라간다).
+
+    영속되는 것은 ``quality``·``format``·``subtitle_langs``·``include_*``뿐이다
+    (`download_history` 컬럼). ``embed_*``와 ``capture_gemini``는 사용자 전역
+    설정에서 매번 다시 채워지는 값이라 이력에 남기지 않는다 — 재시도 시
+    `application.download.defaults`가 현재 설정으로 다시 채운다.
+    """
+
     __slots__ = (
         "quality",
         "format",
@@ -37,6 +49,9 @@ class DownloadSettings:
         "include_thumbnail",
         "include_metadata",
         "capture_gemini",
+        "embed_subtitles",
+        "embed_thumbnail",
+        "embed_chapters",
     )
 
     def __init__(
@@ -47,6 +62,9 @@ class DownloadSettings:
         include_thumbnail: bool = True,
         include_metadata: bool = True,
         capture_gemini: bool = False,
+        embed_subtitles: bool = False,
+        embed_thumbnail: bool = False,
+        embed_chapters: bool = False,
     ) -> None:
         self.quality = quality
         self.format = fmt
@@ -54,17 +72,20 @@ class DownloadSettings:
         self.include_thumbnail = include_thumbnail
         self.include_metadata = include_metadata
         self.capture_gemini = capture_gemini
+        self.embed_subtitles = embed_subtitles
+        self.embed_thumbnail = embed_thumbnail
+        self.embed_chapters = embed_chapters
+
+    @property
+    def is_audio(self) -> bool:
+        """음원 산출물인가 — 자막 굽기 제외·ID3 태깅 대상 판정에 쓴다."""
+        return self.format.value in AUDIO_FORMAT_VALUES
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DownloadSettings):
             return NotImplemented
-        return (
-            self.quality == other.quality
-            and self.format == other.format
-            and self.subtitle_langs == other.subtitle_langs
-            and self.include_thumbnail == other.include_thumbnail
-            and self.include_metadata == other.include_metadata
-            and self.capture_gemini == other.capture_gemini
+        return all(
+            getattr(self, name) == getattr(other, name) for name in self.__slots__
         )
 
     def __hash__(self) -> int:

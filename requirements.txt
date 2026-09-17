@@ -11,3 +11,4 @@ google-auth-httplib2>=0.1.0
 deep-translator>=1.11
 msal>=1.28
 keyring>=25.0
+mutagen>=1.47  # 음원 태그(ID3/MP4/Vorbis) 기록 — 다운로드한 음원에 노래 정보 굽기
