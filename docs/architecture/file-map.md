@@ -58,6 +58,7 @@ online_video_clipper/
 │   │   ├── repositories.py          # IVideoRepository (interface). `MATCH_FIELD_KEYS`가 검색 일치 배지의 **표시 순서**를 고정한다(자막 포함)
 │   │   ├── subtitle_repository.py   # `ISubtitleRepository` + `SubtitleLine`·`SubtitleIndexInfo`. **library 컨텍스트에 두는 이유**: 자막은 Video에 딸려 수명을 함께한다(영상을 지우면 사라진다). 저장은 영상·언어 단위 **통째 교체**다 — 자동 자막이 사람 자막으로 바뀌는 일이 흔해 줄 단위 병합은 중복만 만든다
 │   │   ├── services.py              # Domain services (e.g., duplicate detection)
+│   │   ├── media_server.py           # Plex·Jellyfin·Kodi가 읽는 `.nfo`/`.m3u` **순수 생성 규칙**. 노래는 `musicvideo`, 그 외는 `movie`(`episodedetails`는 시즌·회차를 요구해 YouTube 영상에 맞지 않는다). 함정 셋: 상영시간은 **분** 단위(초를 넣으면 3분짜리가 180분), **빈 태그를 쓰지 않는다**(서버가 '값이 있다'로 읽어 기존 정보를 지운다), m3u 길이는 모를 때 **-1**(0이면 플레이어가 곧바로 넘어간다)
 │   │   ├── availability.py           # 원본 생존 판정 **순수 규칙**. 핵심은 `확인 불가`를 `사라짐`으로 보고하지 **않는 것** — 네트워크가 잠깐 끊긴 것을 두고 멀쩡한 영상을 지우게 만들면 안 된다. 삭제·비공개만 `MISSING_STATUSES`
 │   │   ├── recommendation.py        # derive_seed_queries() — 현재 목록(제목·태그·채널)에서 YouTube 추천 검색어를 뽑는 순수 함수(제목 키워드는 문서빈도 기준). **`search_text`가 있으면 그 낱말만 검색어로 쓴다**(검색창 입력이 짐작을 대체한다). I/O 없음
 │   │   └── events.py                # VideoAdded, VideoUpdated, VideoDeleted
@@ -128,6 +129,8 @@ online_video_clipper/
 │       ├── album_queries.py         # GetAlbums(네트워크 없음)·GetAlbumDetail(외부 조회+캐시)·FillAlbumTracks(빠진 곡 yt-dlp 검색)·ResolveUnknownAlbums(앨범 추정)
 │       ├── queries.py               # GetSongInfo, ListLyricsSources
 │       └── tagging.py               # `SongTagWriter` — `DownloadCompleted`를 **구독**해 받은 음원에 노래 정보를 태그로 쓴다(download 컨텍스트가 song을 모르게 두는 방법). 싱크 가사는 LRC(`[mm:ss.xx]`)로 직렬화하고 `lyrics_offset_ms`는 넣지 않는다(그 영상 전용 보정값이라 다른 플레이어에선 뜻이 없다). 조립은 `SongHandlers.tag_writer` 필드가 **붙들기만** 한다 — 참조를 놓으면 GC돼 구독이 사라진다
+│   ├── transfer/                    # ⬆ 라이브러리 패키지 + **미디어 서버 사이드카**
+│   │   └── media_server.py          # `.nfo`는 **미디어 파일 옆에** 쓴다(서버는 같은 폴더·같은 이름만 읽는다 — 위치를 고르게 두면 "내보냈는데 서버가 못 읽는다"가 된다). 받아 둔 파일이 없는 영상은 건너뛰고 그 수를 결과에 담는다('왜 적게 나왔지?'의 답). 한 건이 실패해도 나머지를 계속한다. m3u는 **UTF-8 고정**(기본 인코딩으로 쓰면 한글 제목이 다른 기기에서 깨진다)
 │   └── sync/                        # 클라우드 동기화 유스케이스 — 구현 중
 │       ├── ports.py                 # ICloudSyncProvider·IOplogStore·ISnapshotStore·ISecretStore (Protocol) + RemoteFile
 │       ├── commands.py              # Push·Pull·SyncNow·ConnectProvider·DisconnectProvider·Compact 핸들러(스키마 게이트 포함). CompactHandler=DB→스냅샷 export→provider 업로드(snapshot/library.db+snapshot.json covered)+선택적 세그먼트 GC(기본 off)

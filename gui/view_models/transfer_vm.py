@@ -54,6 +54,7 @@ class LibraryTransferViewModel(WorkerOwnerMixin, QObject):
     preview_ready     = pyqtSignal(object)   # ImportPreviewDTO
     conflicts_ready   = pyqtSignal(object)   # ImportConflictsDTO
     import_finished   = pyqtSignal(object)   # ImportResultDTO
+    media_server_finished = pyqtSignal(object)   # MediaServerExportResult
     busy_changed      = pyqtSignal(bool)
     error_occurred    = pyqtSignal(str)
 
@@ -63,6 +64,7 @@ class LibraryTransferViewModel(WorkerOwnerMixin, QObject):
         preview_handler: PreviewImportHandler,
         conflicts_handler: DetectImportConflictsHandler,
         import_handler: ImportLibraryHandler,
+        media_server_handler=None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -70,6 +72,7 @@ class LibraryTransferViewModel(WorkerOwnerMixin, QObject):
         self._preview = preview_handler
         self._conflicts = conflicts_handler
         self._import = import_handler
+        self._media_server = media_server_handler
         self._workers: list[QThread] = []
 
     def export_library(self, category_ids: list[UUID], dest_path: str) -> None:
@@ -91,6 +94,20 @@ class LibraryTransferViewModel(WorkerOwnerMixin, QObject):
             archive_path=archive_path, category_ids=category_ids, resolutions=resolutions,
         )
         self._run(self._import, cmd, self.import_finished)
+
+    def export_media_server(
+        self, category_ids: list[UUID], write_nfo: bool, m3u_path: str
+    ) -> bool:
+        """미디어 서버용 사이드카를 쓴다(배경). 기능이 없으면 False."""
+        if self._media_server is None:
+            return False
+        from application.transfer.media_server import ExportMediaServerCommand  # noqa: PLC0415
+
+        cmd = ExportMediaServerCommand(
+            category_ids=category_ids, write_nfo=write_nfo, m3u_path=m3u_path
+        )
+        self._run(self._media_server, cmd, self.media_server_finished)
+        return True
 
     # ── 내부 ────────────────────────────────────────────────────────────
 

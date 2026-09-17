@@ -6,6 +6,7 @@ zip 입출력은 `ILibraryPackageWriter`/`Reader` 포트 구현이 전담하므�
 
 from __future__ import annotations
 
+from application.transfer.media_server import ExportMediaServerHandler
 from application.transfer.commands import (
     DetectImportConflictsHandler,
     ExportLibraryHandler,
@@ -29,4 +30,5 @@ def build(repos: Repositories, services: Services) -> TransferHandlers:
         preview=PreviewImportHandler(reader),
         detect_conflicts=DetectImportConflictsHandler(video, song, reader),
         do_import=ImportLibraryHandler(video, song, services.event_bus, reader),
+        export_media_server=ExportMediaServerHandler(video, song, repos.download),
     )

@@ -278,6 +278,7 @@ ffmpeg 기반 구간 추출. **'영상 위의 시간 구간'을 다루는 모든
 | `GetChaptersQuery` | 영상 설명에서 챕터 구간 추출 |
 | `GetSkipSegmentsQuery` | SponsorBlock 건너뛸 구간(영상당 1회 조회 후 캐시) |
 | `ConvertMediaCommand` | 프리셋대로 변환(원본 보존, 새 파일로 출력) |
+| `ExportMediaServerCommand` | `.nfo`/`.m3u` 사이드카 생성(Plex·Jellyfin·Kodi) |
 
 ### Monitoring
 | Command/Query | 설명 |

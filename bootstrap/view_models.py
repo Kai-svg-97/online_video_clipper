@@ -137,6 +137,7 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             preview_handler=handlers.transfer.preview,
             conflicts_handler=handlers.transfer.detect_conflicts,
             import_handler=handlers.transfer.do_import,
+            media_server_handler=handlers.transfer.export_media_server,
         ),
         subtitle=SubtitleViewModel(
             index_cues_handler=handlers.library.index_subtitle_cues,

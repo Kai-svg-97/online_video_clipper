@@ -315,6 +315,7 @@ class _ImportExportSection(QWidget):
         transfer_vm.preview_ready.connect(self._on_preview_ready)
         transfer_vm.conflicts_ready.connect(self._on_conflicts_ready)
         transfer_vm.import_finished.connect(self._on_import_finished)
+        transfer_vm.media_server_finished.connect(self._on_media_server_finished)
         transfer_vm.error_occurred.connect(self._on_error)
         transfer_vm.busy_changed.connect(self._on_busy_changed)
 
@@ -341,6 +342,24 @@ class _ImportExportSection(QWidget):
         btn_row.addWidget(self._import_btn)
         btn_row.addStretch()
         root.addLayout(btn_row)
+
+        # ── 미디어 서버용 사이드카 ──
+        media_help = QLabel(
+            "Plex·Jellyfin·Kodi가 읽는 정보 파일(.nfo)을 받아 둔 영상 옆에 만들고, "
+            "재생목록(.m3u)을 함께 저장합니다. 제목·설명·채널·태그·업로드일이 서버에 "
+            "그대로 넘어가고, 노래로 표시한 영상은 가수·앨범까지 들어갑니다."
+        )
+        media_help.setWordWrap(True)
+        media_help.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
+        root.addSpacing(6)
+        root.addWidget(media_help)
+
+        media_row = QHBoxLayout()
+        self._media_btn = QPushButton("미디어 서버용 내보내기…")
+        self._media_btn.clicked.connect(self._on_media_server_clicked)
+        media_row.addWidget(self._media_btn)
+        media_row.addStretch()
+        root.addLayout(media_row)
 
         self._status_lbl = QLabel("")
         self._status_lbl.setWordWrap(True)
@@ -378,6 +397,50 @@ class _ImportExportSection(QWidget):
             f"● 내보내기 완료 — 카테고리 {result.category_count}개, "
             f"영상 {result.video_count}개 → {result.path}"
         )
+
+    # ── 미디어 서버용 사이드카 ────────────────────────────────────────────
+
+    def _on_media_server_clicked(self) -> None:
+        """카테고리 → 재생목록 저장 위치 순으로 묻는다.
+
+        `.nfo`의 위치는 묻지 않는다 — 서버는 미디어 파일과 같은 폴더의 같은 이름만
+        읽으므로 고를 여지가 없다. 고르게 두면 "내보냈는데 서버가 못 읽는다"가 된다.
+        """
+        from gui.dialogs.library_transfer_dialogs import CategorySelectDialog  # noqa: PLC0415
+
+        categories = self._get_categories_fn() if self._get_categories_fn else []
+        if not categories:
+            self._status_lbl.setText("내보낼 카테고리가 없습니다.")
+            return
+        dlg = CategorySelectDialog(categories, "정보 파일을 만들 카테고리 선택", self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_category_ids()
+        if not selected:
+            self._status_lbl.setText("카테고리를 선택하세요.")
+            return
+
+        # 재생목록은 선택 사항 — 취소하면 .nfo 만 만든다.
+        m3u_path, _ = QFileDialog.getSaveFileName(
+            self, "재생목록 저장 위치 (취소하면 만들지 않음)", "", "재생목록 (*.m3u)"
+        )
+        if m3u_path and not m3u_path.lower().endswith(".m3u"):
+            m3u_path += ".m3u"
+
+        self._status_lbl.setText("정보 파일을 만드는 중…")
+        if not self._vm.export_media_server(selected, True, m3u_path):
+            self._status_lbl.setText("미디어 서버 내보내기를 쓸 수 없습니다.")
+
+    def _on_media_server_finished(self, result) -> None:
+        parts = [f"● 정보 파일 {result.nfo_written}개 생성"]
+        if result.m3u_path and result.m3u_entries:
+            parts.append(f"재생목록 {result.m3u_entries}곡 → {result.m3u_path}")
+        if result.skipped_no_file:
+            # 가장 흔한 '왜 적게 나왔지?'의 답이라 반드시 알린다.
+            parts.append(f"{result.skipped_no_file}개는 받아 둔 파일이 없어 건너뜀")
+        if result.failed:
+            parts.append(f"{len(result.failed)}개 쓰기 실패(로그 확인)")
+        self._status_lbl.setText(" · ".join(parts))
 
     # ── 가져오기 ──────────────────────────────────────────────────────────
 

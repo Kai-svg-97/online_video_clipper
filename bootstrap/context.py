@@ -255,6 +255,8 @@ class TransferHandlers:
     preview: Any
     detect_conflicts: Any
     do_import: Any
+    # 미디어 서버용 사이드카(.nfo/.m3u) — 패키지 내보내기와는 목적이 다르다.
+    export_media_server: Any
 
 
 @dataclass(frozen=True, slots=True)
