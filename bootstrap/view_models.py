@@ -143,5 +143,7 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             fetch_handler=handlers.library.fetch_and_index_subtitles,
             get_lines_handler=handlers.library.get_subtitle_lines,
             get_indexes_handler=handlers.library.get_subtitle_indexes,
+            bulk_handler=handlers.library.bulk_index_subtitles,
+            coverage_handler=handlers.library.subtitle_coverage,
         ),
     )

@@ -12,12 +12,14 @@ from uuid import UUID
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from application.library.subtitle_commands import (
+    BulkIndexSubtitlesHandler,
     FetchAndIndexSubtitlesCommand,
     FetchAndIndexSubtitlesHandler,
     IndexSubtitleCuesCommand,
     IndexSubtitleCuesHandler,
 )
 from application.library.subtitle_queries import (
+    GetSubtitleCoverageHandler,
     GetSubtitleIndexesHandler,
     GetSubtitleIndexesQuery,
     GetSubtitleLinesHandler,
@@ -55,10 +57,40 @@ class _IndexWorker(QThread):
         self.done.emit(self._cmd.video_id, count)
 
 
+class _BulkIndexWorker(QThread):
+    """라이브러리 전체 자막 색인 — 영상당 1초 안팎이라 수백 건이면 10분을 넘긴다."""
+
+    progress = pyqtSignal(int, int, str)   # 현재, 전체, 제목
+    done = pyqtSignal(object)              # BulkIndexResult
+
+    def __init__(self, handler: BulkIndexSubtitlesHandler) -> None:
+        # 부모를 주지 않는다 — 소유 뷰모델이 사라질 때 실행 중 스레드가 파괴되면
+        # Qt가 프로세스를 죽인다(gui/workers.py).
+        super().__init__(None)
+        self._handler = handler
+        self._stop = False
+
+    def stop(self) -> None:
+        """협조적 중단 — 다음 영상으로 넘어가기 전에 멈춘다."""
+        self._stop = True
+
+    def run(self) -> None:
+        try:
+            result = self._handler.handle(
+                on_progress=self.progress.emit, should_stop=lambda: self._stop
+            )
+        except Exception:
+            logger.exception("자막 일괄 색인 실패")
+            result = None
+        self.done.emit(result)
+
+
 class SubtitleViewModel(WorkerOwnerMixin, QObject):
     lines_loaded = pyqtSignal(object, object)   # video_id, list[SubtitleLineDTO]
     index_started = pyqtSignal(object)          # video_id
     index_finished = pyqtSignal(object, int)    # video_id, 줄 수(0이면 자막 없음)
+    bulk_progress = pyqtSignal(int, int, str)
+    bulk_finished = pyqtSignal(object)          # BulkIndexResult (실패 시 None)
 
     def __init__(
         self,
@@ -66,6 +98,8 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         fetch_handler: FetchAndIndexSubtitlesHandler,
         get_lines_handler: GetSubtitleLinesHandler,
         get_indexes_handler: GetSubtitleIndexesHandler,
+        bulk_handler: BulkIndexSubtitlesHandler | None = None,
+        coverage_handler: GetSubtitleCoverageHandler | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -73,6 +107,9 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         self._fetch = fetch_handler
         self._get_lines = get_lines_handler
         self._get_indexes = get_indexes_handler
+        self._bulk = bulk_handler
+        self._coverage = coverage_handler
+        self._bulk_worker: _BulkIndexWorker | None = None
         # 같은 영상을 두 번 색인하지 않게 — 자막을 껐다 켜면 큐가 다시 들어온다.
         self._indexing: set[UUID] = set()
 
@@ -95,6 +132,46 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
             logger.exception("자막 줄 조회 실패: %s", video_id)
             lines = []
         self.lines_loaded.emit(video_id, lines)
+
+    def coverage(self):
+        """라이브러리 자막 색인 현황(없으면 None)."""
+        if self._coverage is None:
+            return None
+        try:
+            return self._coverage.handle()
+        except Exception:
+            logger.exception("자막 색인 현황 조회 실패")
+            return None
+
+    # ── 일괄 색인 ─────────────────────────────────────────────────
+
+    @property
+    def is_bulk_running(self) -> bool:
+        return self._bulk_worker is not None
+
+    def start_bulk_index(self) -> bool:
+        """라이브러리 전체 색인을 시작한다. 이미 돌고 있으면 False."""
+        if self._bulk is None or self._bulk_worker is not None:
+            return False
+        worker = _BulkIndexWorker(self._bulk)
+        worker.progress.connect(self.bulk_progress)
+        worker.done.connect(self._on_bulk_done)
+        self._bulk_worker = worker
+        self._start_worker(worker)
+        return True
+
+    def stop_bulk_index(self) -> None:
+        if self._bulk_worker is not None:
+            self._bulk_worker.stop()
+
+    def _on_bulk_done(self, result: object) -> None:
+        self._bulk_worker = None
+        self.bulk_finished.emit(result)
+
+    def shutdown(self) -> None:
+        """종료 시 일괄 색인을 먼저 멈춘다 — 협조적 중단이라 곧 끝난다."""
+        self.stop_bulk_index()
+        super().shutdown()
 
     # ── 수집 ──────────────────────────────────────────────────────
 

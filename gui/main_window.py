@@ -568,6 +568,7 @@ class MainWindow(QMainWindow):
             sync_vm=self._sync_vm,
             transfer_vm=self._transfer_vm,
             cleanup_fns=self._cleanup_fns,
+            subtitle_vm=self._subtitle_vm,
             get_categories_fn=lambda: self._library_vm.categories,
         )
         self._stack.addWidget(self._settings_panel)                  # 4

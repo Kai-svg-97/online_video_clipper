@@ -27,10 +27,12 @@ from application.library.commands import (
     UpdateVideoHandler,
 )
 from application.library.subtitle_commands import (
+    BulkIndexSubtitlesHandler,
     FetchAndIndexSubtitlesHandler,
     IndexSubtitleCuesHandler,
 )
 from application.library.subtitle_queries import (
+    GetSubtitleCoverageHandler,
     GetSubtitleIndexesHandler,
     GetSubtitleLinesHandler,
 )
@@ -91,6 +93,13 @@ def build(
     bus = services.event_bus
     media = services.media_source
 
+    # 자막 조회·다운로드 함수를 **여기서 꽂는다** — 핸들러가
+    # `infrastructure/subtitle/`를 직접 import 하면 application → infrastructure
+    # 의존이 생긴다(DDD 의존 규칙). 단건·일괄이 같은 인스턴스를 공유한다.
+    fetch_subtitles = FetchAndIndexSubtitlesHandler(
+        repos.subtitle, track_lister=fetch_tracks_for_url, cue_fetcher=fetch_cues
+    )
+
     # 등록은 노래 감지에 song 체인을 쓴다(등록 시 메타데이터만, 가사는 보강 단계에서).
     add_video = AddVideoHandler(video, bus, media, song_fetch=song.fetch)
     delete_video = DeleteVideoHandler(video, bus)
@@ -140,11 +149,11 @@ def build(
         # 자막 조회·다운로드 함수를 **여기서 꽂는다** — 핸들러가
         # `infrastructure/subtitle/`를 직접 import 하면 application → infrastructure
         # 의존이 생긴다(DDD 의존 규칙).
-        fetch_and_index_subtitles=FetchAndIndexSubtitlesHandler(
-            repos.subtitle,
-            track_lister=fetch_tracks_for_url,
-            cue_fetcher=fetch_cues,
+        fetch_and_index_subtitles=fetch_subtitles,
+        bulk_index_subtitles=BulkIndexSubtitlesHandler(
+            video, repos.subtitle, fetch_subtitles
         ),
         get_subtitle_lines=GetSubtitleLinesHandler(repos.subtitle),
         get_subtitle_indexes=GetSubtitleIndexesHandler(repos.subtitle),
+        subtitle_coverage=GetSubtitleCoverageHandler(video, repos.subtitle),
     )

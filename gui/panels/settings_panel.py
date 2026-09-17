@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -129,12 +130,14 @@ class SettingsPanel(QWidget):
         song_vm=None,    # SongViewModel | None
         sync_vm=None,    # SyncViewModel | None
         transfer_vm=None,        # LibraryTransferViewModel | None
-        cleanup_fns=None,        # (중복찾기, 사라진파일찾기, 삭제) 콜백 3종 | None
+        cleanup_fns=None,        # (중복찾기, 사라진파일찾기, 삭제, 원본소실찾기) | None
+        subtitle_vm=None,        # SubtitleViewModel | None
         get_categories_fn: Callable | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._get_tags_fn = get_tags_fn
+        self._subtitle_vm = subtitle_vm
         self._yt_oauth = yt_oauth
         self._song_vm = song_vm
         self._sync_vm = sync_vm
@@ -190,6 +193,7 @@ class SettingsPanel(QWidget):
         self._build_cloud_sync_section(layout)
         self._build_transfer_section(layout)
         self._build_cleanup_section(layout)
+        self._build_subtitle_index_section(layout)
         self._build_youtube_api_section(layout)
         self._build_cookie_section(layout)
         self._build_hidden_tags_section(layout)
@@ -1417,3 +1421,108 @@ class SettingsPanel(QWidget):
     def _on_open_log_dir(self) -> None:
         from config import settings as s  # noqa: PLC0415
         open_folder(s.LOG_DIR)
+
+    def _build_subtitle_index_section(self, layout) -> None:
+        """자막 색인 — 라이브러리 전체를 훑어 자막을 모아 둔다.
+
+        **자동으로 돌지 않는다.** 영상당 네트워크 왕복이 1초 안팎이라 수백 건이면
+        10분을 넘긴다 — 사용자가 시작을 누르고, 언제든 그만둘 수 있어야 한다.
+        뷰모델이 없으면(다른 진입점에서 연 설정 화면) 섹션 자체를 만들지 않는다.
+        """
+        if self._subtitle_vm is None:
+            return
+
+        self._add_divider(layout)
+        sub_label = QLabel("자막 색인")
+        sub_label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            f"text-transform: uppercase; color: {_t().text_muted};"
+        )
+        layout.addWidget(sub_label)
+        layout.addSpacing(8)
+
+        self._sub_cover_lbl = QLabel("")
+        self._sub_cover_lbl.setStyleSheet("font-size: 11px;")
+        layout.addWidget(self._sub_cover_lbl)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 6, 0, 0)
+        self._sub_index_btn = QPushButton("전체 자막 색인 시작")
+        self._sub_index_btn.clicked.connect(self._on_bulk_subtitle_clicked)
+        row.addWidget(self._sub_index_btn)
+        row.addStretch()
+        layout.addLayout(row)
+
+        self._sub_index_bar = QProgressBar()
+        self._sub_index_bar.setVisible(False)
+        self._sub_index_bar.setTextVisible(True)
+        self._sub_index_bar.setMaximumHeight(16)
+        layout.addWidget(self._sub_index_bar)
+
+        self._sub_index_status = QLabel("")
+        self._sub_index_status.setWordWrap(True)
+        self._sub_index_status.setStyleSheet(
+            f"font-size: 10px; color: {_t().text_secondary};"
+        )
+        layout.addWidget(self._sub_index_status)
+
+        hint = QLabel(
+            "색인해 두면 라이브러리 검색이 영상 속 대사까지 찾고, 상세화면 자막 탭에서 "
+            "그 대사가 나온 시점으로 바로 건너뛸 수 있습니다. 영상마다 인터넷에 한 번씩 "
+            "물어보므로 시간이 걸리며, 이미 색인된 영상은 건너뜁니다."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
+        layout.addWidget(hint)
+        layout.addSpacing(24)
+
+        self._subtitle_vm.bulk_progress.connect(self._on_bulk_subtitle_progress)
+        self._subtitle_vm.bulk_finished.connect(self._on_bulk_subtitle_finished)
+        self._refresh_subtitle_coverage()
+
+    def _refresh_subtitle_coverage(self) -> None:
+        coverage = self._subtitle_vm.coverage() if self._subtitle_vm else None
+        if coverage is None:
+            self._sub_cover_lbl.setText("색인 현황을 읽을 수 없습니다.")
+            return
+        self._sub_cover_lbl.setText(
+            f"영상 {coverage.total_videos}개 중 {coverage.indexed_videos}개 색인됨 "
+            f"(남은 {coverage.remaining}개)"
+        )
+
+    def _on_bulk_subtitle_clicked(self) -> None:
+        if self._subtitle_vm is None:
+            return
+        if self._subtitle_vm.is_bulk_running:
+            self._subtitle_vm.stop_bulk_index()
+            self._sub_index_btn.setText("중지하는 중…")
+            self._sub_index_btn.setEnabled(False)
+            return
+        if not self._subtitle_vm.start_bulk_index():
+            self._sub_index_status.setText("색인을 시작할 수 없습니다.")
+            return
+        self._sub_index_bar.setValue(0)
+        self._sub_index_bar.setVisible(True)
+        self._sub_index_btn.setText("중지")
+        self._sub_index_status.setText("색인 중…")
+
+    def _on_bulk_subtitle_progress(self, current: int, total: int, title: str) -> None:
+        self._sub_index_bar.setMaximum(max(1, total))
+        self._sub_index_bar.setValue(current)
+        self._sub_index_bar.setFormat(f"{current}/{total}")
+        self._sub_index_status.setText(f"확인 중 — {title}")
+
+    def _on_bulk_subtitle_finished(self, result) -> None:
+        self._sub_index_bar.setVisible(False)
+        self._sub_index_btn.setText("전체 자막 색인 시작")
+        self._sub_index_btn.setEnabled(True)
+        if result is None:
+            self._sub_index_status.setText("색인 중 오류가 발생했습니다. 로그를 확인하세요.")
+            return
+        parts = [f"{result.indexed}개 색인"]
+        if result.no_subtitle:
+            parts.append(f"{result.no_subtitle}개는 자막 없음")
+        if result.stopped:
+            parts.append("중단됨")
+        self._sub_index_status.setText(" · ".join(parts))
+        self._refresh_subtitle_coverage()

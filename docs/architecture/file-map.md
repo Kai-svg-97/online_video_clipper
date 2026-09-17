@@ -113,8 +113,8 @@ online_video_clipper/
 │   ├── clip/
 │   │   ├── commands.py              # ExtractClip, **ExtractClips**(챕터 여러 개 순차 추출 — ffmpeg 동시 실행 금지. 한 구간이 실패해도 멈추지 않고 실패 목록을 모아 돌려준다), DeleteClip
 │   │   ├── dtos.py                  # ClipDTO · **ChapterDTO**(제목·시작·끝)
-│   │   ├── subtitle_commands.py     # 자막 색인 수집 — 수집 경로가 **둘**이다. (1)재생 중 자막을 켜면 이미 받은 큐를 그대로 넘기는 **공짜 경로**(`IndexSubtitleCues`), (2)상세화면 버튼으로 받아 오는 명시 경로(`FetchAndIndexSubtitles`). 자동 수집을 두지 않는 이유는 대량 임포트 규칙과 같다(영상당 네트워크 왕복). 자막 조회·다운로드 함수는 **주입받는다** — 직접 import 하면 application → infrastructure 의존이 생긴다
-│   │   ├── subtitle_queries.py      # 자막 줄 조회(전체 또는 검색어 일치) + 색인된 언어 목록
+│   │   ├── subtitle_commands.py     # 자막 색인 수집 — 수집 경로가 **둘**이다. (1)재생 중 자막을 켜면 이미 받은 큐를 그대로 넘기는 **공짜 경로**(`IndexSubtitleCues`), (2)상세화면 버튼으로 받아 오는 명시 경로(`FetchAndIndexSubtitles`). 자동 수집을 두지 않는 이유는 대량 임포트 규칙과 같다(영상당 네트워크 왕복). 자막 조회·다운로드 함수는 **주입받는다** — 직접 import 하면 application → infrastructure 의존이 생긴다. `BulkIndexSubtitles`는 라이브러리 전체를 훑되 **이미 색인된 영상을 건너뛴다** — 중단했다가 다시 시작할 때 처음부터 되풀이하면 끝나지 않는다. 진행률은 건너뛴 영상을 빼고 센다(포함하면 '3/10에서 끝났다'처럼 보인다)
+│   │   ├── subtitle_queries.py      # 자막 줄 조회(전체 또는 검색어 일치) + 색인된 언어 목록 + **색인 현황**(개수만 읽어 라이브러리가 커도 가볍다)
 │   │   ├── convert.py               # 변환 유스케이스. **원본을 덮어쓰지 않는다** — 되돌릴 수 없으므로 출력은 늘 `제목 [프리셋].확장자`라는 새 파일이고, 같은 경로가 될 상황(재변환)에는 이름을 한 번 더 바꾼다
 │   │   ├── sponsor_queries.py       # **GetSkipSegments** — 영상당 1회만 조회하고 세션 동안 캐시한다(상세화면은 같은 영상을 되풀이해 연다: 뒤로가기·재생목록 왕복·앨범 이어재생). 결과가 없다는 답도 캐시한다
 │   │   └── queries.py               # GetClips · **GetChapters**(영상 설명에서 챕터 구간 추출 — yt-dlp `chapters`가 더 정확하지만 저장돼 있지 않아 영상마다 네트워크 왕복이 필요하다. 설명은 이미 DB에 있어 즉시·오프라인이고, 상세화면이 이미 같은 타임스탬프를 seek 링크로 쓰고 있어 화면과 어긋나지 않는다)
