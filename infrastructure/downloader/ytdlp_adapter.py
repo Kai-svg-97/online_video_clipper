@@ -71,6 +71,45 @@ def _height_to_quality_label(height: int | None) -> str:
 _SUBTITLE_EMBED_CONTAINERS = frozenset(("mp4", "mkv", "webm"))
 
 
+def parse_rate_limit(text: str) -> float | None:
+    """``"2M"``·``"500K"``·``"1.5m"`` → 초당 바이트. 알아볼 수 없으면 None(무제한).
+
+    yt-dlp의 ``ratelimit``은 **숫자(bytes/sec)** 를 받는다. CLI의 ``--limit-rate 2M``
+    표기를 그대로 넘기면 조용히 무시되므로 여기서 바꾼다 — "제한을 걸었는데 안 걸린다"가
+    되는 대표적인 함정이다.
+    """
+    raw = (text or "").strip().upper().rstrip("B")
+    if not raw:
+        return None
+    units = {"K": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
+    factor = units.get(raw[-1:], 1)
+    number = raw[:-1] if factor != 1 else raw
+    try:
+        value = float(number)
+    except ValueError:
+        logger.warning("속도 제한 값을 알아볼 수 없어 무시함: %r", text)
+        return None
+    return value * factor if value > 0 else None
+
+
+def _apply_transfer_opts(opts: dict, settings: DownloadSettings) -> None:
+    """속도 제한·조각 병렬·프록시 — **어떻게 받을지**에 대한 옵션.
+
+    셋 다 비어 있으면 아무것도 넣지 않는다(기본 동작 유지).
+    """
+    rate = parse_rate_limit(settings.rate_limit)
+    if rate:
+        opts["ratelimit"] = rate
+    fragments = int(settings.concurrent_fragments or 1)
+    if fragments > 1:
+        # DASH/HLS 처럼 조각으로 쪼개진 영상에서만 효과가 있다. 단일 파일(progressive)
+        # 다운로드에는 yt-dlp가 알아서 무시하므로 조건 없이 켜도 안전하다.
+        opts["concurrent_fragment_downloads"] = fragments
+    proxy = (settings.proxy or "").strip()
+    if proxy:
+        opts["proxy"] = proxy
+
+
 def _apply_sidecar_and_embed_opts(opts: dict, settings: DownloadSettings) -> None:
     """부가 정보를 **곁에 저장**(sidecar)하고 **파일에 굽는**(embed) yt-dlp 옵션 구성.
 
@@ -252,6 +291,7 @@ class YtDlpAdapter:
             "progress_hooks": [self._progress_hook],
             "noplaylist": True,
         }
+        _apply_transfer_opts(base_opts, settings)
 
         if has_ffmpeg:
             base_opts["ffmpeg_location"] = ffmpeg

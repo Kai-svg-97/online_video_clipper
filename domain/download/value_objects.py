@@ -53,6 +53,9 @@ class DownloadSettings:
         "embed_thumbnail",
         "embed_chapters",
         "sponsorblock_remove",
+        "rate_limit",
+        "concurrent_fragments",
+        "proxy",
     )
 
     def __init__(
@@ -67,6 +70,9 @@ class DownloadSettings:
         embed_thumbnail: bool = False,
         embed_chapters: bool = False,
         sponsorblock_remove: tuple[str, ...] = (),
+        rate_limit: str = "",
+        concurrent_fragments: int = 1,
+        proxy: str = "",
     ) -> None:
         self.quality = quality
         self.format = fmt
@@ -79,6 +85,10 @@ class DownloadSettings:
         self.embed_chapters = embed_chapters
         # 비어 있으면 끔. 값이 있으면 그 카테고리 구간을 **파일에서 잘라낸다**.
         self.sponsorblock_remove = sponsorblock_remove
+        # 전송 옵션 — yt-dlp 표기를 그대로 전달한다("2M", "500K").
+        self.rate_limit = rate_limit
+        self.concurrent_fragments = concurrent_fragments
+        self.proxy = proxy
 
     @property
     def is_audio(self) -> bool:

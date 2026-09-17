@@ -11,7 +11,11 @@ from __future__ import annotations
 import pytest
 
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
-from infrastructure.downloader.ytdlp_adapter import _apply_sidecar_and_embed_opts
+from infrastructure.downloader.ytdlp_adapter import (
+    _apply_sidecar_and_embed_opts,
+    _apply_transfer_opts,
+    parse_rate_limit,
+)
 
 
 def _build(settings: DownloadSettings) -> dict:
@@ -157,3 +161,62 @@ class TestSponsorBlock:
         )
         keys = _pp_keys(opts)
         assert keys.index("ModifyChapters") < keys.index("FFmpegMetadata")
+
+
+class TestRateLimitParsing:
+    """yt-dlp의 `ratelimit`은 **숫자(bytes/sec)** 다.
+
+    CLI 표기("2M")를 그대로 넘기면 조용히 무시된다 — "제한을 걸었는데 안 걸린다"가
+    되는 대표적인 함정이라 변환을 고정한다.
+    """
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("2M", 2 * 1024 ** 2),
+            ("500K", 500 * 1024),
+            ("1.5M", int(1.5 * 1024 ** 2)),
+            ("1G", 1024 ** 3),
+            ("4096", 4096),
+            ("2MB", 2 * 1024 ** 2),
+            ("  2m  ", 2 * 1024 ** 2),
+        ],
+    )
+    def test_단위를_바이트로_바꾼다(self, text, expected):
+        assert parse_rate_limit(text) == expected
+
+    @pytest.mark.parametrize("text", ["", "   ", "빠르게", "M", "0", "-5M"])
+    def test_알아볼_수_없거나_0_이하면_무제한(self, text):
+        assert parse_rate_limit(text) is None
+
+
+class TestTransferOpts:
+    def test_기본값은_아무_옵션도_넣지_않는다(self):
+        opts: dict = {}
+        _apply_transfer_opts(opts, DownloadSettings())
+        assert opts == {}
+
+    def test_속도_제한이_숫자로_들어간다(self):
+        opts: dict = {}
+        _apply_transfer_opts(opts, DownloadSettings(rate_limit="2M"))
+        assert opts["ratelimit"] == 2 * 1024 ** 2
+
+    def test_조각_동시_수가_1이면_켜지_않는다(self):
+        opts: dict = {}
+        _apply_transfer_opts(opts, DownloadSettings(concurrent_fragments=1))
+        assert "concurrent_fragment_downloads" not in opts
+
+    def test_조각_동시_수를_전달한다(self):
+        opts: dict = {}
+        _apply_transfer_opts(opts, DownloadSettings(concurrent_fragments=4))
+        assert opts["concurrent_fragment_downloads"] == 4
+
+    def test_프록시를_전달한다(self):
+        opts: dict = {}
+        _apply_transfer_opts(opts, DownloadSettings(proxy=" socks5://127.0.0.1:1080 "))
+        assert opts["proxy"] == "socks5://127.0.0.1:1080"
+
+    def test_빈_프록시는_넣지_않는다(self):
+        opts: dict = {}
+        _apply_transfer_opts(opts, DownloadSettings(proxy="   "))
+        assert "proxy" not in opts

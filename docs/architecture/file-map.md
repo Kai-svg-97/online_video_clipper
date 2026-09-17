@@ -67,6 +67,7 @@ online_video_clipper/
 │   │   ├── aggregates.py            # DownloadQueueAggregate (root)
 │   │   ├── repositories.py          # IDownloadRepository
 │   │   ├── services.py
+│   │   ├── schedule.py               # 예약 시간대·동시 실행 수 **순수 규칙**(I/O 없음). 자정을 넘기는 구간(23~7)이 오히려 흔한 설정이라 단순 비교로 짜면 밤 시간대가 통째로 막힌다. `start == end`는 '하루 종일'로 읽는다(폭 0으로 보면 아무것도 못 받는데 원인을 찾기 어렵다)
 │   │   └── events.py                # DownloadStarted, DownloadCompleted, DownloadFailed
 │   │
 │   ├── clip/                        # [Bounded Context] Clip extraction

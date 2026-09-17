@@ -525,7 +525,151 @@ class SettingsPanel(QWidget):
         )
         layout.addWidget(embed_hint)
         layout.addSpacing(18)
+        self._build_transfer_rows(layout)
+        layout.addSpacing(18)
         self._build_sponsorblock_rows(layout)
+
+    def _build_transfer_rows(self, layout) -> None:
+        """전송 옵션(속도 제한·조각 병렬·프록시)과 예약 시간대."""
+        from domain.download.schedule import MAX_CONCURRENT, MIN_CONCURRENT  # noqa: PLC0415
+
+        try:
+            from config import settings as s
+            cur_rate = s.DOWNLOAD_RATE_LIMIT
+            cur_frag = s.CONCURRENT_FRAGMENTS
+            cur_proxy = s.DOWNLOAD_PROXY
+            cur_win_on = s.DOWNLOAD_WINDOW_ENABLED
+            cur_win_start = s.DOWNLOAD_WINDOW_START
+            cur_win_end = s.DOWNLOAD_WINDOW_END
+        except Exception:
+            logger.exception("전송 옵션 로드 실패")
+            cur_rate, cur_frag, cur_proxy = "", 1, ""
+            cur_win_on, cur_win_start, cur_win_end = False, 23, 7
+
+        tr_lbl = QLabel("전송")
+        tr_lbl.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            f"text-transform: uppercase; color: {_t().text_muted};"
+        )
+        layout.addWidget(tr_lbl)
+        layout.addSpacing(8)
+
+        rate_row = QHBoxLayout()
+        rate_row.setContentsMargins(0, 0, 0, 0)
+        rate_lbl = QLabel("속도 제한")
+        rate_lbl.setFixedWidth(100)
+        rate_lbl.setStyleSheet("font-size: 11px;")
+        self._rate_edit = QLineEdit(cur_rate)
+        self._rate_edit.setPlaceholderText("비우면 무제한 (예: 2M, 500K)")
+        self._rate_edit.editingFinished.connect(self._on_rate_limit_changed)
+        rate_row.addWidget(rate_lbl)
+        rate_row.addWidget(self._rate_edit, 1)
+        layout.addLayout(rate_row)
+        layout.addSpacing(10)
+
+        frag_row = QHBoxLayout()
+        frag_row.setContentsMargins(0, 0, 0, 0)
+        frag_lbl = QLabel("조각 동시 수")
+        frag_lbl.setFixedWidth(100)
+        frag_lbl.setStyleSheet("font-size: 11px;")
+        self._frag_spin = QSpinBox()
+        self._frag_spin.setRange(1, 16)
+        self._frag_spin.setValue(max(1, int(cur_frag or 1)))
+        self._frag_spin.setFixedWidth(64)
+        self._frag_spin.valueChanged.connect(self._on_fragments_changed)
+        frag_hint = QLabel("1이면 끕니다. 고화질 영상에서 체감이 큽니다.")
+        frag_hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
+        frag_row.addWidget(frag_lbl)
+        frag_row.addWidget(self._frag_spin)
+        frag_row.addWidget(frag_hint)
+        frag_row.addStretch()
+        layout.addLayout(frag_row)
+        layout.addSpacing(10)
+
+        proxy_row = QHBoxLayout()
+        proxy_row.setContentsMargins(0, 0, 0, 0)
+        proxy_lbl = QLabel("프록시")
+        proxy_lbl.setFixedWidth(100)
+        proxy_lbl.setStyleSheet("font-size: 11px;")
+        self._proxy_edit = QLineEdit(cur_proxy)
+        self._proxy_edit.setPlaceholderText("비우면 사용 안 함 (예: socks5://127.0.0.1:1080)")
+        self._proxy_edit.editingFinished.connect(self._on_proxy_changed)
+        proxy_row.addWidget(proxy_lbl)
+        proxy_row.addWidget(self._proxy_edit, 1)
+        layout.addLayout(proxy_row)
+        layout.addSpacing(14)
+
+        # ── 예약 시간대 ──
+        self._window_check = QCheckBox("정해진 시간대에만 받기")
+        self._window_check.setChecked(cur_win_on)
+        self._window_check.checkStateChanged.connect(self._on_window_toggled)
+        layout.addWidget(self._window_check)
+
+        win_row = QHBoxLayout()
+        win_row.setContentsMargins(22, 4, 0, 0)
+        self._win_start_spin = QSpinBox()
+        self._win_start_spin.setRange(0, 23)
+        self._win_start_spin.setValue(int(cur_win_start) % 24)
+        self._win_start_spin.setSuffix("시")
+        self._win_start_spin.setFixedWidth(64)
+        self._win_start_spin.valueChanged.connect(self._on_window_hours_changed)
+        self._win_end_spin = QSpinBox()
+        self._win_end_spin.setRange(0, 23)
+        self._win_end_spin.setValue(int(cur_win_end) % 24)
+        self._win_end_spin.setSuffix("시")
+        self._win_end_spin.setFixedWidth(64)
+        self._win_end_spin.valueChanged.connect(self._on_window_hours_changed)
+        win_row.addWidget(self._win_start_spin)
+        win_row.addWidget(QLabel("~"))
+        win_row.addWidget(self._win_end_spin)
+        win_row.addStretch()
+        layout.addLayout(win_row)
+
+        self._window_hint = QLabel("")
+        self._window_hint.setWordWrap(True)
+        self._window_hint.setStyleSheet(
+            f"font-size: 10px; color: {_t().text_secondary}; margin-left: 22px;"
+        )
+        layout.addWidget(self._window_hint)
+        self._refresh_window_hint()
+
+        tr_hint = QLabel(
+            f"동시에 받는 영상 수는 위 '일반'의 동시 다운로드 수({MIN_CONCURRENT}~"
+            f"{MAX_CONCURRENT})를 따릅니다. 자리가 찰 때까지 나머지는 대기합니다."
+        )
+        tr_hint.setWordWrap(True)
+        tr_hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
+        layout.addWidget(tr_hint)
+
+    def _refresh_window_hint(self) -> None:
+        from domain.download.schedule import DownloadWindow  # noqa: PLC0415
+
+        window = DownloadWindow(
+            enabled=self._window_check.isChecked(),
+            start_hour=self._win_start_spin.value(),
+            end_hour=self._win_end_spin.value(),
+        )
+        self._window_hint.setText(window.describe())
+        for spin in (self._win_start_spin, self._win_end_spin):
+            spin.setEnabled(self._window_check.isChecked())
+
+    def _on_rate_limit_changed(self) -> None:
+        self._save_setting("download_rate_limit", self._rate_edit.text().strip())
+
+    def _on_fragments_changed(self, value: int) -> None:
+        self._save_setting("concurrent_fragments", int(value))
+
+    def _on_proxy_changed(self) -> None:
+        self._save_setting("download_proxy", self._proxy_edit.text().strip())
+
+    def _on_window_toggled(self, _state) -> None:
+        self._save_setting("download_window_enabled", self._window_check.isChecked())
+        self._refresh_window_hint()
+
+    def _on_window_hours_changed(self, _value) -> None:
+        self._save_setting("download_window_start", self._win_start_spin.value())
+        self._save_setting("download_window_end", self._win_end_spin.value())
+        self._refresh_window_hint()
 
     def _build_sponsorblock_rows(self, layout) -> None:
         """SponsorBlock — 재생 중 건너뛰기 / 다운로드 시 잘라내기."""

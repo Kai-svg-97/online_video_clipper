@@ -141,6 +141,18 @@ EMBED_THUMBNAIL: bool = _load_bool("embed_thumbnail", True)
 EMBED_CHAPTERS: bool = _load_bool("embed_chapters", True)
 # 음원(mp3·m4a 등)에 라이브러리의 노래 정보(가수·앨범·발매년도·가사·표지)를 태그로 기록한다.
 WRITE_SONG_TAGS: bool = _load_bool("write_song_tags", True)
+# ── 전송 옵션(속도·연결·프록시) ─────────────────────────────────────────
+# `DOWNLOAD_RATE_LIMIT`는 yt-dlp 표기를 그대로 받는다("2M", "500K"). 빈 값 = 무제한.
+DOWNLOAD_RATE_LIMIT: str = _resolve_str("download_rate_limit", "")
+# 조각 병렬 내려받기 — DASH/HLS 영상에서 체감이 크다. 1이면 끄기와 같다.
+CONCURRENT_FRAGMENTS: int = _load_int("concurrent_fragments", 1)
+# 프록시 주소("http://host:port", "socks5://host:port"). 빈 값 = 사용 안 함.
+DOWNLOAD_PROXY: str = _resolve_str("download_proxy", "")
+# ── 예약 다운로드(시간대) ───────────────────────────────────────────────
+# 끄면 언제든 받는다. 자정을 넘기는 구간(23~7)도 지원한다.
+DOWNLOAD_WINDOW_ENABLED: bool = _load_bool("download_window_enabled", False)
+DOWNLOAD_WINDOW_START: int = _load_int("download_window_start", 23)
+DOWNLOAD_WINDOW_END: int = _load_int("download_window_end", 7)
 # ── SponsorBlock ────────────────────────────────────────────────────────
 # 재생 중 건너뛰기는 되돌릴 수 있어 기본 켜고, 다운로드 시 제거는 파일을 실제로
 # 잘라내 되돌릴 수 없으므로 기본 끈다.
@@ -210,6 +222,12 @@ def save_setting(key: str, value) -> None:
         "embed_thumbnail": "EMBED_THUMBNAIL",
         "embed_chapters": "EMBED_CHAPTERS",
         "write_song_tags": "WRITE_SONG_TAGS",
+        "download_rate_limit": "DOWNLOAD_RATE_LIMIT",
+        "concurrent_fragments": "CONCURRENT_FRAGMENTS",
+        "download_proxy": "DOWNLOAD_PROXY",
+        "download_window_enabled": "DOWNLOAD_WINDOW_ENABLED",
+        "download_window_start": "DOWNLOAD_WINDOW_START",
+        "download_window_end": "DOWNLOAD_WINDOW_END",
         "sponsorblock_skip": "SPONSORBLOCK_SKIP",
         "sponsorblock_remove": "SPONSORBLOCK_REMOVE",
         "sponsorblock_categories": "SPONSORBLOCK_CATEGORIES",

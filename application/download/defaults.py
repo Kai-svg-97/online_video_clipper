@@ -51,6 +51,9 @@ def apply_user_defaults(settings: DownloadSettings) -> DownloadSettings:
         embed_thumbnail=bool(cfg.EMBED_THUMBNAIL),
         embed_chapters=bool(cfg.EMBED_CHAPTERS),
         sponsorblock_remove=_removal_categories(cfg),
+        rate_limit=(cfg.DOWNLOAD_RATE_LIMIT or "").strip(),
+        concurrent_fragments=max(1, int(cfg.CONCURRENT_FRAGMENTS or 1)),
+        proxy=(cfg.DOWNLOAD_PROXY or "").strip(),
     )
 
 
