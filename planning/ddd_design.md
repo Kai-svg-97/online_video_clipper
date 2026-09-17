@@ -259,6 +259,15 @@ ffmpeg 기반 구간 추출. **'영상 위의 시간 구간'을 다루는 모든
 | `RetryDownloadCommand` | 실패한 Job 재시도 |
 | `GetDownloadQueueQuery` | 현재 큐 상태 조회 |
 
+### Library — 자막 색인
+
+| Command/Query | 설명 |
+|---------------|------|
+| `IndexSubtitleCuesCommand` | 재생용으로 이미 받은 자막 큐를 색인(네트워크 없음) |
+| `FetchAndIndexSubtitlesCommand` | 자막을 받아 색인(영상당 네트워크 왕복) |
+| `GetSubtitleLinesQuery` | 자막 줄 조회(전체 또는 검색어 일치) |
+| `GetSubtitleIndexesQuery` | 색인된 언어 목록 |
+
 ### Clip
 | Command/Query | 설명 |
 |---------------|------|

@@ -404,6 +404,7 @@ class _LibraryPage(QWidget):
         song_vm=None,
         recommend_vm=None,
         album_vm=None,
+        subtitle_vm=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -421,6 +422,7 @@ class _LibraryPage(QWidget):
             song_vm=song_vm,
             recommend_vm=recommend_vm,
             album_vm=album_vm,
+            subtitle_vm=subtitle_vm,
         )
         layout.addWidget(self._library_panel, 1)
 
@@ -472,6 +474,7 @@ class MainWindow(QMainWindow):
         self._song_vm = vms.song
         self._sync_vm = vms.sync
         self._transfer_vm = vms.transfer
+        self._subtitle_vm = vms.subtitle
         # 라이브러리 정리 콜백(중복찾기·사라진파일찾기·삭제) — composition root가 준다.
         self._cleanup_fns = cleanup_fns
         self._yt_oauth = yt_oauth
@@ -523,6 +526,7 @@ class MainWindow(QMainWindow):
             song_vm=self._song_vm,
             recommend_vm=self._recommend_vm,
             album_vm=self._album_vm,
+            subtitle_vm=self._subtitle_vm,
         )
         self._stack.addWidget(self._library_page)                  # 0
 

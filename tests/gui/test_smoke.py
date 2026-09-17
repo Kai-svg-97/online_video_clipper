@@ -52,7 +52,7 @@ class TestDownloadPanel:
         assert tabs is not None
 
         labels = [tabs.tabText(i) for i in range(tabs.count())]
-        assert labels == ["설명", "요약", "다운로드 / 클립", "노래"]
+        assert labels == ["설명", "요약", "다운로드 / 클립", "노래", "자막"]
 
         # 인덱스 상수와 실제 탭 순서가 어긋나면 탭 전환 코드가 엉뚱한 탭을 연다.
         # (개수만 세던 옛 테스트는 노래 탭이 추가된 뒤 그냥 깨졌고 이 위험은 못 잡았다.)
@@ -60,6 +60,7 @@ class TestDownloadPanel:
         assert labels[VideoDetailWidget._TAB_SUMMARY] == "요약"
         assert labels[VideoDetailWidget._TAB_FILES] == "다운로드 / 클립"
         assert labels[VideoDetailWidget._TAB_SONG] == "노래"
+        assert labels[VideoDetailWidget._TAB_SUBTITLE] == "자막"
 
 
 class TestFeedPanel:

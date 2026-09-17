@@ -55,7 +55,8 @@ online_video_clipper/
 │   │   ├── entities.py              # Video, Category, Tag
 │   │   ├── value_objects.py         # VideoUrl, Duration, Timestamp, ChannelInfo
 │   │   ├── aggregates.py            # VideoAggregate (root)
-│   │   ├── repositories.py          # IVideoRepository (interface)
+│   │   ├── repositories.py          # IVideoRepository (interface). `MATCH_FIELD_KEYS`가 검색 일치 배지의 **표시 순서**를 고정한다(자막 포함)
+│   │   ├── subtitle_repository.py   # `ISubtitleRepository` + `SubtitleLine`·`SubtitleIndexInfo`. **library 컨텍스트에 두는 이유**: 자막은 Video에 딸려 수명을 함께한다(영상을 지우면 사라진다). 저장은 영상·언어 단위 **통째 교체**다 — 자동 자막이 사람 자막으로 바뀌는 일이 흔해 줄 단위 병합은 중복만 만든다
 │   │   ├── services.py              # Domain services (e.g., duplicate detection)
 │   │   ├── recommendation.py        # derive_seed_queries() — 현재 목록(제목·태그·채널)에서 YouTube 추천 검색어를 뽑는 순수 함수(제목 키워드는 문서빈도 기준). **`search_text`가 있으면 그 낱말만 검색어로 쓴다**(검색창 입력이 짐작을 대체한다). I/O 없음
 │   │   └── events.py                # VideoAdded, VideoUpdated, VideoDeleted
@@ -109,6 +110,8 @@ online_video_clipper/
 │   ├── clip/
 │   │   ├── commands.py              # ExtractClip, **ExtractClips**(챕터 여러 개 순차 추출 — ffmpeg 동시 실행 금지. 한 구간이 실패해도 멈추지 않고 실패 목록을 모아 돌려준다), DeleteClip
 │   │   ├── dtos.py                  # ClipDTO · **ChapterDTO**(제목·시작·끝)
+│   │   ├── subtitle_commands.py     # 자막 색인 수집 — 수집 경로가 **둘**이다. (1)재생 중 자막을 켜면 이미 받은 큐를 그대로 넘기는 **공짜 경로**(`IndexSubtitleCues`), (2)상세화면 버튼으로 받아 오는 명시 경로(`FetchAndIndexSubtitles`). 자동 수집을 두지 않는 이유는 대량 임포트 규칙과 같다(영상당 네트워크 왕복). 자막 조회·다운로드 함수는 **주입받는다** — 직접 import 하면 application → infrastructure 의존이 생긴다
+│   │   ├── subtitle_queries.py      # 자막 줄 조회(전체 또는 검색어 일치) + 색인된 언어 목록
 │   │   ├── sponsor_queries.py       # **GetSkipSegments** — 영상당 1회만 조회하고 세션 동안 캐시한다(상세화면은 같은 영상을 되풀이해 연다: 뒤로가기·재생목록 왕복·앨범 이어재생). 결과가 없다는 답도 캐시한다
 │   │   └── queries.py               # GetClips · **GetChapters**(영상 설명에서 챕터 구간 추출 — yt-dlp `chapters`가 더 정확하지만 저장돼 있지 않아 영상마다 네트워크 왕복이 필요하다. 설명은 이미 DB에 있어 즉시·오프라인이고, 상세화면이 이미 같은 타임스탬프를 seek 링크로 쓰고 있어 화면과 어긋나지 않는다)
 │   ├── monitoring/
@@ -142,6 +145,7 @@ online_video_clipper/
 │   │   ├── sqlite_clip_repository.py
 │   │   ├── sqlite_channel_repository.py
 │   │   ├── sqlite_playlist_repository.py  # 재생목록 + 폴더 저장소
+│   │   ├── sqlite_subtitle_repository.py  # 자막 색인 저장·조회. 검색은 **LIKE 부분 일치**다 — 앱의 다른 검색과 규칙을 맞춘다(FTS5 기본 토크나이저는 한국어 부분 일치를 못 해, 섞으면 "제목은 찾는데 자막은 못 찾는" 결과가 된다). 말뭉치가 커져 느려지면 trigram 토크나이저 FTS로 옮긴다
 │   │   ├── sqlite_song_repository.py      # song_info(가사 JSON) + lyrics_sources 저장소
 │   │   └── sqlite_album_repository.py     # album_cache·album_track_links·album_lookup_state (앨범 파생 캐시 — 동기화 대상 아님)
 │   ├── downloader/
@@ -233,7 +237,8 @@ online_video_clipper/
 │   │   ├── detail/                  # ⬆ video_detail_panel의 부품·동작 (분할 결과)
 │   │   │   ├── widgets.py           # `_TagChip`·`_FlowLayout`·`_AutoHeight*`·`_EditableField`·`_LockedNotice` 등 소형 위젯
 │   │   │   ├── related.py           # `RelatedItem`·`_RelatedRow`·`_RelatedList`(연관 영상 + 그 아래 추천 구역)
-│   │   │   ├── song_tab.py          # `_SongTab`·`_LyricRow`·`_LyricsCandidateList`(가사 후보 표)
+│   │   │   ├── subtitle_tab.py          # 상세화면 '자막' 탭 — 이 탭의 쓸모는 목록이 아니라 **점프**다(검색칸이 맨 위, 줄을 누르면 그 시점부터 재생). 빈 상태가 세 가지라 각각 다르게 알린다: 아직 안 받음(가져오기 버튼) / 자막이 없는 영상 / 검색어가 안 맞음(가져오기 버튼 숨김 — 엉뚱한 해결책을 권하지 않는다) / 스트리밍(담으면 쓸 수 있다고 안내)
+│   │   ├── song_tab.py          # `_SongTab`·`_LyricRow`·`_LyricsCandidateList`(가사 후보 표)
 │   │   │   ├── text_format.py       # 설명·요약 렌더링 정규식(마크다운·타임스탬프·URL)과 요약 실패 안내 문구
 │   │   │   ├── text_zoom.py         # 요약·가사 글자 배율 — clamp·pt 계산·설정 저장(`detail_text_scale`). 두 영역이 한 배율을 공유한다
 │   │   │   ├── workers.py           # `_GeminiSummaryWorker`
@@ -284,6 +289,7 @@ online_video_clipper/
 │       ├── playlist_vm.py           # PlaylistViewModel — 재생목록 관리
 │       ├── recommend_vm.py          # RecommendViewModel — 추천 스트립 상태. `_RecommendWorker`(QThread) + 세대 카운터로 이전 조회 결과 폐기, 씨앗 캐시(`_last_key`)로 같은 목록 재조회 방지(`force=True`면 무시, 실패 시 캐시 비움), shutdown(). **FeedViewModel을 재사용하지 않는다** — FeedViewModel의 `_gen`은 키별 캐시가 있어도 전역 하나라, 추천 조회가 세대를 올리면 동시에 진행 중인 구독 피드/채널 조회 결과가 버려진다(추천은 목록이 바뀔 때마다 돌아 그 충돌이 상시 발생)
 │       ├── album_vm.py              # AlbumViewModel — 앨범 목록/상세/빠진 곡 채우기를 QThread로. 세대 카운터로 늦게 온 결과 폐기, `cancel_fill()`로 앨범 이동 시 진행 중 검색 중단, shutdown(). `remove_track_link(disc_no, track_no)`는 **QThread 없이 즉시** 처리한다(DB 삭제 한 줄이라 네트워크가 없다) — 성공하면 그 슬롯을 '없음'으로 되돌린 DTO를 `track_removed`로 실어 화면 한 자리만 갱신한다(전체 재조회 없음)
+│       ├── subtitle_vm.py           # SubtitleViewModel — 자막 색인. 조회는 SQLite 읽기라 동기, 수집은 영상당 네트워크 왕복이라 배경 스레드(`_IndexWorker`). `index_cues`는 **재생용으로 이미 받은 큐**를 그대로 저장하는 공짜 경로다(플레이어의 `subtitle_cues_ready` 신호). 같은 영상을 두 번 색인하지 않도록 진행 중 집합(`_indexing`)을 들고 있다
 │       ├── song_vm.py               # SongViewModel — 노래 탭 상태(load/refresh를 `_SongFetchWorker`(QThread) 백그라운드 조회, 필드·가사 편집, 노래 토글, 가사 출처 관리). **가사 후보 목록**: `search_lyrics_candidates`(`_CandidateSearchWorker` — `candidates_started`/`candidate_ready`/`candidates_finished` 방출, 새 검색 시 이전 워커 `cancel()`+신호 disconnect)·`apply_lyrics_candidate`(`_ApplyCandidateWorker` — 번역이 네트워크라 백그라운드). `translate_lyrics`(현재 가사 재번역, `_TranslateWorker`). **같은 영상 중복 조회 방지**(`_in_flight`), shutdown()
 │       ├── sync_vm.py                # SyncViewModel — 클라우드 동기화 UI 상태(설정 패널). SyncService를 `_SyncWorker`(push/pull+미디어)·`_ConnectWorker`(OAuth) QThread로 감쌈. 연결 시 QTimer로 주기 자동 동기화(start_auto_sync=기동 후 1회+주기). 시그널: status_changed·busy_changed·sync_finished·connection_changed·error_occurred. shutdown()
 │       └── transfer_vm.py            # LibraryTransferViewModel — 가져오기/내보내기 UI 상태(설정 패널). 네 핸들러(export/preview/conflicts/import)가 전부 `handle(cmd)->DTO` 한 메서드짜리라 워커 클래스 하나(`_CommandWorker`)를 공유. 시그널: export_finished·preview_ready·conflicts_ready·import_finished·busy_changed·error_occurred. shutdown()

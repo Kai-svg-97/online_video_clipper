@@ -85,6 +85,7 @@ class PlayerControlMixin:
         self._stream_dto = feed          # 📁 카테고리 지정 시 등록에 쓴다
         self._current_url = feed.url
         self._request_skip_segments(feed.url)
+        self._subtitle_tab.show_streaming_notice()
         self._current_key = getattr(feed, "yt_video_id", "") or feed.url
         self._set_crumb_path(None)
 
@@ -260,3 +261,65 @@ class PlayerControlMixin:
             return self._player.is_playing()
         except RuntimeError:
             return False
+
+    # ── 자막 색인 탭 ───────────────────────────────────────────────
+
+    def _reload_subtitle_tab(self) -> None:
+        """자막 탭을 지금 영상 기준으로 다시 그린다.
+
+        색인이 없으면 목록 대신 '가져오기' 안내판이 뜬다 — 자동으로 받아 오지 않는
+        이유는 영상마다 네트워크 왕복이 있어서다(대량 등록 경로를 막는다).
+        """
+        if self._subtitle_vm is None or self._detail is None:
+            return
+        self._subtitle_tab.clear_search()
+        if self._subtitle_vm.has_index(self._detail.id):
+            self._subtitle_vm.load_lines(self._detail.id)
+        else:
+            self._subtitle_tab.set_lines([], indexed=False)
+
+    def _on_subtitle_search(self, text: str) -> None:
+        if self._subtitle_vm is None or self._detail is None:
+            return
+        self._subtitle_vm.load_lines(self._detail.id, text.strip())
+
+    def _on_subtitle_lines(self, video_id, lines) -> None:
+        """조회 결과 도착 — **지금 보고 있는 영상일 때만** 반영한다."""
+        if self._detail is None or video_id != self._detail.id:
+            return
+        self._subtitle_tab.set_lines(lines, indexed=True)
+
+    def _on_subtitle_index_requested(self) -> None:
+        if self._subtitle_vm is None or self._detail is None:
+            return
+        self._subtitle_tab.set_busy(True)
+        self._subtitle_vm.fetch_and_index(self._detail.id, self._current_url)
+
+    def _on_subtitle_indexed(self, video_id, count: int) -> None:
+        if self._detail is None or video_id != self._detail.id:
+            return
+        self._subtitle_tab.set_busy(False)
+        if count:
+            self._subtitle_vm.load_lines(self._detail.id, self._subtitle_tab.search_text)
+            show_toast(self, f"자막 {count}줄을 색인했습니다")
+        else:
+            self._subtitle_tab.show_no_subtitle()
+
+    def _on_subtitle_seek(self, ms: int) -> None:
+        """자막 줄 클릭 → 그 시점부터 재생. 멈춰 있었다면 재생까지 시작한다."""
+        try:
+            self._player.seek_to_ms(int(ms))
+            if not self._player.is_playing():
+                self._player.toggle_play()
+        except RuntimeError:
+            logger.debug("플레이어가 이미 파괴됨 — 자막 점프 생략")
+
+    def _on_subtitle_cues_ready(self, lang: str, label: str, cues) -> None:
+        """재생용으로 받아 온 자막 큐를 검색 색인에도 남긴다(**공짜 경로**).
+
+        네트워크 왕복이 없으므로 조건 없이 저장한다. 스트리밍 영상은 저장할 대상
+        (라이브러리 영상)이 없어 건너뛴다.
+        """
+        if self._subtitle_vm is None or self._detail is None or self._streaming:
+            return
+        self._subtitle_vm.index_cues(self._detail.id, lang, label, cues)

@@ -142,6 +142,7 @@ MATCH_FIELD_LABELS: dict[str, str] = {
     "summary": "요약",
     "song": "노래",
     "lyrics": "가사",
+    "subtitle": "자막",
 }
 
 

@@ -332,3 +332,37 @@ CREATE TABLE IF NOT EXISTS sync_applied_ops (
     op_id      TEXT PRIMARY KEY,
     applied_at TEXT NOT NULL
 );
+
+-- ---------------------------------------------------------------------------
+-- 자막 색인 — 영상 안에서 한 대사가 언제 나왔는지 찾기 위한 저장소.
+--
+-- 재생용 자막은 매번 네트워크로 받아 쓰지만(infrastructure/subtitle/), 검색은
+-- 오프라인·즉시여야 하므로 받은 김에 여기 남긴다. 한 영상에 언어가 여럿일 수 있어
+-- lang 이 키의 일부다.
+--
+-- 검색은 FTS 가 아니라 LIKE 로 한다 — 앱의 다른 검색이 전부 **부분 일치**이고
+-- ("가정부"로 "가정부라고"를 찾는다), FTS5 기본 토크나이저는 한국어 부분 일치를
+-- 못 한다. 두 방식을 섞으면 "제목은 찾는데 자막은 못 찾는" 결과가 된다.
+-- 말뭉치가 커져 느려지면 trigram 토크나이저 FTS로 옮긴다.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS subtitle_lines (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id  TEXT    NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    lang      TEXT    NOT NULL DEFAULT '',
+    start_ms  INTEGER NOT NULL,
+    end_ms    INTEGER NOT NULL,
+    text      TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_subtitle_lines_video
+    ON subtitle_lines(video_id, lang, start_ms);
+
+-- 어떤 영상의 어떤 언어를 언제 색인했는지 — 다시 받을지 판단하고 화면에 표시한다.
+CREATE TABLE IF NOT EXISTS subtitle_index (
+    video_id   TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    lang       TEXT NOT NULL DEFAULT '',
+    label      TEXT NOT NULL DEFAULT '',
+    line_count INTEGER NOT NULL DEFAULT 0,
+    indexed_at TEXT   NOT NULL,
+    PRIMARY KEY (video_id, lang)
+);

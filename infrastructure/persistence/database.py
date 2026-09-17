@@ -31,6 +31,7 @@ MIGRATION_IDS: tuple[str, ...] = (
     "migrate_album_disc_no",
     "migrate_playback_position",
     "migrate_album_links_reverify",
+    "migrate_subtitle_index",
 )
 
 
@@ -215,6 +216,43 @@ class Database:
                 " video_id TEXT PRIMARY KEY,"
                 " found INTEGER NOT NULL DEFAULT 0,"
                 " tried_at TEXT NOT NULL)"
+            )
+
+    def _migrate_subtitle_index(self) -> None:
+        """자막 색인 테이블을 만든다 (idempotent).
+
+        기존 사용자는 색인이 비어 있는 상태로 시작한다 — 자막은 영상마다 네트워크로
+        받아야 해서 마이그레이션에서 채울 수 없다(수백 건이면 몇십 분이다).
+        재생 중 자막을 켜거나 상세화면에서 가져오면 그때 채워진다.
+        """
+        with self.connection() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subtitle_lines (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    video_id  TEXT    NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                    lang      TEXT    NOT NULL DEFAULT '',
+                    start_ms  INTEGER NOT NULL,
+                    end_ms    INTEGER NOT NULL,
+                    text      TEXT    NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_subtitle_lines_video"
+                " ON subtitle_lines(video_id, lang, start_ms)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subtitle_index (
+                    video_id   TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                    lang       TEXT NOT NULL DEFAULT '',
+                    label      TEXT NOT NULL DEFAULT '',
+                    line_count INTEGER NOT NULL DEFAULT 0,
+                    indexed_at TEXT   NOT NULL,
+                    PRIMARY KEY (video_id, lang)
+                )
+                """
             )
 
     def _migrate_playback_position(self) -> None:

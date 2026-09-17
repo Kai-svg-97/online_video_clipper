@@ -100,6 +100,7 @@ from gui.panels.detail.related import (  # noqa: F401
     _fmt_pub,
     _payload_key,
 )
+from gui.panels.detail.subtitle_tab import SubtitleTab
 from gui.panels.detail.song_tab import (  # noqa: F401
     _LyricRow,
     _LyricsCandidateList,
@@ -195,6 +196,7 @@ class VideoDetailWidget(
     _TAB_SUMMARY = 1
     _TAB_FILES = 2      # 다운로드 + 클립 병합
     _TAB_SONG = 3       # 노래(가수·앨범·제목·가사)
+    _TAB_SUBTITLE = 4   # 자막(대사 찾기 → 그 시점으로 점프)
 
     # 요약 탭 스택 인덱스
     _SUMMARY_VIEW = 0
@@ -204,12 +206,23 @@ class VideoDetailWidget(
     # 요약 렌더링 줄 간격(px) — Gemini 요약은 개행이 촘촘해 단락 여백을 벌려 읽기 편하게 한다.
     _SUMMARY_LINE_GAP = 1
 
-    def __init__(self, clip_vm=None, download_vm=None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        clip_vm=None,
+        download_vm=None,
+        subtitle_vm=None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._detail: VideoDetailDTO | None = None
         self._tag_add_input: QLineEdit | None = None
         self._clip_vm = clip_vm
         self._download_vm = download_vm
+        self._subtitle_vm = subtitle_vm
+        if subtitle_vm is not None:
+            # 바운드 메서드로 연결한다 — 뷰모델이 이 위젯보다 오래 산다.
+            subtitle_vm.lines_loaded.connect(self._on_subtitle_lines)
+            subtitle_vm.index_finished.connect(self._on_subtitle_indexed)
         if clip_vm is not None:
             # 바운드 메서드로 연결한다 — 뷰모델은 앱 수명 내내 살아 있어서
             # 람다로 걸면 이 위젯이 사라진 뒤에도 호출돼 죽은 위젯을 건드린다.
@@ -349,6 +362,7 @@ class VideoDetailWidget(
         self._player.current_line_changed.connect(self._on_current_line_changed)
         self._player.subtitle_offset_changed.connect(self._on_subtitle_offset_changed)
         self._player.segment_skipped.connect(self._on_segment_skipped)
+        self._player.subtitle_cues_ready.connect(self._on_subtitle_cues_ready)
         left_layout.addWidget(self._player)
 
         # ── 제목 행 (플레이어 바로 아래): 제목 + ⟳상세갱신 + 🌐브라우저 ──
@@ -525,6 +539,13 @@ class VideoDetailWidget(
         self._song_tab.category_requested.connect(self._on_category_clicked)
         self._tabs.addTab(_wrap(self._song_tab), "노래")
 
+        # 탭4: 자막 — 대사를 찾아 그 시점으로 점프한다.
+        self._subtitle_tab = SubtitleTab()
+        self._subtitle_tab.seek_requested.connect(self._on_subtitle_seek)
+        self._subtitle_tab.index_requested.connect(self._on_subtitle_index_requested)
+        self._subtitle_tab.search_changed.connect(self._on_subtitle_search)
+        self._tabs.addTab(self._subtitle_tab, "자막")
+
         self._tabs.currentChanged.connect(self._on_tab_changed)
         left_layout.addWidget(self._tabs, stretch=1)
 
@@ -616,6 +637,7 @@ class VideoDetailWidget(
         self._stream_dto = None
         self._current_url = detail.url
         self._request_skip_segments(detail.url)
+        self._reload_subtitle_tab()
         self._current_key = str(detail.id)
         self._set_crumb_path(category_path)
 

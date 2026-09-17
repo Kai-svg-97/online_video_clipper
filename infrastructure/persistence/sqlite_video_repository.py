@@ -634,6 +634,12 @@ class SqliteVideoRepository(IVideoRepository):
                 "OR song_title LIKE ? ESCAPE '\\' OR release_year LIKE ? ESCAPE '\\')",
                 4,
             ),
+            (
+                "subtitle",
+                f"SELECT DISTINCT video_id FROM subtitle_lines WHERE video_id IN ({ph}) "
+                "AND text LIKE ? ESCAPE '\\'",
+                1,
+            ),
         ]
 
         with self._db.connection() as conn:
@@ -694,6 +700,9 @@ class SqliteVideoRepository(IVideoRepository):
                 "SELECT video_id FROM song_info WHERE artist LIKE ? ESCAPE '\\' "
                 "OR album LIKE ? ESCAPE '\\' OR song_title LIKE ? ESCAPE '\\' "
                 "OR release_year LIKE ? ESCAPE '\\'",
+                # 자막은 **색인된 영상만** 대상이다 — 색인이 없으면 이 절이 아무것도
+                # 찾지 못한다(자막은 영상마다 네트워크로 받아야 해서 자동 수집이 없다).
+                "SELECT DISTINCT video_id FROM subtitle_lines WHERE text LIKE ? ESCAPE '\\'",
             ]
             union = " UNION ".join(clauses)
             # ? 개수를 세어 바인딩한다 — 절을 추가·삭제해도 어긋나지 않는다.

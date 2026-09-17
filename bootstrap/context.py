@@ -62,6 +62,9 @@ class Repositories:
     folder: Any
     song: Any
     album: Any
+    # 자막 색인은 **동기화 캡처 대상이 아니다** — 언제든 다시 받을 수 있는
+    # 파생 데이터라 기기 간에 옮길 이유가 없다(album과 같은 취급).
+    subtitle: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +123,11 @@ class LibraryHandlers:
     get_category_order: Any
     set_category_order: Any
     stats: Any
+    # 자막 색인 — 받아서 저장(fetch/index)하고 조회(lines/indexes)한다.
+    index_subtitle_cues: Any
+    fetch_and_index_subtitles: Any
+    get_subtitle_lines: Any
+    get_subtitle_indexes: Any
     # 라이브러리 정리 — (중복찾기, 끊긴파일찾기, 일괄삭제) 콜백 3종.
     # 찾아 주기만 하고 삭제는 사용자가 고른 것만 수행한다(자동 삭제 없음).
     cleanup_fns: tuple[Callable[..., Any], ...]

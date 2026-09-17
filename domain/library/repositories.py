@@ -14,7 +14,7 @@ _ALLOWED_SORT_COLUMNS = frozenset(
 
 # 검색 일치 속성 식별자 — 표시 순서를 고정한다. 한글 라벨 매핑은 GUI가 갖는다.
 MATCH_FIELD_KEYS: tuple[str, ...] = (
-    "title", "tags", "description", "notes", "summary", "song", "lyrics",
+    "title", "tags", "description", "notes", "summary", "song", "lyrics", "subtitle",
 )
 
 # 음악 카테고리로 취급할 최상위(루트) 카테고리 이름 — trim + 소문자로 비교한다.

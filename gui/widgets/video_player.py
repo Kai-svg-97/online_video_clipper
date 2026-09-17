@@ -159,6 +159,8 @@ class InlinePlayer(QWidget):
     subtitle_offset_changed = pyqtSignal(int)   # 사용자가 싱크를 바꿈 → 저장 요청
     current_line_changed    = pyqtSignal(int)   # 원본 가사 줄 인덱스(없으면 -1)
     segment_skipped         = pyqtSignal(str)   # SponsorBlock 구간을 건너뜀(표시 이름)
+    # 자막 큐가 손에 들어왔다 — 색인에 공짜로 실어 보낸다(재차 받지 않는다).
+    subtitle_cues_ready     = pyqtSignal(str, str, object)  # lang, label, cues
 
     _HIDE_MS = 2_000   # 2초 비활성 후 숨김
     _SHOW_MS = 1_000   # 마우스 감지 1초 후 표시
@@ -777,6 +779,14 @@ class InlinePlayer(QWidget):
         self._vsub_tracks[slot] = SubtitleTrack.from_tuples(cues)
         self._vsub_texts = ("", "")   # 강제 갱신
         self._apply_video_subtitle_position(self._player.position())
+        # 이미 받은 큐다 — 검색 색인에 그대로 넘긴다. 이 경로가 없으면 자막 색인은
+        # 사용자가 상세화면에서 따로 눌러야만 쌓인다.
+        base = next((t for t in self._vsub_available if t.key == key), None)
+        self.subtitle_cues_ready.emit(
+            self._vsub_langs[slot] or getattr(base, "lang", "") or "",
+            getattr(base, "label", "") or "",
+            cues,
+        )
 
     def _save_subtitle_pref(self, slot: int, lang: str) -> None:
         self._vsub_pref_lang[slot] = lang

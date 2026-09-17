@@ -33,7 +33,7 @@ class ViewModels:
     `frozen`인 이유는 조립이 시작할 때 한 번 일어나고 그 뒤로는 읽기만 하기
     때문이다 — 실행 중에 뷰모델을 바꿔 끼우는 경로는 없다.
 
-    타입을 `Any`로 둔 것은 이 모듈이 뷰모델 11개를 임포트하면 `gui.view_models`
+    타입을 `Any`로 둔 것은 이 모듈이 뷰모델 12개를 임포트하면 `gui.view_models`
     안에서 순환 임포트가 생기기 때문이다(각 뷰모델이 `base`를 임포트하고 `base`가
     있는 같은 패키지다). 필드 **이름**이 계약이고, 실제 형은 조립부
     (`bootstrap/view_models.py`)가 임포트해 채운다.
@@ -50,3 +50,4 @@ class ViewModels:
     song: Any
     sync: Any
     transfer: Any
+    subtitle: Any

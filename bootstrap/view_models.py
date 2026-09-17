@@ -11,6 +11,7 @@ from gui.view_models.monitoring_vm import MonitoringViewModel
 from gui.view_models.playlist_vm import PlaylistViewModel
 from gui.view_models.recommend_vm import RecommendViewModel
 from gui.view_models.song_vm import SongViewModel
+from gui.view_models.subtitle_vm import SubtitleViewModel
 from gui.view_models.sync_vm import SyncViewModel
 from gui.view_models.transfer_vm import LibraryTransferViewModel
 
@@ -135,5 +136,11 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             preview_handler=handlers.transfer.preview,
             conflicts_handler=handlers.transfer.detect_conflicts,
             import_handler=handlers.transfer.do_import,
+        ),
+        subtitle=SubtitleViewModel(
+            index_cues_handler=handlers.library.index_subtitle_cues,
+            fetch_handler=handlers.library.fetch_and_index_subtitles,
+            get_lines_handler=handlers.library.get_subtitle_lines,
+            get_indexes_handler=handlers.library.get_subtitle_indexes,
         ),
     )

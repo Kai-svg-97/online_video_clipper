@@ -221,6 +221,7 @@ class LibraryPanel(
         song_vm=None,
         recommend_vm=None,
         album_vm=None,
+        subtitle_vm=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -233,6 +234,7 @@ class LibraryPanel(
         self._song_vm = song_vm
         self._recommend_vm = recommend_vm
         self._album_vm = album_vm
+        self._subtitle_vm = subtitle_vm
         # 앨범 보기 상태 — 정렬 '앨범'을 고르면 켜지고, 다른 정렬로 바꾸면 꺼진다.
         self._album_mode: bool = False
         self._current_album_key: str | None = None
@@ -531,6 +533,7 @@ class LibraryPanel(
         self._detail_widget = VideoDetailWidget(
             clip_vm=self._clip_vm,
             download_vm=self._download_vm,
+            subtitle_vm=self._subtitle_vm,
         )
         self._nav_stack.addWidget(self._detail_widget)
 

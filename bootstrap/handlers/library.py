@@ -26,6 +26,19 @@ from application.library.commands import (
     UpdatePlaybackPositionHandler,
     UpdateVideoHandler,
 )
+from application.library.subtitle_commands import (
+    FetchAndIndexSubtitlesHandler,
+    IndexSubtitleCuesHandler,
+)
+from application.library.subtitle_queries import (
+    GetSubtitleIndexesHandler,
+    GetSubtitleLinesHandler,
+)
+from infrastructure.subtitle.youtube_subtitles import (
+    fetch_cues,
+    fetch_tracks_for_url,
+)
+
 from application.library.maintenance import (
     FindBrokenDownloadsHandler,
     FindDuplicatesQuery,
@@ -117,4 +130,15 @@ def build(
         set_category_order=SetCategoryVideoOrderHandler(video),
         stats=LibraryStatsHandler(video, download),
         cleanup_fns=_build_cleanup_fns(video, download, delete_video),
+        index_subtitle_cues=IndexSubtitleCuesHandler(repos.subtitle),
+        # 자막 조회·다운로드 함수를 **여기서 꽂는다** — 핸들러가
+        # `infrastructure/subtitle/`를 직접 import 하면 application → infrastructure
+        # 의존이 생긴다(DDD 의존 규칙).
+        fetch_and_index_subtitles=FetchAndIndexSubtitlesHandler(
+            repos.subtitle,
+            track_lister=fetch_tracks_for_url,
+            cue_fetcher=fetch_cues,
+        ),
+        get_subtitle_lines=GetSubtitleLinesHandler(repos.subtitle),
+        get_subtitle_indexes=GetSubtitleIndexesHandler(repos.subtitle),
     )
