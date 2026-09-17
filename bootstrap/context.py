@@ -155,6 +155,7 @@ class ClipHandlers:
     get_clips: Any
     get_chapters: Any
     get_skip_segments: Any
+    convert: Any
 
 
 @dataclass(frozen=True, slots=True)

@@ -105,6 +105,7 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             get_chapters_handler=handlers.clip.get_chapters,
             extract_many_handler=handlers.clip.extract_many,
             get_skip_segments_handler=handlers.clip.get_skip_segments,
+            convert_handler=handlers.clip.convert,
         ),
         monitoring=MonitoringViewModel(
             subscribe_handler=handlers.monitoring.subscribe,

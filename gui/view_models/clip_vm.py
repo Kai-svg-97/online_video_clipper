@@ -13,6 +13,7 @@ from application.clip.commands import (
     ExtractClipsCommand,
     ExtractClipsHandler,
 )
+from application.clip.convert import ConvertMediaCommand, ConvertMediaHandler
 from application.clip.dtos import ChapterDTO, ClipDTO
 from application.clip.queries import (
     GetChaptersHandler,
@@ -112,6 +113,27 @@ class _SkipSegmentWorker(QThread):
         self.loaded.emit(self._url, segments)
 
 
+class _ConvertWorker(QThread):
+    """포맷 변환 — 몇 분이 걸릴 수 있어 반드시 배경에서 돈다."""
+
+    progress = pyqtSignal(int)
+    done = pyqtSignal(str, str)   # 결과 경로, 오류(성공이면 빈 문자열)
+
+    def __init__(self, handler: ConvertMediaHandler, cmd: ConvertMediaCommand) -> None:
+        # 부모를 주지 않는다 — `_ExtractWorker`와 같은 이유(gui/workers.py).
+        super().__init__(None)
+        self._handler = handler
+        self._cmd = cmd
+
+    def run(self) -> None:
+        try:
+            path = self._handler.handle(self._cmd, on_progress=self.progress.emit)
+        except Exception as exc:
+            self.done.emit("", str(exc))
+            return
+        self.done.emit(str(path), "")
+
+
 class ClipViewModel(WorkerOwnerMixin, QObject):
     clips_changed = pyqtSignal()
     error_occurred = pyqtSignal(str)
@@ -119,6 +141,8 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
     chapter_progress = pyqtSignal(int, int, str)
     chapter_finished = pyqtSignal(int, int)     # 성공 수, 실패 수
     skip_segments_loaded = pyqtSignal(str, object)  # url, list[SkipSegment]
+    convert_progress = pyqtSignal(int)
+    convert_finished = pyqtSignal(str, str)   # 결과 경로, 오류
 
     def __init__(
         self,
@@ -128,6 +152,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
         get_chapters_handler: GetChaptersHandler | None = None,
         extract_many_handler: ExtractClipsHandler | None = None,
         get_skip_segments_handler: GetSkipSegmentsHandler | None = None,
+        convert_handler: ConvertMediaHandler | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -137,6 +162,10 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
         self._get_chapters = get_chapters_handler
         self._extract_many = extract_many_handler
         self._get_skips = get_skip_segments_handler
+        self._convert = convert_handler
+        # 변환은 한 번에 하나만 — ffmpeg 여러 개를 동시에 돌리면 저사양
+        # PC(목표 사양)에서 CPU가 먼저 막힌다.
+        self._converting = False
         self._clips: list[ClipDTO] = []
         self._chapters: list[ChapterDTO] = []
         self._worker: _ExtractWorker | None = None
@@ -148,6 +177,30 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
     @property
     def chapters(self) -> list[ChapterDTO]:
         return self._chapters
+
+    # ── 포맷 변환 ─────────────────────────────────────────────────
+
+    @property
+    def is_converting(self) -> bool:
+        return self._converting
+
+    def convert_media(self, source_file_path: str, preset_key: str) -> bool:
+        """변환을 시작한다. 이미 돌고 있거나 기능이 없으면 False."""
+        if self._convert is None or self._converting or not source_file_path:
+            return False
+        self._converting = True
+        worker = _ConvertWorker(
+            self._convert,
+            ConvertMediaCommand(source_file_path=source_file_path, preset_key=preset_key),
+        )
+        worker.progress.connect(self.convert_progress)
+        worker.done.connect(self._on_convert_done)
+        self._start_worker(worker)
+        return True
+
+    def _on_convert_done(self, path: str, error: str) -> None:
+        self._converting = False
+        self.convert_finished.emit(path, error)
 
     # ── SponsorBlock ──────────────────────────────────────────────
 

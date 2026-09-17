@@ -11,6 +11,7 @@ from application.clip.commands import (
     ExtractClipHandler,
     ExtractClipsHandler,
 )
+from application.clip.convert import ConvertMediaHandler
 from application.clip.queries import GetChaptersHandler, GetClipsHandler
 from application.clip.sponsor_queries import GetSkipSegmentsHandler
 
@@ -26,4 +27,5 @@ def build(repos: Repositories, services: Services) -> ClipHandlers:
         get_clips=GetClipsHandler(repos.clip),
         get_chapters=GetChaptersHandler(repos.video),
         get_skip_segments=GetSkipSegmentsHandler(services.skip_source),
+        convert=ConvertMediaHandler(services.clip_extractor),
     )

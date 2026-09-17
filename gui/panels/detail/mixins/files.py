@@ -15,6 +15,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -222,6 +223,7 @@ class FilesTabMixin:
                 rl.addWidget(err_lbl)
                 dl_layout.addWidget(row)
 
+        self._build_convert_row(dl_layout, downloads)
         dl_layout.addStretch()
 
     def _build_clip_tab(self) -> None:
@@ -485,3 +487,96 @@ class FilesTabMixin:
     def refresh_downloads(self, downloads: list, failed_downloads: list) -> None:
         """다운로드 파일 탭만 새로 그린다."""
         self._build_downloads_tab(downloads, failed_downloads)
+
+    # ── 포맷 변환 ──────────────────────────────────────────────────
+
+    def _build_convert_row(self, layout, downloads) -> None:
+        """받아 둔 파일을 다른 기기용으로 바꾸는 줄.
+
+        **원본을 덮어쓰지 않는다** — 변환은 되돌릴 수 없으므로 결과는 늘 새 파일이다.
+        로컬 파일이 없으면 줄 자체를 만들지 않는다(바꿀 대상이 없다).
+
+        대상 파일을 `self._clip_source_file`에서 읽지 **않는다** — 그 값은 이 탭을
+        지은 **뒤에** 채워지므로(`load()`의 순서), 여기서 읽으면 첫 로드에는 비어 있고
+        두 번째부터는 이전 영상의 파일을 가리킨다. 넘겨받은 목록에서 직접 고른다.
+        """
+        from application.clip.convert import list_presets  # noqa: PLC0415
+
+        self._convert_source = next(
+            (dl.file_path for dl in downloads or []
+             if dl.file_path and Path(dl.file_path).exists()),
+            "",
+        )
+        if self._clip_vm is None or not self._convert_source:
+            return
+
+        hdr = QLabel("다른 기기용으로 변환")
+        hdr.setStyleSheet("font-size:9pt; font-weight:bold; margin-top:8px;")
+        layout.addWidget(hdr)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self._convert_combo = QComboBox()
+        for preset in list_presets():
+            self._convert_combo.addItem(preset.name, preset.key)
+            self._convert_combo.setItemData(
+                self._convert_combo.count() - 1,
+                preset.description,
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        self._convert_btn = QPushButton("변환")
+        self._convert_btn.setFixedHeight(26)
+        self._convert_btn.clicked.connect(self._on_convert_clicked)
+        row.addWidget(self._convert_combo, 1)
+        row.addWidget(self._convert_btn)
+        layout.addLayout(row)
+
+        self._convert_bar = QProgressBar()
+        self._convert_bar.setRange(0, 100)
+        self._convert_bar.setMaximumHeight(16)
+        self._convert_bar.setVisible(False)
+        layout.addWidget(self._convert_bar)
+
+        self._convert_status = QLabel("")
+        self._convert_status.setWordWrap(True)
+        self._convert_status.setStyleSheet(
+            f"font-size:8pt; color:{_t().text_secondary};"
+        )
+        layout.addWidget(self._convert_status)
+
+        for signal, slot in (
+            (self._clip_vm.convert_progress, self._on_convert_progress),
+            (self._clip_vm.convert_finished, self._on_convert_finished),
+        ):
+            try:
+                signal.disconnect(slot)
+            except Exception:
+                logger.debug("변환 시그널 미연결 상태 — 첫 빌드 시 정상")
+            signal.connect(slot)
+
+    def _on_convert_clicked(self) -> None:
+        if self._clip_vm is None or not getattr(self, "_convert_source", ""):
+            return
+        preset_key = self._convert_combo.currentData()
+        if not self._clip_vm.convert_media(self._convert_source, preset_key):
+            self._convert_status.setText("이미 변환이 진행 중입니다.")
+            return
+        self._convert_btn.setEnabled(False)
+        self._convert_bar.setValue(0)
+        self._convert_bar.setVisible(True)
+        self._convert_status.setText("변환 중… (영상 길이에 따라 몇 분이 걸릴 수 있습니다)")
+
+    def _on_convert_progress(self, percent: int) -> None:
+        if hasattr(self, "_convert_bar"):
+            self._convert_bar.setValue(int(percent))
+
+    def _on_convert_finished(self, path: str, error: str) -> None:
+        if not hasattr(self, "_convert_btn"):
+            return
+        self._convert_btn.setEnabled(True)
+        self._convert_bar.setVisible(False)
+        if error:
+            self._convert_status.setText(f"변환 실패: {error}")
+            return
+        self._convert_status.setText(f"변환 완료 — {Path(path).name}")
+        show_toast(self, "변환이 끝났습니다")

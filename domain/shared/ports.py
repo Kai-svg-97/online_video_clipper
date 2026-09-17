@@ -185,6 +185,20 @@ class IClipExtractor(Protocol):
         height: int = 90,
     ) -> Path: ...
 
+    def convert(
+        self,
+        source_path: Path,
+        preset: object,
+        output_path: Path,
+        on_progress: Callable[[int], None] | None = None,
+    ) -> Path:
+        """프리셋(`domain.clip.presets.ConvertPreset`)대로 변환한다.
+
+        `on_progress`는 0~100 정수를 받는다. 길이를 알 수 없는 원본이면 호출되지
+        않을 수 있다(진행률만 없을 뿐 변환은 된다).
+        """
+        ...
+
 
 class ILibraryPackageWriter(Protocol):
     """포터블 라이브러리 패키지(zip) 작성 추상화.

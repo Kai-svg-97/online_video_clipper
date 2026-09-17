@@ -74,6 +74,7 @@ online_video_clipper/
 │   ├── clip/                        # [Bounded Context] Clip extraction
 │   │   ├── entities.py              # Clip
 │   │   ├── value_objects.py         # TimeRange
+│   │   ├── presets.py               # 변환 프리셋 **순수 정의**. 모든 영상 프리셋이 H.264+AAC+mp4인 이유는 그 조합만 폰·TV·차량·구형 플레이어에서 사실상 항상 열리기 때문이다(H.265·VP9·AV1은 기기에 따라 아예 안 열린다). `scale_filter`는 `-2`(짝수 자동 너비)를 쓴다 — `-1`로 두면 H.264가 홀수 크기를 못 만들어 세로 영상에서 변환이 실패한다. `min(제한,ih)`라 작은 영상을 늘리지 않는다
 │   │   ├── sponsor.py               # SponsorBlock 구간의 **순수 규칙**(I/O 없음). 제출 데이터는 겹치고 순서가 뒤섞여 오므로 `normalize_segments`가 정렬·병합·필터한 결과만 쓴다(합치지 않으면 앞 구간 끝으로 넘긴 자리가 다시 다음 구간이라 연달아 튄다). `segment_at`은 **끝 경계를 포함하지 않는다** — 포함하면 끝으로 넘긴 직후 같은 구간이 다시 잡혀 제자리에서 튄다
 │   │   ├── chapters.py              # 설명 → 챕터 구간 **순수 규칙**(I/O 없음). 오탐 제거가 핵심 — 타임스탬프가 줄 맨앞/맨뒤에 있을 때만 후보로 보고(본문 속 "10:30에 촬영" 배제), 뒤로 가는 값은 건너뛰며, 2개 미만이면 챕터로 보지 않는다. 마지막 구간의 끝은 영상 길이이고 길이를 모르면 **그 구간을 버린다**(끝을 모르는 구간은 추출할 수 없다)
 │   │   ├── aggregates.py            # ClipAggregate (root)
@@ -114,6 +115,7 @@ online_video_clipper/
 │   │   ├── dtos.py                  # ClipDTO · **ChapterDTO**(제목·시작·끝)
 │   │   ├── subtitle_commands.py     # 자막 색인 수집 — 수집 경로가 **둘**이다. (1)재생 중 자막을 켜면 이미 받은 큐를 그대로 넘기는 **공짜 경로**(`IndexSubtitleCues`), (2)상세화면 버튼으로 받아 오는 명시 경로(`FetchAndIndexSubtitles`). 자동 수집을 두지 않는 이유는 대량 임포트 규칙과 같다(영상당 네트워크 왕복). 자막 조회·다운로드 함수는 **주입받는다** — 직접 import 하면 application → infrastructure 의존이 생긴다
 │   │   ├── subtitle_queries.py      # 자막 줄 조회(전체 또는 검색어 일치) + 색인된 언어 목록
+│   │   ├── convert.py               # 변환 유스케이스. **원본을 덮어쓰지 않는다** — 되돌릴 수 없으므로 출력은 늘 `제목 [프리셋].확장자`라는 새 파일이고, 같은 경로가 될 상황(재변환)에는 이름을 한 번 더 바꾼다
 │   │   ├── sponsor_queries.py       # **GetSkipSegments** — 영상당 1회만 조회하고 세션 동안 캐시한다(상세화면은 같은 영상을 되풀이해 연다: 뒤로가기·재생목록 왕복·앨범 이어재생). 결과가 없다는 답도 캐시한다
 │   │   └── queries.py               # GetClips · **GetChapters**(영상 설명에서 챕터 구간 추출 — yt-dlp `chapters`가 더 정확하지만 저장돼 있지 않아 영상마다 네트워크 왕복이 필요하다. 설명은 이미 DB에 있어 즉시·오프라인이고, 상세화면이 이미 같은 타임스탬프를 seek 링크로 쓰고 있어 화면과 어긋나지 않는다)
 │   ├── monitoring/
@@ -153,7 +155,7 @@ online_video_clipper/
 │   ├── downloader/
 │   │   └── ytdlp_adapter.py         # yt-dlp 래퍼 — domain.shared.ports.IMediaSource를 구조적으로 만족
 │   ├── ffmpeg/
-│   │   └── ffmpeg_adapter.py        # ffmpeg wrapper for clip extraction
+│   │   └── ffmpeg_adapter.py        # ffmpeg wrapper — 클립 추출·썸네일·**포맷 변환**. 변환은 ffmpeg-python이 아니라 subprocess로 직접 돌린다(`-progress pipe:1`을 줄 단위로 따라가야 진행률이 나온다 — `run()`은 끝날 때까지 돌려주지 않아 몇 분짜리 변환이 멈춘 것처럼 보인다). 길이 조회에 **ffprobe를 쓰지 않는다** — 배포 패키지에는 `bin/ffmpeg`만 있고 ffprobe는 없어서, 기대면 진행률이 조용히 0에 머문다(실측으로 잡힌 함정). 대신 `ffmpeg -i`가 stderr에 찍는 `Duration:` 줄을 읽는다
 │   ├── browser/
 │   │   └── gemini_extractor.py      # Playwright 기반 YouTube Gemini AI 요약 추출기 (QThread에서만 호출)
 │   ├── auth/
