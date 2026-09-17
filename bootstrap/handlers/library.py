@@ -41,6 +41,7 @@ from infrastructure.subtitle.youtube_subtitles import (
 
 from application.library.maintenance import (
     FindBrokenDownloadsHandler,
+    FindMissingSourcesHandler,
     FindDuplicatesQuery,
     FindDuplicateVideosHandler,
 )
@@ -59,8 +60,8 @@ from application.library.queries import (
 from bootstrap.context import LibraryHandlers, Repositories, Services, SongHandlers
 
 
-def _build_cleanup_fns(video_repo, download_repo, delete_video) -> tuple:
-    """라이브러리 정리 콜백 3종 — (중복 찾기, 끊긴 파일 찾기, 일괄 삭제).
+def _build_cleanup_fns(video_repo, download_repo, delete_video, availability) -> tuple:
+    """라이브러리 정리 콜백 4종 — (중복 찾기, 끊긴 파일 찾기, 일괄 삭제, 원본 소실 찾기).
 
     **찾아 주기만 하고 삭제는 사용자가 고른 것만 한다** — 자동 삭제 경로는 없다.
     """
@@ -71,10 +72,13 @@ def _build_cleanup_fns(video_repo, download_repo, delete_video) -> tuple:
         for vid in video_ids:
             delete_video.handle(DeleteVideoCommand(video_id=vid))
 
+    find_missing = FindMissingSourcesHandler(video_repo, availability)
+
     return (
         lambda: find_dups.handle(FindDuplicatesQuery()),
         find_broken.handle,
         delete_bulk,
+        find_missing.handle,
     )
 
 
@@ -129,7 +133,9 @@ def build(
         get_category_order=GetCategoryVideoOrderHandler(video),
         set_category_order=SetCategoryVideoOrderHandler(video),
         stats=LibraryStatsHandler(video, download),
-        cleanup_fns=_build_cleanup_fns(video, download, delete_video),
+        cleanup_fns=_build_cleanup_fns(
+            video, download, delete_video, services.availability_source
+        ),
         index_subtitle_cues=IndexSubtitleCuesHandler(repos.subtitle),
         # 자막 조회·다운로드 함수를 **여기서 꽂는다** — 핸들러가
         # `infrastructure/subtitle/`를 직접 import 하면 application → infrastructure

@@ -16,6 +16,7 @@ from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
 from infrastructure.event_bus import EventBus
 from infrastructure.ffmpeg.ffmpeg_adapter import FfmpegAdapter
 from infrastructure.song.audio_tagger import MutagenAudioTagger
+from infrastructure.downloader.availability import YouTubeAvailabilityChecker
 from infrastructure.sponsorblock.client import SponsorBlockClient
 from infrastructure.song.album_providers import build_default_album_provider
 from infrastructure.song.lyrics_providers import build_default_providers
@@ -96,6 +97,7 @@ def build_services(db) -> Services:
         clip_extractor=FfmpegAdapter(),
         audio_tagger=MutagenAudioTagger(),
         skip_source=SponsorBlockClient(),
+        availability_source=YouTubeAvailabilityChecker(),
         youtube_oauth=yt_oauth,
         youtube_api=_make_youtube_api_provider(yt_oauth),
         auth_service=YouTubeAuthService(),

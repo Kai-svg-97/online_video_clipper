@@ -847,8 +847,15 @@ class SettingsPanel(QWidget):
             LibraryCleanupDialog,
         )
 
-        find_duplicates, find_broken, delete_videos = self._cleanup_fns
-        LibraryCleanupDialog(find_duplicates, find_broken, delete_videos, self).exec()
+        # 콜백 개수는 조립 루트가 정한다. 옛 조립(3종)과도 맞물리도록 길이를 본다 —
+        # 테스트·다른 진입점이 3종만 넘기는 경우가 있어 여기서 터지면 정리 화면 전체가
+        # 열리지 않는다.
+        fns = tuple(self._cleanup_fns or ())
+        find_duplicates, find_broken, delete_videos = fns[:3]
+        find_missing = fns[3] if len(fns) > 3 else None
+        LibraryCleanupDialog(
+            find_duplicates, find_broken, delete_videos, find_missing, self
+        ).exec()
 
     def _build_youtube_api_section(self, layout) -> None:
         """YouTube API 연동(번들 OAuth 로그인)."""

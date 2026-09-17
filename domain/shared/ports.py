@@ -140,6 +140,18 @@ class IAudioTagger(Protocol):
     def write_tags(self, file_path: Path, tags: AudioTags) -> bool: ...
 
 
+class IAvailabilitySource(Protocol):
+    """원본 영상 생존 확인 추상화.
+
+    구현체: infrastructure.downloader.availability.YouTubeAvailabilityChecker
+
+    반환은 `domain.library.availability.AvailabilityResult`다. **실패는 예외가 아니라
+    '확인 불가'**다 — 확인하지 못한 것을 '사라졌다'고 보고하면 멀쩡한 영상을 지우게 만든다.
+    """
+
+    def check(self, url: str) -> object: ...
+
+
 class ISkipSegmentSource(Protocol):
     """SponsorBlock 등 '건너뛸 구간' 공급자 추상화.
 

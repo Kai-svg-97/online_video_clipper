@@ -58,6 +58,7 @@ online_video_clipper/
 │   │   ├── repositories.py          # IVideoRepository (interface). `MATCH_FIELD_KEYS`가 검색 일치 배지의 **표시 순서**를 고정한다(자막 포함)
 │   │   ├── subtitle_repository.py   # `ISubtitleRepository` + `SubtitleLine`·`SubtitleIndexInfo`. **library 컨텍스트에 두는 이유**: 자막은 Video에 딸려 수명을 함께한다(영상을 지우면 사라진다). 저장은 영상·언어 단위 **통째 교체**다 — 자동 자막이 사람 자막으로 바뀌는 일이 흔해 줄 단위 병합은 중복만 만든다
 │   │   ├── services.py              # Domain services (e.g., duplicate detection)
+│   │   ├── availability.py           # 원본 생존 판정 **순수 규칙**. 핵심은 `확인 불가`를 `사라짐`으로 보고하지 **않는 것** — 네트워크가 잠깐 끊긴 것을 두고 멀쩡한 영상을 지우게 만들면 안 된다. 삭제·비공개만 `MISSING_STATUSES`
 │   │   ├── recommendation.py        # derive_seed_queries() — 현재 목록(제목·태그·채널)에서 YouTube 추천 검색어를 뽑는 순수 함수(제목 키워드는 문서빈도 기준). **`search_text`가 있으면 그 낱말만 검색어로 쓴다**(검색창 입력이 짐작을 대체한다). I/O 없음
 │   │   └── events.py                # VideoAdded, VideoUpdated, VideoDeleted
 │   │

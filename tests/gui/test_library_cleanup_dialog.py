@@ -101,3 +101,83 @@ class TestFailureIsolation:
 
         assert dlg._dup_tree.topLevelItemCount() == 0
         assert dlg._broken_tree.topLevelItemCount() == 0
+
+
+# ----------------------------------------------------------------------
+# 사라진 원본 탭
+# ----------------------------------------------------------------------
+
+from application.library.maintenance import MissingSourceDTO  # noqa: E402
+
+
+def _missing(title="사라진 영상", status="removed", label="삭제됨"):
+    return MissingSourceDTO(
+        video_id=uuid4(), title=title, url="https://youtu.be/x",
+        status=status, status_label=label, detail="원본이 삭제되었습니다",
+    )
+
+
+def _dialog_with_missing(qtbot, found=(), deleted=None):
+    dlg = LibraryCleanupDialog(
+        find_duplicates=lambda: [],
+        find_broken=lambda: [],
+        delete_videos=(deleted.extend if deleted is not None else (lambda ids: None)),
+        find_missing=lambda on_progress=None, should_stop=None: list(found),
+    )
+    qtbot.addWidget(dlg)
+    return dlg
+
+
+class TestMissingSources:
+    def test_열자마자_돌지_않는다(self, qtbot):
+        """영상당 네트워크 요청이라 수백 건이면 몇 분이다 — 사람이 눌러야 시작한다."""
+        dlg = _dialog_with_missing(qtbot, found=[_missing()])
+        assert dlg._missing_tree.topLevelItemCount() == 0
+        assert dlg._missing_btn.text() == "원본 확인 시작"
+
+    def test_결과를_목록에_채운다(self, qtbot):
+        dlg = _dialog_with_missing(qtbot)
+        dlg._on_missing_done([_missing("A"), _missing("B", "private", "비공개")])
+        assert dlg._missing_tree.topLevelItemCount() == 2
+        assert dlg._missing_tree.topLevelItem(1).text(1) == "비공개"
+
+    def test_기본은_아무것도_선택하지_않는다(self, qtbot):
+        """비공개는 다시 공개될 수 있고, 삭제된 영상도 기록으로 남기고 싶을 수 있다."""
+        dlg = _dialog_with_missing(qtbot)
+        dlg._on_missing_done([_missing(), _missing()])
+        assert dlg.checked_video_ids() == []
+
+    def test_체크하면_삭제_대상에_들어간다(self, qtbot):
+        from PyQt6.QtCore import Qt
+
+        dlg = _dialog_with_missing(qtbot)
+        item = _missing()
+        dlg._on_missing_done([item])
+        dlg._missing_tree.topLevelItem(0).setCheckState(0, Qt.CheckState.Checked)
+        assert dlg.checked_video_ids() == [item.video_id]
+
+    def test_찾은_수를_탭_제목에_적는다(self, qtbot):
+        dlg = _dialog_with_missing(qtbot)
+        dlg._on_missing_done([_missing(), _missing(), _missing()])
+        assert "(3)" in dlg._tabs.tabText(2)
+
+    def test_없으면_그렇게_알린다(self, qtbot):
+        dlg = _dialog_with_missing(qtbot)
+        dlg._on_missing_done([])
+        assert "없습니다" in dlg._status.text()
+
+    def test_진행률이_표시된다(self, qtbot):
+        dlg = _dialog_with_missing(qtbot)
+        dlg._on_missing_progress(7, 40)
+        assert dlg._missing_bar.value() == 7
+        assert dlg._missing_bar.maximum() == 40
+
+    def test_기능이_없으면_안내만_한다(self, qtbot):
+        """옛 조립(콜백 3종)과 맞물려도 창이 열려야 한다."""
+        dlg = LibraryCleanupDialog(
+            find_duplicates=lambda: [], find_broken=lambda: [],
+            delete_videos=lambda ids: None,
+        )
+        qtbot.addWidget(dlg)
+        dlg._on_missing_scan()
+        assert "쓸 수 없습니다" in dlg._status.text()

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -135,3 +136,72 @@ class FindBrokenDownloadsHandler:
             offset += _PAGE
         logger.info("다운로드 파일 점검: 사라진 파일 %d건", len(broken))
         return broken
+
+
+@dataclass
+class MissingSourceDTO:
+    """원본이 사라진(또는 비공개가 된) 영상 1건."""
+
+    video_id: object
+    title: str
+    url: str
+    status: str
+    status_label: str
+    detail: str
+
+
+class FindMissingSourcesHandler:
+    """라이브러리 영상의 원본이 아직 살아 있는지 확인한다.
+
+    **영상당 네트워크 요청이 하나씩 나간다.** 그래서 배경 스레드 전용이고, 진행률
+    콜백과 중단 콜백을 받는다 — 수백 건이면 사용자가 도중에 그만두고 싶어진다.
+
+    `확인 불가`는 결과에 넣지 않는다(도메인 규칙 참조) — 네트워크가 잠깐 끊긴 것을
+    두고 멀쩡한 영상을 지우게 만들면 안 된다.
+    """
+
+    def __init__(self, video_repo: IVideoRepository, checker, to_dto=None) -> None:
+        self._repo = video_repo
+        self._checker = checker
+        self._to_dto = to_dto
+
+    def handle(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> list[MissingSourceDTO]:
+        from domain.library.availability import AvailabilityResult, STATUS_UNKNOWN  # noqa: PLC0415
+
+        videos = [self._as_dto(agg) for agg in self._scan_all()]
+        total = len(videos)
+        found: list[MissingSourceDTO] = []
+        for index, video in enumerate(videos, start=1):
+            if should_stop is not None and should_stop():
+                logger.info("원본 점검 중단: %d/%d까지 확인", index - 1, total)
+                break
+            if on_progress is not None:
+                on_progress(index, total)
+            try:
+                result = self._checker.check(video.url)
+            except Exception:
+                # 어댑터가 예외를 삼키는 계약이지만, 여기서도 한 겹 막는다 —
+                # 한 건 때문에 점검 전체가 멈추면 앞서 찾은 것도 못 보여준다.
+                logger.exception("원본 확인 중 예외 (무시): %s", video.url)
+                result = AvailabilityResult(STATUS_UNKNOWN)
+            if getattr(result, "is_missing", False):
+                found.append(
+                    MissingSourceDTO(
+                        video_id=video.id,
+                        title=video.title,
+                        url=video.url,
+                        status=result.status,
+                        status_label=result.label,
+                        detail=getattr(result, "detail", ""),
+                    )
+                )
+        logger.info("원본 점검: 사라진 영상 %d건 (영상 %d개 검사)", len(found), total)
+        return found
+
+    # `FindDuplicateVideosHandler`와 같은 페이지네이션 규칙을 쓴다.
+    _scan_all = FindDuplicateVideosHandler._scan_all
+    _as_dto = FindDuplicateVideosHandler._as_dto
