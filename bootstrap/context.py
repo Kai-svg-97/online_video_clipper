@@ -140,8 +140,10 @@ class ClipHandlers:
     """클립 추출 유스케이스."""
 
     extract: Any
+    extract_many: Any
     delete: Any
     get_clips: Any
+    get_chapters: Any
 
 
 @dataclass(frozen=True, slots=True)

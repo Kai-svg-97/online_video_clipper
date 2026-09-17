@@ -14,6 +14,7 @@ from PyQt6.QtCore import (
     Qt,
 )
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -29,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from application.library.dtos import FailedDownloadInfoDTO
 from gui.themes.colors import sem
+from gui.toast import show_toast
 
 
 # ── 분할된 부품 (gui/panels/detail/*) ─────────────────────────────
@@ -72,6 +74,14 @@ from gui.panels.detail.workers import (  # noqa: F401
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _fmt_hms(seconds: float) -> str:
+    """초 → H:MM:SS (1시간 미만이면 M:SS). 챕터 표시·툴팁 공용."""
+    total = int(seconds)
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
 class FilesTabMixin:
@@ -215,12 +225,21 @@ class FilesTabMixin:
         dl_layout.addStretch()
 
     def _build_clip_tab(self) -> None:
-        # 오류3 방지: 레이아웃 삭제 전에 시그널 먼저 해제
+        # 오류3 방지: 레이아웃 삭제 전에 시그널 먼저 해제.
+        # 뷰모델은 앱 수명 내내 살아 있고 이 위젯은 그보다 짧으므로, 남겨 두면
+        # 죽은 위젯을 건드린다(CLAUDE.md의 신호원 수명 규칙).
         if self._clip_vm is not None:
-            try:
-                self._clip_vm.clips_changed.disconnect(self._refresh_clip_list)
-            except Exception:
-                logger.debug("클립 시그널 미연결 상태 — 첫 빌드 시 정상")
+            for signal, slot in (
+                (self._clip_vm.clips_changed, self._refresh_clip_list),
+                (self._clip_vm.chapters_loaded, self._on_chapters_loaded),
+                (self._clip_vm.chapter_progress, self._on_chapter_progress),
+                (self._clip_vm.chapter_finished, self._on_chapter_finished),
+            ):
+                try:
+                    signal.disconnect(slot)
+                except Exception:
+                    logger.debug("클립 시그널 미연결 상태 — 첫 빌드 시 정상")
+        self._chapter_checks = []
         _clear_layout(self._clip_tab_layout)
 
         if self._clip_vm is None or self._detail is None:
@@ -235,6 +254,15 @@ class FilesTabMixin:
             self._clip_tab_layout.addWidget(info)
             self._clip_tab_layout.addStretch()
             return
+
+        # ── 설명 속 챕터 → 클립 ─────────────────────────────────────
+        # 목록은 비어 있을 수 있으므로 자리만 먼저 만들고 내용은 신호로 채운다.
+        self._chapter_grp = QGroupBox("설명 속 챕터")
+        self._chapter_layout = QVBoxLayout(self._chapter_grp)
+        self._chapter_layout.setContentsMargins(10, 18, 10, 10)
+        self._chapter_layout.setSpacing(6)
+        self._chapter_grp.setVisible(False)   # 챕터가 있을 때만 보인다
+        self._clip_tab_layout.addWidget(self._chapter_grp)
 
         # ── 구간 설정 영역 ──────────────────────────────────────────
         range_grp = QGroupBox("구간 설정")
@@ -300,6 +328,92 @@ class FilesTabMixin:
         self._clip_tab_layout.addStretch()
 
         self._clip_vm.clips_changed.connect(self._refresh_clip_list)
+        self._clip_vm.chapters_loaded.connect(self._on_chapters_loaded)
+        self._clip_vm.chapter_progress.connect(self._on_chapter_progress)
+        self._clip_vm.chapter_finished.connect(self._on_chapter_finished)
+        if self._detail is not None:
+            self._clip_vm.load_chapters(self._detail.id)
+
+    # ── 챕터 → 클립 ────────────────────────────────────────────────
+
+    def _on_chapters_loaded(self, chapters) -> None:
+        """챕터 목록을 체크박스 행으로 그린다. 없으면 구역 자체를 숨긴다."""
+        if not hasattr(self, "_chapter_layout"):
+            return
+        try:
+            _clear_layout(self._chapter_layout)
+        except RuntimeError:
+            logger.debug("_chapter_layout 이미 삭제됨 — 갱신 생략")
+            return
+        self._chapter_checks = []
+        if not chapters:
+            self._chapter_grp.setVisible(False)
+            return
+
+        hint = QLabel(
+            "설명의 타임스탬프에서 찾은 구간입니다. 고른 챕터를 각각 클립으로 저장합니다."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
+        self._chapter_layout.addWidget(hint)
+
+        for chapter in chapters:
+            check = QCheckBox(f"{_fmt_hms(chapter.start_sec)}  {chapter.title}")
+            check.setChecked(True)
+            check.setToolTip(
+                f"{_fmt_hms(chapter.start_sec)} ~ {_fmt_hms(chapter.end_sec)} "
+                f"({_fmt_hms(chapter.duration_sec)})"
+            )
+            self._chapter_layout.addWidget(check)
+            self._chapter_checks.append((check, chapter))
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        toggle_btn = QPushButton("전체 선택/해제")
+        toggle_btn.clicked.connect(self._on_toggle_all_chapters)
+        self._chapter_extract_btn = QPushButton("선택한 챕터 추출")
+        self._chapter_extract_btn.clicked.connect(self._on_extract_chapters)
+        btn_row.addWidget(toggle_btn)
+        btn_row.addWidget(self._chapter_extract_btn)
+        btn_row.addStretch()
+        self._chapter_layout.addLayout(btn_row)
+
+        self._chapter_status_lbl = QLabel("")
+        self._chapter_status_lbl.setStyleSheet(
+            f"font-size: 9pt; color: {_t().text_secondary};"
+        )
+        self._chapter_layout.addWidget(self._chapter_status_lbl)
+        self._chapter_grp.setVisible(True)
+
+    def _on_toggle_all_chapters(self) -> None:
+        turn_on = not all(check.isChecked() for check, _ in self._chapter_checks)
+        for check, _ in self._chapter_checks:
+            check.setChecked(turn_on)
+
+    def _on_extract_chapters(self) -> None:
+        if self._clip_vm is None or self._detail is None or not self._clip_source_file:
+            return
+        chosen = [chapter for check, chapter in self._chapter_checks if check.isChecked()]
+        if not chosen:
+            self._chapter_status_lbl.setText("추출할 챕터를 하나 이상 고르세요.")
+            return
+        self._chapter_extract_btn.setEnabled(False)
+        self._chapter_status_lbl.setText(f"{len(chosen)}개 추출 준비 중…")
+        self._clip_vm.extract_chapters(self._detail.id, self._clip_source_file, chosen)
+
+    def _on_chapter_progress(self, current: int, total: int, title: str) -> None:
+        if hasattr(self, "_chapter_status_lbl"):
+            self._chapter_status_lbl.setText(f"추출 중 ({current}/{total}) — {title}")
+
+    def _on_chapter_finished(self, ok_count: int, fail_count: int) -> None:
+        if hasattr(self, "_chapter_extract_btn"):
+            self._chapter_extract_btn.setEnabled(True)
+        if hasattr(self, "_chapter_status_lbl"):
+            msg = f"{ok_count}개 추출 완료"
+            if fail_count:
+                msg += f" · {fail_count}개 실패"
+            self._chapter_status_lbl.setText(msg)
+        show_toast(self, f"챕터 클립 {ok_count}개 추출 완료")
 
     def _on_extract_clip(self) -> None:
         if self._clip_vm is None or self._detail is None or not self._clip_source_file:

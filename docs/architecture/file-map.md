@@ -71,6 +71,7 @@ online_video_clipper/
 │   ├── clip/                        # [Bounded Context] Clip extraction
 │   │   ├── entities.py              # Clip
 │   │   ├── value_objects.py         # TimeRange
+│   │   ├── chapters.py              # 설명 → 챕터 구간 **순수 규칙**(I/O 없음). 오탐 제거가 핵심 — 타임스탬프가 줄 맨앞/맨뒤에 있을 때만 후보로 보고(본문 속 "10:30에 촬영" 배제), 뒤로 가는 값은 건너뛰며, 2개 미만이면 챕터로 보지 않는다. 마지막 구간의 끝은 영상 길이이고 길이를 모르면 **그 구간을 버린다**(끝을 모르는 구간은 추출할 수 없다)
 │   │   ├── aggregates.py            # ClipAggregate (root)
 │   │   ├── repositories.py          # IClipRepository
 │   │   └── events.py                # ClipCreated
@@ -105,8 +106,9 @@ online_video_clipper/
 │   │   ├── queries.py               # GetDownloadQueue, GetDownloadHistory
 │   │   └── defaults.py              # 굽기(embed)·자막 언어 기본값을 `config.settings`에서 채우는 **유일한 곳**. 이 값들은 `download_history`에 남지 않으므로 새 작업과 재시도 모두 `StartDownloadHandler.handle`이 `apply_user_defaults`로 다시 채운다 — 호출부가 각자 config를 읽으면 한 곳만 빠져도 굽기가 조용히 꺼진다
 │   ├── clip/
-│   │   ├── commands.py              # ExtractClip, DeleteClip
-│   │   └── queries.py               # GetClips
+│   │   ├── commands.py              # ExtractClip, **ExtractClips**(챕터 여러 개 순차 추출 — ffmpeg 동시 실행 금지. 한 구간이 실패해도 멈추지 않고 실패 목록을 모아 돌려준다), DeleteClip
+│   │   ├── dtos.py                  # ClipDTO · **ChapterDTO**(제목·시작·끝)
+│   │   └── queries.py               # GetClips · **GetChapters**(영상 설명에서 챕터 구간 추출 — yt-dlp `chapters`가 더 정확하지만 저장돼 있지 않아 영상마다 네트워크 왕복이 필요하다. 설명은 이미 DB에 있어 즉시·오프라인이고, 상세화면이 이미 같은 타임스탬프를 seek 링크로 쓰고 있어 화면과 어긋나지 않는다)
 │   ├── monitoring/
 │   │   ├── commands.py              # SubscribeChannel, UnsubscribeChannel, SetMonitoringRule
 │   │   └── queries.py               # GetSubscriptions
