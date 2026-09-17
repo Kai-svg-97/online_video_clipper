@@ -26,6 +26,7 @@ def clip_vm():
         chapters_loaded = pyqtSignal(object)
         chapter_progress = pyqtSignal(int, int, str)
         chapter_finished = pyqtSignal(int, int)
+        skip_segments_loaded = pyqtSignal(str, object)
 
         def __init__(self):
             super().__init__()
@@ -34,6 +35,9 @@ def clip_vm():
             self.loaded_for: list = []
 
         def load_clips(self, video_id):
+            pass
+
+        def load_skip_segments(self, url):
             pass
 
         def load_chapters(self, video_id):

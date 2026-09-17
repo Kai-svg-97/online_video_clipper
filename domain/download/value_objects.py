@@ -52,6 +52,7 @@ class DownloadSettings:
         "embed_subtitles",
         "embed_thumbnail",
         "embed_chapters",
+        "sponsorblock_remove",
     )
 
     def __init__(
@@ -65,6 +66,7 @@ class DownloadSettings:
         embed_subtitles: bool = False,
         embed_thumbnail: bool = False,
         embed_chapters: bool = False,
+        sponsorblock_remove: tuple[str, ...] = (),
     ) -> None:
         self.quality = quality
         self.format = fmt
@@ -75,6 +77,8 @@ class DownloadSettings:
         self.embed_subtitles = embed_subtitles
         self.embed_thumbnail = embed_thumbnail
         self.embed_chapters = embed_chapters
+        # 비어 있으면 끔. 값이 있으면 그 카테고리 구간을 **파일에서 잘라낸다**.
+        self.sponsorblock_remove = sponsorblock_remove
 
     @property
     def is_audio(self) -> bool:

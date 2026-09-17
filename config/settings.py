@@ -141,6 +141,14 @@ EMBED_THUMBNAIL: bool = _load_bool("embed_thumbnail", True)
 EMBED_CHAPTERS: bool = _load_bool("embed_chapters", True)
 # 음원(mp3·m4a 등)에 라이브러리의 노래 정보(가수·앨범·발매년도·가사·표지)를 태그로 기록한다.
 WRITE_SONG_TAGS: bool = _load_bool("write_song_tags", True)
+# ── SponsorBlock ────────────────────────────────────────────────────────
+# 재생 중 건너뛰기는 되돌릴 수 있어 기본 켜고, 다운로드 시 제거는 파일을 실제로
+# 잘라내 되돌릴 수 없으므로 기본 끈다.
+SPONSORBLOCK_SKIP: bool = _load_bool("sponsorblock_skip", True)
+SPONSORBLOCK_REMOVE: bool = _load_bool("sponsorblock_remove", False)
+SPONSORBLOCK_CATEGORIES: str = _resolve_str(
+    "sponsorblock_categories", "sponsor,selfpromo,interaction"
+)
 # 단건 등록 직후 요약(비노래)·가사(노래) 자동 보강. 일괄 임포트는 대상이 아니다.
 AUTO_ENRICH_ON_ADD: bool = _load_bool("auto_enrich_on_add", True)
 # 라이브러리 목록 아래 추천 영상 스트립 — 접힘 상태와 높이(px)를 기억한다.
@@ -202,6 +210,9 @@ def save_setting(key: str, value) -> None:
         "embed_thumbnail": "EMBED_THUMBNAIL",
         "embed_chapters": "EMBED_CHAPTERS",
         "write_song_tags": "WRITE_SONG_TAGS",
+        "sponsorblock_skip": "SPONSORBLOCK_SKIP",
+        "sponsorblock_remove": "SPONSORBLOCK_REMOVE",
+        "sponsorblock_categories": "SPONSORBLOCK_CATEGORIES",
         "recommend_strip_expanded": "RECOMMEND_STRIP_EXPANDED",
         "recommend_strip_height": "RECOMMEND_STRIP_HEIGHT",
         "subtitle_font_scale": "SUBTITLE_FONT_SCALE",

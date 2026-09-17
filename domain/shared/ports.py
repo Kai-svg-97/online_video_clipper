@@ -140,6 +140,20 @@ class IAudioTagger(Protocol):
     def write_tags(self, file_path: Path, tags: AudioTags) -> bool: ...
 
 
+class ISkipSegmentSource(Protocol):
+    """SponsorBlock 등 '건너뛸 구간' 공급자 추상화.
+
+    구현체: infrastructure.sponsorblock.client.SponsorBlockClient
+
+    반환은 (카테고리, 시작초, 끝초) 목록이다. **실패는 예외가 아니라 빈 목록**이다 —
+    건너뛰기는 부가 기능이라 공급자가 죽어 있다고 재생을 막으면 안 된다.
+    """
+
+    def fetch_segments(
+        self, video_id: str, categories: tuple[str, ...]
+    ) -> list[tuple[str, float, float]]: ...
+
+
 class IClipExtractor(Protocol):
     """ffmpeg 기반 클립/썸네일 추출 추상화.
 

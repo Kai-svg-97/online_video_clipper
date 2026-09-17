@@ -123,3 +123,37 @@ class TestOrder:
             "FFmpegMetadata",
             "EmbedThumbnail",
         ]
+
+
+class TestSponsorBlock:
+    def test_비어_있으면_후처리기가_붙지_않는다(self):
+        opts = _build(DownloadSettings())
+        assert "SponsorBlock" not in _pp_keys(opts)
+        assert "ModifyChapters" not in _pp_keys(opts)
+
+    def test_카테고리를_주면_조회와_잘라내기가_함께_붙는다(self):
+        opts = _build(DownloadSettings(sponsorblock_remove=("sponsor", "intro")))
+        sb = _pp(opts, "SponsorBlock")
+        assert sb["categories"] == ["sponsor", "intro"]
+        # after_filter 여야 다운로드 전에 구간을 확보한다.
+        assert sb["when"] == "after_filter"
+        assert _pp(opts, "ModifyChapters")["remove_sponsor_segments"] == ["sponsor", "intro"]
+
+    def test_자막을_구운_뒤에_잘라낸다(self):
+        """순서가 바뀌면 잘라낸 만큼 자막 타이밍이 어긋난다."""
+        opts = _build(
+            DownloadSettings(
+                subtitle_langs=("ko",),
+                embed_subtitles=True,
+                sponsorblock_remove=("sponsor",),
+            )
+        )
+        keys = _pp_keys(opts)
+        assert keys.index("FFmpegEmbedSubtitle") < keys.index("ModifyChapters")
+
+    def test_메타데이터보다_먼저_잘라낸다(self):
+        opts = _build(
+            DownloadSettings(include_metadata=True, sponsorblock_remove=("sponsor",))
+        )
+        keys = _pp_keys(opts)
+        assert keys.index("ModifyChapters") < keys.index("FFmpegMetadata")

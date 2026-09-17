@@ -158,6 +158,7 @@ class InlinePlayer(QWidget):
     playing_changed    = pyqtSignal(bool)  # 재생/일시정지 전환 — 이어보기 위치 보고 주기 제어
     subtitle_offset_changed = pyqtSignal(int)   # 사용자가 싱크를 바꿈 → 저장 요청
     current_line_changed    = pyqtSignal(int)   # 원본 가사 줄 인덱스(없으면 -1)
+    segment_skipped         = pyqtSignal(str)   # SponsorBlock 구간을 건너뜀(표시 이름)
 
     _HIDE_MS = 2_000   # 2초 비활성 후 숨김
     _SHOW_MS = 1_000   # 마우스 감지 1초 후 표시
@@ -193,6 +194,10 @@ class InlinePlayer(QWidget):
         self._current_merge: bool = InlinePlayer._last_quality_merge
         self._current_quality_short: str = InlinePlayer._last_quality_short
         self._resume_ms: int = 0
+        # SponsorBlock — 건너뛸 구간과 "이미 건너뛴" 구간. 후자가 없으면 사용자가
+        # 일부러 되감아 그 구간을 보려 할 때마다 다시 튕겨 나간다.
+        self._skip_segments: list = []
+        self._skipped_once: set = set()
         self._stream_quality_label: str = ""  # yt-dlp 보고 품질 레이블
         self._temp_stream_path: str = ""      # 고화질 병합 임시 파일(재생 후 정리)
         self._playing_local: bool = False     # 로컬 파일 재생 중인지(재시도 판단용)
@@ -833,6 +838,10 @@ class InlinePlayer(QWidget):
         resume_ms: int = 0,
     ) -> None:
         self.stop()
+        # 새 영상이므로 이전 영상의 구간을 반드시 지운다 — 남겨 두면 엉뚱한
+        # 지점에서 건너뛴다(조회가 비동기라 늦게 도착하는 결과도 있다).
+        self._skip_segments = []
+        self._skipped_once = set()
         self._video_url   = video_url
         self._video_title = title
         self._downloads   = downloads
@@ -1263,7 +1272,37 @@ class InlinePlayer(QWidget):
             self._audio.setMuted(muted)
             self._bar.set_muted(muted)
 
+    def set_skip_segments(self, segments: list) -> None:
+        """SponsorBlock 건너뛰기 구간을 건네받는다(`domain.clip.sponsor.SkipSegment`).
+
+        `load()`가 구간을 지우므로 **조회 결과가 늦게 와도 안전하다** — 다른 영상으로
+        넘어간 뒤 도착한 결과는 그 영상에 적용되지 않는다. 지금 위치가 이미 구간
+        안이면 즉시 한 번 판정한다(재생 시작 직후 도착하는 경우가 흔하다).
+        """
+        self._skip_segments = list(segments or [])
+        if self._skip_segments:
+            self._maybe_skip(self._player.position())
+
+    def _maybe_skip(self, pos_ms: int) -> None:
+        """현재 위치가 건너뛸 구간 안이면 그 끝으로 넘긴다.
+
+        **되돌아오는 것을 막는다**: 사용자가 직접 구간 안으로 seek 했다면(지나간
+        구간을 다시 보려는 것) 건너뛰지 않는다. 그 판단은 '방금 우리가 건너뛴
+        구간인가'로 한다 — 한 번 건너뛴 구간은 다시 건너뛰지 않는다.
+        """
+        if not self._skip_segments:
+            return
+        from domain.clip.sponsor import segment_at  # noqa: PLC0415 (도메인 순수 함수)
+
+        seg = segment_at(self._skip_segments, pos_ms / 1000.0)
+        if seg is None or seg in self._skipped_once:
+            return
+        self._skipped_once.add(seg)
+        self._player.setPosition(int(seg.end_sec * 1000))
+        self.segment_skipped.emit(seg.display_name)
+
     def _on_position(self, pos: int) -> None:
+        self._maybe_skip(pos)
         dur = self._player.duration()
         self._bar.update_position(pos, dur)
         if self._fs_win:

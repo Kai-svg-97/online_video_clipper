@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from domain.clip.sponsor import DEFAULT_SKIP_CATEGORIES
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
 
 
@@ -49,4 +50,18 @@ def apply_user_defaults(settings: DownloadSettings) -> DownloadSettings:
         embed_subtitles=bool(cfg.EMBED_SUBTITLES),
         embed_thumbnail=bool(cfg.EMBED_THUMBNAIL),
         embed_chapters=bool(cfg.EMBED_CHAPTERS),
+        sponsorblock_remove=_removal_categories(cfg),
     )
+
+
+def _removal_categories(cfg) -> tuple[str, ...]:
+    """다운로드 파일에서 **잘라낼** SponsorBlock 카테고리(꺼져 있으면 빈 튜플).
+
+    재생 중 건너뛰기와 같은 카테고리 목록을 쓰되, 켜고 끄는 스위치는 따로다 —
+    건너뛰기는 되돌릴 수 있지만 잘라내기는 파일을 실제로 바꾼다.
+    """
+    if not cfg.SPONSORBLOCK_REMOVE:
+        return ()
+    raw = (cfg.SPONSORBLOCK_CATEGORIES or "").split(",")
+    picked = tuple(part.strip() for part in raw if part.strip())
+    return picked or DEFAULT_SKIP_CATEGORIES

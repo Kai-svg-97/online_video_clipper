@@ -75,7 +75,8 @@ def _apply_sidecar_and_embed_opts(opts: dict, settings: DownloadSettings) -> Non
     """부가 정보를 **곁에 저장**(sidecar)하고 **파일에 굽는**(embed) yt-dlp 옵션 구성.
 
     후처리기 **순서가 결과를 바꾼다**. yt-dlp CLI와 같은 순서로 붙인다 —
-    ``ExtractAudio → EmbedSubtitle → Metadata(+chapters) → EmbedThumbnail``.
+    ``ExtractAudio → EmbedSubtitle → SponsorBlock·ModifyChapters →
+    Metadata(+chapters) → EmbedThumbnail``.
     yt-dlp는 주어진 리스트 순서대로 실행할 뿐 재정렬하지 않으므로, 음원 추출이
     뒤에 오면 앞에서 넣은 태그·표지가 새 파일로 옮겨지지 않는다(이전 코드는
     Metadata 를 ExtractAudio 보다 먼저 넣고 있었다).
@@ -114,7 +115,17 @@ def _apply_sidecar_and_embed_opts(opts: dict, settings: DownloadSettings) -> Non
         # 플레이어가 같은 자막을 두 번 잡아 중복 표시되는 일이 잦다.
         pps.append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
 
-    # 3) 메타데이터·챕터 — 굽기 설정이 하나라도 켜져 있을 때만.
+    # 3) SponsorBlock — 구간을 조회(after_filter)한 뒤 ModifyChapters가 잘라낸다.
+    #    yt-dlp CLI와 같은 자리에 둔다: 자막을 구운 **뒤**여야 ModifyChapters가
+    #    잘라낸 만큼 자막 타이밍도 함께 맞춰 준다.
+    if settings.sponsorblock_remove:
+        categories = list(settings.sponsorblock_remove)
+        pps.append(
+            {"key": "SponsorBlock", "categories": categories, "when": "after_filter"}
+        )
+        pps.append({"key": "ModifyChapters", "remove_sponsor_segments": categories})
+
+    # 4) 메타데이터·챕터 — 굽기 설정이 하나라도 켜져 있을 때만.
     if settings.include_metadata or settings.embed_chapters:
         pps.append(
             {
@@ -124,7 +135,7 @@ def _apply_sidecar_and_embed_opts(opts: dict, settings: DownloadSettings) -> Non
             }
         )
 
-    # 4) 표지 굽기 — mp3·m4a·mp4·mkv·flac·opus 만 지원한다(webm 은 조용히 건너뛴다).
+    # 5) 표지 굽기 — mp3·m4a·mp4·mkv·flac·opus 만 지원한다(webm 은 조용히 건너뛴다).
     if settings.embed_thumbnail:
         pps.append({"key": "EmbedThumbnail", "already_have_thumbnail": want_thumb_file})
 

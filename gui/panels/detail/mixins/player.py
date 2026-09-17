@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
     QLabel,
 )
 
+from gui.toast import show_toast
+
 
 
 
@@ -82,6 +84,7 @@ class PlayerControlMixin:
         self._streaming = True
         self._stream_dto = feed          # 📁 카테고리 지정 시 등록에 쓴다
         self._current_url = feed.url
+        self._request_skip_segments(feed.url)
         self._current_key = getattr(feed, "yt_video_id", "") or feed.url
         self._set_crumb_path(None)
 
@@ -126,6 +129,30 @@ class PlayerControlMixin:
 
         self._btn_refresh.setEnabled(False)  # 스트리밍은 안정적 id 없음
         self.set_related(related or [], header=related_header)
+
+    # ── SponsorBlock 건너뛰기 ──────────────────────────────────────
+
+    def _request_skip_segments(self, url: str) -> None:
+        """이 영상의 건너뛸 구간을 조회 요청한다(결과는 비동기로 돌아온다).
+
+        플레이어에는 `load()`가 이미 이전 영상의 구간을 지워 뒀으므로, 늦게 도착한
+        결과가 엉뚱한 영상에 붙는 일은 아래 URL 대조로 한 번 더 막는다.
+        """
+        if self._clip_vm is None or not url:
+            return
+        self._clip_vm.load_skip_segments(url)
+
+    def _on_skip_segments_loaded(self, url: str, segments: object) -> None:
+        """조회 결과 도착 — **지금 보고 있는 영상일 때만** 적용한다."""
+        if url != self._current_url:
+            return
+        try:
+            self._player.set_skip_segments(list(segments or []))
+        except RuntimeError:
+            logger.debug("플레이어가 이미 파괴됨 — 구간 적용 생략")
+
+    def _on_segment_skipped(self, name: str) -> None:
+        show_toast(self, f"{name} 구간을 건너뛰었습니다")
 
     def player_position_ms(self) -> int:
         """현재 재생 위치(ms) — 이어보기 저장·미니바 표시용.

@@ -94,7 +94,9 @@ class IDownloadRepository(ABC):
 
 ### 3. Clip Context
 
-ffmpeg 기반 구간 추출.
+ffmpeg 기반 구간 추출. **'영상 위의 시간 구간'을 다루는 모든 규칙**이 여기 모인다 —
+사용자가 지정한 클립 구간뿐 아니라, 설명에서 뽑은 챕터와 SponsorBlock이 알려 준
+건너뛸 구간도 같은 개념이라 별도 컨텍스트를 만들지 않았다.
 
 **Aggregate Root:** `ClipAggregate`
 
@@ -103,6 +105,13 @@ ffmpeg 기반 구간 추출.
 
 **Value Objects:**
 - `TimeRange` — startSec, endSec, 유효성 검증 (start < end)
+- `Chapter` — title, startSec, endSec (설명의 타임스탬프에서 파생, 저장하지 않음)
+- `SkipSegment` — category, startSec, endSec (SponsorBlock, 저장하지 않음)
+
+**Domain Services (순수 함수):**
+- `parse_chapters(description, duration)` — 설명 → 챕터. 오탐 제거 규칙 포함
+- `normalize_segments(raw, categories)` — 제출된 구간 정리(정렬·병합·필터)
+- `segment_at(segments, positionSec)` — 현재 위치를 품은 구간 조회
 
 **Domain Events:**
 - `ClipCreated(clip_id, source_video_id, time_range)`
@@ -254,7 +263,10 @@ ffmpeg 기반 구간 추출.
 | Command/Query | 설명 |
 |---------------|------|
 | `ExtractClipCommand` | TimeRange 지정 → ffmpeg 구간 추출 |
+| `ExtractClipsCommand` | 여러 구간 순차 추출(챕터 → 클립). 한 건 실패해도 계속 |
 | `GetClipsQuery` | 특정 Video의 클립 목록 |
+| `GetChaptersQuery` | 영상 설명에서 챕터 구간 추출 |
+| `GetSkipSegmentsQuery` | SponsorBlock 건너뛸 구간(영상당 1회 조회 후 캐시) |
 
 ### Monitoring
 | Command/Query | 설명 |

@@ -210,6 +210,10 @@ class VideoDetailWidget(
         self._tag_add_input: QLineEdit | None = None
         self._clip_vm = clip_vm
         self._download_vm = download_vm
+        if clip_vm is not None:
+            # 바운드 메서드로 연결한다 — 뷰모델은 앱 수명 내내 살아 있어서
+            # 람다로 걸면 이 위젯이 사라진 뒤에도 호출돼 죽은 위젯을 건드린다.
+            clip_vm.skip_segments_loaded.connect(self._on_skip_segments_loaded)
         self._clip_source_file: str | None = None
         self._filter_on = False
         self._streaming = False          # 스트리밍(피드/채널) 모드 여부
@@ -344,6 +348,7 @@ class VideoDetailWidget(
         self._player.playing_changed.connect(self._on_playback_state_for_position)
         self._player.current_line_changed.connect(self._on_current_line_changed)
         self._player.subtitle_offset_changed.connect(self._on_subtitle_offset_changed)
+        self._player.segment_skipped.connect(self._on_segment_skipped)
         left_layout.addWidget(self._player)
 
         # ── 제목 행 (플레이어 바로 아래): 제목 + ⟳상세갱신 + 🌐브라우저 ──
@@ -610,6 +615,7 @@ class VideoDetailWidget(
         self._streaming = False
         self._stream_dto = None
         self._current_url = detail.url
+        self._request_skip_segments(detail.url)
         self._current_key = str(detail.id)
         self._set_crumb_path(category_path)
 

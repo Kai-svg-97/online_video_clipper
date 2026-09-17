@@ -78,6 +78,7 @@ class Services:
     media_source: Any            # YtDlpAdapter — domain.shared.ports.IMediaSource
     clip_extractor: Any          # FfmpegAdapter — IClipExtractor
     audio_tagger: Any            # MutagenAudioTagger — IAudioTagger
+    skip_source: Any             # SponsorBlockClient — ISkipSegmentSource
     youtube_oauth: Any
     youtube_api: Callable[[], Any | None]
     auth_service: Any
@@ -144,6 +145,7 @@ class ClipHandlers:
     delete: Any
     get_clips: Any
     get_chapters: Any
+    get_skip_segments: Any
 
 
 @dataclass(frozen=True, slots=True)

@@ -524,6 +524,73 @@ class SettingsPanel(QWidget):
             f"font-size: 10px; color: {_t().text_secondary}; margin-left: 22px;"
         )
         layout.addWidget(embed_hint)
+        layout.addSpacing(18)
+        self._build_sponsorblock_rows(layout)
+
+    def _build_sponsorblock_rows(self, layout) -> None:
+        """SponsorBlock — 재생 중 건너뛰기 / 다운로드 시 잘라내기."""
+        from domain.clip.sponsor import SKIP_CATEGORY_NAMES  # noqa: PLC0415
+
+        try:
+            from config import settings as s
+            cur_skip = s.SPONSORBLOCK_SKIP
+            cur_remove = s.SPONSORBLOCK_REMOVE
+            cur_cats = {c.strip() for c in s.SPONSORBLOCK_CATEGORIES.split(",") if c.strip()}
+        except Exception:
+            logger.exception("SponsorBlock 설정 로드 실패")
+            cur_skip, cur_remove, cur_cats = True, False, set()
+
+        sb_lbl = QLabel("SponsorBlock")
+        sb_lbl.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            f"text-transform: uppercase; color: {_t().text_muted};"
+        )
+        layout.addWidget(sb_lbl)
+        layout.addSpacing(8)
+
+        self._sb_skip_check = QCheckBox("재생 중 자동으로 건너뛰기")
+        self._sb_skip_check.setChecked(cur_skip)
+        self._sb_skip_check.checkStateChanged.connect(self._on_sb_skip_changed)
+        layout.addWidget(self._sb_skip_check)
+
+        self._sb_remove_check = QCheckBox("다운로드한 파일에서 잘라내기")
+        self._sb_remove_check.setChecked(cur_remove)
+        self._sb_remove_check.checkStateChanged.connect(self._on_sb_remove_changed)
+        layout.addWidget(self._sb_remove_check)
+
+        # 카테고리 — 건너뛰기와 잘라내기가 **같은 목록**을 쓴다.
+        self._sb_cat_checks: dict[str, QCheckBox] = {}
+        cat_box = QVBoxLayout()
+        cat_box.setContentsMargins(22, 4, 0, 0)
+        cat_box.setSpacing(2)
+        for key, name in SKIP_CATEGORY_NAMES.items():
+            check = QCheckBox(name)
+            check.setChecked(key in cur_cats)
+            check.checkStateChanged.connect(self._on_sb_categories_changed)
+            self._sb_cat_checks[key] = check
+            cat_box.addWidget(check)
+        layout.addLayout(cat_box)
+
+        sb_hint = QLabel(
+            "SponsorBlock은 사용자들이 모은 공개 구간 정보입니다. 조회는 영상 ID를 "
+            "그대로 보내지 않고 해시 앞자리만 보내므로 어떤 영상을 보는지 서버가 알 수 "
+            "없습니다. 잘라내기는 파일을 실제로 바꾸므로 되돌릴 수 없습니다."
+        )
+        sb_hint.setWordWrap(True)
+        sb_hint.setStyleSheet(
+            f"font-size: 10px; color: {_t().text_secondary}; margin-left: 22px;"
+        )
+        layout.addWidget(sb_hint)
+
+    def _on_sb_skip_changed(self, _state) -> None:
+        self._save_setting("sponsorblock_skip", self._sb_skip_check.isChecked())
+
+    def _on_sb_remove_changed(self, _state) -> None:
+        self._save_setting("sponsorblock_remove", self._sb_remove_check.isChecked())
+
+    def _on_sb_categories_changed(self, _state) -> None:
+        picked = ",".join(k for k, c in self._sb_cat_checks.items() if c.isChecked())
+        self._save_setting("sponsorblock_categories", picked)
 
     @staticmethod
     def _save_setting(key: str, value) -> None:

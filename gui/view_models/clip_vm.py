@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -19,7 +20,13 @@ from application.clip.queries import (
     GetClipsHandler,
     GetClipsQuery,
 )
+from application.clip.sponsor_queries import (
+    GetSkipSegmentsHandler,
+    GetSkipSegmentsQuery,
+)
 from gui.view_models.base import WorkerOwnerMixin
+
+logger = logging.getLogger(__name__)
 
 
 def _clip_to_dto(agg) -> ClipDTO:
@@ -82,12 +89,36 @@ class _ChapterExtractWorker(QThread):
         self.progress.emit(current, total, title)
 
 
+class _SkipSegmentWorker(QThread):
+    """SponsorBlock 조회 — 네트워크라 배경에서 돈다."""
+
+    loaded = pyqtSignal(str, object)   # url, list[SkipSegment]
+
+    def __init__(self, handler: GetSkipSegmentsHandler, url: str) -> None:
+        # 부모를 주지 않는다 — `_ExtractWorker`와 같은 이유(gui/workers.py).
+        super().__init__(None)
+        self._handler = handler
+        self._url = url
+
+    def run(self) -> None:
+        try:
+            segments = self._handler.handle(GetSkipSegmentsQuery(url=self._url))
+        except Exception:
+            # 건너뛰기는 부가 기능이다 — 실패해도 재생을 막지 않는다.
+            logger.exception("SponsorBlock 구간 조회 실패 (무시): %s", self._url)
+            segments = []
+        # URL을 함께 실어 보낸다 — 사용자가 이미 다른 영상으로 넘어갔을 수 있어
+        # 받는 쪽이 "지금 그 영상 맞나"를 판별해야 한다.
+        self.loaded.emit(self._url, segments)
+
+
 class ClipViewModel(WorkerOwnerMixin, QObject):
     clips_changed = pyqtSignal()
     error_occurred = pyqtSignal(str)
     chapters_loaded = pyqtSignal(object)        # list[ChapterDTO]
     chapter_progress = pyqtSignal(int, int, str)
     chapter_finished = pyqtSignal(int, int)     # 성공 수, 실패 수
+    skip_segments_loaded = pyqtSignal(str, object)  # url, list[SkipSegment]
 
     def __init__(
         self,
@@ -96,6 +127,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
         get_clips_handler: GetClipsHandler,
         get_chapters_handler: GetChaptersHandler | None = None,
         extract_many_handler: ExtractClipsHandler | None = None,
+        get_skip_segments_handler: GetSkipSegmentsHandler | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -104,6 +136,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
         self._get_clips = get_clips_handler
         self._get_chapters = get_chapters_handler
         self._extract_many = extract_many_handler
+        self._get_skips = get_skip_segments_handler
         self._clips: list[ClipDTO] = []
         self._chapters: list[ChapterDTO] = []
         self._worker: _ExtractWorker | None = None
@@ -115,6 +148,19 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
     @property
     def chapters(self) -> list[ChapterDTO]:
         return self._chapters
+
+    # ── SponsorBlock ──────────────────────────────────────────────
+
+    def load_skip_segments(self, url: str) -> None:
+        """건너뛸 구간을 배경에서 조회한다. 결과는 `skip_segments_loaded`로."""
+        if self._get_skips is None or not url:
+            return
+        worker = _SkipSegmentWorker(self._get_skips, url)
+        worker.loaded.connect(self._on_skips_loaded)
+        self._start_worker(worker)
+
+    def _on_skips_loaded(self, url: str, segments: object) -> None:
+        self.skip_segments_loaded.emit(url, segments or [])
 
     # ── 챕터 ──────────────────────────────────────────────────────
 
