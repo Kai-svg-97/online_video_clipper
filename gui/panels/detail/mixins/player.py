@@ -346,13 +346,34 @@ class PlayerControlMixin:
             return
         if not self._subtitle_vm.transcribe(self._detail.id, media):
             return
-        self._subtitle_tab.show_transcribing("음성 인식을 준비하는 중…")
+        self._asr_downloading = False
+        self._asr_stopping = False
+        self._subtitle_tab.show_transcribing("음성 인식을 준비하는 중…", stoppable=True)
+
+    def _on_transcribe_stop_requested(self) -> None:
+        """중단 — **그때까지 인식한 부분은 남는다**(어댑터가 모은 것을 돌려준다).
+
+        협조적 중단이라 즉시 멈추지 않는다. 세그먼트 경계에서 멈추므로 한 박자
+        걸리고, 모델을 내려받는 중이면 그것이 끝나야 멈춘다 — 둘을 구분해 알린다.
+        """
+        if self._subtitle_vm is None or self._detail is None:
+            return
+        self._asr_stopping = True
+        self._subtitle_vm.stop_transcribe(self._detail.id)
+        self._subtitle_tab.show_stopping(
+            "모델 내려받기가 끝나면 멈춥니다…"
+            if self._asr_downloading
+            else "중단하는 중… 지금까지 인식한 부분은 자막으로 남깁니다."
+        )
 
     def _on_asr_model_downloading(self, model_key: str) -> None:
         """모델은 처음 한 번만 받는다 — 수십~수백 MB라 반드시 알린다."""
         from domain.library.transcribe import resolve_model  # noqa: PLC0415
 
         model = resolve_model(model_key)
+        self._asr_downloading = True
+        # 내려받는 동안에는 중단 버튼을 띄우지 않는다 — 협조적 중단이 세그먼트
+        # 경계에서만 걸려, 눌러도 몇 분간 아무 반응이 없으면 고장처럼 보인다.
         self._subtitle_tab.show_transcribing(
             f"음성 인식 모델을 처음 한 번 내려받는 중… ({model.disk_mb}MB)\n"
             "다음부터는 바로 시작합니다."
@@ -361,14 +382,35 @@ class PlayerControlMixin:
     def _on_asr_progress(self, video_id, ratio: float) -> None:
         if self._detail is None or video_id != self._detail.id:
             return
-        self._subtitle_tab.show_transcribing(f"소리를 듣는 중… {int(ratio * 100)}%")
+        # 첫 진행률이 왔다 = 모델은 이미 준비됐다는 뜻이다.
+        self._asr_downloading = False
+        if self._asr_stopping:
+            return   # 중단 안내를 진행률로 덮지 않는다
+        self._subtitle_tab.show_transcribing(
+            f"소리를 듣는 중… {int(ratio * 100)}%", stoppable=True
+        )
 
     def _on_asr_finished(self, video_id, count: int) -> None:
         if self._detail is None or video_id != self._detail.id:
             return
+        stopped = self._asr_stopping
+        self._asr_stopping = False
+        self._asr_downloading = False
         if count:
             self._subtitle_vm.load_lines(self._detail.id)
-            show_toast(self, f"음성 인식으로 자막 {count}줄을 만들었습니다")
+            show_toast(
+                self,
+                f"중단 전까지 자막 {count}줄을 만들었습니다"
+                if stopped
+                else f"음성 인식으로 자막 {count}줄을 만들었습니다",
+            )
+            return
+        # 결과가 없다 — **왜** 없는지는 중단했는지에 달렸다. 중단한 사람에게
+        # "말을 찾지 못했다"고 하면 기능이 고장 난 것처럼 들린다.
+        if stopped:
+            self._subtitle_tab.show_transcribing(
+                "중단했습니다. 인식된 부분이 없어 자막을 만들지 못했습니다."
+            )
             return
         self._subtitle_tab.show_transcribing(
             "소리에서 말을 찾지 못했습니다.\n음악만 있거나 소리가 없는 영상일 수 있습니다."

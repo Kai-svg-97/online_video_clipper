@@ -219,6 +219,10 @@ class VideoDetailWidget(
         self._clip_vm = clip_vm
         self._download_vm = download_vm
         self._subtitle_vm = subtitle_vm
+        # 음성 인식 진행 단계 — 중단 버튼을 언제 띄울지, 끝났을 때 뭐라고 말할지가
+        # 이 둘로 갈린다(내려받는 중에는 중단이 걸리지 않는다).
+        self._asr_downloading = False
+        self._asr_stopping = False
         if subtitle_vm is not None:
             # 바운드 메서드로 연결한다 — 뷰모델이 이 위젯보다 오래 산다.
             subtitle_vm.lines_loaded.connect(self._on_subtitle_lines)
@@ -547,6 +551,9 @@ class VideoDetailWidget(
         self._subtitle_tab.seek_requested.connect(self._on_subtitle_seek)
         self._subtitle_tab.index_requested.connect(self._on_subtitle_index_requested)
         self._subtitle_tab.transcribe_requested.connect(self._on_transcribe_requested)
+        self._subtitle_tab.transcribe_stop_requested.connect(
+            self._on_transcribe_stop_requested
+        )
         self._subtitle_tab.search_changed.connect(self._on_subtitle_search)
         self._tabs.addTab(self._subtitle_tab, "자막")
 

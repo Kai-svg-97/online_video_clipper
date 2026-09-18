@@ -241,9 +241,7 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
             return False
         if video_id in self._transcribe_workers:
             return False
-        from config import settings as cfg  # noqa: PLC0415 (런타임 설정)
-
-        model_key = cfg.TRANSCRIBE_MODEL
+        model_key = self.transcribe_model_key
         cmd = TranscribeVideoCommand(
             video_id=video_id, media_path=media_path,
             model_key=model_key, language=language,
@@ -261,6 +259,50 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         worker = self._transcribe_workers.get(video_id)
         if worker is not None:
             worker.stop()
+
+    # ── 전사 모델 관리(설정 화면) ─────────────────────────────────
+    #
+    # 모델 파일을 다루는 일은 전부 어댑터에 맡기고 여기서는 **예외를 흡수**한다 —
+    # 설정 화면은 모델이 없어도 열려야 하고, 디스크 오류로 화면이 죽으면 안 된다.
+
+    @property
+    def transcribe_model_key(self) -> str:
+        from config import settings as cfg  # noqa: PLC0415 (런타임 설정)
+
+        return cfg.TRANSCRIBE_MODEL
+
+    def set_transcribe_model(self, model_key: str) -> None:
+        from config import settings as cfg  # noqa: PLC0415
+
+        cfg.save_setting("transcribe_model", model_key)
+
+    def installed_models(self) -> set[str]:
+        """받아 둔 모델 키. 어댑터가 없으면 빈 집합."""
+        if self._transcriber is None:
+            return set()
+        try:
+            return set(self._transcriber.installed_models())
+        except Exception:
+            logger.exception("받아 둔 전사 모델 조회 실패")
+            return set()
+
+    def model_disk_mb(self, model_key: str) -> int:
+        if self._transcriber is None:
+            return 0
+        try:
+            return int(self._transcriber.model_disk_mb(model_key))
+        except Exception:
+            logger.exception("전사 모델 용량 조회 실패: %s", model_key)
+            return 0
+
+    def delete_model(self, model_key: str) -> bool:
+        if self._transcriber is None:
+            return False
+        try:
+            return bool(self._transcriber.delete_model(model_key))
+        except Exception:
+            logger.exception("전사 모델 삭제 실패: %s", model_key)
+            return False
 
     def _on_transcribe_progress(self, ratio: float) -> None:
         # 어느 영상의 진행인지는 워커가 알지만 신호는 비율만 준다 — 한 번에 하나가

@@ -17,7 +17,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from config.settings import DATA_DIR
-from domain.library.transcribe import MODEL_DIR_NAME, resolve_model, segments_to_cues
+from domain.library.transcribe import (
+    MODEL_DIR_NAME,
+    MODELS,
+    resolve_model,
+    segments_to_cues,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +34,42 @@ _COMPUTE_TYPE = "int8"
 
 def model_root() -> Path:
     return DATA_DIR / "models" / MODEL_DIR_NAME
+
+
+def model_dir_for(model_key: str) -> Path:
+    """모델 하나가 놓이는 폴더. HuggingFace 캐시 규약(`models--<org>--<repo>`)."""
+    return model_root() / f"models--Systran--faster-whisper-{resolve_model(model_key).key}"
+
+
+def is_model_downloaded(model_key: str) -> bool:
+    """받아 둔 모델인가 — **파일만 본다**(모듈 함수라 어댑터 인스턴스도 필요 없다).
+
+    `WhisperTranscriber.is_model_ready()`는 실제로 모델을 **메모리에 올려** 판정하므로
+    설정 화면처럼 '목록만 보여주는' 자리에서 부르면 수백 MB가 붙잡힌다. 여기서는
+    가중치 파일(`model.bin`)이 내려받기 완료 상태로 있는지만 확인한다 —
+    잘못 판정해도 전사 경로가 알아서 복구한다(있다고 보면 내려받기 안내만 안 뜨고,
+    없다고 보면 `download_model()`이 완성본 앞에서 즉시 끝난다).
+    """
+    try:
+        target = model_dir_for(model_key)
+        if not target.is_dir():
+            return False
+        return any(p.stat().st_size > 0 for p in target.rglob("model.bin"))
+    except OSError:
+        logger.exception("전사 모델 확인 실패: %s", model_key)
+        return False
+
+
+def model_disk_bytes(model_key: str) -> int:
+    """받아 둔 모델이 실제로 차지하는 용량(없으면 0)."""
+    target = model_dir_for(model_key)
+    if not target.is_dir():
+        return 0
+    try:
+        return sum(p.stat().st_size for p in target.rglob("*") if p.is_file())
+    except OSError:
+        logger.exception("전사 모델 용량 계산 실패: %s", target)
+        return 0
 
 
 class WhisperTranscriber:
@@ -66,16 +107,27 @@ class WhisperTranscriber:
         return True
 
     def installed_models(self) -> set[str]:
-        """받아 둔 모델 키 — 설정 화면이 무엇을 지울 수 있는지 보여준다."""
-        return {m for m in ("tiny", "base", "small") if self.is_model_ready(m)}
+        """받아 둔 모델 키 — 설정 화면이 무엇을 지울 수 있는지 보여준다.
+
+        **파일만 본다.** 예전엔 모델마다 `is_model_ready()`를 불렀는데, 그것은 실제로
+        모델을 메모리에 올리는 판정이라 설정 화면을 열기만 해도 수백 MB가 붙잡혔다.
+        """
+        return {m.key for m in MODELS if is_model_downloaded(m.key)}
+
+    def model_disk_mb(self, model_key: str) -> int:
+        """받아 둔 모델이 실제로 차지하는 용량(MB, 없으면 0).
+
+        카탈로그의 `disk_mb`는 '내려받기 전에 알려 주는 예상치'다. 지우는 사람에게는
+        **지금 되찾는 용량**이 필요하므로 실제 파일을 잰다.
+        """
+        return int(model_disk_bytes(model_key) / 1024**2)
 
     def delete_model(self, model_key: str) -> bool:
         """받아 둔 모델을 지운다(디스크를 되찾는다)."""
         import shutil  # noqa: PLC0415
 
         model = resolve_model(model_key)
-        # HuggingFace 캐시 규약: `models--<org>--<repo>` 폴더 하나가 모델 하나다.
-        target = model_root() / f"models--Systran--faster-whisper-{model.key}"
+        target = model_dir_for(model.key)
         if self._loaded_key == model.key:
             self._model = None
             self._loaded_key = ""

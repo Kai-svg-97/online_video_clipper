@@ -24,9 +24,25 @@ class _VM(QObject):
         self.is_bulk_running = False
         self.started = 0
         self.stopped = 0
+        # 같은 섹션에 붙은 음성 인식 모델 선택이 쓰는 것들.
+        self.transcribe_model_key = "base"
+        self.saved: list[str] = []
 
     def coverage(self):
         return self._coverage
+
+    def set_transcribe_model(self, key):
+        self.saved.append(key)
+        self.transcribe_model_key = key
+
+    def installed_models(self):
+        return set()
+
+    def model_disk_mb(self, key):
+        return 0
+
+    def delete_model(self, key):
+        return False
 
     def start_bulk_index(self):
         self.started += 1

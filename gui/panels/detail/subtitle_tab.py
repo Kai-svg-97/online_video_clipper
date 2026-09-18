@@ -43,6 +43,7 @@ class SubtitleTab(QWidget):
     seek_requested = pyqtSignal(int)      # ms
     index_requested = pyqtSignal()
     transcribe_requested = pyqtSignal()
+    transcribe_stop_requested = pyqtSignal()
     search_changed = pyqtSignal(str)
 
     _PAGE_EMPTY = 0
@@ -96,9 +97,19 @@ class SubtitleTab(QWidget):
             "영상 길이에 따라 몇 분이 걸립니다."
         )
         self._asr_btn.clicked.connect(self.transcribe_requested.emit)
+        # 긴 영상은 몇십 분이 걸린다 — 시작한 사람이 되돌릴 길이 있어야 한다.
+        # 중단해도 그때까지 인식한 부분은 남는다(어댑터가 모아 둔 것을 돌려준다).
+        self._stop_btn = QPushButton("중단")
+        self._stop_btn.setFixedWidth(100)
+        self._stop_btn.setToolTip(
+            "음성 인식을 멈춥니다. 그때까지 인식한 부분은 자막으로 남습니다."
+        )
+        self._stop_btn.clicked.connect(self.transcribe_stop_requested.emit)
+        self._stop_btn.setVisible(False)
         empty_layout.addWidget(self._empty_lbl)
         empty_layout.addWidget(self._index_btn, alignment=Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(self._asr_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(self._stop_btn, alignment=Qt.AlignmentFlag.AlignCenter)
         self._stack.addWidget(empty)                       # _PAGE_EMPTY
 
         self._list = QListWidget()
@@ -122,6 +133,7 @@ class SubtitleTab(QWidget):
             self._empty_lbl.setText("이 영상의 자막을 아직 가져오지 않았습니다.")
             self._index_btn.setVisible(True)
             self._asr_btn.setVisible(self._can_transcribe)
+            self._stop_btn.setVisible(False)
             self._stack.setCurrentIndex(self._PAGE_EMPTY)
             self._count_lbl.setText("")
             self._refresh_btn.setVisible(False)
@@ -135,6 +147,7 @@ class SubtitleTab(QWidget):
             self._empty_lbl.setText("찾는 말이 든 자막 줄이 없습니다.")
             self._index_btn.setVisible(False)
             self._asr_btn.setVisible(False)
+            self._stop_btn.setVisible(False)
             self._stack.setCurrentIndex(self._PAGE_EMPTY)
             self._count_lbl.setText("0줄")
             return
@@ -148,6 +161,7 @@ class SubtitleTab(QWidget):
         self._count_lbl.setText(
             f"{total}줄" if total <= _MAX_ROWS else f"{_MAX_ROWS}/{total}줄"
         )
+        self._stop_btn.setVisible(False)
         self._stack.setCurrentIndex(self._PAGE_LIST)
 
     def set_busy(self, busy: bool) -> None:
@@ -156,6 +170,7 @@ class SubtitleTab(QWidget):
         self._refresh_btn.setEnabled(not busy)
         if busy:
             self._empty_lbl.setText("자막을 가져오는 중…")
+            self._stop_btn.setVisible(False)
             self._stack.setCurrentIndex(self._PAGE_EMPTY)
 
     def set_transcribe_available(self, available: bool) -> None:
@@ -165,11 +180,24 @@ class SubtitleTab(QWidget):
             self._can_transcribe and self._stack.currentIndex() == self._PAGE_EMPTY
         )
 
-    def show_transcribing(self, text: str) -> None:
-        """음성 인식 진행 표시 — 몇 분이 걸리므로 무엇을 하는 중인지 계속 알린다."""
+    def show_transcribing(self, text: str, *, stoppable: bool = False) -> None:
+        """음성 인식 진행 표시 — 몇 분이 걸리므로 무엇을 하는 중인지 계속 알린다.
+
+        `stoppable`은 **지금 멈출 수 있는 단계인가**다. 모델을 내려받는 동안에는
+        협조적 중단이 걸리지 않으므로(내려받기가 끝나야 첫 판정이 돈다) 버튼을
+        띄우지 않는다 — 눌러도 몇 분간 아무 반응이 없으면 고장처럼 보인다.
+        """
         self._empty_lbl.setText(text)
         self._index_btn.setVisible(False)
         self._asr_btn.setVisible(False)
+        self._stop_btn.setVisible(bool(stoppable))
+        self._stop_btn.setEnabled(True)
+        self._stack.setCurrentIndex(self._PAGE_EMPTY)
+
+    def show_stopping(self, text: str) -> None:
+        """중단 요청을 받았다 — 실제로 멈출 때까지 한 박자 걸린다(세그먼트 경계)."""
+        self._empty_lbl.setText(text)
+        self._stop_btn.setEnabled(False)
         self._stack.setCurrentIndex(self._PAGE_EMPTY)
 
     def show_no_subtitle(self) -> None:
@@ -181,6 +209,7 @@ class SubtitleTab(QWidget):
         self._index_btn.setVisible(True)
         # 자막이 아예 없는 영상 — 음성 인식이 **가장 쓸모 있는 경우**다.
         self._asr_btn.setVisible(self._can_transcribe)
+        self._stop_btn.setVisible(False)
         self._stack.setCurrentIndex(self._PAGE_EMPTY)
 
     def show_streaming_notice(self) -> None:
@@ -196,6 +225,7 @@ class SubtitleTab(QWidget):
         )
         self._index_btn.setVisible(False)
         self._asr_btn.setVisible(False)
+        self._stop_btn.setVisible(False)
         self._refresh_btn.setVisible(False)
         self._count_lbl.setText("")
         self._stack.setCurrentIndex(self._PAGE_EMPTY)
