@@ -159,3 +159,142 @@ class TestCancel:
         vm.shutdown()
         assert vm.waiting_count == 0
         assert not vm._window_timer.isActive()
+
+
+class TestLiveRecording:
+    """녹화는 게이트를 우회한다 — 방송은 지금 아니면 받을 수 없다."""
+
+    def test_시간대가_닫혀_있어도_즉시_시작한다(self, vm, cfg, monkeypatch):
+        """대기줄에 묶이면 그동안 방송이 끝난다."""
+        monkeypatch.setattr(cfg, "DOWNLOAD_WINDOW_ENABLED", True, raising=False)
+        monkeypatch.setattr(cfg, "DOWNLOAD_WINDOW_START", 3, raising=False)
+        monkeypatch.setattr(cfg, "DOWNLOAD_WINDOW_END", 4, raising=False)
+        _freeze_hour(monkeypatch, 12)
+
+        assert vm.start_live_recording("https://y/live", "생방송") is True
+        assert len(vm.launched) == 1
+        assert vm.waiting_count == 0
+
+    def test_동시_다운로드_한도가_차_있어도_시작한다(self, vm, cfg):
+        _enqueue(vm, 5)                     # 한도 2를 이미 채운다
+        assert len(vm.launched) == 2
+
+        assert vm.start_live_recording("https://y/live", "생방송") is True
+        assert len(vm.launched) == 3
+
+    def test_녹화_자체_상한은_지킨다(self, vm, cfg):
+        """녹화는 몇 시간씩 이어져 쌓아 두면 디스크가 먼저 찬다."""
+        from domain.download.live import MAX_CONCURRENT_RECORDINGS
+
+        for i in range(MAX_CONCURRENT_RECORDINGS):
+            assert vm.start_live_recording(f"https://y/l{i}", f"방송{i}") is True
+        assert vm.start_live_recording("https://y/over", "초과") is False
+        assert len(vm.launched) == MAX_CONCURRENT_RECORDINGS
+
+    def test_녹화는_일반_다운로드_자리를_막지_않는다(self, vm, cfg):
+        """녹화를 한도 계산에 넣으면 장시간 녹화 하나가 큐를 통째로 멈춘다."""
+        vm.start_live_recording("https://y/live", "생방송")
+        _enqueue(vm, 3)
+        # 녹화 1 + 일반 2(한도) = 3
+        assert len(vm.launched) == 3
+        assert vm.waiting_count == 1
+
+    def test_녹화가_끝나면_자리를_돌려준다(self, vm, cfg):
+        vm.start_live_recording("https://y/live", "생방송")
+        rec_id = vm.launched[0]
+        assert vm.recording_count == 1
+
+        vm._cleanup_worker(rec_id)
+
+        assert vm.recording_count == 0
+        assert not vm.is_recording(rec_id)
+
+    def test_녹화_여부를_알려준다(self, vm, cfg):
+        """화면이 진행률 대신 경과·용량을 보여줄지 판단하는 근거."""
+        vm.start_live_recording("https://y/live", "생방송")
+        rec_id = vm.launched[0]
+        _enqueue(vm, 1)
+        normal_id = vm.launched[1]
+
+        assert vm.is_recording(rec_id)
+        assert not vm.is_recording(normal_id)
+
+    def test_종료하면_녹화_목록도_비운다(self, vm, cfg):
+        vm.start_live_recording("https://y/live", "생방송")
+        vm.shutdown()
+        assert vm.recording_count == 0
+
+
+class TestLiveProbeRouting:
+    """대기하게 된 작업만 라이브인지 확인하고, 방송 중이면 대기줄에서 빼낸다."""
+
+    @pytest.fixture
+    def probing_vm(self, qapp_instance, monkeypatch):
+        from gui.view_models.download_vm import DownloadViewModel
+
+        asked: list[str] = []
+
+        def probe(url):
+            asked.append(url)
+            return "live" if "live" in url else "not_live"
+
+        start = MagicMock()
+        start.handle.side_effect = lambda cmd: type("Job", (), {"id": uuid4()})()
+        model = DownloadViewModel(
+            start_handler=start,
+            cancel_handler=MagicMock(),
+            queue_handler=MagicMock(handle=MagicMock(return_value=[])),
+            history_handler=MagicMock(handle=MagicMock(return_value=[])),
+            event_bridge=_Bridge(),
+            live_status_fn=probe,
+        )
+        launched: list = []
+
+        class _FakeWorker:
+            def isRunning(self): return False
+            def terminate(self): pass
+            def wait(self, _ms=0): return True
+
+        monkeypatch.setattr(
+            model, "_launch",
+            lambda jid: (launched.append(jid), model._workers.__setitem__(jid, _FakeWorker())),
+        )
+        # 실제 QThread 를 띄우지 않고 판정만 본다.
+        monkeypatch.setattr(model, "_probe_live", lambda jid, url: model._on_live_probed(jid, probe(url)))
+        model.launched = launched      # type: ignore[attr-defined]
+        model.asked = asked            # type: ignore[attr-defined]
+        return model
+
+    def test_곧바로_시작하면_묻지_않는다(self, probing_vm, cfg):
+        """모든 다운로드에 메타데이터 조회를 끼우면 흔한 경우가 1초씩 느려진다."""
+        probing_vm.start_download("https://y/live1", "방송")
+        assert probing_vm.asked == []
+        assert len(probing_vm.launched) == 1
+
+    def test_대기하게_되면_묻는다(self, probing_vm, cfg):
+        for i in range(3):                       # 한도 2 → 세 번째가 대기
+            probing_vm.start_download(f"https://y/normal{i}", f"영상{i}")
+        assert probing_vm.asked == ["https://y/normal2"]
+
+    def test_방송_중이면_대기줄에서_빼내_녹화한다(self, probing_vm, cfg):
+        probing_vm.start_download("https://y/normal0", "영상0")
+        probing_vm.start_download("https://y/normal1", "영상1")
+        assert probing_vm.waiting_count == 0
+
+        probing_vm.start_download("https://y/live-now", "생방송")
+
+        assert probing_vm.waiting_count == 0          # 대기하지 않고
+        assert probing_vm.recording_count == 1        # 녹화로 돌았다
+        assert len(probing_vm.launched) == 3
+
+    def test_라이브가_아니면_그대로_대기한다(self, probing_vm, cfg):
+        for i in range(3):
+            probing_vm.start_download(f"https://y/normal{i}", f"영상{i}")
+        assert probing_vm.waiting_count == 1
+        assert probing_vm.recording_count == 0
+
+    def test_판정_함수가_없으면_기능만_꺼진다(self, vm, cfg):
+        """라이브 판정 없이도 큐는 평소대로 동작해야 한다."""
+        _enqueue(vm, 3)
+        assert vm.waiting_count == 1
+        assert vm.recording_count == 0

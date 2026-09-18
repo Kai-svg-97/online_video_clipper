@@ -10,6 +10,7 @@ from gui.view_models.base import WorkerOwnerMixin
 
 from application.download.commands import CancelDownloadCommand, CancelDownloadHandler, StartDownloadCommand, StartDownloadHandler
 from application.download.dtos import DownloadJobDTO
+from domain.download.live import MAX_CONCURRENT_RECORDINGS, is_recordable
 from domain.download.schedule import DownloadWindow, clamp_concurrent, slots_available
 from domain.download.value_objects import DownloadSettings
 from application.download.event_bridge import DownloadEventBridge
@@ -37,6 +38,29 @@ class _DownloadWorker(QThread):
         self._handler.execute_job(self._job_id)
 
 
+class _LiveProbeWorker(QThread):
+    """이 주소가 지금 방송 중인지 확인한다(메타데이터 1회 조회)."""
+
+    done = pyqtSignal(object, str)   # job_id, 라이브 상태
+
+    def __init__(self, probe, job_id: UUID, url: str) -> None:
+        # 부모를 주지 않는다 — gui/workers.py 의 규칙과 같다.
+        super().__init__(None)
+        self._probe = probe
+        self._job_id = job_id
+        self._url = url
+
+    def run(self) -> None:
+        from domain.download.live import NOT_LIVE  # noqa: PLC0415
+
+        try:
+            status = self._probe(self._url)
+        except Exception:
+            logger.exception("라이브 상태 조회 실패 (무시): %s", self._url)
+            status = NOT_LIVE
+        self.done.emit(self._job_id, status)
+
+
 class DownloadViewModel(WorkerOwnerMixin, QObject):
     queue_changed = pyqtSignal()
     history_changed = pyqtSignal()
@@ -49,6 +73,7 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
         queue_handler: GetDownloadQueueHandler,
         history_handler: GetDownloadHistoryHandler,
         event_bridge: DownloadEventBridge,
+        live_status_fn=None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -56,11 +81,18 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
         self._cancel = cancel_handler
         self._queue_q = queue_handler
         self._history_q = history_handler
+        # 주소 → 라이브 상태. 없으면 라이브 판정을 하지 않는다(기능만 비활성).
+        self._live_status_fn = live_status_fn
+        # 이미 라이브인지 확인한 작업 — 두 번 묻지 않는다.
+        self._probed: set[UUID] = set()
         self._workers: dict[UUID, _DownloadWorker] = {}
         # 아직 시작하지 않은 작업(FIFO). 동시 실행 수와 예약 시간대 **둘 다** 여기서
         # 지킨다 — 예전에는 요청이 올 때마다 워커를 바로 띄워, 설정 화면의
         # "동시 다운로드 수"가 화면에만 있고 아무 효과가 없었다.
         self._pending: list[UUID] = []
+        # 녹화 중인 작업 id — 예약·동시한도 게이트를 **우회한** 것들이라
+        # 일반 대기줄과 따로 센다.
+        self._recordings: set[UUID] = set()
         # 예약 시간대가 열리기를 기다리는 타이머. 대기 중일 때만 돈다.
         self._window_timer = QTimer(self)
         self._window_timer.setInterval(_WINDOW_POLL_MS)
@@ -89,6 +121,67 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
         self._pending.append(job.id)
         self.queue_changed.emit()
         self._pump()
+        # **대기하게 된 작업만** 라이브인지 확인한다. 곧바로 시작했다면 라이브든
+        # 아니든 이미 받고 있으므로 물어볼 이유가 없다 — 모든 다운로드에 메타데이터
+        # 조회를 끼워 넣으면 흔한 경우가 1초씩 느려진다.
+        if job.id in self._pending:
+            self._probe_live(job.id, url)
+
+    def start_live_recording(
+        self, url: str, title: str, settings: DownloadSettings | None = None
+    ) -> bool:
+        """라이브 방송 녹화를 **즉시** 시작한다(예약 시간대·동시 다운로드 한도 우회).
+
+        방송은 지금 아니면 받을 수 없다 — 게이트에 걸려 대기하면 그동안 방송이 끝난다.
+        대신 녹화 자체의 상한(`MAX_CONCURRENT_RECORDINGS`)을 지킨다: 녹화는 몇 시간씩
+        이어져 쌓아 두면 디스크가 먼저 찬다.
+
+        상한에 걸리면 False 를 돌려준다(호출부가 사용자에게 알린다).
+        """
+        if len(self._recordings) >= MAX_CONCURRENT_RECORDINGS:
+            return False
+        try:
+            job = self._start.handle(
+                StartDownloadCommand(url=url, title=title, settings=settings)
+            )
+        except Exception as exc:
+            self.error_occurred.emit(str(exc))
+            return False
+        self._recordings.add(job.id)
+        self._launch(job.id)
+        return True
+
+    def _probe_live(self, job_id: UUID, url: str) -> None:
+        if self._live_status_fn is None or job_id in self._probed:
+            return
+        self._probed.add(job_id)
+        worker = _LiveProbeWorker(self._live_status_fn, job_id, url)
+        worker.done.connect(self._on_live_probed)
+        self._start_worker(worker)
+
+    def _on_live_probed(self, job_id: object, status: str) -> None:
+        """방송 중이면 대기줄에서 빼내 즉시 녹화로 돌린다.
+
+        그 사이 시작됐거나 취소됐을 수 있으므로 **아직 대기 중인지 다시 본다**.
+        """
+        if job_id not in self._pending or not is_recordable(status):
+            return
+        if len(self._recordings) >= MAX_CONCURRENT_RECORDINGS:
+            self.error_occurred.emit(
+                "방송 중이지만 동시 녹화 수가 꽉 차 대기합니다."
+            )
+            return
+        self._pending.remove(job_id)
+        self._recordings.add(job_id)
+        self._launch(job_id)
+
+    @property
+    def recording_count(self) -> int:
+        return len(self._recordings)
+
+    def is_recording(self, job_id: UUID) -> bool:
+        """이 작업이 녹화인가 — 화면이 진행률 대신 경과·용량을 보여줄지 판단한다."""
+        return job_id in self._recordings
 
     # ── 큐 게이트 ─────────────────────────────────────────────────
 
@@ -129,7 +222,10 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
             return
         self._window_timer.stop()
 
-        for _ in range(slots_available(len(self._workers), self._concurrent_limit())):
+        # 녹화는 게이트를 우회해 시작했으므로 **한도 계산에서 뺀다** — 넣으면
+        # 장시간 녹화 하나가 일반 다운로드 자리를 통째로 막는다.
+        running_normal = len(self._workers) - len(self._recordings & set(self._workers))
+        for _ in range(slots_available(running_normal, self._concurrent_limit())):
             if not self._pending:
                 break
             self._launch(self._pending.pop(0))
@@ -173,6 +269,7 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
 
     def _cleanup_worker(self, job_id: UUID) -> None:
         self._workers.pop(job_id, None)
+        self._recordings.discard(job_id)
         # 한 자리가 비었으니 다음 대기 작업을 올린다.
         self._pump()
 
@@ -184,6 +281,8 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
         """
         self._window_timer.stop()
         self._pending.clear()
+        self._recordings.clear()
+        self._probed.clear()
         for worker in list(self._workers.values()):
             if worker.isRunning():
                 worker.terminate()

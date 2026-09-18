@@ -53,6 +53,14 @@ class IMediaSource(Protocol):
 
     def fetch_metadata(self, url: str) -> dict: ...
 
+    def fetch_live_status(self, url: str) -> str:
+        """지금 방송 중인지 — `domain.download.live`의 상태 문자열.
+
+        실패는 예외가 아니라 `not_live`다 — 확인하지 못한 것을 '방송 중'으로
+        보면 엉뚱한 녹화가 시작된다.
+        """
+        ...
+
     def download_thumbnail(
         self,
         video_id: UUID,

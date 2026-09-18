@@ -107,7 +107,21 @@ class DownloadSettings:
 
 
 class DownloadProgress:
-    __slots__ = ("percent", "speed_bps", "eta_sec", "downloaded_bytes")
+    """진행 상황. **총량을 모를 수 있다** — 라이브 방송이 그렇다.
+
+    라이브는 끝을 모르므로 yt-dlp가 퍼센트 자리에 `NA`를 준다. 그대로 두면 화면이
+    영원히 0%에 머물러 멈춘 것처럼 보이므로, `is_indeterminate`로 구분해 경과 시간과
+    받은 용량으로 대신 알린다(`domain.download.live.format_recording_progress`).
+    """
+
+    __slots__ = (
+        "percent",
+        "speed_bps",
+        "eta_sec",
+        "downloaded_bytes",
+        "total_bytes",
+        "elapsed_sec",
+    )
 
     def __init__(
         self,
@@ -115,11 +129,21 @@ class DownloadProgress:
         speed_bps: float = 0.0,
         eta_sec: int = 0,
         downloaded_bytes: int = 0,
+        total_bytes: int = 0,
+        elapsed_sec: float = 0.0,
     ) -> None:
         self.percent = percent
         self.speed_bps = speed_bps
         self.eta_sec = eta_sec
         self.downloaded_bytes = downloaded_bytes
+        # 0 = 모름(라이브). 추정치라도 있으면 채운다.
+        self.total_bytes = total_bytes
+        self.elapsed_sec = elapsed_sec
+
+    @property
+    def is_indeterminate(self) -> bool:
+        """총량을 모르는가 — 퍼센트를 보여줄 수 없는 상태."""
+        return self.total_bytes <= 0
 
     def speed_formatted(self) -> str:
         if self.speed_bps < 1024:

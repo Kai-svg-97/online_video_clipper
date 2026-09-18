@@ -216,6 +216,20 @@ class YtDlpAdapter:
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False) or {}
 
+    def fetch_live_status(self, url: str) -> str:
+        """이 주소가 지금 방송 중인지 — `domain.download.live` 의 상태 문자열.
+
+        메타데이터만 읽으므로 가볍다. 실패는 예외 대신 `not_live` 다 — 상태를
+        확인하지 못한 것을 '방송 중'으로 보면 엉뚱한 녹화가 시작된다.
+        """
+        from domain.download.live import NOT_LIVE, classify_live_status  # noqa: PLC0415
+
+        try:
+            return classify_live_status(self.fetch_metadata(url))
+        except Exception:
+            logger.warning("라이브 상태 조회 실패 — 라이브가 아닌 것으로 본다: %s", url)
+            return NOT_LIVE
+
     def download_thumbnail(
         self,
         video_id: UUID,
@@ -767,15 +781,19 @@ class YtDlpAdapter:
             return
         if info.get("status") != "downloading":
             return
-        try:
-            pct_str = str(info.get("_percent_str") or "0").strip().rstrip("%")
-            percent = float(pct_str or 0)
-        except (ValueError, TypeError):
-            percent = 0.0
+        # 라이브는 총량을 몰라 `_percent_str`이 "NA%"로 온다 — float() 가 터지고
+        # percent 가 0에 머문다. 그래서 퍼센트는 **총량이 있을 때만** 의미가 있다.
+        total = int(
+            info.get("total_bytes") or info.get("total_bytes_estimate") or 0
+        )
+        downloaded = int(info.get("downloaded_bytes") or 0)
+        percent = (downloaded * 100.0 / total) if total > 0 else 0.0
         progress = DownloadProgress(
             percent=percent,
             speed_bps=float(info.get("speed") or 0),
             eta_sec=int(info.get("eta") or 0),
-            downloaded_bytes=int(info.get("downloaded_bytes") or 0),
+            downloaded_bytes=downloaded,
+            total_bytes=total,
+            elapsed_sec=float(info.get("elapsed") or 0),
         )
         self._on_progress(progress)

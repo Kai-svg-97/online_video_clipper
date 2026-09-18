@@ -381,15 +381,27 @@ class _HistoryCardDelegate(QStyledItemDelegate):
 
         painter.restore()
 
-        # ── 진행 중 퍼센트 텍스트 오버레이 ─────────────────────────────
+        # ── 진행 중 오버레이 ───────────────────────────────────────────
+        # 라이브 녹화는 총량을 몰라 퍼센트가 성립하지 않는다 — 0%가 계속 떠 있으면
+        # 멈춘 것처럼 보이므로 경과 시간·받은 용량으로 대신 알린다.
         if is_active:
-            pct_text = f"{int(pct)}%"
+            progress = job.progress if job else None
+            if progress is not None and progress.is_indeterminate:
+                from domain.download.live import format_recording_progress  # noqa: PLC0415
+
+                pct_text = format_recording_progress(
+                    progress.elapsed_sec, progress.downloaded_bytes
+                )
+                pct_font_size = 10
+            else:
+                pct_text = f"{int(pct)}%"
+                pct_font_size = 14
             mid_y = ty + THUMB_H // 2 - 14
             painter.save()
             # 진행률 글자 뒤 스크림 — 썸네일 이미지 위에 얹는 색이라 기준이 앱 테마가 아니라
             # '어떤 썸네일 위에서도 읽히는가'다(자막 오버레이와 같은 예외 계열).
             painter.fillRect(QRect(tx, mid_y, CARD_W, 28), QColor(0, 0, 0, 120))
-            painter.setFont(QFont("", 14, QFont.Weight.Bold))
+            painter.setFont(QFont("", pct_font_size, QFont.Weight.Bold))
             painter.setPen(QColor("white"))
             painter.drawText(
                 QRect(tx, mid_y, CARD_W, 28),

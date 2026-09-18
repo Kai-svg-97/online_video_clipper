@@ -69,6 +69,7 @@ online_video_clipper/
 │   │   ├── aggregates.py            # DownloadQueueAggregate (root)
 │   │   ├── repositories.py          # IDownloadRepository
 │   │   ├── services.py
+│   │   ├── live.py                   # 라이브 방송 판정·녹화 표기 **순수 규칙**. 녹화는 일반 다운로드와 성질이 다르다 — **끝을 모르므로** 퍼센트가 성립하지 않고(0%가 계속 뜨면 멈춘 것처럼 보인다) 경과 시간·받은 용량으로 알린다. **지금 아니면 못 받으므로** 예약·동시한도 게이트를 우회하되 자기 상한(`MAX_CONCURRENT_RECORDINGS`)을 갖는다. 예정(`upcoming`) 방송은 녹화 대상이 **아니다** — 대기시키면 워커가 몇 시간 잡힌 채 '녹화 중'으로 보인다
 │   │   ├── schedule.py               # 예약 시간대·동시 실행 수 **순수 규칙**(I/O 없음). 자정을 넘기는 구간(23~7)이 오히려 흔한 설정이라 단순 비교로 짜면 밤 시간대가 통째로 막힌다. `start == end`는 '하루 종일'로 읽는다(폭 0으로 보면 아무것도 못 받는데 원인을 찾기 어렵다)
 │   │   └── events.py                # DownloadStarted, DownloadCompleted, DownloadFailed
 │   │

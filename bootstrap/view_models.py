@@ -97,6 +97,9 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             queue_handler=handlers.download.get_queue,
             history_handler=handlers.download.get_history,
             event_bridge=handlers.download.event_bridge,
+            # 라이브 판정은 미디어 소스가 안다. 뷰모델이 어댑터를 직접
+            # 들지 않도록 **함수 하나만** 넘긴다.
+            live_status_fn=services.media_source.fetch_live_status,
         ),
         clip=ClipViewModel(
             extract_handler=handlers.clip.extract,
