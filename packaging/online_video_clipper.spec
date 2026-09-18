@@ -37,6 +37,10 @@ a = Analysis(
         *collect_submodules("msal"),
         "googleapiclient",
         "google_auth_oauthlib",
+        # 음원 태깅: 포맷별 모듈을 함수 안에서 import 하고, `mutagen.File`은 런타임에
+        # 핸들러(oggvorbis·oggopus 등)를 동적으로 고른다 — 정적 분석으로는 잡히지
+        # 않아 빠지면 태깅이 **조용히** 실패한다(어댑터가 예외를 삼키는 설계라 더 그렇다).
+        *collect_submodules("mutagen"),
     ],
     noarchive=False,
 )

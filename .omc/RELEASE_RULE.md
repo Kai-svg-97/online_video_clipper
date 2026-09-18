@@ -1,7 +1,7 @@
 # Release Rules
-<!-- last-analyzed: 2026-08-26T00:00:00Z -->
-<!-- delta 확인: release.yml 최종 변경 d3ab43e(2026-08-10 11:22, OAuth2.json BOM 제거)는
-     기존 "Required Secrets" 항목 안의 구현 세부라 규칙 변화 없음. 아래 버전 게이트를 추가 기록. -->
+<!-- last-analyzed: 2026-09-18T00:00:00Z -->
+<!-- delta 확인(2026-09-18): release.yml 최종 변경은 여전히 d3ab43e(2026-08-10)로
+     규칙 변화 없음. 테스트 건수만 현재 값으로 갱신했다(린트 기준선 10건은 그대로). -->
 
 ## Version Sources
 - `version.py` — `__version__ = "X.Y.Z"` (단일 출처)
@@ -28,9 +28,10 @@ version.py does not contain 'X.Y.Z' — update version.py before tagging
 
 ## Test Gate
 - CI 릴리즈 워크플로우에 test step 없음 — 빌드 성공만이 게이트다.
-  따라서 **로컬에서 전체 테스트를 돌리고 릴리즈해야 한다**: `pytest` (현재 1,517건)
+  따라서 **로컬에서 전체 테스트를 돌리고 릴리즈해야 한다**: `pytest` (2026-09-18 기준 2,136건)
 - 린트: `ruff check gui/ application/` — 이 저장소는 `ruff format` 미적용이라
-  기존 E402 16건이 기준선이다. "새 위반이 늘지 않았는가"로만 판단한다.
+  기존 E402가 기준선이다(2026-09-18 기준 10건 — 조립 루트 분해로 main.py 8건이 사라졌다).
+  "새 위반이 늘지 않았는가"로만 판단한다.
 
 ## Registry / Distribution
 - GitHub Releases — `softprops/action-gh-release@v2`
