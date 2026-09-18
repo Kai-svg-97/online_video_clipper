@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListView,
+    QMenu,
     QPushButton,
     QStackedWidget,
     QStyledItemDelegate,
@@ -185,12 +186,16 @@ class _HistoryModel(QAbstractListModel):
     ThumbRole    = Qt.ItemDataRole.UserRole + 3
     JobRole      = Qt.ItemDataRole.UserRole + 4
     IsActiveRole = Qt.ItemDataRole.UserRole + 5
+    # 게이트(예약 시간대·동시 한도)에 걸려 아직 시작하지 않은 작업.
+    # 진행률이 영원히 0이라 '0%'로 그리면 멈춘 것처럼 보인다.
+    IsWaitingRole = Qt.ItemDataRole.UserRole + 6
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._jobs: list[DownloadJobDTO] = []
         self._thumbs: dict[str, str] = {}   # str(job.id) → thumb path
         self._active_ids: set[UUID] = set()
+        self._waiting_ids: set[UUID] = set()
 
     def set_all(
         self,
@@ -198,6 +203,7 @@ class _HistoryModel(QAbstractListModel):
         history: list[DownloadJobDTO],
         thumb_provider: Callable[[str], str | None] | None = None,
         title_provider: Callable[[str], str | None] | None = None,
+        waiting_ids: set[UUID] | None = None,
     ) -> None:
         import dataclasses  # noqa: PLC0415
 
@@ -219,6 +225,7 @@ class _HistoryModel(QAbstractListModel):
 
         self._jobs = resolved_active + resolved_history
         self._active_ids = {j.id for j in active}
+        self._waiting_ids = set(waiting_ids or ())
 
         self._thumbs = {}
         for j in self._jobs:
@@ -249,6 +256,17 @@ class _HistoryModel(QAbstractListModel):
                 self.dataChanged.emit(idx, idx, [self.JobRole])
         return True
 
+    def set_waiting(self, waiting_ids: set[UUID]) -> None:
+        """대기 집합만 바꾼다 — 목록 구조는 그대로라 전체 갱신이 필요 없다."""
+        changed = self._waiting_ids ^ set(waiting_ids)
+        if not changed:
+            return
+        self._waiting_ids = set(waiting_ids)
+        for row, job in enumerate(self._jobs):
+            if job.id in changed:
+                idx = self.index(row, 0)
+                self.dataChanged.emit(idx, idx, [self.IsWaitingRole])
+
     def thumb_paths(self) -> list[str]:
         return list(self._thumbs.values())
 
@@ -271,6 +289,8 @@ class _HistoryModel(QAbstractListModel):
             return job
         if role == self.IsActiveRole:
             return job.id in self._active_ids
+        if role == self.IsWaitingRole:
+            return job.id in self._waiting_ids
         return None
 
     def notify_thumbs_loaded(self, results: list) -> None:
@@ -386,7 +406,11 @@ class _HistoryCardDelegate(QStyledItemDelegate):
         # 멈춘 것처럼 보이므로 경과 시간·받은 용량으로 대신 알린다.
         if is_active:
             progress = job.progress if job else None
-            if progress is not None and progress.is_indeterminate:
+            if bool(index.data(_HistoryModel.IsWaitingRole)):
+                # 게이트에 걸려 아직 시작하지 않았다 — 0%는 거짓말이다.
+                pct_text = "대기 중"
+                pct_font_size = 11
+            elif progress is not None and progress.is_indeterminate:
                 from domain.download.live import format_recording_progress  # noqa: PLC0415
 
                 pct_text = format_recording_progress(
@@ -555,6 +579,16 @@ class DownloadPanel(QWidget):
         header_row.addWidget(refresh_btn)
         list_layout.addLayout(header_row)
 
+        # 게이트(예약 시간대·동시 한도)에 걸려 기다리는 중이면 **왜** 기다리는지
+        # 알린다. 카드에 '대기 중'만 떠 있으면 고장과 구분이 안 된다.
+        self._waiting_lbl = QLabel("")
+        self._waiting_lbl.setWordWrap(True)
+        self._waiting_lbl.setStyleSheet(
+            f"font-size: 10pt; padding: 4px 6px; color: {_t().text_secondary};"
+        )
+        self._waiting_lbl.setVisible(False)
+        list_layout.addWidget(self._waiting_lbl)
+
         self._model    = _HistoryModel()
         self._delegate = _HistoryCardDelegate()
 
@@ -569,6 +603,8 @@ class DownloadPanel(QWidget):
         self._list.setSelectionMode(QListView.SelectionMode.SingleSelection)
         self._list.setMouseTracking(True)
         self._list.clicked.connect(self._on_card_clicked)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._show_card_menu)
         list_layout.addWidget(self._list)
         self._page_stack.addWidget(list_page)
 
@@ -634,13 +670,49 @@ class DownloadPanel(QWidget):
         active  = self._vm.queue
         history = self._vm.load_history()
         filtered = [j for j in history if _is_listable_history(j)]
-        self._model.set_all(active, filtered, self._thumb_provider, self._title_provider)
+        self._model.set_all(
+            active, filtered, self._thumb_provider, self._title_provider,
+            waiting_ids=self._vm.waiting_ids,
+        )
+        self._refresh_waiting_notice()
         self._start_thumb_worker()
 
     def _on_queue_changed(self) -> None:
         """progress 경량 갱신. 구조 변경(새 다운로드 시작·종료) 시에만 full refresh."""
         active = self._vm.queue
         if not self._model.update_active_progress(active):
+            self.refresh()
+            return
+        # 구조는 그대로여도 게이트가 열려 대기가 풀렸을 수 있다.
+        self._model.set_waiting(self._vm.waiting_ids)
+        self._refresh_waiting_notice()
+
+    def _refresh_waiting_notice(self) -> None:
+        reason = self._vm.waiting_reason()
+        self._waiting_lbl.setText(reason)
+        self._waiting_lbl.setVisible(bool(reason))
+
+    # ── 취소 ─────────────────────────────────────────────────────────
+
+    def _show_card_menu(self, pos) -> None:
+        """진행 중·대기 중인 다운로드를 멈춘다.
+
+        여기 말고는 멈출 길이 없었다 — 잘못 넣은 주소나 몇 시간짜리 녹화를 되돌릴
+        방법이 없으면 앱을 끄는 것이 유일한 수단이 된다.
+        """
+        index = self._list.indexAt(pos)
+        if not index.isValid():
+            return
+        if not bool(index.data(_HistoryModel.IsActiveRole)):
+            return
+        job: DownloadJobDTO | None = index.data(_HistoryModel.JobRole)
+        if job is None:
+            return
+        waiting = bool(index.data(_HistoryModel.IsWaitingRole))
+        menu = QMenu(self)
+        action = menu.addAction("대기 취소" if waiting else "다운로드 취소")
+        if menu.exec(self._list.viewport().mapToGlobal(pos)) is action:
+            self._vm.cancel_download(job.id)
             self.refresh()
 
     def _start_thumb_worker(self) -> None:

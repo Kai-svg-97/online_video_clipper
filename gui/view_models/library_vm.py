@@ -326,6 +326,10 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         self._tags: list[TagDTO] = []
         self._scoped_tags: list[TagDTO] = []
         self._current_page: int = 0
+        # 다음 쪽이 더 있는가 — 마지막으로 받아 온 묶음이 한 쪽을 꽉 채웠는지로
+        # 본다. 총 개수를 따로 세지 않는 이유는 COUNT(*) 한 번이 목록 조회와
+        # 맞먹기 때문이다(필터·검색이 걸리면 특히).
+        self._has_more: bool = False
         self._search_text: str = ""
         self._filter_category_id: UUID | None = None
         # "로컬" 루트 뷰 — 카테고리에 속한 영상만 표시(미분류·재생목록 전용 제외). 기본 진입 뷰.
@@ -437,9 +441,26 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         self._refresh_tags()
         # refresh_scoped_tags()는 categories가 로드된 후 호출됨
 
-    def load_next_page(self) -> None:
+    @property
+    def has_more(self) -> bool:
+        """더 읽을 쪽이 남았는가 — 화면이 '끝'을 알릴지 판단한다."""
+        return self._has_more
+
+    @property
+    def is_list_loading(self) -> bool:
+        return self._list_inflight > 0
+
+    def load_next_page(self) -> bool:
+        """다음 쪽을 이어 붙인다. 읽을 게 없거나 이미 읽는 중이면 False.
+
+        **스스로 막아야 한다.** 무한 스크롤은 바닥 근처에서 신호가 연달아 오므로,
+        호출부가 막아 주기를 기대하면 같은 쪽을 여러 번 읽고 목록에 중복이 쌓인다.
+        """
+        if not self._has_more or self._list_inflight:
+            return False
         self._current_page += 1
         self._refresh_videos(append=True)
+        return True
 
     def set_search_text(self, text: str) -> None:
         """검색어를 적용한다. 실제로 바뀐 경우에만 재조회한다.
@@ -873,10 +894,13 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         if bust_cache:
             self._video_cache.clear()
 
-        ck = None if append else self._cache_key()
+        # 1쪽을 넘겨 읽은 상태에서는 캐시를 쓰지 않는다 — 캐시는 '첫 쪽'만 담는
+        # 구조라, 재조회 결과(여러 쪽 분량)를 같은 키로 넣으면 크기가 뒤섞인다.
+        ck = None if (append or self._current_page) else self._cache_key()
         if ck and ck in self._video_cache:
             # 캐시 히트 — 스피너 없이 즉시 표시
             self._videos = list(self._video_cache[ck])
+            self._has_more = len(self._videos) >= DEFAULT_PAGE_SIZE
             self.videos_changed.emit()
             if on_done:
                 on_done()
@@ -885,7 +909,13 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         self._list_gen += 1
         gen = self._list_gen
 
-        offset = self._current_page * DEFAULT_PAGE_SIZE
+        if append:
+            offset, limit = self._current_page * DEFAULT_PAGE_SIZE, DEFAULT_PAGE_SIZE
+        else:
+            # **이어 붙인 것까지 통째로 다시 읽는다.** 삭제·태그 변경 등은 쪽 번호를
+            # 되돌리지 않고 이 함수를 부르는데, 그때 현재 쪽만 읽으면 목록이
+            # 151번째부터로 튄다(무한 스크롤을 붙이기 전에는 늘 0쪽이라 안 드러났다).
+            offset, limit = 0, DEFAULT_PAGE_SIZE * (self._current_page + 1)
         # 필터 상태를 호출 시점에 캡처 — fetch는 워커 스레드에서 실행된다.
         search_text = self._search_text
         filter_category_id = self._filter_category_id
@@ -922,7 +952,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
                 tag_ids=tag_ids,
                 video_ids=video_ids,
                 categorized_only=categorized_only,
-                limit=DEFAULT_PAGE_SIZE,
+                limit=limit,
                 offset=offset,
                 sort_by=sort_by,
                 sort_asc=sort_asc,
@@ -931,18 +961,20 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
                 return self._search_videos.handle(SearchVideosQuery(text=search_text, **common))
             return self._get_videos.handle(GetVideosQuery(**common))
 
-        self._enqueue_list(fetch, append, gen, ck, on_done, node_key)
+        self._enqueue_list(fetch, append, gen, ck, on_done, node_key, limit)
 
-    def _enqueue_list(self, fetch, append, gen, ck, on_done, node_key) -> None:
+    def _enqueue_list(self, fetch, append, gen, ck, on_done, node_key, req_limit) -> None:
         """워커 슬롯이 있으면 즉시 실행, 아니면 큐에 보관(상한 32)."""
         if len(self._list_workers) < self._max_workers:
-            self._run_list(fetch, append, gen, ck, on_done, node_key)
+            self._run_list(fetch, append, gen, ck, on_done, node_key, req_limit)
         else:
             if len(self._pending_list) >= 32:
                 self._pending_list.popleft()
-            self._pending_list.append((fetch, append, gen, ck, on_done, node_key))
+            self._pending_list.append(
+                (fetch, append, gen, ck, on_done, node_key, req_limit)
+            )
 
-    def _run_list(self, fetch, append, gen, ck, on_done, node_key) -> None:
+    def _run_list(self, fetch, append, gen, ck, on_done, node_key, req_limit) -> None:
         self._list_inflight += 1
         if self._list_inflight == 1:
             self.loading_changed.emit(True)
@@ -959,6 +991,8 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
                     self._video_cache.popitem(last=False)
             if gen != self._list_gen:
                 return  # UI 반영은 현재 gen만
+            # 요청한 만큼 꽉 채워 왔으면 다음 쪽이 있을 수 있다. 덜 왔으면 끝이다.
+            self._has_more = len(videos) >= req_limit
             if app:
                 self._videos.extend(videos)
             else:
@@ -982,8 +1016,8 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         if self._list_inflight == 0:
             self.loading_changed.emit(False)
         while len(self._list_workers) < self._max_workers and self._pending_list:
-            fetch, append, gen, ck, on_done, nk = self._pending_list.popleft()
-            self._run_list(fetch, append, gen, ck, on_done, nk)
+            fetch, append, gen, ck, on_done, nk, rl = self._pending_list.popleft()
+            self._run_list(fetch, append, gen, ck, on_done, nk, rl)
 
     def _refresh_categories(self) -> None:
         self._video_cache.clear()  # 카테고리 트리 변경 시 캐시 무효화

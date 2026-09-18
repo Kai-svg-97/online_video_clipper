@@ -29,6 +29,11 @@ def _to_dto(job: DownloadJob) -> DownloadJobDTO:
             percent=job.progress.percent,
             speed_bps=job.progress.speed_bps,
             eta_sec=job.progress.eta_sec,
+            # 라이브 녹화는 퍼센트가 성립하지 않아 화면이 이 셋으로 대신 알린다.
+            # 빠뜨리면 카드를 그리는 순간 앱이 죽는다(dtos.py 주석 참고).
+            downloaded_bytes=job.progress.downloaded_bytes,
+            total_bytes=job.progress.total_bytes,
+            elapsed_sec=job.progress.elapsed_sec,
         ),
         file_path=job.file_path,
         error_msg=job.error_msg,

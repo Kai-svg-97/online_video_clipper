@@ -255,10 +255,54 @@ class VideoListMixin:
                 "브라우저에서 주소를 끌어다 놓거나, 좌측 트리에 URL을 떨어뜨려 담아 보세요."
             )
 
+    # ── 무한 스크롤 ────────────────────────────────────────────────
+    #
+    # 목록 조회는 한 쪽 50개다(CLAUDE.md 의 메모리 규칙 — 전체를 메모리에 올리지
+    # 않는다). 그런데 다음 쪽을 부르는 쪽이 **아무도 없어서** 51번째 영상부터는
+    # 화면에서 사라져 있었다(영상 60개로 재현: 첫 화면 50개, 끝까지 내려도 50개).
+    #
+    # 바닥에 완전히 닿기 전에 미리 부른다 — 닿은 뒤에 시작하면 조회가 끝날 때까지
+    # 빈 바닥을 보게 된다. 중복 호출은 뷰모델이 막는다(`load_next_page`).
+    _PREFETCH_PX = 400
+
+    def _on_list_scrolled(self, value: int) -> None:
+        bar = self.sender()
+        if bar is None:
+            return
+        maximum = bar.maximum()
+        if maximum <= 0:
+            return
+        if value >= maximum - self._PREFETCH_PX:
+            self._vm.load_next_page()
+
+    def _maybe_fill_viewport(self) -> None:
+        """첫 쪽이 화면을 못 채우면 스크롤이 생기지 않아 영영 다음 쪽을 못 부른다.
+
+        큰 화면 + 목록 뷰에서 실제로 생기는 경우다. 뷰모델이 '더 있다'고 할 때만
+        부르므로 끝에 닿으면 저절로 멈춘다.
+        """
+        if not self._vm.has_more or self._vm.is_list_loading:
+            return
+        try:
+            view = self._view_stack.currentWidget()
+            # **영상 목록 뷰일 때만** 본다. 폴더·피드·앨범 뷰는 이 목록을 보여주지
+            # 않으므로, 스크롤이 없다는 이유로 쪽을 계속 읽으면 라이브러리 전체가
+            # 메모리에 올라온다(저사양 PC가 목표 사양이다).
+            if view not in (self._icon_view, self._list_view, self._table):
+                return
+            if view.verticalScrollBar().maximum() > 0:
+                return
+        except RuntimeError:
+            logger.debug("패널이 이미 파괴됨 — 다음 쪽 채우기 생략")
+            return
+        self._vm.load_next_page()
+
     def _on_videos_changed(self) -> None:
         videos = self._vm.videos
         self._model.set_videos(videos)
         self._refresh_list_overlay()
+        # 배치가 끝난 뒤에 재야 스크롤 범위가 확정된다.
+        QTimer.singleShot(0, self._maybe_fill_viewport)
         # 표(상세) 뷰는 행마다 위젯을 만들고 다운로드 여부까지 조회하므로
         # 실제로 보고 있을 때만 채운다. 숨겨져 있으면 표시 시점으로 미룬다.
         if self._view_stack.currentIndex() == _VIEW_DETAIL:

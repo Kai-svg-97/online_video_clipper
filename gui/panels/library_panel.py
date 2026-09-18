@@ -726,6 +726,13 @@ class LibraryPanel(
             lambda pos: self._show_video_menu(pos, self._list_view)
         )
 
+        # 무한 스크롤 — 바닥에 닿으면 다음 쪽을 이어 붙인다. 셋 다 같은 목록을
+        # 보여주므로(모델 공유 + 표) 어느 뷰에서 내리든 같은 곳으로 간다.
+        for _scroll_view in (self._icon_view, self._list_view, self._table):
+            _scroll_view.verticalScrollBar().valueChanged.connect(
+                self._on_list_scrolled
+            )
+
         self._table.clicked.connect(self._on_table_clicked)
         self._table.doubleClicked.connect(self._on_table_double_click)
         self._table.customContextMenuRequested.connect(self._show_table_menu)

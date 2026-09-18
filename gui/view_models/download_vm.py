@@ -207,6 +207,31 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
         """아직 시작하지 않고 기다리는 작업 수 — 화면 표시용."""
         return len(self._pending)
 
+    @property
+    def waiting_ids(self) -> set[UUID]:
+        """기다리는 작업들 — 화면이 0%가 아니라 '대기 중'으로 그린다.
+
+        게이트에 걸린 작업은 진행률이 영원히 0이다. 그대로 두면 멈춘 것처럼 보이고,
+        사용자는 왜 안 받는지 알 길이 없다(CLAUDE.md — 상태를 말하지 않는 화면을
+        만들지 않는다).
+        """
+        return set(self._pending)
+
+    def waiting_reason(self) -> str:
+        """왜 기다리는지 한 줄로. 기다리는 게 없으면 빈 문자열."""
+        if not self._pending:
+            return ""
+        window = self.current_window()
+        if not window.allows(datetime.now().time()):
+            return (
+                f"예약 시간대({window.start_hour}시~{window.end_hour}시)를 기다립니다 — "
+                f"{len(self._pending)}건 대기"
+            )
+        return (
+            f"동시 다운로드 {self._concurrent_limit()}개 제한 — "
+            f"{len(self._pending)}건이 차례를 기다립니다"
+        )
+
     def _pump(self) -> None:
         """자리와 시간대가 허락하는 만큼 대기 작업을 시작한다.
 
