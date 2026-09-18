@@ -115,3 +115,44 @@ class TestInteraction:
         tab.index_requested.connect(lambda: got.append(1))
         tab._index_btn.click()
         assert got == [1]
+
+
+class TestTranscribeButton:
+    """음성 인식은 **대안**이다 — 쓸 수 있을 때만, 쓸모 있는 자리에만 보인다."""
+
+    def test_기본은_숨어_있다(self, tab):
+        """받아 둔 파일이 있어야 소리를 읽을 수 있다."""
+        tab.set_lines([], indexed=False)
+        assert not tab._asr_btn.isVisibleTo(tab)
+
+    def test_쓸_수_있으면_색인_전_화면에_뜬다(self, tab):
+        tab.set_transcribe_available(True)
+        tab.set_lines([], indexed=False)
+        assert tab._asr_btn.isHidden() is False
+
+    def test_자막이_아예_없는_영상에서_가장_쓸모있다(self, tab):
+        tab.set_transcribe_available(True)
+        tab.show_no_subtitle()
+        assert tab._asr_btn.isHidden() is False
+
+    def test_검색_결과가_없을_때는_숨는다(self, tab):
+        """색인은 있다 — 음성 인식은 엉뚱한 해결책이다."""
+        tab.set_transcribe_available(True)
+        tab.set_lines([], indexed=True)
+        assert tab._asr_btn.isHidden() is True
+
+    def test_스트리밍_영상에서는_숨는다(self, tab):
+        tab.set_transcribe_available(True)
+        tab.show_streaming_notice()
+        assert tab._asr_btn.isHidden() is True
+
+    def test_버튼이_요청을_낸다(self, tab):
+        got: list[int] = []
+        tab.transcribe_requested.connect(lambda: got.append(1))
+        tab._asr_btn.click()
+        assert got == [1]
+
+    def test_진행_문구를_보여준다(self, tab):
+        tab.show_transcribing("소리를 듣는 중… 42%")
+        assert "42%" in tab._empty_lbl.text()
+        assert tab._asr_btn.isHidden() is True     # 도는 동안 다시 누를 수 없다

@@ -141,6 +141,10 @@ EMBED_THUMBNAIL: bool = _load_bool("embed_thumbnail", True)
 EMBED_CHAPTERS: bool = _load_bool("embed_chapters", True)
 # 음원(mp3·m4a 등)에 라이브러리의 노래 정보(가수·앨범·발매년도·가사·표지)를 태그로 기록한다.
 WRITE_SONG_TAGS: bool = _load_bool("write_song_tags", True)
+# ── 음성 인식(전사) ─────────────────────────────────────────────────────
+# 모델 키(`domain.library.transcribe.MODELS`). 모델 파일은 DATA_DIR/models/whisper 에
+# 받아 두며, 한 번도 쓰지 않으면 아무것도 내려받지 않는다.
+TRANSCRIBE_MODEL: str = _resolve_str("transcribe_model", "base")
 # ── 전송 옵션(속도·연결·프록시) ─────────────────────────────────────────
 # `DOWNLOAD_RATE_LIMIT`는 yt-dlp 표기를 그대로 받는다("2M", "500K"). 빈 값 = 무제한.
 DOWNLOAD_RATE_LIMIT: str = _resolve_str("download_rate_limit", "")
@@ -222,6 +226,7 @@ def save_setting(key: str, value) -> None:
         "embed_thumbnail": "EMBED_THUMBNAIL",
         "embed_chapters": "EMBED_CHAPTERS",
         "write_song_tags": "WRITE_SONG_TAGS",
+        "transcribe_model": "TRANSCRIBE_MODEL",
         "download_rate_limit": "DOWNLOAD_RATE_LIMIT",
         "concurrent_fragments": "CONCURRENT_FRAGMENTS",
         "download_proxy": "DOWNLOAD_PROXY",

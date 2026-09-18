@@ -148,6 +148,34 @@ class IAudioTagger(Protocol):
     def write_tags(self, file_path: Path, tags: AudioTags) -> bool: ...
 
 
+class ITranscriber(Protocol):
+    """음성 인식(전사) 추상화.
+
+    구현체: infrastructure.subtitle.whisper_transcriber.WhisperTranscriber
+
+    모델은 수십~수백 MB라 **처음 쓸 때 받아야 한다**. `is_model_ready`로 미리 물어보고,
+    없으면 화면이 크기를 알린 뒤 `download_model`을 부른다. 전사는 몇 분이 걸리므로
+    진행률·중단 콜백을 받으며, 중단 시 **그때까지 나온 것을 돌려준다**.
+    """
+
+    def is_model_ready(self, model_key: str) -> bool: ...
+
+    def download_model(self, model_key: str) -> bool: ...
+
+    def installed_models(self) -> set[str]: ...
+
+    def delete_model(self, model_key: str) -> bool: ...
+
+    def transcribe(
+        self,
+        media_path: str,
+        model_key: str,
+        language: str | None = None,
+        on_progress: Callable[[float], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> list[tuple[int, int, str]]: ...
+
+
 class IAvailabilitySource(Protocol):
     """원본 영상 생존 확인 추상화.
 

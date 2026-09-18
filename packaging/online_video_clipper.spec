@@ -41,6 +41,11 @@ a = Analysis(
         # 핸들러(oggvorbis·oggopus 등)를 동적으로 고른다 — 정적 분석으로는 잡히지
         # 않아 빠지면 태깅이 **조용히** 실패한다(어댑터가 예외를 삼키는 설계라 더 그렇다).
         *collect_submodules("mutagen"),
+        # 음성 인식: faster_whisper 는 ctranslate2·tokenizers·av 를 함수 안에서
+        # 끌어오고, ctranslate2 는 네이티브 DLL 을 동적으로 연다.
+        *collect_submodules("faster_whisper"),
+        *collect_submodules("ctranslate2"),
+        "av",
     ],
     noarchive=False,
 )

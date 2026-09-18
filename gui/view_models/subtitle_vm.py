@@ -13,6 +13,8 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from application.library.subtitle_commands import (
     BulkIndexSubtitlesHandler,
+    TranscribeVideoCommand,
+    TranscribeVideoHandler,
     FetchAndIndexSubtitlesCommand,
     FetchAndIndexSubtitlesHandler,
     IndexSubtitleCuesCommand,
@@ -85,12 +87,55 @@ class _BulkIndexWorker(QThread):
         self.done.emit(result)
 
 
+class _TranscribeWorker(QThread):
+    """음성 인식 — 영상 길이의 6~35%가 걸린다(모델에 따라). 반드시 배경."""
+
+    progress = pyqtSignal(float)          # 0.0 ~ 1.0
+    done = pyqtSignal(object, int)        # video_id, 색인한 줄 수
+    model_downloading = pyqtSignal(str)   # 모델 키 — 처음 한 번 받는 중
+
+    def __init__(self, handler, cmd, transcriber, model_key: str) -> None:
+        # 부모를 주지 않는다 — gui/workers.py 의 규칙과 같다.
+        super().__init__(None)
+        self._handler = handler
+        self._cmd = cmd
+        self._transcriber = transcriber
+        self._model_key = model_key
+        self._stop = False
+
+    def stop(self) -> None:
+        """협조적 중단 — 다음 세그먼트로 넘어가기 전에 멈춘다."""
+        self._stop = True
+
+    def run(self) -> None:
+        # 모델이 없으면 먼저 받는다. 수십~수백 MB라 시간이 걸리므로 화면에 알린다.
+        try:
+            if self._transcriber is not None and not self._transcriber.is_model_ready(
+                self._model_key
+            ):
+                self.model_downloading.emit(self._model_key)
+                self._transcriber.download_model(self._model_key)
+        except Exception:
+            logger.exception("전사 모델 준비 실패: %s", self._model_key)
+
+        count = self._handler.handle(
+            self._cmd,
+            on_progress=self.progress.emit,
+            should_stop=lambda: self._stop,
+        )
+        self.done.emit(self._cmd.video_id, count)
+
+
 class SubtitleViewModel(WorkerOwnerMixin, QObject):
     lines_loaded = pyqtSignal(object, object)   # video_id, list[SubtitleLineDTO]
     index_started = pyqtSignal(object)          # video_id
     index_finished = pyqtSignal(object, int)    # video_id, 줄 수(0이면 자막 없음)
     bulk_progress = pyqtSignal(int, int, str)
     bulk_finished = pyqtSignal(object)          # BulkIndexResult (실패 시 None)
+    transcribe_started = pyqtSignal(object)     # video_id
+    transcribe_model_downloading = pyqtSignal(str)
+    transcribe_progress = pyqtSignal(object, float)   # video_id, 0.0~1.0
+    transcribe_finished = pyqtSignal(object, int)     # video_id, 줄 수
 
     def __init__(
         self,
@@ -100,6 +145,8 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         get_indexes_handler: GetSubtitleIndexesHandler,
         bulk_handler: BulkIndexSubtitlesHandler | None = None,
         coverage_handler: GetSubtitleCoverageHandler | None = None,
+        transcribe_handler: TranscribeVideoHandler | None = None,
+        transcriber=None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -110,6 +157,9 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         self._bulk = bulk_handler
         self._coverage = coverage_handler
         self._bulk_worker: _BulkIndexWorker | None = None
+        self._transcribe = transcribe_handler
+        self._transcriber = transcriber
+        self._transcribe_workers: dict = {}
         # 같은 영상을 두 번 색인하지 않게 — 자막을 껐다 켜면 큐가 다시 들어온다.
         self._indexing: set[UUID] = set()
 
@@ -169,9 +219,59 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         self.bulk_finished.emit(result)
 
     def shutdown(self) -> None:
-        """종료 시 일괄 색인을 먼저 멈춘다 — 협조적 중단이라 곧 끝난다."""
+        """종료 시 긴 작업을 먼저 멈춘다 — 협조적 중단이라 곧 끝난다."""
         self.stop_bulk_index()
+        for worker in list(self._transcribe_workers.values()):
+            worker.stop()
+        self._transcribe_workers.clear()
         super().shutdown()
+
+    # ── 음성 인식 ─────────────────────────────────────────────────
+
+    @property
+    def can_transcribe(self) -> bool:
+        return self._transcribe is not None
+
+    def is_transcribing(self, video_id: UUID) -> bool:
+        return video_id in self._transcribe_workers
+
+    def transcribe(self, video_id: UUID, media_path: str, language: str = "") -> bool:
+        """음성 인식으로 자막을 만든다(배경). 이미 이 영상을 돌고 있으면 False."""
+        if self._transcribe is None or not media_path:
+            return False
+        if video_id in self._transcribe_workers:
+            return False
+        from config import settings as cfg  # noqa: PLC0415 (런타임 설정)
+
+        model_key = cfg.TRANSCRIBE_MODEL
+        cmd = TranscribeVideoCommand(
+            video_id=video_id, media_path=media_path,
+            model_key=model_key, language=language,
+        )
+        worker = _TranscribeWorker(self._transcribe, cmd, self._transcriber, model_key)
+        worker.model_downloading.connect(self.transcribe_model_downloading)
+        worker.progress.connect(self._on_transcribe_progress)
+        worker.done.connect(self._on_transcribe_done)
+        self._transcribe_workers[video_id] = worker
+        self.transcribe_started.emit(video_id)
+        self._start_worker(worker)
+        return True
+
+    def stop_transcribe(self, video_id: UUID) -> None:
+        worker = self._transcribe_workers.get(video_id)
+        if worker is not None:
+            worker.stop()
+
+    def _on_transcribe_progress(self, ratio: float) -> None:
+        # 어느 영상의 진행인지는 워커가 알지만 신호는 비율만 준다 — 한 번에 하나가
+        # 보통이라, 지금 돌고 있는 것 중 하나를 골라 실어 보낸다.
+        for video_id in list(self._transcribe_workers):
+            self.transcribe_progress.emit(video_id, ratio)
+            break
+
+    def _on_transcribe_done(self, video_id: object, count: int) -> None:
+        self._transcribe_workers.pop(video_id, None)
+        self.transcribe_finished.emit(video_id, count)
 
     # ── 수집 ──────────────────────────────────────────────────────
 

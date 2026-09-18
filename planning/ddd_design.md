@@ -268,6 +268,8 @@ ffmpeg 기반 구간 추출. **'영상 위의 시간 구간'을 다루는 모든
 | `FetchAndIndexSubtitlesCommand` | 자막을 받아 색인(영상당 네트워크 왕복) |
 | `GetSubtitleLinesQuery` | 자막 줄 조회(전체 또는 검색어 일치) |
 | `GetSubtitleIndexesQuery` | 색인된 언어 목록 |
+| `BulkIndexSubtitlesCommand` | 라이브러리 전체 자막 색인(이미 색인된 영상 건너뜀) |
+| `TranscribeVideoCommand` | 음성 인식으로 자막 생성 → 같은 색인에 저장 |
 
 ### Clip
 | Command/Query | 설명 |

@@ -149,5 +149,7 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             get_indexes_handler=handlers.library.get_subtitle_indexes,
             bulk_handler=handlers.library.bulk_index_subtitles,
             coverage_handler=handlers.library.subtitle_coverage,
+            transcribe_handler=handlers.library.transcribe_video,
+            transcriber=services.transcriber,
         ),
     )

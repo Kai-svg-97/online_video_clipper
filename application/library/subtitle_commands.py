@@ -213,3 +213,62 @@ class BulkIndexSubtitlesHandler:
                 break
             offset += _PAGE
         return out
+
+
+@dataclass
+class TranscribeVideoCommand:
+    """음성 인식으로 자막을 만들어 색인한다. 배경 QThread 전용(몇 분이 걸린다)."""
+
+    video_id: UUID
+    media_path: str
+    model_key: str = ""
+    language: str = ""          # 비우면 자동 감지
+
+
+class TranscribeVideoHandler:
+    """전사 → 기존 자막 색인에 저장.
+
+    **만든 자막을 따로 두지 않는다.** 기존 색인에 넣으면 라이브러리 검색·자막 탭의
+    시점 점프가 그대로 동작한다 — YouTube 자막과 구분해야 할 이유가 없다(사용자에게는
+    '이 영상의 자막'일 뿐이다). 다만 `label`로 출처를 남겨 화면이 구분해 보여줄 수는 있다.
+    """
+
+    # 색인 언어 키. YouTube 자막(`ko`·`en` 등)과 겹치지 않게 접두를 붙인다 —
+    # 겹치면 다시 받은 YouTube 자막이 전사 결과를 통째로 덮어쓴다.
+    LANG_PREFIX = "asr-"
+
+    def __init__(self, repo: ISubtitleRepository, transcriber) -> None:
+        self._repo = repo
+        self._transcriber = transcriber
+
+    def handle(
+        self,
+        cmd: TranscribeVideoCommand,
+        on_progress: Callable[[float], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> int:
+        """색인한 줄 수(못 만들었으면 0). 예외를 밖으로 내지 않는다."""
+        from domain.library.transcribe import resolve_model  # noqa: PLC0415
+
+        model = resolve_model(cmd.model_key)
+        try:
+            cues = self._transcriber.transcribe(
+                cmd.media_path,
+                model.key,
+                language=cmd.language or None,
+                on_progress=on_progress,
+                should_stop=should_stop,
+            )
+        except Exception:
+            logger.exception("음성 인식 실패: %s", cmd.media_path)
+            return 0
+
+        lines = _to_lines(cues)
+        if not lines:
+            return 0
+        lang = f"{self.LANG_PREFIX}{cmd.language}" if cmd.language else f"{self.LANG_PREFIX}auto"
+        self._repo.replace_lines(
+            cmd.video_id, lang, f"음성 인식 ({model.name})", lines
+        )
+        logger.info("음성 인식 색인: %s (%d줄, %s)", cmd.media_path, len(lines), model.key)
+        return len(lines)

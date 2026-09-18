@@ -42,6 +42,7 @@ class SubtitleTab(QWidget):
 
     seek_requested = pyqtSignal(int)      # ms
     index_requested = pyqtSignal()
+    transcribe_requested = pyqtSignal()
     search_changed = pyqtSignal(str)
 
     _PAGE_EMPTY = 0
@@ -86,8 +87,18 @@ class SubtitleTab(QWidget):
         self._index_btn = QPushButton("자막 가져오기")
         self._index_btn.setFixedWidth(140)
         self._index_btn.clicked.connect(self.index_requested.emit)
+        # 음성 인식은 **대안**이다 — YouTube가 자막을 주지 않는 영상에서만 쓸모가 있고,
+        # 몇 분이 걸리므로 첫 수단으로 권하지 않는다.
+        self._asr_btn = QPushButton("음성 인식으로 만들기")
+        self._asr_btn.setFixedWidth(180)
+        self._asr_btn.setToolTip(
+            "영상의 소리를 듣고 자막을 만듭니다. 받아 둔 파일이 있어야 하며 "
+            "영상 길이에 따라 몇 분이 걸립니다."
+        )
+        self._asr_btn.clicked.connect(self.transcribe_requested.emit)
         empty_layout.addWidget(self._empty_lbl)
         empty_layout.addWidget(self._index_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(self._asr_btn, alignment=Qt.AlignmentFlag.AlignCenter)
         self._stack.addWidget(empty)                       # _PAGE_EMPTY
 
         self._list = QListWidget()
@@ -98,6 +109,8 @@ class SubtitleTab(QWidget):
         self._stack.addWidget(self._list)                  # _PAGE_LIST
 
         layout.addWidget(self._stack, 1)
+        # 받아 둔 파일이 있어야 음성 인식이 가능하다 — 상세화면이 알려 준다.
+        self._can_transcribe = False
         self.set_lines([], indexed=False)
 
     # ── 표시 ──────────────────────────────────────────────────────
@@ -108,6 +121,7 @@ class SubtitleTab(QWidget):
         if not indexed:
             self._empty_lbl.setText("이 영상의 자막을 아직 가져오지 않았습니다.")
             self._index_btn.setVisible(True)
+            self._asr_btn.setVisible(self._can_transcribe)
             self._stack.setCurrentIndex(self._PAGE_EMPTY)
             self._count_lbl.setText("")
             self._refresh_btn.setVisible(False)
@@ -120,6 +134,7 @@ class SubtitleTab(QWidget):
             # 띄우면 엉뚱한 해결책을 권하는 셈이라 숨긴다.
             self._empty_lbl.setText("찾는 말이 든 자막 줄이 없습니다.")
             self._index_btn.setVisible(False)
+            self._asr_btn.setVisible(False)
             self._stack.setCurrentIndex(self._PAGE_EMPTY)
             self._count_lbl.setText("0줄")
             return
@@ -137,10 +152,25 @@ class SubtitleTab(QWidget):
 
     def set_busy(self, busy: bool) -> None:
         self._index_btn.setEnabled(not busy)
+        self._asr_btn.setEnabled(not busy)
         self._refresh_btn.setEnabled(not busy)
         if busy:
             self._empty_lbl.setText("자막을 가져오는 중…")
             self._stack.setCurrentIndex(self._PAGE_EMPTY)
+
+    def set_transcribe_available(self, available: bool) -> None:
+        """음성 인식을 쓸 수 있는가 — 받아 둔 파일이 없으면 보여 줄 이유가 없다."""
+        self._can_transcribe = bool(available)
+        self._asr_btn.setVisible(
+            self._can_transcribe and self._stack.currentIndex() == self._PAGE_EMPTY
+        )
+
+    def show_transcribing(self, text: str) -> None:
+        """음성 인식 진행 표시 — 몇 분이 걸리므로 무엇을 하는 중인지 계속 알린다."""
+        self._empty_lbl.setText(text)
+        self._index_btn.setVisible(False)
+        self._asr_btn.setVisible(False)
+        self._stack.setCurrentIndex(self._PAGE_EMPTY)
 
     def show_no_subtitle(self) -> None:
         """자막을 찾지 못했을 때 — 왜 비었는지 말해 준다."""
@@ -149,6 +179,8 @@ class SubtitleTab(QWidget):
             "(YouTube가 자동 자막도 제공하지 않는 영상입니다)"
         )
         self._index_btn.setVisible(True)
+        # 자막이 아예 없는 영상 — 음성 인식이 **가장 쓸모 있는 경우**다.
+        self._asr_btn.setVisible(self._can_transcribe)
         self._stack.setCurrentIndex(self._PAGE_EMPTY)
 
     def show_streaming_notice(self) -> None:
@@ -163,6 +195,7 @@ class SubtitleTab(QWidget):
             "카테고리에 담으면 자막 찾기를 쓸 수 있습니다."
         )
         self._index_btn.setVisible(False)
+        self._asr_btn.setVisible(False)
         self._refresh_btn.setVisible(False)
         self._count_lbl.setText("")
         self._stack.setCurrentIndex(self._PAGE_EMPTY)

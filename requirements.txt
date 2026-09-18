@@ -12,3 +12,4 @@ deep-translator>=1.11
 msal>=1.28
 keyring>=25.0
 mutagen>=1.47  # 음원 태그(ID3/MP4/Vorbis) 기록 — 다운로드한 음원에 노래 정보 굽기
+faster-whisper>=1.1  # 음성 인식(전사) — 자막 없는 영상의 자막을 만든다. 모델 가중치는 첫 사용 시 내려받는다

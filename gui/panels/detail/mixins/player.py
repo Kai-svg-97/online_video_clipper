@@ -273,6 +273,9 @@ class PlayerControlMixin:
         if self._subtitle_vm is None or self._detail is None:
             return
         self._subtitle_tab.clear_search()
+        self._subtitle_tab.set_transcribe_available(
+            self._subtitle_vm.can_transcribe and bool(self._clip_source_file)
+        )
         if self._subtitle_vm.has_index(self._detail.id):
             self._subtitle_vm.load_lines(self._detail.id)
         else:
@@ -323,3 +326,50 @@ class PlayerControlMixin:
         if self._subtitle_vm is None or self._detail is None or self._streaming:
             return
         self._subtitle_vm.index_cues(self._detail.id, lang, label, cues)
+
+    # ── 음성 인식으로 자막 만들기 ──────────────────────────────────
+
+    def _on_transcribe_requested(self) -> None:
+        """받아 둔 파일의 소리를 듣고 자막을 만든다.
+
+        **로컬 파일이 있어야 한다** — 스트리밍만으로는 소리를 읽을 수 없다.
+        `_clip_source_file`은 이 시점에 이미 채워져 있다(`load()`가 자막 탭보다 먼저
+        다운로드 목록을 훑는다).
+        """
+        if self._subtitle_vm is None or self._detail is None:
+            return
+        media = self._clip_source_file or ""
+        if not media:
+            self._subtitle_tab.show_transcribing(
+                "받아 둔 파일이 없어 음성 인식을 할 수 없습니다.\n먼저 다운로드해 주세요."
+            )
+            return
+        if not self._subtitle_vm.transcribe(self._detail.id, media):
+            return
+        self._subtitle_tab.show_transcribing("음성 인식을 준비하는 중…")
+
+    def _on_asr_model_downloading(self, model_key: str) -> None:
+        """모델은 처음 한 번만 받는다 — 수십~수백 MB라 반드시 알린다."""
+        from domain.library.transcribe import resolve_model  # noqa: PLC0415
+
+        model = resolve_model(model_key)
+        self._subtitle_tab.show_transcribing(
+            f"음성 인식 모델을 처음 한 번 내려받는 중… ({model.disk_mb}MB)\n"
+            "다음부터는 바로 시작합니다."
+        )
+
+    def _on_asr_progress(self, video_id, ratio: float) -> None:
+        if self._detail is None or video_id != self._detail.id:
+            return
+        self._subtitle_tab.show_transcribing(f"소리를 듣는 중… {int(ratio * 100)}%")
+
+    def _on_asr_finished(self, video_id, count: int) -> None:
+        if self._detail is None or video_id != self._detail.id:
+            return
+        if count:
+            self._subtitle_vm.load_lines(self._detail.id)
+            show_toast(self, f"음성 인식으로 자막 {count}줄을 만들었습니다")
+            return
+        self._subtitle_tab.show_transcribing(
+            "소리에서 말을 찾지 못했습니다.\n음악만 있거나 소리가 없는 영상일 수 있습니다."
+        )

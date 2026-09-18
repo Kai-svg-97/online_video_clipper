@@ -223,6 +223,9 @@ class VideoDetailWidget(
             # 바운드 메서드로 연결한다 — 뷰모델이 이 위젯보다 오래 산다.
             subtitle_vm.lines_loaded.connect(self._on_subtitle_lines)
             subtitle_vm.index_finished.connect(self._on_subtitle_indexed)
+            subtitle_vm.transcribe_model_downloading.connect(self._on_asr_model_downloading)
+            subtitle_vm.transcribe_progress.connect(self._on_asr_progress)
+            subtitle_vm.transcribe_finished.connect(self._on_asr_finished)
         if clip_vm is not None:
             # 바운드 메서드로 연결한다 — 뷰모델은 앱 수명 내내 살아 있어서
             # 람다로 걸면 이 위젯이 사라진 뒤에도 호출돼 죽은 위젯을 건드린다.
@@ -543,6 +546,7 @@ class VideoDetailWidget(
         self._subtitle_tab = SubtitleTab()
         self._subtitle_tab.seek_requested.connect(self._on_subtitle_seek)
         self._subtitle_tab.index_requested.connect(self._on_subtitle_index_requested)
+        self._subtitle_tab.transcribe_requested.connect(self._on_transcribe_requested)
         self._subtitle_tab.search_changed.connect(self._on_subtitle_search)
         self._tabs.addTab(self._subtitle_tab, "자막")
 
@@ -637,7 +641,6 @@ class VideoDetailWidget(
         self._stream_dto = None
         self._current_url = detail.url
         self._request_skip_segments(detail.url)
-        self._reload_subtitle_tab()
         self._current_key = str(detail.id)
         self._set_crumb_path(category_path)
 
@@ -689,6 +692,10 @@ class VideoDetailWidget(
                 self._clip_source_file = dl.file_path
                 break
         self._build_clip_tab()
+        # 자막 탭은 **여기서** 갱신한다 — 음성 인식 가능 여부가 `_clip_source_file`에
+        # 달려 있는데, 그 값은 바로 위에서야 정해진다. 더 위에서 부르면 첫 로드에는
+        # 비어 있고 이후에는 이전 영상의 파일을 보게 된다.
+        self._reload_subtitle_tab()
         # 병합 탭이 기본 노출되므로 클립을 즉시 로드(지연 로드 불필요)
         if self._clip_vm is not None:
             self._clip_vm.load_clips(detail.id)

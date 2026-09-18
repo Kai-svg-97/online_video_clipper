@@ -28,6 +28,7 @@ from application.library.commands import (
 )
 from application.library.subtitle_commands import (
     BulkIndexSubtitlesHandler,
+    TranscribeVideoHandler,
     FetchAndIndexSubtitlesHandler,
     IndexSubtitleCuesHandler,
 )
@@ -156,4 +157,5 @@ def build(
         get_subtitle_lines=GetSubtitleLinesHandler(repos.subtitle),
         get_subtitle_indexes=GetSubtitleIndexesHandler(repos.subtitle),
         subtitle_coverage=GetSubtitleCoverageHandler(video, repos.subtitle),
+        transcribe_video=TranscribeVideoHandler(repos.subtitle, services.transcriber),
     )
