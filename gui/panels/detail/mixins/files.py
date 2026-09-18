@@ -236,6 +236,7 @@ class FilesTabMixin:
                 (self._clip_vm.chapters_loaded, self._on_chapters_loaded),
                 (self._clip_vm.chapter_progress, self._on_chapter_progress),
                 (self._clip_vm.chapter_finished, self._on_chapter_finished),
+                (self._clip_vm.highlights_loaded, self._on_highlights_loaded),
             ):
                 try:
                     signal.disconnect(slot)
@@ -265,6 +266,7 @@ class FilesTabMixin:
         self._chapter_layout.setSpacing(6)
         self._chapter_grp.setVisible(False)   # 챕터가 있을 때만 보인다
         self._clip_tab_layout.addWidget(self._chapter_grp)
+        self._build_highlight_row(self._clip_tab_layout)
 
         # ── 구간 설정 영역 ──────────────────────────────────────────
         range_grp = QGroupBox("구간 설정")
@@ -333,6 +335,7 @@ class FilesTabMixin:
         self._clip_vm.chapters_loaded.connect(self._on_chapters_loaded)
         self._clip_vm.chapter_progress.connect(self._on_chapter_progress)
         self._clip_vm.chapter_finished.connect(self._on_chapter_finished)
+        self._clip_vm.highlights_loaded.connect(self._on_highlights_loaded)
         if self._detail is not None:
             self._clip_vm.load_chapters(self._detail.id)
 
@@ -352,9 +355,7 @@ class FilesTabMixin:
             self._chapter_grp.setVisible(False)
             return
 
-        hint = QLabel(
-            "설명의 타임스탬프에서 찾은 구간입니다. 고른 챕터를 각각 클립으로 저장합니다."
-        )
+        hint = QLabel(self._chapter_hint_text)
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         self._chapter_layout.addWidget(hint)
@@ -373,7 +374,7 @@ class FilesTabMixin:
         btn_row.setSpacing(8)
         toggle_btn = QPushButton("전체 선택/해제")
         toggle_btn.clicked.connect(self._on_toggle_all_chapters)
-        self._chapter_extract_btn = QPushButton("선택한 챕터 추출")
+        self._chapter_extract_btn = QPushButton("선택한 구간 추출")
         self._chapter_extract_btn.clicked.connect(self._on_extract_chapters)
         btn_row.addWidget(toggle_btn)
         btn_row.addWidget(self._chapter_extract_btn)
@@ -580,3 +581,57 @@ class FilesTabMixin:
             return
         self._convert_status.setText(f"변환 완료 — {Path(path).name}")
         show_toast(self, "변환이 끝났습니다")
+
+    # ── 볼 만한 구간 제안 ──────────────────────────────────────────
+
+    _chapter_hint_text = "설명의 타임스탬프에서 찾은 구간입니다. 고른 구간을 각각 클립으로 저장합니다."
+
+    def _build_highlight_row(self, layout) -> None:
+        """자막에서 볼 만한 구간을 제안하는 버튼.
+
+        **챕터 구역을 그대로 쓴다** — 제안 결과도 "고르고 한 번에 추출"이라 흐름이
+        같다. 화면을 하나 더 만들면 사용자가 배울 것만 늘어난다.
+        """
+        if self._clip_vm is None or not self._clip_vm.can_suggest_highlights:
+            return
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self._highlight_btn = QPushButton("자막에서 볼 만한 구간 찾기")
+        self._highlight_btn.setToolTip(
+            "자막에서 말이 몰린 곳을 찾아 구간으로 제안합니다. "
+            "자막을 먼저 가져오거나 음성 인식으로 만들어야 합니다."
+        )
+        self._highlight_btn.clicked.connect(self._on_find_highlights)
+        row.addWidget(self._highlight_btn)
+        row.addStretch()
+        layout.addLayout(row)
+
+    def _on_find_highlights(self) -> None:
+        if self._clip_vm is None or self._detail is None:
+            return
+        self._clip_vm.load_highlights(self._detail.id)
+
+    def _on_highlights_loaded(self, picks) -> None:
+        """제안 결과를 챕터 목록 자리에 채운다."""
+        if not hasattr(self, "_chapter_layout"):
+            return
+        if not picks:
+            # 자막이 없어서인지 제안할 것이 없어서인지 구분해 알린다 — 빈 목록만
+            # 보여 주면 기능이 고장 난 것처럼 보인다.
+            if hasattr(self, "_chapter_status_lbl"):
+                self._chapter_status_lbl.setText(
+                    "제안할 구간이 없습니다. 자막을 먼저 가져오거나 만들어 주세요."
+                )
+            else:
+                self._chapter_grp.setVisible(True)
+                self._chapter_hint_text = (
+                    "제안할 구간이 없습니다. 자막을 먼저 가져오거나 만들어 주세요."
+                )
+                self._on_chapters_loaded([])
+            return
+        self._chapter_hint_text = (
+            "자막에서 말이 몰린 곳을 찾은 구간입니다. 고른 구간을 각각 클립으로 저장합니다."
+        )
+        self._on_chapters_loaded(picks)
+        if hasattr(self, "_chapter_status_lbl"):
+            self._chapter_status_lbl.setText(f"{len(picks)}개 구간을 제안했습니다.")

@@ -107,6 +107,7 @@ ffmpeg 기반 구간 추출. **'영상 위의 시간 구간'을 다루는 모든
 - `TimeRange` — startSec, endSec, 유효성 검증 (start < end)
 - `Chapter` — title, startSec, endSec (설명의 타임스탬프에서 파생, 저장하지 않음)
 - `SkipSegment` — category, startSec, endSec (SponsorBlock, 저장하지 않음)
+- `Highlight` — startSec, endSec, score, title (자막에서 파생, 저장하지 않음)
 - `ConvertPreset` — 변환 프리셋(코덱·확장자·해상도 상한). 코드에 고정된 목록
 
 **Domain Services (순수 함수):**
@@ -279,6 +280,7 @@ ffmpeg 기반 구간 추출. **'영상 위의 시간 구간'을 다루는 모든
 | `GetClipsQuery` | 특정 Video의 클립 목록 |
 | `GetChaptersQuery` | 영상 설명에서 챕터 구간 추출 |
 | `GetSkipSegmentsQuery` | SponsorBlock 건너뛸 구간(영상당 1회 조회 후 캐시) |
+| `GetHighlightsQuery` | 자막에서 볼 만한 구간 제안(순수 계산, 네트워크 없음) |
 | `ConvertMediaCommand` | 프리셋대로 변환(원본 보존, 새 파일로 출력) |
 | `ExportMediaServerCommand` | `.nfo`/`.m3u` 사이드카 생성(Plex·Jellyfin·Kodi) |
 

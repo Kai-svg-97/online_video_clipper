@@ -106,6 +106,7 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             delete_handler=handlers.clip.delete,
             get_clips_handler=handlers.clip.get_clips,
             get_chapters_handler=handlers.clip.get_chapters,
+            get_highlights_handler=handlers.clip.get_highlights,
             extract_many_handler=handlers.clip.extract_many,
             get_skip_segments_handler=handlers.clip.get_skip_segments,
             convert_handler=handlers.clip.convert,

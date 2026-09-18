@@ -24,6 +24,7 @@ def clip_vm():
         clips_changed = pyqtSignal()
         error_occurred = pyqtSignal(str)
         chapters_loaded = pyqtSignal(object)
+        highlights_loaded = pyqtSignal(object)
         chapter_progress = pyqtSignal(int, int, str)
         chapter_finished = pyqtSignal(int, int)
         skip_segments_loaded = pyqtSignal(str, object)
@@ -44,6 +45,11 @@ def clip_vm():
 
         def convert_media(self, path, preset_key):
             return True
+
+        can_suggest_highlights = True
+
+        def load_highlights(self, video_id, limit=5):
+            self.highlights_loaded.emit([])
 
         def load_chapters(self, video_id):
             self.loaded_for.append(video_id)
@@ -183,3 +189,62 @@ class TestExtraction:
         clip_vm.chapter_finished.emit(1, 1)
 
         assert "1개 실패" in w._chapter_status_lbl.text()
+
+
+class TestHighlightSuggestions:
+    """제안 구간은 **챕터 구역을 그대로 쓴다** — 화면을 하나 더 만들지 않는다."""
+
+    def test_버튼이_노출된다(self, qtbot, clip_vm, local_file):
+        w = _widget(qtbot, clip_vm, local_file)
+        assert w._highlight_btn.text() == "자막에서 볼 만한 구간 찾기"
+
+    def test_누르면_뷰모델에_요청한다(self, qtbot, clip_vm, local_file):
+        w = _widget(qtbot, clip_vm, local_file)
+        asked: list = []
+        clip_vm.load_highlights = lambda vid, limit=5: asked.append(vid)
+
+        w._highlight_btn.click()
+
+        assert asked == [w._detail.id]
+
+    def test_제안이_챕터_목록_자리에_들어간다(self, qtbot, clip_vm, local_file):
+        from application.clip.dtos import ChapterDTO
+
+        w = _widget(qtbot, clip_vm, local_file)
+        clip_vm.highlights_loaded.emit(
+            [ChapterDTO("제안 구간 1", 100.0, 160.0), ChapterDTO("본론", 300.0, 360.0)]
+        )
+        assert len(w._chapter_checks) == 2
+        assert w._chapter_grp.isHidden() is False
+
+    def test_제안한_구간을_그대로_추출할_수_있다(self, qtbot, clip_vm, local_file):
+        """챕터와 같은 흐름이라 추가로 배울 것이 없다."""
+        from application.clip.dtos import ChapterDTO
+
+        w = _widget(qtbot, clip_vm, local_file)
+        pick = ChapterDTO("제안 구간 1", 100.0, 160.0)
+        clip_vm.highlights_loaded.emit([pick])
+
+        w._chapter_extract_btn.click()
+
+        assert clip_vm.extracted[-1][2] == [pick]
+
+    def test_제안이_없으면_왜인지_알린다(self, qtbot, clip_vm, local_file):
+        """빈 목록만 보여 주면 기능이 고장 난 것처럼 보인다."""
+        from application.clip.dtos import ChapterDTO
+
+        w = _widget(qtbot, clip_vm, local_file)
+        clip_vm.chapters_loaded.emit([ChapterDTO("A", 0.0, 60.0), ChapterDTO("B", 60.0, 120.0)])
+
+        clip_vm.highlights_loaded.emit([])
+
+        assert "자막을 먼저" in w._chapter_status_lbl.text()
+
+    def test_제안_개수를_알린다(self, qtbot, clip_vm, local_file):
+        from application.clip.dtos import ChapterDTO
+
+        w = _widget(qtbot, clip_vm, local_file)
+        clip_vm.highlights_loaded.emit(
+            [ChapterDTO(f"제안 {i}", i * 100.0, i * 100.0 + 60.0) for i in range(1, 4)]
+        )
+        assert "3개 구간" in w._chapter_status_lbl.text()

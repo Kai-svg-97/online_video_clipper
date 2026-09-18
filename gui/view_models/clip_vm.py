@@ -20,6 +20,8 @@ from application.clip.queries import (
     GetChaptersQuery,
     GetClipsHandler,
     GetClipsQuery,
+    GetHighlightsHandler,
+    GetHighlightsQuery,
 )
 from application.clip.sponsor_queries import (
     GetSkipSegmentsHandler,
@@ -138,6 +140,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
     clips_changed = pyqtSignal()
     error_occurred = pyqtSignal(str)
     chapters_loaded = pyqtSignal(object)        # list[ChapterDTO]
+    highlights_loaded = pyqtSignal(object)      # list[ChapterDTO] (제안 구간)
     chapter_progress = pyqtSignal(int, int, str)
     chapter_finished = pyqtSignal(int, int)     # 성공 수, 실패 수
     skip_segments_loaded = pyqtSignal(str, object)  # url, list[SkipSegment]
@@ -150,6 +153,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
         delete_handler: DeleteClipHandler,
         get_clips_handler: GetClipsHandler,
         get_chapters_handler: GetChaptersHandler | None = None,
+        get_highlights_handler: GetHighlightsHandler | None = None,
         extract_many_handler: ExtractClipsHandler | None = None,
         get_skip_segments_handler: GetSkipSegmentsHandler | None = None,
         convert_handler: ConvertMediaHandler | None = None,
@@ -160,6 +164,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
         self._delete = delete_handler
         self._get_clips = get_clips_handler
         self._get_chapters = get_chapters_handler
+        self._get_highlights = get_highlights_handler
         self._extract_many = extract_many_handler
         self._get_skips = get_skip_segments_handler
         self._convert = convert_handler
@@ -226,6 +231,26 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
             except Exception as exc:
                 self.error_occurred.emit(str(exc))
         self.chapters_loaded.emit(self._chapters)
+
+    @property
+    def can_suggest_highlights(self) -> bool:
+        return self._get_highlights is not None
+
+    def load_highlights(self, video_id: UUID, limit: int = 5) -> None:
+        """자막에서 볼 만한 구간을 제안한다.
+
+        네트워크도 모델 호출도 없는 순수 계산이라 동기로 충분하다
+        (`domain.clip.highlights`).
+        """
+        picks = []
+        if self._get_highlights is not None:
+            try:
+                picks = self._get_highlights.handle(
+                    GetHighlightsQuery(video_id=video_id, limit=limit)
+                )
+            except Exception as exc:
+                self.error_occurred.emit(str(exc))
+        self.highlights_loaded.emit(picks)
 
     def extract_chapters(
         self,

@@ -158,6 +158,7 @@ class ClipHandlers:
     delete: Any
     get_clips: Any
     get_chapters: Any
+    get_highlights: Any
     get_skip_segments: Any
     convert: Any
 

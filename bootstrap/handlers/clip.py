@@ -12,7 +12,11 @@ from application.clip.commands import (
     ExtractClipsHandler,
 )
 from application.clip.convert import ConvertMediaHandler
-from application.clip.queries import GetChaptersHandler, GetClipsHandler
+from application.clip.queries import (
+    GetChaptersHandler,
+    GetClipsHandler,
+    GetHighlightsHandler,
+)
 from application.clip.sponsor_queries import GetSkipSegmentsHandler
 
 from bootstrap.context import ClipHandlers, Repositories, Services
@@ -26,6 +30,7 @@ def build(repos: Repositories, services: Services) -> ClipHandlers:
         delete=DeleteClipHandler(repos.clip, services.event_bus),
         get_clips=GetClipsHandler(repos.clip),
         get_chapters=GetChaptersHandler(repos.video),
+        get_highlights=GetHighlightsHandler(repos.subtitle, repos.video),
         get_skip_segments=GetSkipSegmentsHandler(services.skip_source),
         convert=ConvertMediaHandler(services.clip_extractor),
     )
