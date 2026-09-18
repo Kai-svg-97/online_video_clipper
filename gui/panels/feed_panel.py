@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
-    QPushButton,
     QScrollArea,
     QSizePolicy,
     QToolButton,
@@ -30,18 +29,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from application.library.dtos import CategoryDTO, ChannelInfoDTO, FeedVideoDTO, PlaylistDTO
+from application.library.dtos import CategoryDTO, ChannelInfoDTO, FeedVideoDTO
 from config.settings import THUMBNAIL_DIR
 from gui.anim import fade_in
 from gui.themes.manager import ThemeManager
 from gui.workers import track_thread
-from gui.view_models.feed_vm import FeedViewModel
 
-from typing import TYPE_CHECKING
 from gui.themes.colors import sem, tok
-if TYPE_CHECKING:
-    from gui.view_models.library_vm import LibraryViewModel
-    from gui.view_models.playlist_vm import PlaylistViewModel
 
 logger = logging.getLogger(__name__)
 
@@ -262,42 +256,6 @@ class _CategoryPickDialog(QDialog):
 
 # ---------------------------------------------------------------------------
 # 재생목록 선택 다이얼로그
-# ---------------------------------------------------------------------------
-
-class _PlaylistPickDialog(QDialog):
-    def __init__(self, playlists: list[PlaylistDTO], parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("재생목록 선택")
-        self.setMinimumWidth(280)
-        self._selected_id: UUID | None = None
-
-        layout = QVBoxLayout(self)
-        lbl = QLabel("추가할 재생목록을 선택하세요:")
-        layout.addWidget(lbl)
-
-        self._tree = QTreeWidget()
-        self._tree.setHeaderHidden(True)
-        layout.addWidget(self._tree, 1)
-
-        for pl in playlists:
-            item = QTreeWidgetItem([f"{pl.title}  ({pl.item_count}개)"])
-            item.setData(0, Qt.ItemDataRole.UserRole, pl.id)
-            self._tree.addTopLevelItem(item)
-
-        self._tree.itemClicked.connect(lambda item, _: setattr(self, "_selected_id",
-                                        item.data(0, Qt.ItemDataRole.UserRole)))
-
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
-
-    def selected_id(self) -> UUID | None:
-        return self._selected_id
-
-
-# ---------------------------------------------------------------------------
-# 둥근 모서리 썸네일 위젯 (라이브러리와 동일한 스타일)
 # ---------------------------------------------------------------------------
 
 class _RoundedThumbLabel(QWidget):
@@ -1116,126 +1074,3 @@ class _ChannelGrid(QWidget):
 # 피드 패널 (메인)
 # ---------------------------------------------------------------------------
 
-class FeedPanel(QWidget):
-    video_to_category  = pyqtSignal(str, object)   # url, category_id (UUID)
-    video_to_playlist  = pyqtSignal(str, object)   # url, playlist_id (UUID)
-    download_requested = pyqtSignal(str, str)       # url, title
-
-    def __init__(
-        self,
-        vm: FeedViewModel,
-        library_vm: "LibraryViewModel | None" = None,
-        playlist_vm: "PlaylistViewModel | None" = None,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._vm = vm
-        self._library_vm = library_vm
-        self._playlist_vm = playlist_vm
-        self._setup_ui()
-        self._connect_signals()
-
-    def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        hdr = QWidget()
-        hdr.setFixedHeight(48)
-        hdr_layout = QHBoxLayout(hdr)
-        hdr_layout.setContentsMargins(16, 0, 16, 0)
-        hdr_layout.setSpacing(8)
-
-        title = QLabel("구독 피드")
-        f = QFont()
-        f.setPointSize(11)
-        f.setWeight(QFont.Weight.Bold)
-        title.setFont(f)
-        hdr_layout.addWidget(title)
-        hdr_layout.addStretch()
-
-        self._refresh_btn = QPushButton("새로고침")
-        self._refresh_btn.setFixedWidth(80)
-        self._refresh_btn.clicked.connect(self._on_refresh)
-        hdr_layout.addWidget(self._refresh_btn)
-
-        self._status_lbl = QLabel()
-        self._status_lbl.hide()
-        hdr_layout.addWidget(self._status_lbl)
-
-        layout.addWidget(hdr)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(sep)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-
-        self._grid = _FeedGrid()
-        scroll.setWidget(self._grid)
-        layout.addWidget(scroll, stretch=1)
-
-        self._grid.add_to_category_requested.connect(self._on_add_to_category)
-        self._grid.add_to_playlist_requested.connect(self._on_add_to_playlist)
-        self._grid.download_requested.connect(self.download_requested)
-
-        self._apply_theme(ThemeManager.instance().current())
-        ThemeManager.instance().theme_changed.connect(self._apply_theme)
-
-    def _connect_signals(self) -> None:
-        self._vm.feed_changed.connect(self._on_feed_changed)
-        self._vm.loading_changed.connect(self._on_loading_changed)
-        self._vm.error_occurred.connect(self._on_error)
-
-    def _on_refresh(self) -> None:
-        self._status_lbl.hide()
-        self._vm.refresh()
-
-    def _on_feed_changed(self) -> None:
-        self._grid.set_feed(self._vm.feed)
-
-    def _on_loading_changed(self, loading: bool) -> None:
-        self._refresh_btn.setEnabled(not loading)
-        if loading:
-            self._status_lbl.setText("로딩 중…")
-            self._status_lbl.show()
-        else:
-            self._status_lbl.hide()
-
-    def _on_error(self, msg: str) -> None:
-        if "Could not copy" in msg and "cookie" in msg.lower():
-            display = "쿠키 읽기 실패 — 사이드바 계정 버튼에서 로그인하세요."
-        else:
-            display = f"오류: {msg[:120]}"
-        self._status_lbl.setText(display)
-        self._status_lbl.show()
-
-    def _on_add_to_category(self, url: str) -> None:
-        categories = self._library_vm.categories if self._library_vm else []
-        if not categories:
-            self._status_lbl.setText("등록된 카테고리가 없습니다.")
-            self._status_lbl.show()
-            return
-        dlg = _CategoryPickDialog(categories, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            cat_id = dlg.selected_id()
-            if cat_id is not None:
-                self.video_to_category.emit(url, cat_id)
-
-    def _on_add_to_playlist(self, url: str) -> None:
-        playlists = self._playlist_vm.playlists if self._playlist_vm else []
-        if not playlists:
-            self._status_lbl.setText("등록된 재생목록이 없습니다.")
-            self._status_lbl.show()
-            return
-        dlg = _PlaylistPickDialog(playlists, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            pl_id = dlg.selected_id()
-            if pl_id is not None:
-                self.video_to_playlist.emit(url, pl_id)
-
-    def _apply_theme(self, tokens) -> None:
-        tok = tokens
-        self.setStyleSheet(f"background: {tok.bg_base};")

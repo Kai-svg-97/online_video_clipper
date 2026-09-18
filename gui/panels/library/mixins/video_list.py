@@ -573,12 +573,12 @@ class VideoListMixin:
         # 순서 편집 버튼 — 카테고리 선택 시에만 표시
         if cat_id is not None:
             self._btn_reorder.show()
-            self.path_changed.emit(self._build_category_path(cat_id))
         else:
             self._btn_reorder.setChecked(False)
             self._btn_reorder.hide()
             self._model.set_reorder_mode(False)
-            self.path_changed.emit("라이브러리")
+        # 현재 위치 표시는 `_refresh_breadcrumb()`가 직접 그린다 — 예전에는 여기서
+        # `path_changed`로 껍데기에 넘겼는데, 받는 쪽이 끝내 붙지 않았다.
         self._refresh_breadcrumb()
         # 음악 카테고리에서만 보기 유형에 '앨범'을 노출한다(카테고리마다 달라진다).
         self._update_view_options()
@@ -778,7 +778,6 @@ class VideoListMixin:
             return
         if mods & Qt.KeyboardModifier.ShiftModifier:
             return
-        self.video_selected.emit(dto)
         self._open_detail(dto.id)
 
     def _on_double_click(self, index: QModelIndex) -> None:

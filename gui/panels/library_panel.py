@@ -202,9 +202,7 @@ class LibraryPanel(
     ShortcutsMixin,
     QWidget,
 ):
-    video_selected     = pyqtSignal(object)
     download_requested = pyqtSignal(str, str, object)
-    path_changed       = pyqtSignal(str)   # 현재 위치 경로 문자열 (breadcrumb)
     back_exhausted     = pyqtSignal()      # 뒤로가기 기록 소진(외부에서 원본 페이지 복귀용)
     # 지금 재생 중 미니바 — 상세를 떠나도 재생이 이어질 때 MainWindow가 하단 띠로 그린다.
     now_playing_changed  = pyqtSignal(object)          # dict | None

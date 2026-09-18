@@ -63,15 +63,6 @@ class TestDownloadPanel:
         assert labels[VideoDetailWidget._TAB_SUBTITLE] == "자막"
 
 
-class TestFeedPanel:
-    def test_widget_creates_without_error(self, qtbot, feed_vm):
-        from gui.panels.feed_panel import FeedPanel
-
-        panel = FeedPanel(vm=feed_vm)
-        qtbot.addWidget(panel)
-        panel.show()
-
-
 class TestLibraryPanel:
     def test_widget_creates_without_error(self, qtbot, library_vm, download_vm, clip_vm):
         from gui.panels.library_panel import LibraryPanel

@@ -237,7 +237,8 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
   손으로 적으면 원본 토큰을 바꿀 때 같이 고치는 것을 잊는다.
 - 카드·차트처럼 위젯 스타일시트나 QPainter로 직접 칠하는 화면은 전역 QSS 교체만으로 갱신되지 않는다 →
   `ThemeManager.theme_changed`에 다시 그리는 슬롯을 연결한다. **연결을 빼먹으면 그 화면만
-  영구히 옛 색으로 남는다**(`player/controls.py`의 화질 배지가 그 상태다 — 미해결).
+  영구히 옛 색으로 남는다** — `player/controls.py`의 화질 배지·화질 버튼이 그랬고,
+  `_on_theme_changed`가 둘의 스타일시트를 다시 씌우도록 고쳤다(해결됨).
 - **Qt가 지원하지 않는 QSS 선택자를 쓰지 않는다.** 조용히 무시돼 "고쳤는데 안 바뀐다"는
   함정이 된다. 대표적으로 placeholder 글자색은 QSS에 속성이 없고
   `QPalette.ColorRole.PlaceholderText`가 담당한다.
