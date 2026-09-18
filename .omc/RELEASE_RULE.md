@@ -1,5 +1,5 @@
 # Release Rules
-<!-- last-analyzed: 2026-09-18T00:00:00Z -->
+<!-- last-analyzed: 2026-09-18T06:00:00Z -->
 <!-- delta 확인(2026-09-18): release.yml 최종 변경은 여전히 d3ab43e(2026-08-10)로
      규칙 변화 없음. 테스트 건수만 현재 값으로 갱신했다(린트 기준선 10건은 그대로). -->
 
@@ -28,10 +28,25 @@ version.py does not contain 'X.Y.Z' — update version.py before tagging
 
 ## Test Gate
 - CI 릴리즈 워크플로우에 test step 없음 — 빌드 성공만이 게이트다.
-  따라서 **로컬에서 전체 테스트를 돌리고 릴리즈해야 한다**: `pytest` (2026-09-18 기준 2,136건)
+  따라서 **로컬에서 전체 테스트를 돌리고 릴리즈해야 한다**: `pytest` (2026-09-18 기준 2,253건)
 - 린트: `ruff check gui/ application/` — 이 저장소는 `ruff format` 미적용이라
   기존 E402가 기준선이다(2026-09-18 기준 10건 — 조립 루트 분해로 main.py 8건이 사라졌다).
   "새 위반이 늘지 않았는가"로만 판단한다.
+
+## 네이티브 의존이 늘었을 때의 추가 게이트 (v1.27.0~)
+음성 인식(faster-whisper→ctranslate2·onnxruntime·av)처럼 **네이티브 확장**을 번들에
+추가하면, CI 빌드가 성공해도 실행 시 DLL 로드에 실패해 기능이 **조용히** 죽을 수 있다.
+그런 변경이 있으면 태그 전에 로컬에서 확인한다:
+```powershell
+.\scripts\build_windows.ps1
+dist\windows\YouTubeContentManager\YouTubeContentManager.exe   # 실제 실행 파일은 하위 폴더다
+```
+- **실제 실행 파일은 `dist\windows\YouTubeContentManager\`** 안에 있다. `dist\windows\`
+  바로 아래 exe 는 COLLECT 이전 부트로더 잔여물이라 `_internal` 없이 즉시 죽는다.
+- 순수 파이썬 패키지는 `_internal` 에 폴더로 보이지 않는다(PYZ 아카이브에 들어간다) —
+  폴더 존재로 판정하면 오탐이다.
+- 네이티브 확장은 **import 성공만으로 부족**하다. 함수를 실제로 호출해 봐야 한다
+  (예: `ctranslate2.get_supported_compute_types('cpu')`).
 
 ## Registry / Distribution
 - GitHub Releases — `softprops/action-gh-release@v2`
