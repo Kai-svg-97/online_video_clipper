@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import QSize, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QColor, QIcon, QPainter, QPen, QPixmap, QPixmapCache
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
@@ -31,7 +31,7 @@ from gui.widgets.mini_player_bar import MiniPlayerBar
 from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.toast import KIND_ERROR, KIND_SUCCESS, show_toast
-from gui.workers import wait_all
+from gui.workers import retire_thread, track_thread, wait_all
 
 from gui.view_models.base import shutdown_all
 from gui.view_models.bundle import ViewModels
@@ -45,6 +45,10 @@ from gui.view_models.playlist_vm import PlaylistViewModel
 from infrastructure.auth.youtube_auth import YouTubeAuthService
 
 logger = logging.getLogger(__name__)
+
+# 북마크 한 번에 담는 상한 — 각 건이 네트워크 조회를 한 번씩 하므로, 수천 건을
+# 그대로 밀어 넣으면 앱이 먹통처럼 보인다.
+_BOOKMARK_IMPORT_LIMIT = 200
 
 # ---------------------------------------------------------------------------
 # SVG 아이콘 정의 (인라인)
@@ -434,6 +438,30 @@ class _LibraryPage(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# DB 백업 워커
+# ---------------------------------------------------------------------------
+
+class _DbBackupWorker(QThread):
+    """하루 한 번 DB 사본을 남긴다 — **배경에서**.
+
+    큰 라이브러리는 복사에 몇 초가 걸린다. 시작 경로에서 동기로 돌리면 그만큼
+    창이 멈춰 보인다(CLAUDE.md 의 시작 성능 규칙).
+    """
+
+    done = pyqtSignal(object)   # 만든 경로(str) 또는 None
+
+    def __init__(self, backup) -> None:
+        # 부모를 주지 않는다 — 창이 먼저 닫힐 때 실행 중 스레드가 파괴되면
+        # Qt가 프로세스를 즉시 종료한다(gui/workers.py).
+        super().__init__(None)
+        self._backup = backup
+
+    def run(self) -> None:
+        made = self._backup.run_daily()
+        self.done.emit(str(made) if made else None)
+
+
+# ---------------------------------------------------------------------------
 # 메인 윈도우
 # ---------------------------------------------------------------------------
 
@@ -446,6 +474,7 @@ class MainWindow(QMainWindow):
         auth_service: YouTubeAuthService | None = None,
         yt_oauth=None,      # YouTubeOAuthAdapter | None
         cleanup_fns=None,   # 라이브러리 정리 콜백 3종 | None
+        db_backup=None,     # DbBackup — 하루 한 번 DB 사본 | None
     ) -> None:
         """뷰모델은 **묶음 하나로** 받는다.
 
@@ -477,6 +506,11 @@ class MainWindow(QMainWindow):
         self._subtitle_vm = vms.subtitle
         # 라이브러리 정리 콜백(중복찾기·사라진파일찾기·삭제) — composition root가 준다.
         self._cleanup_fns = cleanup_fns
+        # 하루 한 번 DB 사본 — 시작을 막지 않게 창이 뜬 뒤에 배경에서 돈다.
+        self._db_backup = db_backup
+        self._backup_worker = None
+        # 트레이 — 환경에 트레이가 없으면 None으로 남는다(기능만 빠진다).
+        self._tray = None
         self._yt_oauth = yt_oauth
         self._auth_service = auth_service or YouTubeAuthService()
         self._update_controller = None
@@ -492,6 +526,9 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_signals()
         self._setup_clipboard_monitoring()
+        # 첫 목록 조회가 끝난 뒤에 시작한다 — 시작 직후는 디스크가 가장 바쁘다.
+        QTimer.singleShot(3000, self._start_db_backup)
+        self._setup_tray()
 
     # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
@@ -570,6 +607,7 @@ class MainWindow(QMainWindow):
             cleanup_fns=self._cleanup_fns,
             subtitle_vm=self._subtitle_vm,
             get_categories_fn=lambda: self._library_vm.categories,
+            add_videos_fn=self._add_videos_from_bookmarks,
         )
         self._stack.addWidget(self._settings_panel)                  # 4
 
@@ -827,7 +865,110 @@ class MainWindow(QMainWindow):
         if idx not in (_PAGE_LIBRARY, _PAGE_STATS):
             self._return_to_page = None
 
+    # ── 북마크 가져오기 ──────────────────────────────────────────
+
+    def _add_videos_from_bookmarks(self, urls: list[str], category_id) -> None:
+        """고른 북마크를 라이브러리에 담는다.
+
+        한 건씩 `add_video`를 부른다 — 뷰모델이 이미 워커를 띄우고 중복을 걸러 준다.
+        **한꺼번에 수백 건을 밀어 넣지 않는다**: 각 건이 네트워크 조회를 한 번씩 하므로
+        워커가 폭주하면 시작 직후 앱이 먹통처럼 보인다. 뷰모델의 워커 관리에 맡기되,
+        담는 상한을 둬서 실수로 북마크 전체(수천 건)를 넣는 것을 막는다.
+        """
+        capped = list(urls)[:_BOOKMARK_IMPORT_LIMIT]
+        for url in capped:
+            self._library_vm.add_video(url, category_id=category_id)
+        if len(urls) > len(capped):
+            self._show_error(
+                f"한 번에 {_BOOKMARK_IMPORT_LIMIT}개까지 담습니다. "
+                f"나머지 {len(urls) - len(capped)}개는 다시 골라 주세요."
+            )
+
+    # ── 트레이 알림 ──────────────────────────────────────────────
+
+    def _setup_tray(self) -> None:
+        """트레이 아이콘과 알림을 건다. 트레이가 없는 환경이면 조용히 건너뛴다."""
+        from gui.tray import AppTray  # noqa: PLC0415
+
+        if not AppTray.is_available():
+            logger.info("시스템 트레이가 없는 환경 — 알림 기능을 건너뛴다")
+            return
+        tray = AppTray(self.windowIcon(), parent=self)
+        tray.show_requested.connect(self._on_tray_show)
+        tray.quit_requested.connect(self.close)
+        self._tray = tray
+
+        # 바운드 메서드로 연결한다 — 뷰모델이 이 창보다 오래 산다.
+        self._download_vm.job_finished.connect(self._on_job_finished_notify)
+        if self._feed_vm is not None:
+            self._feed_vm.new_videos_found.connect(self._on_new_videos_notify)
+            # 첫 확인은 조금 늦춘다 — 시작 직후는 네트워크·디스크가 가장 바쁘다.
+            QTimer.singleShot(60_000, self._start_watching)
+
+    def _start_watching(self) -> None:
+        if self._feed_vm is not None and self._feed_vm.start_watching():
+            self._feed_vm.check_new_videos()
+
+    def _notifications_on(self) -> bool:
+        """알림을 보낼 때인가 — 보고 있는 사람에게는 알리지 않는다.
+
+        창이 앞에 있으면 이미 토스트·상태바가 알려 준다. 그 위에 트레이 풍선까지
+        띄우면 같은 소식이 두 번 뜬다.
+        """
+        from config import settings as cfg  # noqa: PLC0415
+
+        if self._tray is None or not cfg.TRAY_NOTIFICATIONS:
+            return False
+        return not self.isActiveWindow()
+
+    def _on_job_finished_notify(self, ok: bool, detail: str) -> None:
+        if not self._notifications_on():
+            return
+        if ok:
+            self._tray.notify("다운로드 완료", detail or "1건을 받았습니다", ok=True)
+        else:
+            self._tray.notify("다운로드 실패", detail[:200], ok=False)
+
+    def _on_new_videos_notify(self, count: int, body: str) -> None:
+        """새 영상은 창이 앞에 있어도 알린다 — 다른 화면을 보고 있을 수 있다."""
+        from config import settings as cfg  # noqa: PLC0415
+
+        if self._tray is None or not cfg.TRAY_NOTIFICATIONS:
+            return
+        self._tray.notify(f"구독 채널에 새 영상 {count}개", body, ok=True)
+
+    def _on_tray_show(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    # ── DB 백업 ──────────────────────────────────────────────────
+
+    def _start_db_backup(self) -> None:
+        """하루 한 번 사본을 남긴다. 어댑터가 없으면(테스트 등) 아무것도 하지 않는다."""
+        if self._db_backup is None or self._backup_worker is not None:
+            return
+        worker = _DbBackupWorker(self._db_backup)
+        # 바운드 메서드로 연결한다 — 워커가 이 창보다 오래 살 수 있다.
+        worker.done.connect(self._on_db_backup_done)
+        self._backup_worker = track_thread(worker)
+        worker.start()
+
+    def _on_db_backup_done(self, made: object) -> None:
+        """조용히 끝낸다 — 성공을 알릴 일이 아니다(매일 뜨면 소음이다)."""
+        retire_thread(self._backup_worker, "done")
+        self._backup_worker = None
+        if made:
+            logger.info("DB 백업 완료: %s", made)
+
     def closeEvent(self, event: QCloseEvent) -> None:
+        # 감시 타이머를 먼저 멈춘다 — 정리 중에 새 조회가 시작되면 그 워커를
+        # 아무도 기다려 주지 않는다.
+        if self._feed_vm is not None:
+            self._feed_vm.stop_watching()
+        # 트레이 아이콘을 내린다 — 남겨 두면 유령 아이콘이 트레이에 붙어 있다.
+        if self._tray is not None:
+            self._tray.hide()
         # 위젯이 띄운 워커(썸네일·스트림 등)가 남아 있으면 먼저 기다린다 —
         # 실행 중인 QThread가 파괴되면 Qt가 프로세스를 죽인다(gui/workers.py).
         wait_all(3000)

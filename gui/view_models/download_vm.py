@@ -64,6 +64,10 @@ class _LiveProbeWorker(QThread):
 class DownloadViewModel(WorkerOwnerMixin, QObject):
     queue_changed = pyqtSignal()
     history_changed = pyqtSignal()
+    # 한 건이 끝났다 — 창을 보고 있지 않은 사람에게 알리기 위한 신호다
+    # (트레이 알림). `history_changed`는 '목록이 바뀌었다'일 뿐 무엇이 끝났는지
+    # 말하지 않아 알림 문구를 만들 수 없다.
+    job_finished = pyqtSignal(bool, str)   # 성공 여부, 설명(제목 또는 오류)
     error_occurred = pyqtSignal(str)
 
     def __init__(
@@ -287,10 +291,25 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
     def _on_completed(self) -> None:
         self.queue_changed.emit()
         self.history_changed.emit()
+        self.job_finished.emit(True, self._last_finished_title())
 
     def _on_failed(self, error: str) -> None:
         self.queue_changed.emit()
         self.error_occurred.emit(f"Download failed: {error}")
+        self.job_finished.emit(False, error)
+
+    def _last_finished_title(self) -> str:
+        """방금 끝난 것의 제목 — 이력 맨 앞이 그것이다.
+
+        완료 이벤트가 어떤 작업인지 싣지 않아 이력에서 되짚는다. 틀려도 알림 문구가
+        어긋날 뿐이라(기능은 멀쩡하다) 여기서 예외를 내지 않는다.
+        """
+        try:
+            recent = self.load_history(limit=1)
+        except Exception:
+            logger.exception("완료 알림용 제목 조회 실패 (무시)")
+            return ""
+        return recent[0].title if recent else ""
 
     def _cleanup_worker(self, job_id: UUID) -> None:
         self._workers.pop(job_id, None)

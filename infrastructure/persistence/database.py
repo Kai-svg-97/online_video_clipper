@@ -41,6 +41,11 @@ class Database:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or DATABASE_PATH
 
+    @property
+    def path(self) -> Path:
+        """DB 파일 경로 — 백업처럼 파일 자체를 다루는 쪽이 필요하다."""
+        return self._path
+
     def initialize(self) -> None:
         """Create schema and enable WAL mode. Called once at startup."""
         schema_sql = get_resource_path("db/schema.sql").read_text(encoding="utf-8")

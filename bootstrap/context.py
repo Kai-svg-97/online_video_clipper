@@ -92,6 +92,7 @@ class Services:
     summary_source: Any          # GeminiExtractor — ISummarySource
     album_provider: Any
     sync_service: Any
+    db_backup: Any                # DbBackup — 하루 한 번 DB 사본
     download_queue: Any
 
 

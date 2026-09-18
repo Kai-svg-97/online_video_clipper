@@ -9,11 +9,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from config.settings import DATA_DIR
+from config.settings import BACKUP_DIR, DATA_DIR
 from infrastructure.auth.youtube_auth import YouTubeAuthService
 from infrastructure.browser.gemini_extractor import GeminiExtractor
 from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
 from infrastructure.event_bus import EventBus
+from infrastructure.persistence.db_backup import DbBackup
 from infrastructure.ffmpeg.ffmpeg_adapter import FfmpegAdapter
 from infrastructure.song.audio_tagger import MutagenAudioTagger
 from infrastructure.downloader.availability import YouTubeAvailabilityChecker
@@ -109,5 +110,6 @@ def build_services(db) -> Services:
         summary_source=GeminiExtractor(),
         album_provider=build_default_album_provider(),
         sync_service=SyncService(db),
+        db_backup=DbBackup(db.path, Path(BACKUP_DIR)),
         download_queue=DownloadQueueAggregate(),
     )

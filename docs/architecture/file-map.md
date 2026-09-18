@@ -110,6 +110,8 @@ online_video_clipper/
 │   ├── library/
 │   │   ├── commands.py              # AddVideo, UpdateVideo, DeleteVideo, ImportYouTubePlaylistToCategory
 │   │   └── queries.py               # GetVideos, SearchVideos, GetVideoDetail
+│   │   (도메인) backup.py            # DB 백업 보관 규칙(하루 1회·최근 7개·남의 파일 제외)
+│   │   (도메인) bookmarks.py         # 브라우저 북마크 HTML 파싱 + '영상일 법한 호스트' 판정
 │   ├── download/
 │   │   ├── commands.py              # StartDownload, CancelDownload, RetryDownload
 │   │   ├── queries.py               # GetDownloadQueue, GetDownloadHistory

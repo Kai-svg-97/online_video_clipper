@@ -80,6 +80,7 @@ def main() -> int:
         auth_service=graph.services.auth_service,
         yt_oauth=graph.services.youtube_oauth,
         cleanup_fns=graph.handlers.library.cleanup_fns,
+        db_backup=graph.services.db_backup,
     )
 
     # 9. 자동 업데이트 컨트롤러 — 창이 있어야 배지·다이얼로그를 띄울 수 있다.

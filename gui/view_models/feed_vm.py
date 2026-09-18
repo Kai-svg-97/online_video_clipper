@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 from collections import deque
 from collections.abc import Callable
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 from gui.view_models.base import WorkerOwnerMixin
 
@@ -21,7 +22,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from infrastructure.auth.youtube_auth import YouTubeAuthService
 
+logger = logging.getLogger(__name__)
+
 FEED_ALL_KEY = "__all__"   # 전체 구독 피드 식별 키
+# 배경 감시 전용 키 — 화면이 쓰는 캐시 키와 겹치면 보던 목록이 갈아 끼워진다.
+_WATCH_KEY = "__watch__"
 CHANNELS_ROOT_KEY = "__channels__"   # "구독 채널" 노드(채널 카드 목록) 식별 키
 
 
@@ -61,6 +66,8 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
     # ── 키별 시그널 (멀티워커·채널별 캐시 지원) ───────────────────────────────
     loading_key_changed = pyqtSignal(str, bool)   # (key, loading)
     feed_key_changed    = pyqtSignal(str, list)   # (key, items)
+    # 배경 감시가 새 영상을 찾았다 — 트레이 알림용.
+    new_videos_found    = pyqtSignal(int, str)    # (건수, 알림 본문)
     feed_batch_ready    = pyqtSignal(str, list)   # (key, batch)
 
     def __init__(
@@ -90,6 +97,8 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
         except Exception:
             self._max_workers = 4
         self._gen: int = 0
+        # 새 영상 배경 감시 타이머(꺼져 있으면 None).
+        self._watch_timer = None
 
     @property
     def feed(self) -> list[FeedVideoDTO]:
@@ -157,6 +166,70 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
             self._run(fetch, on_ok, gen, next_key, next_silent)
         if not self._workers:
             self.loading_changed.emit(False)
+
+    # ── 새 영상 배경 감시 ─────────────────────────────────────────
+    #
+    # 구독 채널에 새 영상이 올라와도 앱을 열어 피드를 눌러 봐야만 알 수 있었다.
+    # 주기적으로 조용히 훑어(스피너 없이) 지난번에 없던 주소가 있으면 알린다.
+
+    def start_watching(self) -> bool:
+        """배경 감시를 켠다. 이미 돌고 있거나 설정이 꺼져 있으면 False."""
+        from config import settings as cfg  # noqa: PLC0415
+        from domain.monitoring.watch import clamp_interval  # noqa: PLC0415
+
+        if self._watch_timer is not None or not cfg.WATCH_NEW_VIDEOS:
+            return False
+        minutes = clamp_interval(cfg.WATCH_INTERVAL_MIN)
+        timer = QTimer(self)
+        timer.setInterval(minutes * 60_000)
+        timer.timeout.connect(self.check_new_videos)
+        timer.start()
+        self._watch_timer = timer
+        logger.info("새 영상 감시 시작 — %d분 주기", minutes)
+        return True
+
+    def stop_watching(self) -> None:
+        if self._watch_timer is not None:
+            self._watch_timer.stop()
+            self._watch_timer = None
+
+    def check_new_videos(self, limit: int = 100) -> None:
+        """피드를 조용히 훑어 새 영상이 있으면 `new_videos_found`를 낸다.
+
+        **화면에 쓰는 캐시·목록을 건드리지 않는다.** 사용자가 다른 채널을 보고 있는데
+        배경 조회가 목록을 갈아 끼우면 보던 것이 사라진다.
+        """
+        cookie_opts = self._cookie_opts()
+        self._start(
+            lambda on_progress=None: self._handler.handle(
+                GetSubscriptionFeedQuery(limit=limit, cookie_opts=cookie_opts),
+                on_progress=on_progress,
+            ),
+            self._on_watch_result,
+            key=_WATCH_KEY,
+            silent=True,
+        )
+
+    def _on_watch_result(self, items, _key: str) -> None:
+        from config import settings as cfg  # noqa: PLC0415
+        from domain.monitoring.watch import next_seen, select_new, summarize  # noqa: PLC0415
+
+        urls = [i.url for i in items or []]
+        seen = list(cfg.WATCH_SEEN_URLS or [])
+        fresh = select_new(urls, seen)
+
+        # 기억은 새 영상이 없어도 갱신한다 — 첫 실행에서 기준선을 잡아야
+        # 다음 회차부터 판정이 성립한다.
+        try:
+            cfg.save_setting("watch_seen_urls", next_seen(urls, seen))
+        except Exception:
+            logger.exception("감시 기억 저장 실패 (무시)")
+
+        if not fresh:
+            return
+        by_url = {i.url: i for i in items or []}
+        titles = [getattr(by_url.get(u), "title", "") for u in fresh]
+        self.new_videos_found.emit(len(fresh), summarize(titles, len(fresh)))
 
     def refresh(self, limit: int = 100, silent: bool = False) -> None:
         """전체 구독 피드를 가져온다. silent=True면 스피너 없이 조용히 갱신한다."""

@@ -133,6 +133,7 @@ class SettingsPanel(QWidget):
         cleanup_fns=None,        # (중복찾기, 사라진파일찾기, 삭제, 원본소실찾기) | None
         subtitle_vm=None,        # SubtitleViewModel | None
         get_categories_fn: Callable | None = None,
+        add_videos_fn: Callable | None = None,   # (urls, category_id) -> None
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -145,6 +146,8 @@ class SettingsPanel(QWidget):
         # 라이브러리 정리 — 조회·삭제를 콜백으로 받는다(설정 화면은 저장소를 모른다).
         self._cleanup_fns = cleanup_fns
         self._get_categories_fn = get_categories_fn
+        # 북마크 가져오기가 영상을 담을 때 쓴다. 없으면 그 섹션을 만들지 않는다.
+        self._add_videos_fn = add_videos_fn
         self._theme_cards: dict[str, _ThemeCard] = {}
         self._yt_auth_worker = None
         self._pending_dto = None
@@ -192,6 +195,7 @@ class SettingsPanel(QWidget):
         self._build_lyrics_sources_section(layout)
         self._build_cloud_sync_section(layout)
         self._build_transfer_section(layout)
+        self._build_bookmark_section(layout)
         self._build_cleanup_section(layout)
         self._build_subtitle_index_section(layout)
         self._build_youtube_api_section(layout)
@@ -372,7 +376,75 @@ class SettingsPanel(QWidget):
         enrich_hint.setWordWrap(True)
         enrich_hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary}; margin-left: 22px;")
         layout.addWidget(enrich_hint)
+
+        self._build_notify_rows(layout)
         layout.addSpacing(28)
+
+    # ── 알림 · 새 영상 감시 ───────────────────────────────────────
+
+    def _build_notify_rows(self, layout) -> None:
+        """트레이 알림과 구독 채널 새 영상 감시.
+
+        다운로드는 몇 분~몇 시간이 걸린다. 그동안 사용자는 이 앱을 보고 있지 않아
+        앱 안의 토스트로는 끝났다는 소식이 전달되지 않는다.
+        """
+        from config import settings as cfg  # noqa: PLC0415
+        from domain.monitoring.watch import (  # noqa: PLC0415
+            MAX_INTERVAL_MIN,
+            MIN_INTERVAL_MIN,
+            clamp_interval,
+        )
+        from gui.tray import AppTray  # noqa: PLC0415
+
+        layout.addSpacing(10)
+        self._tray_check = QCheckBox("작업이 끝나면 트레이로 알리기")
+        self._tray_check.setChecked(bool(cfg.TRAY_NOTIFICATIONS))
+        self._tray_check.checkStateChanged.connect(self._on_tray_notify_changed)
+        layout.addWidget(self._tray_check)
+
+        if not AppTray.is_available():
+            # 트레이가 없는 데스크톱이 있다 — 켤 수 있게 두면 켜 놓고 안 온다고 한다.
+            self._tray_check.setEnabled(False)
+            self._tray_check.setToolTip("이 환경에는 시스템 트레이가 없습니다.")
+
+        self._watch_check = QCheckBox("구독 채널에 새 영상이 올라오면 알리기")
+        self._watch_check.setChecked(bool(cfg.WATCH_NEW_VIDEOS))
+        self._watch_check.checkStateChanged.connect(self._on_watch_changed)
+        layout.addWidget(self._watch_check)
+
+        int_row = QHBoxLayout()
+        int_row.setContentsMargins(22, 0, 0, 0)
+        int_lbl = QLabel("확인 주기(분)")
+        int_lbl.setFixedWidth(100)
+        self._watch_spin = QSpinBox()
+        self._watch_spin.setRange(MIN_INTERVAL_MIN, MAX_INTERVAL_MIN)
+        self._watch_spin.setValue(clamp_interval(cfg.WATCH_INTERVAL_MIN))
+        self._watch_spin.setFixedWidth(80)
+        self._watch_spin.valueChanged.connect(self._on_watch_interval_changed)
+        int_row.addWidget(int_lbl)
+        int_row.addWidget(self._watch_spin)
+        int_row.addStretch()
+        layout.addLayout(int_row)
+
+        hint = QLabel(
+            "확인은 배경에서 조용히 이뤄지며 보고 있는 목록을 건드리지 않습니다. "
+            "너무 자주 확인하면 YouTube가 요청을 막을 수 있어 최소 "
+            f"{MIN_INTERVAL_MIN}분입니다. 바꾼 주기는 앱을 다시 켤 때 적용됩니다."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary}; margin-left: 22px;")
+        layout.addWidget(hint)
+
+    def _on_tray_notify_changed(self, _state) -> None:
+        self._save_setting("tray_notifications", self._tray_check.isChecked())
+
+    def _on_watch_changed(self, _state) -> None:
+        self._save_setting("watch_new_videos", self._watch_check.isChecked())
+
+    def _on_watch_interval_changed(self, value: int) -> None:
+        from domain.monitoring.watch import clamp_interval  # noqa: PLC0415
+
+        self._save_setting("watch_interval_min", clamp_interval(value))
 
     def _build_download_section(self, layout) -> None:
         """다운로드 기본값(화질·형식·경로)."""
@@ -821,6 +893,92 @@ class SettingsPanel(QWidget):
                 self._transfer_vm, self._get_categories_fn
             )
             layout.addWidget(self._import_export_section)
+
+    # ── 북마크에서 가져오기 ───────────────────────────────────────
+
+    def _build_bookmark_section(self, layout) -> None:
+        """브라우저 북마크(HTML)에서 영상을 담아온다.
+
+        브라우저마다 내보내기 메뉴는 다르지만 결과 형식은 하나로 수렴한다
+        (Netscape Bookmark File Format) — 파서 하나로 Chrome·Edge·Firefox·Safari를
+        모두 받는다.
+        """
+        if self._add_videos_fn is None:
+            return
+
+        self._add_divider(layout)
+        label = QLabel("북마크에서 가져오기")
+        label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            f"text-transform: uppercase; color: {_t().text_muted};"
+        )
+        layout.addWidget(label)
+        layout.addSpacing(8)
+
+        hint = QLabel(
+            "브라우저에서 북마크를 HTML로 내보낸 뒤 그 파일을 고르면, 담을 영상을 "
+            "골라 라이브러리에 넣습니다. 북마크에는 영상이 아닌 링크도 섞여 있으므로 "
+            "흔한 영상 사이트만 미리 골라 두고 나머지는 직접 고르게 합니다."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
+        layout.addWidget(hint)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 6, 0, 0)
+        self._bookmark_btn = QPushButton("북마크 파일 고르기…")
+        self._bookmark_btn.clicked.connect(self._on_bookmark_import_clicked)
+        row.addWidget(self._bookmark_btn)
+        row.addStretch()
+        layout.addLayout(row)
+
+        self._bookmark_status = QLabel("")
+        self._bookmark_status.setWordWrap(True)
+        self._bookmark_status.setStyleSheet(
+            f"font-size: 10px; color: {_t().text_secondary};"
+        )
+        layout.addWidget(self._bookmark_status)
+        layout.addSpacing(24)
+
+    def _on_bookmark_import_clicked(self) -> None:
+        from domain.library.bookmarks import parse_bookmarks  # noqa: PLC0415
+        from gui.dialogs.bookmark_import_dialog import (  # noqa: PLC0415
+            BookmarkImportDialog,
+        )
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "북마크 파일 선택", "", "북마크 (*.html *.htm);;모든 파일 (*)"
+        )
+        if not path:
+            return
+        try:
+            # 브라우저가 UTF-8로 쓰지만, 오래된 파일은 다른 인코딩일 수 있다.
+            # 읽기 자체가 실패하면 아무것도 못 하므로 깨진 글자를 감수하고 읽는다.
+            content = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            logger.exception("북마크 파일 읽기 실패: %s", path)
+            self._bookmark_status.setText(f"파일을 읽지 못했습니다: {exc}")
+            return
+
+        marks = parse_bookmarks(content)
+        if not marks:
+            self._bookmark_status.setText(
+                "이 파일에서 주소를 찾지 못했습니다. 브라우저의 '북마크 내보내기'로 "
+                "저장한 HTML 파일인지 확인해 주세요."
+            )
+            return
+
+        categories = self._get_categories_fn() if self._get_categories_fn else []
+        dlg = BookmarkImportDialog(marks, categories, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        urls = dlg.selected_urls()
+        if not urls:
+            return
+        self._add_videos_fn(urls, dlg.selected_category_id())
+        self._bookmark_status.setText(
+            f"{len(urls)}개를 담는 중입니다 — 제목·썸네일은 조회되는 대로 채워집니다."
+        )
 
     def _build_cleanup_section(self, layout) -> None:
         """라이브러리 정리 — 중복 영상·사라진 파일 점검(정리 콜백 주입 시에만 표시).

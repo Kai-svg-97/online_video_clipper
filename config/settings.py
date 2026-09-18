@@ -145,6 +145,16 @@ WRITE_SONG_TAGS: bool = _load_bool("write_song_tags", True)
 # 모델 키(`domain.library.transcribe.MODELS`). 모델 파일은 DATA_DIR/models/whisper 에
 # 받아 두며, 한 번도 쓰지 않으면 아무것도 내려받지 않는다.
 TRANSCRIBE_MODEL: str = _resolve_str("transcribe_model", "base")
+# ── 트레이 알림 · 새 영상 감시 ───────────────────────────────────────────
+# 다운로드는 몇 분~몇 시간이 걸린다. 그동안 사용자는 이 앱을 보고 있지 않으므로,
+# 앱 안의 토스트만으로는 끝났다는 소식이 전달되지 않는다.
+TRAY_NOTIFICATIONS: bool = _load_bool("tray_notifications", True)
+# 구독 채널에 새 영상이 올라왔는지 배경에서 주기적으로 확인한다.
+WATCH_NEW_VIDEOS: bool = _load_bool("watch_new_videos", False)
+WATCH_INTERVAL_MIN: int = _load_int("watch_interval_min", 30)
+# 지난번 조회에서 본 영상 주소들. 날짜 표기가 출처마다 달라 **주소로 비교한다**
+# (domain/monitoring/watch.py 참고).
+WATCH_SEEN_URLS: list = _load_config().get("watch_seen_urls") or []
 # ── 전송 옵션(속도·연결·프록시) ─────────────────────────────────────────
 # `DOWNLOAD_RATE_LIMIT`는 yt-dlp 표기를 그대로 받는다("2M", "500K"). 빈 값 = 무제한.
 DOWNLOAD_RATE_LIMIT: str = _resolve_str("download_rate_limit", "")
@@ -227,6 +237,10 @@ def save_setting(key: str, value) -> None:
         "embed_chapters": "EMBED_CHAPTERS",
         "write_song_tags": "WRITE_SONG_TAGS",
         "transcribe_model": "TRANSCRIBE_MODEL",
+        "tray_notifications": "TRAY_NOTIFICATIONS",
+        "watch_new_videos": "WATCH_NEW_VIDEOS",
+        "watch_interval_min": "WATCH_INTERVAL_MIN",
+        "watch_seen_urls": "WATCH_SEEN_URLS",
         "download_rate_limit": "DOWNLOAD_RATE_LIMIT",
         "concurrent_fragments": "CONCURRENT_FRAGMENTS",
         "download_proxy": "DOWNLOAD_PROXY",
