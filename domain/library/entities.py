@@ -26,7 +26,7 @@ class Video:
     thumbnail_path: str       # relative path under THUMBNAIL_DIR; "" if not cached
     created_at: datetime
     updated_at: datetime
-    # description is loaded on demand (GetVideoByIdQuery), not stored here
+    # description is loaded on demand (GetVideoDetailHandler), not stored here
     description: str = field(default="", repr=False)
     gemini_summary: str = field(default="", repr=False)
     # 이어보기 — 마지막으로 보던 위치(ms)와 시각. 0이면 처음부터 본다.

@@ -72,13 +72,6 @@ class MarkWatchedCommand:
     video_id: UUID
 
 
-@dataclass
-class ImportPlaylistCommand:
-    playlist_url: str
-    category_id: UUID | None = None
-    favorite: bool = False
-
-
 # ------------------------------------------------------------------
 # Handlers
 # ------------------------------------------------------------------
@@ -584,59 +577,6 @@ class DeleteTagHandler:
 
     def handle(self, cmd: DeleteTagCommand) -> None:
         self._repo.delete_tag(cmd.tag_id)
-
-
-class ImportPlaylistHandler:
-    """Imports a playlist in chunks of 50 to limit memory usage."""
-
-    CHUNK_SIZE = 50
-
-    def __init__(
-        self,
-        add_handler: AddVideoHandler,
-        ytdlp: IMediaSource,
-        on_progress: "Callable[[int, int], None] | None" = None,
-    ) -> None:
-        self._add = add_handler
-        self._ytdlp = ytdlp
-        self._on_progress = on_progress
-
-    def handle(self, cmd: ImportPlaylistCommand) -> int:
-        opts = {
-            "quiet": True,
-            "extract_flat": True,
-            "skip_download": True,
-        }
-        import yt_dlp
-
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(cmd.playlist_url, download=False) or {}
-
-        entries = info.get("entries") or []
-        total = len(entries)
-        imported = 0
-
-        for i in range(0, total, self.CHUNK_SIZE):
-            chunk = entries[i : i + self.CHUNK_SIZE]
-            for entry in chunk:
-                url = entry.get("url") or entry.get("webpage_url")
-                if not url:
-                    continue
-                try:
-                    add_cmd = AddVideoCommand(
-                        url=url,
-                        favorite=cmd.favorite,
-                        category_id=cmd.category_id,
-                        fetch_metadata=False,
-                    )
-                    self._add.handle(add_cmd)
-                    imported += 1
-                except Exception:
-                    logger.exception("재생목록 영상 추가 실패")  # duplicate or fetch error — skip silently
-            if self._on_progress:
-                self._on_progress(min(i + self.CHUNK_SIZE, total), total)
-
-        return imported
 
 
 @dataclass

@@ -108,8 +108,8 @@ online_video_clipper/
 │
 ├── application/                     # Application layer — use cases (commands & queries)
 │   ├── library/
-│   │   ├── commands.py              # AddVideo, UpdateVideo, DeleteVideo, ImportPlaylist
-│   │   └── queries.py               # GetVideos, SearchVideos, GetVideoById
+│   │   ├── commands.py              # AddVideo, UpdateVideo, DeleteVideo, ImportYouTubePlaylistToCategory
+│   │   └── queries.py               # GetVideos, SearchVideos, GetVideoDetail
 │   ├── download/
 │   │   ├── commands.py              # StartDownload, CancelDownload, RetryDownload
 │   │   ├── queries.py               # GetDownloadQueue, GetDownloadHistory

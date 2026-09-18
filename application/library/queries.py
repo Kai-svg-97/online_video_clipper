@@ -79,11 +79,6 @@ class SearchVideosQuery:
     max_duration_sec: int | None = None
 
 
-@dataclass
-class GetVideoByIdQuery:
-    video_id: UUID
-
-
 def _to_dto(
     agg: VideoAggregate,
     cats: dict | None = None,
@@ -189,18 +184,6 @@ class SearchVideosHandler:
         # 일치 속성은 현재 페이지에만 판정한다(전체 스캔 방지).
         matches = self._repo.match_fields_for([d.id for d in dtos], query.text)
         return [replace(d, match_fields=matches.get(d.id, ())) for d in dtos]
-
-
-class GetVideoByIdHandler:
-    def __init__(self, repo: IVideoRepository) -> None:
-        self._repo = repo
-
-    def handle(self, query: GetVideoByIdQuery) -> VideoDTO | None:
-        agg = self._repo.get_by_id(query.video_id)
-        if agg is None:
-            return None
-        cats = _cats_dict(self._repo)
-        return _to_dto(agg, cats)
 
 
 class GetVideoDetailHandler:

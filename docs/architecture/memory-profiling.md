@@ -11,7 +11,7 @@
 - **페이지네이션 구현 완료**: 모든 리포지토리 쿼리에 `LIMIT/OFFSET` 적용(기본 50), `.fetchall()` 사용 지점 0개, 커서 반복만 사용.
   - 검증: `tests/integration/test_downloaded_formats_bulk.py`(배치 조회), `tests/integration/test_search_fields.py`(검색 페이징).
 - **Lazy Load 확인**:
-  - `description`, `notes` 필드: `GetVideoByIdQuery` 상세 조회 시에만, 목록 쿼리에서 제외.
+  - `description`, `notes` 필드: `GetVideoDetailHandler` 상세 조회 시에만, 목록 쿼리에서 제외.
   - `song_info` 전체: 노래 탭 진입 시에만 `SongViewModel.load()` 호출.
   - 자막/영상 메타: 재생 시작 시점에만 `_on_playback_state`에서 조회.
 - **기타 확인**:

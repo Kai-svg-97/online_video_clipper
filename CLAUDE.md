@@ -270,7 +270,7 @@ These are **mandatory coding constraints**, not suggestions.
 
 - All repository queries **must** use `LIMIT` / `OFFSET` pagination — default page size 50.
 - Never call `.fetchall()` on the `videos` table; iterate with a cursor.
-- Load `description` and `notes` fields **only** when the detail panel is opened (`GetVideoByIdQuery`), not in list queries.
+- Load `description` and `notes` fields **only** when the detail panel is opened (`GetVideoDetailHandler`), not in list queries.
 - Thumbnails are stored as **file paths** in the DB — never as BLOBs.
 
 ### Domain / Value Objects

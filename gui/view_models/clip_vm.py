@@ -185,10 +185,6 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
 
     # ── 포맷 변환 ─────────────────────────────────────────────────
 
-    @property
-    def is_converting(self) -> bool:
-        return self._converting
-
     def convert_media(self, source_file_path: str, preset_key: str) -> bool:
         """변환을 시작한다. 이미 돌고 있거나 기능이 없으면 False."""
         if self._convert is None or self._converting or not source_file_path:

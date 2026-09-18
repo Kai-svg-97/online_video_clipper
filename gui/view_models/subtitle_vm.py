@@ -232,9 +232,6 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
     def can_transcribe(self) -> bool:
         return self._transcribe is not None
 
-    def is_transcribing(self, video_id: UUID) -> bool:
-        return video_id in self._transcribe_workers
-
     def transcribe(self, video_id: UUID, media_path: str, language: str = "") -> bool:
         """음성 인식으로 자막을 만든다(배경). 이미 이 영상을 돌고 있으면 False."""
         if self._transcribe is None or not media_path:

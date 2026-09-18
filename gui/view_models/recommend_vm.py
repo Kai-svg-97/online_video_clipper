@@ -224,10 +224,6 @@ class RecommendViewModel(WorkerOwnerMixin, QObject):
             # 진행 중인데도 스트립이 다시 요청을 받아 중복 조회가 된다.
             self.more_loading_changed.emit(False)
 
-    def invalidate(self) -> None:
-        """씨앗 캐시를 비워 다음 load()가 반드시 재조회하게 한다."""
-        self._last_key = ""
-
     def _on_partial(self, batch: list, gen: int) -> None:
         if gen == self._gen:
             self.partial_ready.emit(batch)

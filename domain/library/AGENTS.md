@@ -24,7 +24,7 @@
 - `VideoUrl`은 YouTube URL을 `https://www.youtube.com/watch?v=ID` 형태로 정규화 — `youtu.be`, `list=`, `si=` 파라미터 제거.
 - `extract_youtube_video_id(url)`는 `value_objects.py`에 정의 — application/infrastructure 어디서든 재사용 가능.
 - 새 엔티티 추가 시 `repositories.py`에 해당 인터페이스 메서드도 추가.
-- `description` 필드는 상세 조회(`GetVideoByIdQuery`) 시에만 로드 — 목록 쿼리에서 제외.
+- `description` 필드는 상세 조회(`GetVideoDetailHandler`) 시에만 로드 — 목록 쿼리에서 제외.
 
 ### Common Patterns
 ```python

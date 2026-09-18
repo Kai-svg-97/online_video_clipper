@@ -246,11 +246,11 @@ ffmpeg 기반 구간 추출. **'영상 위의 시간 구간'을 다루는 모든
 | Command/Query | 설명 |
 |---------------|------|
 | `AddVideoCommand` | URL로 영상 메타데이터 조회 후 라이브러리에 추가 |
-| `ImportPlaylistCommand` | 플레이리스트 URL → 전체 영상 일괄 추가 |
+| `ImportYouTubePlaylistToCategoryCommand` | YouTube 재생목록 → 카테고리에 일괄 추가(진행률 콜백, 50개 청크) |
 | `UpdateVideoCommand` | 태그, 카테고리, 메모 수정 |
 | `DeleteVideoCommand` | 영상 삭제 (파일 삭제 여부 옵션) |
 | `SearchVideosQuery` | FTS5 + 복합 필터 검색 |
-| `GetVideoByIdQuery` | 상세 정보 조회 |
+| `GetVideoDetailHandler` | 상세 정보 조회(설명·태그·다운로드 이력까지) |
 | `GetRecommendationsQuery` | 현재 목록(제목·채널·태그) 씨앗 → 파생 검색어로 추천 후보 조회 (라이브러리에 이미 있는 영상은 제외) |
 
 ### Download
