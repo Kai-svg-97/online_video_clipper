@@ -26,6 +26,9 @@ from infrastructure.persistence.sqlite_playlist_repository import (
     SqlitePlaylistRepository,
 )
 from infrastructure.persistence.sqlite_song_repository import SqliteSongRepository
+from infrastructure.persistence.sqlite_saved_search_repository import (
+    SqliteSavedSearchRepository,
+)
 from infrastructure.persistence.sqlite_subtitle_repository import SqliteSubtitleRepository
 from infrastructure.persistence.sqlite_video_repository import SqliteVideoRepository
 
@@ -76,6 +79,7 @@ def build_repositories(db: Database, sync_service: object | None = None) -> Repo
         song=SqliteSongRepository(db),
         album=SqliteAlbumRepository(db),
         subtitle=SqliteSubtitleRepository(db),
+        saved_search=SqliteSavedSearchRepository(db),
     )
     if sync_service is None:
         return repos

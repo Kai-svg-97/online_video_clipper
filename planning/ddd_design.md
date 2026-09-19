@@ -252,6 +252,7 @@ ffmpeg 기반 구간 추출. **'영상 위의 시간 구간'을 다루는 모든
 | `SearchVideosQuery` | FTS5 + 복합 필터 검색 |
 | `GetVideoDetailHandler` | 상세 정보 조회(설명·태그·다운로드 이력까지) |
 | `GetRecommendationsQuery` | 현재 목록(제목·채널·태그) 씨앗 → 파생 검색어로 추천 후보 조회 (라이브러리에 이미 있는 영상은 제외) |
+| `SaveSearchCommand` | 지금 필터 조건에 이름을 붙여 저장(조건은 **프리셋 키**로 담는다 — 날짜를 값으로 굳히면 저장한 시점으로 얼어붙는다) |
 
 ### Download
 | Command/Query | 설명 |

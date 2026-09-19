@@ -430,6 +430,14 @@ class LibraryPanel(
         self._btn_filter.setChecked(False)
         toolbar.addWidget(self._btn_filter)
 
+        # 저장된 검색 — 뷰모델이 기능을 갖고 있을 때만 만든다.
+        self._btn_saved = QToolButton()
+        self._btn_saved.setText("저장된 검색")
+        self._btn_saved.setToolTip("이름 붙여 둔 검색 조건을 되부릅니다")
+        self._btn_saved.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._btn_saved.setVisible(bool(getattr(self._vm, "can_save_searches", False)))
+        toolbar.addWidget(self._btn_saved)
+
         toolbar.addSpacing(8)
         self._btn_reorder = QToolButton()
         self._btn_reorder.setText("⇅")
@@ -750,6 +758,8 @@ class LibraryPanel(
 
         self._btn_filter.toggled.connect(self._on_filter_toggled)
         self._filter_bar.changed.connect(self._on_filters_changed)
+        self._filter_bar.save_requested.connect(self._on_save_search)
+        self._btn_saved.clicked.connect(self._refresh_saved_menu)
 
         self._table.clicked.connect(self._on_table_clicked)
         self._table.doubleClicked.connect(self._on_table_double_click)

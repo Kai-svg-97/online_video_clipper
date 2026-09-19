@@ -65,6 +65,8 @@ class Repositories:
     # 자막 색인은 **동기화 캡처 대상이 아니다** — 언제든 다시 받을 수 있는
     # 파생 데이터라 기기 간에 옮길 이유가 없다(album과 같은 취급).
     subtitle: Any
+    # 저장된 검색은 **동기화 캡처 대상이 아니다** — 기기마다 쓰는 조건이 다르다.
+    saved_search: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +108,10 @@ class LibraryHandlers:
     mark_watched: Any
     update_position: Any
     enrich_video: Any
+    list_saved_searches: Any
+    save_search: Any
+    delete_saved_search: Any
+    rename_saved_search: Any
     assign_category: Any
     create_category: Any
     rename_category: Any

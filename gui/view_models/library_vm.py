@@ -278,6 +278,10 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         find_song_videos=None,   # FindSongVideoIdsHandler | None — 같은 가수/앨범 필터
         update_position=None,    # UpdatePlaybackPositionHandler | None — 이어보기
         enrich_video=None,       # EnrichVideoHandler | None — 등록 후 요약/가사 자동 보강
+        list_saved_searches=None,   # ListSavedSearchesHandler | None
+        save_search=None,           # SaveSearchHandler | None
+        delete_saved_search=None,   # DeleteSavedSearchHandler | None
+        rename_saved_search=None,   # RenameSavedSearchHandler | None
         get_downloaded_formats=None,  # GetDownloadedFormatsHandler | None — 목록 배지 일괄 판정
         parent: QObject | None = None,
     ) -> None:
@@ -310,6 +314,11 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         # 이어보기 위치 저장(선택 주입) — 없으면 위치를 기록하지 않는다.
         self._update_position = update_position
         self._enrich_video = enrich_video
+        # 없으면 저장된 검색 기능만 조용히 빠진다(화면이 메뉴를 만들지 않는다).
+        self._list_saved = list_saved_searches
+        self._save_search = save_search
+        self._delete_saved = delete_saved_search
+        self._rename_saved = rename_saved_search
         # 보강은 동시 1건만 — Gemini가 브라우저를 띄우므로 병렬 실행을 막는다.
         self._enrich_workers: list[_EnrichWorker] = []
         self._pending_enrich: deque = deque()   # (video_id, url)
@@ -539,6 +548,42 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
 
     def clear_advanced_filters(self) -> None:
         self.set_advanced_filters()
+
+    # ── 저장된 검색 ───────────────────────────────────────────────
+    #
+    # 자주 쓰는 조건에 이름을 붙여 두고 한 번에 되부른다. **조건은 프리셋 키로**
+    # 저장한다 — "최근 1주"를 날짜 값으로 굳히면 다음 달에 그 주로 얼어붙는다
+    # (domain/library/saved_search.py).
+
+    @property
+    def can_save_searches(self) -> bool:
+        return self._list_saved is not None and self._save_search is not None
+
+    def saved_searches(self) -> list:
+        """저장된 검색 목록(기능이 없으면 빈 목록)."""
+        return self._list_saved.handle() if self._list_saved else []
+
+    def save_search(self, name: str, **conditions) -> object | None:
+        """지금 조건을 이름 붙여 저장한다. 조건이 하나도 없으면 저장하지 않는다.
+
+        이름 중복 처리·빈 조건 거부 같은 **정책은 응용 계층**에 있다 — 나중에 다른
+        진입점이 생겨도 같은 규칙을 타게 하기 위해서다.
+        """
+        if self._save_search is None:
+            return None
+        from application.library.saved_search_commands import (  # noqa: PLC0415
+            SaveSearchCommand,
+        )
+
+        return self._save_search.handle(SaveSearchCommand(name=name, **conditions))
+
+    def delete_saved_search(self, search_id: UUID) -> None:
+        if self._delete_saved is not None:
+            self._delete_saved.handle(search_id)
+
+    def rename_saved_search(self, search_id: UUID, name: str) -> None:
+        if self._rename_saved is not None:
+            self._rename_saved.handle(search_id, name)
 
     def set_category_filter(self, category_id: UUID | None, node_key: str | None = None) -> None:
         self._filter_category_id = category_id

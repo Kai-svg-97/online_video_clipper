@@ -6,6 +6,12 @@ song 컨텍스트가 **먼저** 조립돼 있어야 한다.
 
 from __future__ import annotations
 
+from application.library.saved_search_commands import (
+    DeleteSavedSearchHandler,
+    ListSavedSearchesHandler,
+    RenameSavedSearchHandler,
+    SaveSearchHandler,
+)
 from application.library.commands import (
     AddVideoHandler,
     AssignCategoryHandler,
@@ -114,6 +120,10 @@ def build(
         # 가벼운 UPDATE 전용 경로를 쓴다.
         update_position=UpdatePlaybackPositionHandler(video),
         # 등록 직후 요약(비노래)·가사(노래) 자동 보강.
+        list_saved_searches=ListSavedSearchesHandler(repos.saved_search),
+        save_search=SaveSearchHandler(repos.saved_search),
+        delete_saved_search=DeleteSavedSearchHandler(repos.saved_search),
+        rename_saved_search=RenameSavedSearchHandler(repos.saved_search),
         enrich_video=EnrichVideoHandler(
             video,
             repos.song,

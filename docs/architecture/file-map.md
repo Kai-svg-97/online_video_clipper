@@ -112,6 +112,8 @@ online_video_clipper/
 │   │   └── queries.py               # GetVideos, SearchVideos, GetVideoDetail
 │   │   (도메인) backup.py            # DB 백업 보관 규칙(하루 1회·최근 7개·남의 파일 제외)
 │   │   (도메인) bookmarks.py         # 브라우저 북마크 HTML 파싱 + '영상일 법한 호스트' 판정
+│   │   (도메인) filters.py           # 복합 필터 프리셋 ↔ 값 변환(날짜·길이·다운로드·시청)
+│   │   (도메인) saved_search.py      # 저장된 검색 값 객체 + JSON 직렬화(프리셋 키로 담는다)
 │   ├── download/
 │   │   ├── commands.py              # StartDownload, CancelDownload, RetryDownload
 │   │   ├── queries.py               # GetDownloadQueue, GetDownloadHistory

@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 from application.library.dtos import VideoDTO
 
+from gui.toast import show_toast
 from gui.workers import track_thread
 
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
@@ -283,6 +284,76 @@ class VideoListMixin:
         self._btn_filter.setToolTip(
             self._filter_bar.summary() or "업로드 날짜·길이·채널·다운로드 여부로 좁히기"
         )
+
+    # ── 저장된 검색 ────────────────────────────────────────────────
+
+    def _on_save_search(self) -> None:
+        """지금 조건에 이름을 붙여 저장한다.
+
+        **값이 아니라 프리셋 키로** 넘긴다 — "최근 1주"를 날짜 값으로 굳히면 다음
+        달에 그 주로 얼어붙는다(`filter_bar.condition_keys()`).
+        """
+        keys = self._filter_bar.condition_keys()
+        text = self._search_box.text().strip()
+        suggested = self._filter_bar.summary() or text or "내 검색"
+        name, ok = QInputDialog.getText(self, "검색 저장", "이름", text=suggested[:40])
+        if not ok:
+            return
+        saved = self._vm.save_search(name, text=text, **keys)
+        if saved is None:
+            QMessageBox.information(
+                self, "검색 저장",
+                "저장할 조건이 없습니다. 검색어를 넣거나 필터를 걸어 주세요.",
+            )
+            return
+        self._refresh_saved_menu()
+        show_toast(self, f"'{saved.name}' 검색을 저장했습니다")
+
+    def _refresh_saved_menu(self) -> None:
+        """저장된 검색 메뉴를 다시 만든다(열 때마다 — 목록이 바뀔 수 있다)."""
+        from PyQt6.QtWidgets import QMenu  # noqa: PLC0415
+
+        searches = self._vm.saved_searches()
+        menu = QMenu(self)
+        if not searches:
+            act = menu.addAction("저장된 검색이 없습니다")
+            act.setEnabled(False)
+        for search in searches:
+            sub = menu.addMenu(search.name)
+            sub.addAction("이 조건으로 보기").triggered.connect(
+                lambda _=False, s=search: self._apply_saved_search(s)
+            )
+            sub.addSeparator()
+            sub.addAction("이름 바꾸기…").triggered.connect(
+                lambda _=False, s=search: self._rename_saved_search(s)
+            )
+            sub.addAction("삭제").triggered.connect(
+                lambda _=False, s=search: self._delete_saved_search(s)
+            )
+        # 메뉴를 지역 변수로 두면 파이썬이 회수해 눌러도 아무 일이 없다.
+        self._saved_menu = menu
+        self._btn_saved.setMenu(menu)
+
+    def _apply_saved_search(self, search) -> None:
+        """저장된 조건을 화면에 얹는다 — 필터 막대를 펴서 무엇이 걸렸는지 보인다."""
+        self._search_box.setText(search.text)
+        self._btn_filter.setChecked(True)
+        self._filter_bar.apply_saved(search)
+        self._apply_search_text()
+
+    def _rename_saved_search(self, search) -> None:
+        name, ok = QInputDialog.getText(self, "이름 바꾸기", "이름", text=search.name)
+        if ok and name.strip():
+            self._vm.rename_saved_search(search.id, name)
+            self._refresh_saved_menu()
+
+    def _delete_saved_search(self, search) -> None:
+        if QMessageBox.question(
+            self, "저장된 검색 삭제", f"'{search.name}'을(를) 지울까요?"
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._vm.delete_saved_search(search.id)
+        self._refresh_saved_menu()
 
     # ── 무한 스크롤 ────────────────────────────────────────────────
     #

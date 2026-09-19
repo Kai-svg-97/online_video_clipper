@@ -50,6 +50,10 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             refresh_video_metadata=lib.refresh_video_metadata,
             find_song_videos=song.find_video_ids,
             enrich_video=lib.enrich_video,
+            list_saved_searches=lib.list_saved_searches,
+            save_search=lib.save_search,
+            delete_saved_search=lib.delete_saved_search,
+            rename_saved_search=lib.rename_saved_search,
             get_downloaded_formats=lib.get_downloaded_formats,
         ),
         playlist=PlaylistViewModel(

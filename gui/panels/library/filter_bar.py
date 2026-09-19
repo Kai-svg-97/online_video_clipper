@@ -41,6 +41,9 @@ class FilterBar(QWidget):
     """복합 필터 입력 한 줄. 값이 바뀌면 `changed`를 낸다."""
 
     changed = pyqtSignal()
+    # 저장된 검색 — 이 막대는 조건만 알고, 어디에 담는지는 패널이 정한다.
+    save_requested = pyqtSignal()
+    apply_requested = pyqtSignal(object)   # SavedSearch
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -63,6 +66,11 @@ class FilterBar(QWidget):
         self._favorite = QCheckBox("즐겨찾기만")
         self._favorite.checkStateChanged.connect(self.changed)
 
+        self._save = QPushButton("검색 저장…")
+        self._save.setFixedWidth(84)
+        self._save.setToolTip("지금 조건에 이름을 붙여 저장합니다")
+        self._save.clicked.connect(self.save_requested)
+
         self._reset = QPushButton("필터 초기화")
         self._reset.setFixedWidth(90)
         self._reset.clicked.connect(self.reset)
@@ -76,6 +84,7 @@ class FilterBar(QWidget):
         ):
             row.addWidget(widget)
         row.addStretch()
+        row.addWidget(self._save)
         row.addWidget(self._reset)
 
     # ── 조립 도우미 ───────────────────────────────────────────────
@@ -132,6 +141,45 @@ class FilterBar(QWidget):
             channel_name=self._channel.text(),
             favorite_only=self._favorite.isChecked(),
         )
+
+    def apply_saved(self, search) -> None:
+        """저장된 검색을 막대에 얹는다. **신호는 한 번만** 낸다.
+
+        조건마다 신호를 내면 되부르기 한 번에 조회가 예닐곱 번 나간다.
+        """
+        widgets = (
+            self._date, self._duration, self._download, self._watched,
+            self._channel, self._favorite,
+        )
+        for w in widgets:
+            w.blockSignals(True)
+        for combo, key in (
+            (self._date, search.date_key),
+            (self._duration, search.duration_key),
+            (self._download, search.download_key),
+            (self._watched, search.watched_key),
+        ):
+            idx = combo.findData(key)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)   # 모르는 키면 '전체'
+        self._channel.setText(search.channel_name)
+        self._favorite.setChecked(bool(search.favorite_only))
+        for w in widgets:
+            w.blockSignals(False)
+        self.changed.emit()
+
+    def condition_keys(self) -> dict:
+        """지금 고른 것을 **프리셋 키 그대로** 준다 — 저장용.
+
+        `filters()`는 값으로 푼 것(날짜 등)이라 저장하면 그 시점으로 얼어붙는다.
+        """
+        return {
+            "date_key": self._date.currentData(),
+            "duration_key": self._duration.currentData(),
+            "download_key": self._download.currentData(),
+            "watched_key": self._watched.currentData(),
+            "channel_name": self._channel.text().strip(),
+            "favorite_only": self._favorite.isChecked(),
+        }
 
     def reset(self) -> None:
         """전부 '전체'로. **신호는 한 번만 낸다** — 칸마다 내면 조회가 여섯 번 나간다."""
