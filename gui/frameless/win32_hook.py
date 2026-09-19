@@ -88,15 +88,6 @@ DWMWA_NCRENDERING_POLICY = 2
 DWMNCRP_ENABLED = 2
 
 
-class MARGINS(Structure):
-    _fields_ = [
-        ("cxLeftWidth", c_int),
-        ("cxRightWidth", c_int),
-        ("cyTopHeight", c_int),
-        ("cyBottomHeight", c_int),
-    ]
-
-
 class NCCALCSIZE_PARAMS(Structure):
     _fields_ = [("rgrc", RECT * 3), ("lppos", c_void_p)]
 
@@ -232,17 +223,19 @@ class FramelessHook:
         # (프레임 자체는 아래 `WM_NCCALCSIZE`에서 지운다).
         windll.user32.SetWindowLongPtrW(self._hwnd, GWL_STYLE, patched_style(style))
 
-        # 그림자. DWM 이 꺼져 있으면(원격 데스크톱 등) 실패하지만 기능만 빠진다.
+        # 비클라이언트 렌더링을 켜 둔다(그림자·최대화 애니메이션은 DWM 이 그린다).
+        #
+        # **`DwmExtendFrameIntoClientArea`는 부르지 않는다.** 그림자를 확실히 하려고
+        # 넣었었는데, 프레임을 클라이언트 안으로 확장하면 **Win11 분할 배치 메뉴가
+        # 뜨지 않는다**(실측: 이 호출만 빼면 화면 변화율 0.003 → 0.844, 메모장 0.839와
+        # 같은 수준). `WS_THICKFRAME | WS_CAPTION` 만으로도 DWM 이 그림자를 그려 준다.
         try:
             policy = c_int(DWMNCRP_ENABLED)
             windll.dwmapi.DwmSetWindowAttribute(
                 self._hwnd, DWMWA_NCRENDERING_POLICY, byref(policy), sizeof(policy)
             )
-            windll.dwmapi.DwmExtendFrameIntoClientArea(
-                self._hwnd, byref(MARGINS(1, 1, 1, 1))
-            )
         except OSError:
-            logger.debug("DWM 그림자를 걸지 못했다 — 모양만 다르다", exc_info=True)
+            logger.debug("DWM 비클라이언트 렌더링 설정 실패 — 모양만 다르다", exc_info=True)
 
         self.reapply()
 
