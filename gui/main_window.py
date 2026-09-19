@@ -758,6 +758,11 @@ class MainWindow(QMainWindow):
         controller.download_progress.connect(self._update_badge.show_progress)
         controller.download_failed.connect(self._update_badge.show_failed)
         controller.install_started.connect(self._update_badge.show_installing)
+        controller.install_started.connect(self._on_install_started)
+
+        # 지난 실행에서 설치가 실패했다면 지금 알린다 — 배치는 조용히 죽으므로
+        # 이 알림이 없으면 사용자는 "눌렀는데 버전이 그대로"인 이유를 알 수 없다.
+        QTimer.singleShot(1200, self._report_failed_install)
 
         QTimer.singleShot(2000, controller.check_silently)
         if hasattr(self._settings_panel, "check_update_requested"):
@@ -798,6 +803,25 @@ class MainWindow(QMainWindow):
         self._sidebar.show_update_badge(True)
         self._sidebar.set_settings_tooltip(f"업데이트 발견: v{dto.version} — 눌러서 설치")
         self._settings_panel.set_update_available(dto)
+
+    def _on_install_started(self) -> None:
+        """설치 착수 — 창이 곧 닫힌다. 말없이 닫히면 앱이 죽은 줄 안다."""
+        self.statusBar().showMessage("설치 중입니다. 잠시 후 자동으로 다시 시작됩니다…")
+        show_toast(self, "설치 중입니다. 잠시 후 자동으로 다시 시작됩니다", KIND_SUCCESS)
+
+    def _report_failed_install(self) -> None:
+        """지난 설치가 실패했으면 알린다(흔적은 읽으면서 지운다 — 한 번만 알린다)."""
+        from gui.updater.pending import take_update_failure  # noqa: PLC0415
+
+        code = take_update_failure()
+        if not code:
+            return
+        logger.warning("지난 업데이트 설치가 실패했다(종료 코드 %s)", code)
+        show_toast(
+            self,
+            f"지난 업데이트 설치가 완료되지 않았습니다(코드 {code}). 다시 시도해 주세요",
+            KIND_ERROR,
+        )
 
     def _on_update_badge_clicked(self) -> None:
         """배지 클릭 — 지금 상태가 무엇을 뜻하는지는 도메인이 정한다."""

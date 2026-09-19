@@ -160,19 +160,34 @@ def show_splash(app: QApplication) -> QSplashScreen:
 def install_pending_update() -> None:
     """앱이 완전히 종료된 뒤 대기 중인 업데이트 인스톨러를 실행한다.
 
-    **실행 중에는 설치할 수 없다**(자기 파일이 잠겨 있다). 그래서 배치 파일로
-    지연 실행한다: 5초 대기 → 무인 설치 → 설치 후 앱 재실행.
+    **실행 중에는 설치할 수 없다**(자기 파일이 잠겨 있다). 그래서 배치 파일을 띄워
+    두고 **우리 프로세스가 사라지는 것을 확인한 뒤** 설치하게 한다. 배치 내용은
+    `infrastructure/updater/install_script.py`가 만든다(거기 이유가 적혀 있다).
 
     재실행 주체는 **배치 하나로 고정한다.** 인스톨러(`installer.iss`)의 `[Run]`에도
     실행 항목이 있으면 업데이트 후 앱이 두 개 뜬다 — 예전에 `skipifsilent`가 빠져
     실제로 그랬다. 반대로 양쪽을 다 막으면 다음 업데이트에서 아무도 앱을 실행하지
     않으므로, 한쪽만 남기는 것이 맞다(배치는 구버전 앱이 만들고 인스톨러는 신버전
     이라, 지금 손댈 수 있는 쪽이 배치다).
+
+    ## `DETACHED_PROCESS`를 쓰지 않는 이유
+
+    그 플래그로 띄우면 배치에 **콘솔이 없고**, 콘솔이 필요한 명령이 즉시 실패한다.
+    예전 배치의 `timeout /t 5`가 바로 그래서 **한 번도 기다린 적이 없었다**(실측).
+    지금 쓰는 `tasklist`도 같은 이유로 실패해 PID 대기가 통째로 건너뛰어진다.
+    `CREATE_NO_WINDOW`는 창을 숨기면서 콘솔은 준다 — 우리가 원하는 쪽이다.
     """
     if sys.platform != "win32":
         return
 
-    marker = Path(tempfile.gettempdir()) / "ovc_pending_update.txt"
+    # 업데이트 관련 임시 파일 경로는 전부 `gui/updater/pending.py`가 안다 —
+    # 쓰는 쪽(컨트롤러)과 읽는 쪽(여기)이 갈라지면 조용히 어긋난다.
+    from gui.updater.pending import (  # noqa: PLC0415
+        pending_marker_path,
+        update_failure_path,
+    )
+
+    marker = pending_marker_path()
     if not marker.exists():
         return
 
@@ -189,21 +204,31 @@ def install_pending_update() -> None:
         return
 
     try:
-        bat = Path(tempfile.gettempdir()) / "ovc_update_launcher.bat"
-        content = (
-            "@echo off\r\n"
-            "timeout /t 5 /nobreak >nul\r\n"
-            f'"{installer}" /VERYSILENT /NORESTART\r\n'
+        from infrastructure.updater.install_script import (  # noqa: PLC0415
+            build_update_batch,
         )
-        if exe:
-            content += f'start "" "{exe}"\r\n'
-        content += 'del "%~f0"\r\n'
-        bat.write_text(content, encoding="mbcs")
+
+        bat = Path(tempfile.gettempdir()) / "ovc_update_launcher.bat"
+        content = build_update_batch(
+            installer, exe, os.getpid(), str(update_failure_path())
+        )
+        # **바이트로 쓴다.** `write_text`는 윈도우에서 `\n`을 `\r\n`으로 바꿔 우리가
+        # 넣은 CRLF가 `\r\r\n`이 된다. 지금은 견디지만, 레이블·goto가 섞인 스크립트를
+        # 굳이 그 상태로 둘 이유가 없다.
+        #
+        # 인코딩은 **시스템 ANSI 코드페이지**(mbcs)다. cmd.exe 가 배치 파일을 그렇게
+        # 읽기 때문이고, 경로에 한글이 들어올 수 있기 때문이다 — 사용자 이름이
+        # 한글이면 임시 경로가 `C:\Users\홍길동\...`이 된다(한국어 사용자에게 흔하다).
+        # ascii 로 쓰면 그 경우 인코딩이 실패해 **업데이트가 통째로 막힌다.**
+        # 우리가 적는 명령어는 ASCII 뿐이고, 여기 섞이는 비ASCII 는 사용자 경로뿐인데
+        # 그것은 정의상 그 PC 의 ANSI 코드페이지로 표현된다.
+        bat.write_bytes(content.encode("mbcs"))
         subprocess.Popen(
             ["cmd", "/c", str(bat)],
-            creationflags=subprocess.DETACHED_PROCESS
+            creationflags=subprocess.CREATE_NO_WINDOW
             | subprocess.CREATE_NEW_PROCESS_GROUP,
             close_fds=True,
         )
-    except (OSError, IOError):
+        logger.info("업데이트 설치 예약: pid %d 종료를 기다린다", os.getpid())
+    except (OSError, ValueError):
         logger.exception("업데이트 launcher 실행 실패")

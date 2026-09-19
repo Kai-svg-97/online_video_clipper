@@ -37,3 +37,27 @@ def write_pending_update(installer_path: str) -> bool:
     except OSError:
         logger.exception("pending update 마커 작성 실패")
         return False
+
+
+def update_failure_path() -> Path:
+    """설치 배치가 실패 종료 코드를 남기는 자리.
+
+    배치는 조용히 죽는다 — 디스크가 모자라거나 인스톨러가 거부돼도 아무도 모르고,
+    사용자는 "업데이트를 눌렀는데 버전이 그대로"인 상태에 남는다. 여기 흔적이 있으면
+    다음 기동에서 알려 줄 수 있다.
+    """
+    return Path(tempfile.gettempdir()) / "ovc_update_failed.txt"
+
+
+def take_update_failure() -> str:
+    """지난 설치가 실패했으면 종료 코드를 돌려주고 흔적을 지운다(한 번만 알린다)."""
+    path = update_failure_path()
+    try:
+        if not path.exists():
+            return ""
+        code = path.read_text(encoding="ascii", errors="replace").strip()
+        path.unlink(missing_ok=True)
+        return code
+    except OSError:
+        logger.exception("업데이트 실패 기록을 읽지 못했다")
+        return ""

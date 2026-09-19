@@ -35,6 +35,16 @@ _MAX_WAIT_TICKS = 120
 # Inno Setup 인자. `/CLOSEAPPLICATIONS`는 PID 대기가 상한에 걸렸을 때를 위한 2차 방어다.
 INSTALLER_ARGS = "/SILENT /NORESTART /CLOSEAPPLICATIONS /SUPPRESSMSGBOXES"
 
+# **시스템 도구는 절대 경로로 부른다.** 그냥 `find`라고 쓰면 PATH 앞쪽에 있는 다른
+# 것이 잡힌다 — Git for Windows 가 깔린 PC 에서는 그쪽 `usr/bin/find.exe`(GNU find)가
+# 먼저 잡히고, 그것은 인자를 파일 경로로 해석해 실패한다. 그러면 `|| goto ready`가
+# 곧바로 발동해 **PID 대기가 통째로 건너뛰어지고**, 앱이 아직 살아 있는 채로
+# 인스톨러가 떠 파일 잠금 문제로 되돌아간다(실측으로 잡았다).
+#
+# `find` 대신 `findstr`을 쓰는 이유도 같다 — 이름이 겹치는 유닉스 도구가 없다.
+_TASKLIST = "%SystemRoot%\\System32\\tasklist.exe"
+_FINDSTR = "%SystemRoot%\\System32\\findstr.exe"
+
 
 def build_update_batch(
     installer: str,
@@ -49,22 +59,29 @@ def build_update_batch(
 
     줄바꿈은 CRLF다. 배치 파일은 LF만으로도 대개 동작하지만, 레이블(`:wait`)과
     `goto`가 섞이면 해석이 깨지는 경우가 있어 맞춰 준다.
+
+    **내용은 ASCII만 쓴다.** 이 문자열은 `encoding="mbcs"`(시스템 ANSI 코드페이지)로
+    기록되는데, 한글 주석을 넣으면 한국어가 아닌 코드페이지(영문 Windows의 cp1252
+    등)에서 **기록 자체가 실패해** 업데이트가 통째로 멈춘다. 설명은 여기 독스트링에
+    두고 배치에는 남기지 않는다.
     """
     lines = [
         "@echo off",
         "setlocal",
-        "rem 앱이 완전히 죽을 때까지 기다린다 — 실행 중에는 파일이 잠겨 있다.",
+        # 앱이 완전히 죽을 때까지 기다린다 — 실행 중에는 파일이 잠겨 있다.
         "set /a n=0",
         ":wait",
-        f'tasklist /FI "PID eq {pid}" /NH | find "{pid}" >nul || goto ready',
+        f'{_TASKLIST} /FI "PID eq {pid}" /NH | {_FINDSTR} /C:"{pid}" >nul || goto ready',
         "set /a n+=1",
         f"if %n% GEQ {_MAX_WAIT_TICKS} goto ready",
         "ping -n 2 127.0.0.1 >nul",
         "goto wait",
         ":ready",
         f'"{installer}" {INSTALLER_ARGS}',
-        "rem 실패를 남겨야 다음 기동에서 사용자에게 알릴 수 있다.",
-        f'if errorlevel 1 echo %ERRORLEVEL%> "{fail_log}"',
+        # 실패를 남겨야 다음 기동에서 사용자에게 알릴 수 있다. 리다이렉션을
+        # **앞에** 둔다 — `echo %ERRORLEVEL%> "파일"`로 쓰면 코드가 한 자리
+        # 숫자일 때 `2>`가 stderr 리다이렉션으로 해석돼 파일이 비어 버린다.
+        f'if errorlevel 1 >"{fail_log}" echo %ERRORLEVEL%',
     ]
     if exe:
         lines.append(f'start "" "{exe}"')

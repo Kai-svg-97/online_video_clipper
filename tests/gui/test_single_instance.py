@@ -78,10 +78,20 @@ class TestInstallerFlags:
 
         installer.iss 에 skipifsilent 를 넣었으므로 재실행 주체는 이 배치 하나뿐이다.
         """
-        # 종료 tail은 `bootstrap/runtime.py:install_pending_update()`로 옮겨졌다
-        # (main.py는 조립 목록이 아니라 순서만 담는다).
-        src = Path("bootstrap/runtime.py").read_text(encoding="utf-8", errors="replace")
-        assert 'start ""' in src, (
-            "종료 tail 배치에서 앱을 재실행하는 start 줄이 사라졌다 — "
+        # 배치 내용은 `infrastructure/updater/install_script.py`가 만든다. 소스를
+        # 훑는 대신 **실제로 만들어 본다** — 생성 로직이 어느 파일로 옮겨가든
+        # 이 불변식은 그대로여야 한다.
+        from infrastructure.updater.install_script import build_update_batch
+
+        exe = r"C:\Program Files\YouTubeContentManager\YouTubeContentManager.exe"
+        batch = build_update_batch(r"C:\tmp\setup.exe", exe, 1234, r"C:\tmp\fail.txt")
+        assert f'start "" "{exe}"' in batch, (
+            "설치 배치에서 앱을 재실행하는 start 줄이 사라졌다 — "
             "installer.iss 의 skipifsilent 와 함께라면 앱이 아예 실행되지 않는다"
         )
+
+    def test_installer_does_not_also_relaunch(self):
+        """재실행 주체는 하나여야 한다 — 둘이면 인스턴스가 2개 뜬다(과거 회귀)."""
+        from infrastructure.updater.install_script import INSTALLER_ARGS
+
+        assert "/NORESTART" in INSTALLER_ARGS
