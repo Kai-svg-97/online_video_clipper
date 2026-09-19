@@ -1435,7 +1435,11 @@ class SettingsPanel(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
         self._auto_update_check = QCheckBox("자동 업데이트")
-        self._auto_update_check.setToolTip("시작 시 자동으로 업데이트를 확인·다운로드합니다")
+        # 확인만 자동이고 **받는 것은 누를 때**다 — 문구가 동작과 어긋나면
+        # 사용자는 받는 줄 알고 기다린다.
+        self._auto_update_check.setToolTip(
+            "새 버전이 나왔는지 자동으로 확인합니다(내려받기는 눌러야 시작됩니다)"
+        )
         self._auto_update_check.setChecked(cur_auto)
         self._auto_update_check.checkStateChanged.connect(self._on_auto_update_changed)
         row.addWidget(self._auto_update_check)
@@ -1456,7 +1460,7 @@ class SettingsPanel(QWidget):
 
     # ------------------------------------------------------------------
     def set_update_ready(self, dto) -> None:
-        """자동 다운로드 완료 — 헤더 상태를 '준비됨'으로 바꾸고 설치 버튼을 노출한다."""
+        """다운로드 완료 — 헤더 상태를 '준비됨'으로 바꾸고 설치 버튼을 노출한다."""
         self._pending_dto = dto
         self._upd_status_lbl.setText(f"업데이트 준비됨 · v{dto.version}")
         self._upd_status_lbl.setStyleSheet(
@@ -1467,7 +1471,7 @@ class SettingsPanel(QWidget):
         self._upd_install_btn.show()
 
     def set_update_available(self, dto) -> None:
-        """새 버전을 찾았지만 자동 설치 준비에 실패한 상태.
+        """새 버전을 찾았지만 아직 받지 않은 상태(또는 받다가 실패한 상태).
 
         예전에는 이때 기어의 빨간 점만 켜지고 설정 화면은 그대로여서, 사용자가
         업데이트를 진행할 방법이 화면에 없었다. 여기서 직접 내려받을 버튼을 준다.

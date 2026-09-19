@@ -4,7 +4,7 @@
 종료 tail이 이 마커(`ovc_pending_update.txt`)를 읽어 조용히 설치하고 앱을 재실행한다.
 
 마커 포맷(2줄): 1) 인스톨러 경로, 2) 재실행할 exe 경로(frozen 빌드일 때만, 아니면 빈 줄).
-자동 다운로드 컨트롤러와 UpdateDialog가 공유한다(동일 계약).
+`UpdateController`와 `UpdateDialog`가 공유한다(동일 계약).
 """
 
 from __future__ import annotations

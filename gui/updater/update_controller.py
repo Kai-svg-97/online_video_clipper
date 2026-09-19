@@ -23,7 +23,11 @@ _CHECK_INTERVAL_SEC = 3_600  # 1시간
 
 
 class UpdateController(QObject):
-    """업데이트 확인·자동 다운로드·설치 트리거를 담당. MainWindow가 소유하며 shutdown()으로 정리."""
+    """업데이트 확인·다운로드·설치 트리거를 담당. MainWindow가 소유하며 shutdown()으로 정리.
+
+    **확인만 자동이고 받는 것은 사용자가 누를 때다** — 그래야 진행률 연출이 보이고,
+    업데이트를 원치 않는 사람의 회선·디스크를 쓰지 않는다.
+    """
 
     update_notification = pyqtSignal(object)   # UpdateDTO — 새 버전을 찾았지만 아직 준비 안 됨
     update_ready = pyqtSignal(object)          # UpdateDTO — 다운로드 완료(누르면 설치)
