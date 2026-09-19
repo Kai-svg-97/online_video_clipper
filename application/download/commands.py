@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from application.download.defaults import apply_user_defaults
+from application.download.defaults import (
+    active_preset,
+    apply_user_defaults,
+    build_from_preset,
+)
 from domain.download.aggregates import DownloadQueueAggregate
 from domain.download.entities import DownloadJob
 from domain.download.repositories import IDownloadRepository
@@ -62,7 +66,13 @@ class StartDownloadHandler:
         # 부가 옵션(굽기·자막 언어·노래 태그)은 이력에 남지 않으므로, 호출부가 무엇을
         # 넘겼든 **여기서** 현재 사용자 설정으로 채운다. 호출부가 3곳 이상이라
         # 각자 config를 읽게 두면 한 곳만 빠져도 조용히 꺼진 채로 동작한다.
-        settings = apply_user_defaults(cmd.settings or DownloadSettings())
+        # 호출부가 방식을 지정했으면(화질 메뉴 등) 그것을 존중하고 굽기 옵션만
+        # 채운다. 지정하지 않았으면 **지금 고른 프리셋**으로 만든다 — 프리셋이
+        # 없으면 예전과 똑같이 전역 기본값이다.
+        if cmd.settings is not None:
+            settings = apply_user_defaults(cmd.settings)
+        else:
+            settings = build_from_preset(active_preset())
         job = DownloadJob.create(
             url=cmd.url,
             title=cmd.title,

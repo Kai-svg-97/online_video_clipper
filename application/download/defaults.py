@@ -68,3 +68,85 @@ def _removal_categories(cfg) -> tuple[str, ...]:
     raw = (cfg.SPONSORBLOCK_CATEGORIES or "").split(",")
     picked = tuple(part.strip() for part in raw if part.strip())
     return picked or DEFAULT_SKIP_CATEGORIES
+
+
+# ── 다운로드 프리셋 ────────────────────────────────────────────────────
+# 프리셋은 **어떤 파일을 원하는가**(화질·형식·자막·굽기)만 정하고, **어떻게 받는가**
+# (속도 제한·프록시·조각 수)는 전역 설정을 그대로 쓴다. 후자는 회선의 성질이라
+# 무엇을 받든 같기 때문이다.
+
+
+def available_presets() -> list:
+    """내장 + 사용자 프리셋 목록(숨긴 내장은 빠진다)."""
+    from config import settings as cfg  # noqa: PLC0415
+    from domain.download.download_presets import (  # noqa: PLC0415
+        BUILTIN_PRESETS,
+        DownloadPreset,
+        merge,
+    )
+
+    saved = []
+    for raw in cfg.DOWNLOAD_PRESETS or []:
+        preset = DownloadPreset.from_payload(raw)
+        if preset is not None:
+            saved.append(preset)
+    return merge(BUILTIN_PRESETS, saved, list(cfg.HIDDEN_PRESET_KEYS or []))
+
+
+def active_preset():
+    """지금 쓰기로 한 프리셋(없거나 사라졌으면 None).
+
+    **사라진 키를 가리켜도 죽지 않는다** — 사용자가 프리셋을 지우면 설정에는 그 키가
+    남는데, 그때 다운로드가 실패하면 안 된다. 그냥 전역 설정으로 떨어진다.
+    """
+    from config import settings as cfg  # noqa: PLC0415
+    from domain.download.download_presets import find  # noqa: PLC0415
+
+    key = (cfg.ACTIVE_PRESET_KEY or "").strip()
+    return find(available_presets(), key) if key else None
+
+
+def build_from_preset(preset, *, capture_gemini: bool = False) -> DownloadSettings:
+    """프리셋 → `DownloadSettings`. 프리셋이 없으면 전역 기본값 그대로."""
+    if preset is None:
+        return build_download_settings(capture_gemini=capture_gemini)
+
+    from config import settings as cfg  # noqa: PLC0415
+
+    return DownloadSettings(
+        quality=_as_quality(preset.quality),
+        fmt=_as_format(preset.fmt),
+        subtitle_langs=parse_subtitle_langs(preset.subtitle_langs),
+        include_thumbnail=bool(preset.include_thumbnail),
+        include_metadata=bool(preset.include_metadata),
+        capture_gemini=capture_gemini,
+        embed_subtitles=bool(preset.embed_subtitles),
+        embed_thumbnail=bool(preset.embed_thumbnail),
+        embed_chapters=bool(preset.embed_chapters),
+        sponsorblock_remove=(
+            _removal_categories(cfg) if preset.sponsorblock_remove else ()
+        ),
+        # 전송 옵션은 프리셋이 정하지 않는다 — 회선의 성질이다.
+        rate_limit=(cfg.DOWNLOAD_RATE_LIMIT or "").strip(),
+        concurrent_fragments=max(1, int(cfg.CONCURRENT_FRAGMENTS or 1)),
+        proxy=(cfg.DOWNLOAD_PROXY or "").strip(),
+    )
+
+
+def _as_quality(value: str) -> Quality:
+    """설정 문자열 → Quality. **모르는 값이면 기본으로 떨어진다**.
+
+    프리셋은 설정 파일에 글자로 남아 사용자가 손볼 수 있고, 값 목록이 나중에 바뀔
+    수도 있다. 그때 다운로드가 통째로 실패하면 안 된다.
+    """
+    for member in Quality:
+        if member.value == value:
+            return member
+    return Quality.P1080
+
+
+def _as_format(value: str) -> MediaFormat:
+    for member in MediaFormat:
+        if member.value == value:
+            return member
+    return MediaFormat.MP4

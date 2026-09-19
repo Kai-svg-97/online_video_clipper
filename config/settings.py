@@ -145,6 +145,14 @@ WRITE_SONG_TAGS: bool = _load_bool("write_song_tags", True)
 # 모델 키(`domain.library.transcribe.MODELS`). 모델 파일은 DATA_DIR/models/whisper 에
 # 받아 두며, 한 번도 쓰지 않으면 아무것도 내려받지 않는다.
 TRANSCRIBE_MODEL: str = _resolve_str("transcribe_model", "base")
+# ── 다운로드 프리셋 ─────────────────────────────────────────────────────
+# 같은 사람이 영상을 받는 방식은 몇 가지로 갈린다(보관용·음악·가볍게). 이름 붙인
+# 묶음을 두고 고르게 한다. 내장 프리셋은 코드에 있고(domain/download/download_presets.py)
+# 여기에는 **사용자가 만들거나 고친 것**과 숨긴 내장만 담는다.
+DOWNLOAD_PRESETS: list = _load_config().get("download_presets") or []
+HIDDEN_PRESET_KEYS: list = _load_config().get("hidden_preset_keys") or []
+# 다운로드할 때 쓸 프리셋 키. 빈 값이면 프리셋을 쓰지 않고 전역 설정을 그대로 쓴다.
+ACTIVE_PRESET_KEY: str = _resolve_str("active_preset_key", "")
 # ── 트레이 알림 · 새 영상 감시 ───────────────────────────────────────────
 # 다운로드는 몇 분~몇 시간이 걸린다. 그동안 사용자는 이 앱을 보고 있지 않으므로,
 # 앱 안의 토스트만으로는 끝났다는 소식이 전달되지 않는다.
@@ -237,6 +245,9 @@ def save_setting(key: str, value) -> None:
         "embed_chapters": "EMBED_CHAPTERS",
         "write_song_tags": "WRITE_SONG_TAGS",
         "transcribe_model": "TRANSCRIBE_MODEL",
+        "download_presets": "DOWNLOAD_PRESETS",
+        "hidden_preset_keys": "HIDDEN_PRESET_KEYS",
+        "active_preset_key": "ACTIVE_PRESET_KEY",
         "tray_notifications": "TRAY_NOTIFICATIONS",
         "watch_new_videos": "WATCH_NEW_VIDEOS",
         "watch_interval_min": "WATCH_INTERVAL_MIN",

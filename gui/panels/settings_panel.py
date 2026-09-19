@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QProgressBar,
@@ -531,8 +532,135 @@ class SettingsPanel(QWidget):
         layout.addLayout(format_row)
         layout.addSpacing(18)
 
+        self._build_preset_rows(layout)
         self._build_embed_rows(layout)
         layout.addSpacing(28)
+
+    # ── 다운로드 프리셋 ───────────────────────────────────────────
+
+    def _build_preset_rows(self, layout) -> None:
+        """받는 방식을 이름 붙여 고르기.
+
+        같은 사람이 영상을 받는 방식은 몇 가지로 갈린다(보관용·음악·가볍게). 그때마다
+        아래 설정을 오가는 대신 골라 쓴다. **전송 옵션(속도·프록시)은 프리셋이 정하지
+        않는다** — 회선의 성질이라 무엇을 받든 같기 때문이다.
+        """
+        from application.download.defaults import available_presets  # noqa: PLC0415
+        from config import settings as cfg  # noqa: PLC0415
+
+        layout.addSpacing(10)
+        row = QHBoxLayout()
+        lbl = QLabel("받는 방식")
+        lbl.setFixedWidth(100)
+        self._preset_combo = QComboBox()
+        self._preset_combo.addItem("프리셋 없음 (아래 설정 그대로)", "")
+        for preset in available_presets():
+            self._preset_combo.addItem(preset.name, preset.key)
+        idx = self._preset_combo.findData(cfg.ACTIVE_PRESET_KEY or "")
+        self._preset_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._preset_combo.setFixedWidth(240)
+        self._preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        row.addWidget(lbl)
+        row.addWidget(self._preset_combo)
+        row.addStretch()
+
+        self._preset_save_btn = QPushButton("지금 설정을 프리셋으로…")
+        self._preset_save_btn.setFixedWidth(160)
+        self._preset_save_btn.clicked.connect(self._on_preset_save)
+        row.addWidget(self._preset_save_btn)
+
+        self._preset_del_btn = QPushButton("프리셋 지우기")
+        self._preset_del_btn.setFixedWidth(100)
+        self._preset_del_btn.clicked.connect(self._on_preset_delete)
+        row.addWidget(self._preset_del_btn)
+        layout.addLayout(row)
+
+        self._preset_hint = QLabel("")
+        self._preset_hint.setWordWrap(True)
+        self._preset_hint.setStyleSheet(
+            f"font-size: 10px; color: {_t().text_secondary};"
+        )
+        layout.addWidget(self._preset_hint)
+        self._refresh_preset_hint()
+
+    def _refresh_preset_hint(self) -> None:
+        from application.download.defaults import available_presets  # noqa: PLC0415
+        from domain.download.download_presets import find  # noqa: PLC0415
+
+        key = self._preset_combo.currentData() or ""
+        preset = find(available_presets(), key) if key else None
+        self._preset_del_btn.setEnabled(preset is not None)
+        if preset is None:
+            self._preset_hint.setText(
+                "프리셋을 고르면 아래 화질·형식·자막·굽기 설정 대신 그 방식으로 받습니다. "
+                "속도 제한·프록시 같은 전송 옵션은 프리셋과 무관하게 늘 적용됩니다."
+            )
+            return
+        langs = preset.subtitle_langs or "자막 없음"
+        self._preset_hint.setText(
+            f"{preset.quality} · {preset.fmt} · 자막 {langs}"
+            + (" · 광고 잘라내기" if preset.sponsorblock_remove else "")
+        )
+
+    def _on_preset_changed(self, _index: int) -> None:
+        self._save_setting("active_preset_key", self._preset_combo.currentData() or "")
+        self._refresh_preset_hint()
+
+    def _on_preset_save(self) -> None:
+        """지금 화면의 설정을 프리셋으로 굳힌다."""
+        from config import settings as cfg  # noqa: PLC0415
+        from domain.download.download_presets import (  # noqa: PLC0415
+            DownloadPreset,
+            quality_from_selector,
+            unique_name,
+        )
+        from application.download.defaults import available_presets  # noqa: PLC0415
+        import uuid as _uuid  # noqa: PLC0415
+
+        name, ok = QInputDialog.getText(self, "프리셋 저장", "이름", text="내 프리셋")
+        if not ok:
+            return
+        existing = [p.name for p in available_presets()]
+        preset = DownloadPreset(
+            key=f"user:{_uuid.uuid4().hex[:8]}",
+            name=unique_name(name, existing),
+            quality=quality_from_selector(self._quality_combo.currentData()),
+            fmt=self._format_combo.currentText() or "mp4",
+            subtitle_langs=self._sub_langs_edit.text().strip(),
+            embed_subtitles=self._embed_subs_check.isChecked(),
+            embed_thumbnail=self._embed_thumb_check.isChecked(),
+            embed_chapters=self._embed_chapters_check.isChecked(),
+            sponsorblock_remove=self._sb_remove_check.isChecked(),
+        )
+        saved = list(cfg.DOWNLOAD_PRESETS or []) + [preset.to_payload()]
+        self._save_setting("download_presets", saved)
+        self._preset_combo.addItem(preset.name, preset.key)
+        self._preset_combo.setCurrentIndex(self._preset_combo.count() - 1)
+
+    def _on_preset_delete(self) -> None:
+        """고른 프리셋을 목록에서 뺀다.
+
+        내장 프리셋은 지울 수 없으니 **숨긴다** — 코드에 있는 것을 설정으로 없앨
+        방법이 달리 없고, 안 쓰는 항목이 목록에 남으면 고르기를 방해한다.
+        """
+        from config import settings as cfg  # noqa: PLC0415
+        from domain.download.download_presets import BUILTIN_PREFIX  # noqa: PLC0415
+
+        key = self._preset_combo.currentData() or ""
+        if not key:
+            return
+        if key.startswith(BUILTIN_PREFIX):
+            hidden = list(cfg.HIDDEN_PRESET_KEYS or [])
+            if key not in hidden:
+                hidden.append(key)
+            self._save_setting("hidden_preset_keys", hidden)
+        else:
+            self._save_setting(
+                "download_presets",
+                [p for p in (cfg.DOWNLOAD_PRESETS or []) if p.get("key") != key],
+            )
+        self._preset_combo.removeItem(self._preset_combo.currentIndex())
+        self._preset_combo.setCurrentIndex(0)
 
     def _build_embed_rows(self, layout) -> None:
         """부가 정보를 받은 파일 안에 굽는 설정(자막·표지·챕터·노래 태그)."""
