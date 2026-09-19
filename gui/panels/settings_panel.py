@@ -196,6 +196,7 @@ class SettingsPanel(QWidget):
         self._build_lyrics_sources_section(layout)
         self._build_cloud_sync_section(layout)
         self._build_transfer_section(layout)
+        self._build_watch_folder_section(layout)
         self._build_bookmark_section(layout)
         self._build_cleanup_section(layout)
         self._build_subtitle_index_section(layout)
@@ -1021,6 +1022,98 @@ class SettingsPanel(QWidget):
                 self._transfer_vm, self._get_categories_fn
             )
             layout.addWidget(self._import_export_section)
+
+    # ── 워치 폴더 ─────────────────────────────────────────────────
+
+    def _build_watch_folder_section(self, layout) -> None:
+        """주소가 담긴 파일을 떨구면 알아서 담는 폴더.
+
+        브라우저에서 주소를 앱까지 끌어다 놓으려면 앱이 떠 있어야 한다. 폴더 하나를
+        정해 두면 앱이 꺼져 있어도 거기 모아 뒀다가 켤 때 한꺼번에 담는다.
+        """
+        from config import settings as cfg  # noqa: PLC0415
+        from domain.library.watch_folder import (  # noqa: PLC0415
+            DONE_DIR_NAME,
+            WATCHED_SUFFIXES,
+        )
+
+        self._add_divider(layout)
+        label = QLabel("워치 폴더")
+        label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            f"text-transform: uppercase; color: {_t().text_muted};"
+        )
+        layout.addWidget(label)
+        layout.addSpacing(8)
+
+        hint = QLabel(
+            f"이 폴더에 주소가 든 파일({' · '.join(WATCHED_SUFFIXES)})을 넣어 두면 "
+            "앱이 30초마다 훑어 라이브러리에 담습니다. 브라우저에서 링크를 폴더로 끌면 "
+            f".url 파일이 생기므로 그것만으로 끝납니다. 담은 파일은 '{DONE_DIR_NAME}' "
+            "폴더로 옮겨 둬, 무엇이 처리됐는지 폴더만 봐도 알 수 있습니다."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
+        layout.addWidget(hint)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 6, 0, 0)
+        self._watch_edit = QLineEdit()
+        self._watch_edit.setPlaceholderText("비워 두면 쓰지 않습니다")
+        self._watch_edit.setText(cfg.WATCH_FOLDER or "")
+        self._watch_edit.editingFinished.connect(self._on_watch_folder_changed)
+        browse = QPushButton("찾기…")
+        browse.setFixedWidth(60)
+        browse.clicked.connect(self._on_watch_folder_browse)
+        clear = QPushButton("사용 안 함")
+        clear.setFixedWidth(80)
+        clear.clicked.connect(self._on_watch_folder_clear)
+        row.addWidget(self._watch_edit, 1)
+        row.addWidget(browse)
+        row.addWidget(clear)
+        layout.addLayout(row)
+
+        self._watch_status = QLabel("")
+        self._watch_status.setWordWrap(True)
+        self._watch_status.setStyleSheet(
+            f"font-size: 10px; color: {_t().text_secondary};"
+        )
+        layout.addWidget(self._watch_status)
+        layout.addSpacing(24)
+        self._refresh_watch_status()
+
+    def _refresh_watch_status(self) -> None:
+        """설정된 폴더가 **실제로 있는지** 알린다.
+
+        경로만 적어 두면 오타나 옮겨진 폴더를 알아차릴 수 없다 — 쿠키 파일에서
+        똑같은 일이 있었다.
+        """
+        from pathlib import Path as _Path  # noqa: PLC0415
+
+        raw = self._watch_edit.text().strip()
+        if not raw:
+            self._watch_status.setText("쓰지 않는 중입니다.")
+            return
+        if not _Path(raw).is_dir():
+            self._watch_status.setText("⚠ 이 경로에 폴더가 없습니다.")
+            return
+        self._watch_status.setText(
+            "폴더를 확인했습니다. 바뀐 설정은 앱을 다시 켤 때 적용됩니다."
+        )
+
+    def _on_watch_folder_changed(self) -> None:
+        self._save_setting("watch_folder", self._watch_edit.text().strip())
+        self._refresh_watch_status()
+
+    def _on_watch_folder_browse(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "워치 폴더 선택")
+        if folder:
+            self._watch_edit.setText(folder)
+            self._on_watch_folder_changed()
+
+    def _on_watch_folder_clear(self) -> None:
+        self._watch_edit.clear()
+        self._on_watch_folder_changed()
 
     # ── 북마크에서 가져오기 ───────────────────────────────────────
 

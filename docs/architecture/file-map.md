@@ -116,6 +116,8 @@ online_video_clipper/
 │   │   (도메인) saved_search.py      # 저장된 검색 값 객체 + JSON 직렬화(프리셋 키로 담는다)
 │   │   (도메인) subtitle_translate.py # 자막 번역 묶기·정렬 검증(어긋나면 줄 단위로 되돌린다)
 │   │   (도메인) download_presets.py   # 다운로드 프리셋 값 객체·내장 3종·병합(숨김/덮어쓰기)
+│   │   (도메인) watch_folder.py       # 워치 폴더 판정(확장자·안정화 대기·주소 추출·처리됨 이름)
+│   infrastructure/watch/folder_scanner.py  # 그 규칙대로 폴더를 훑고 처리한 파일을 옮긴다
 │   ├── download/
 │   │   ├── commands.py              # StartDownload, CancelDownload, RetryDownload
 │   │   ├── queries.py               # GetDownloadQueue, GetDownloadHistory

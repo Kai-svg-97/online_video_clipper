@@ -153,6 +153,10 @@ DOWNLOAD_PRESETS: list = _load_config().get("download_presets") or []
 HIDDEN_PRESET_KEYS: list = _load_config().get("hidden_preset_keys") or []
 # 다운로드할 때 쓸 프리셋 키. 빈 값이면 프리셋을 쓰지 않고 전역 설정을 그대로 쓴다.
 ACTIVE_PRESET_KEY: str = _resolve_str("active_preset_key", "")
+# ── 워치 폴더 ───────────────────────────────────────────────────────────
+# 주소가 담긴 파일(.txt·.url·.html)을 이 폴더에 떨구면 앱이 알아서 담는다.
+# 앱이 꺼져 있어도 모아 뒀다가 켤 때 한꺼번에 처리된다. 빈 값 = 쓰지 않음.
+WATCH_FOLDER: str = _resolve_str("watch_folder", "")
 # ── 트레이 알림 · 새 영상 감시 ───────────────────────────────────────────
 # 다운로드는 몇 분~몇 시간이 걸린다. 그동안 사용자는 이 앱을 보고 있지 않으므로,
 # 앱 안의 토스트만으로는 끝났다는 소식이 전달되지 않는다.
@@ -248,6 +252,7 @@ def save_setting(key: str, value) -> None:
         "download_presets": "DOWNLOAD_PRESETS",
         "hidden_preset_keys": "HIDDEN_PRESET_KEYS",
         "active_preset_key": "ACTIVE_PRESET_KEY",
+        "watch_folder": "WATCH_FOLDER",
         "tray_notifications": "TRAY_NOTIFICATIONS",
         "watch_new_videos": "WATCH_NEW_VIDEOS",
         "watch_interval_min": "WATCH_INTERVAL_MIN",

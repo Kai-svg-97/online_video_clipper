@@ -50,6 +50,10 @@ logger = logging.getLogger(__name__)
 # 그대로 밀어 넣으면 앱이 먹통처럼 보인다.
 _BOOKMARK_IMPORT_LIMIT = 200
 
+# 워치 폴더를 얼마나 자주 훑나(ms). 폴더 목록을 읽는 것뿐이라 싸지만, 너무 자주
+# 돌면 절전 중인 디스크를 계속 깨운다.
+_WATCH_SCAN_MS = 30_000
+
 # ---------------------------------------------------------------------------
 # SVG 아이콘 정의 (인라인)
 # ---------------------------------------------------------------------------
@@ -511,6 +515,8 @@ class MainWindow(QMainWindow):
         self._backup_worker = None
         # 트레이 — 환경에 트레이가 없으면 None으로 남는다(기능만 빠진다).
         self._tray = None
+        # 워치 폴더 — 설정이 비어 있으면 아예 돌지 않는다.
+        self._watch_timer = None
         self._yt_oauth = yt_oauth
         self._auth_service = auth_service or YouTubeAuthService()
         self._update_controller = None
@@ -529,6 +535,8 @@ class MainWindow(QMainWindow):
         # 첫 목록 조회가 끝난 뒤에 시작한다 — 시작 직후는 디스크가 가장 바쁘다.
         QTimer.singleShot(3000, self._start_db_backup)
         self._setup_tray()
+        # 시작 직후는 디스크가 가장 바쁘다 — 조금 뒤에 첫 스캔을 돈다.
+        QTimer.singleShot(5000, self._setup_watch_folder)
 
     # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
@@ -865,6 +873,47 @@ class MainWindow(QMainWindow):
         if idx not in (_PAGE_LIBRARY, _PAGE_STATS):
             self._return_to_page = None
 
+    # ── 워치 폴더 ────────────────────────────────────────────────
+
+    def _setup_watch_folder(self) -> None:
+        """설정된 폴더가 있으면 주기적으로 훑는다."""
+        from config import settings as cfg  # noqa: PLC0415
+
+        if not (cfg.WATCH_FOLDER or "").strip():
+            return
+        timer = QTimer(self)
+        timer.setInterval(_WATCH_SCAN_MS)
+        timer.timeout.connect(self._scan_watch_folder)
+        timer.start()
+        self._watch_timer = timer
+        logger.info("워치 폴더 감시 시작: %s", cfg.WATCH_FOLDER)
+        self._scan_watch_folder()
+
+    def _scan_watch_folder(self) -> None:
+        """폴더를 한 번 훑어 주소를 담는다.
+
+        **메인 스레드에서 돈다** — 폴더 목록을 읽고 작은 텍스트 파일을 여는 일이라
+        밀리초 단위다. 실제로 오래 걸리는 등록은 뷰모델이 워커로 띄운다.
+        """
+        from config import settings as cfg  # noqa: PLC0415
+        from infrastructure.watch.folder_scanner import (  # noqa: PLC0415
+            WatchFolderScanner,
+        )
+
+        folder = (cfg.WATCH_FOLDER or "").strip()
+        if not folder:
+            return
+        try:
+            result = WatchFolderScanner(folder).scan()
+        except Exception:
+            logger.exception("워치 폴더 훑기 실패 (무시하고 계속): %s", folder)
+            return
+        if not result.urls:
+            return
+        for url in result.urls:
+            self._library_vm.add_video(url)
+        show_toast(self, f"워치 폴더에서 {len(result.urls)}건을 담는 중입니다")
+
     # ── 북마크 가져오기 ──────────────────────────────────────────
 
     def _add_videos_from_bookmarks(self, urls: list[str], category_id) -> None:
@@ -966,6 +1015,8 @@ class MainWindow(QMainWindow):
         # 아무도 기다려 주지 않는다.
         if self._feed_vm is not None:
             self._feed_vm.stop_watching()
+        if self._watch_timer is not None:
+            self._watch_timer.stop()
         # 트레이 아이콘을 내린다 — 남겨 두면 유령 아이콘이 트레이에 붙어 있다.
         if self._tray is not None:
             self._tray.hide()
