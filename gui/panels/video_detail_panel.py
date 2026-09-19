@@ -230,6 +230,8 @@ class VideoDetailWidget(
             subtitle_vm.transcribe_model_downloading.connect(self._on_asr_model_downloading)
             subtitle_vm.transcribe_progress.connect(self._on_asr_progress)
             subtitle_vm.transcribe_finished.connect(self._on_asr_finished)
+            subtitle_vm.translate_progress.connect(self._on_translate_progress)
+            subtitle_vm.translate_finished.connect(self._on_translate_finished)
         if clip_vm is not None:
             # 바운드 메서드로 연결한다 — 뷰모델은 앱 수명 내내 살아 있어서
             # 람다로 걸면 이 위젯이 사라진 뒤에도 호출돼 죽은 위젯을 건드린다.
@@ -554,6 +556,7 @@ class VideoDetailWidget(
         self._subtitle_tab.transcribe_stop_requested.connect(
             self._on_transcribe_stop_requested
         )
+        self._subtitle_tab.translate_requested.connect(self._on_translate_requested)
         self._subtitle_tab.search_changed.connect(self._on_subtitle_search)
         self._tabs.addTab(self._subtitle_tab, "자막")
 

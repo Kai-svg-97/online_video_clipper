@@ -126,6 +126,32 @@ class _TranscribeWorker(QThread):
         self.done.emit(self._cmd.video_id, count)
 
 
+class _TranslateWorker(QThread):
+    """자막 번역 — 수백 줄이면 몇 분이 걸린다(묶어 보내도 왕복이 십수 번)."""
+
+    progress = pyqtSignal(float)          # 0.0 ~ 1.0
+    done = pyqtSignal(object, int)        # video_id, 색인한 줄 수
+
+    def __init__(self, handler, cmd) -> None:
+        # 부모를 주지 않는다 — gui/workers.py 의 규칙과 같다.
+        super().__init__(None)
+        self._handler = handler
+        self._cmd = cmd
+        self._stop = False
+
+    def stop(self) -> None:
+        """협조적 중단 — 다음 묶음으로 넘어가기 전에 멈춘다."""
+        self._stop = True
+
+    def run(self) -> None:
+        count = self._handler.handle(
+            self._cmd,
+            on_progress=self.progress.emit,
+            should_stop=lambda: self._stop,
+        )
+        self.done.emit(self._cmd.video_id, count)
+
+
 class SubtitleViewModel(WorkerOwnerMixin, QObject):
     lines_loaded = pyqtSignal(object, object)   # video_id, list[SubtitleLineDTO]
     index_started = pyqtSignal(object)          # video_id
@@ -136,6 +162,9 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
     transcribe_model_downloading = pyqtSignal(str)
     transcribe_progress = pyqtSignal(object, float)   # video_id, 0.0~1.0
     transcribe_finished = pyqtSignal(object, int)     # video_id, 줄 수
+    translate_started = pyqtSignal(object)            # video_id
+    translate_progress = pyqtSignal(object, float)    # video_id, 0.0~1.0
+    translate_finished = pyqtSignal(object, int)      # video_id, 줄 수
 
     def __init__(
         self,
@@ -146,6 +175,7 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         bulk_handler: BulkIndexSubtitlesHandler | None = None,
         coverage_handler: GetSubtitleCoverageHandler | None = None,
         transcribe_handler: TranscribeVideoHandler | None = None,
+        translate_handler=None,   # TranslateSubtitlesHandler | None
         transcriber=None,
         parent: QObject | None = None,
     ) -> None:
@@ -158,6 +188,8 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         self._coverage = coverage_handler
         self._bulk_worker: _BulkIndexWorker | None = None
         self._transcribe = transcribe_handler
+        self._translate = translate_handler
+        self._translate_workers: dict = {}
         self._transcriber = transcriber
         self._transcribe_workers: dict = {}
         # 같은 영상을 두 번 색인하지 않게 — 자막을 껐다 켜면 큐가 다시 들어온다.
@@ -224,6 +256,9 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         for worker in list(self._transcribe_workers.values()):
             worker.stop()
         self._transcribe_workers.clear()
+        for worker in list(self._translate_workers.values()):
+            worker.stop()
+        self._translate_workers.clear()
         super().shutdown()
 
     # ── 음성 인식 ─────────────────────────────────────────────────
@@ -256,6 +291,50 @@ class SubtitleViewModel(WorkerOwnerMixin, QObject):
         worker = self._transcribe_workers.get(video_id)
         if worker is not None:
             worker.stop()
+
+    # ── 자막 번역 ─────────────────────────────────────────────────
+
+    @property
+    def can_translate(self) -> bool:
+        return self._translate is not None
+
+    def translatable_sources(self, video_id: UUID) -> list:
+        """번역할 수 있는 원본 자막 목록(번역본은 빠진다)."""
+        if self._translate is None:
+            return []
+        return self._translate.source_candidates(video_id)
+
+    def translate_subtitles(self, video_id: UUID, source_lang: str = "") -> bool:
+        """자막을 한글로 번역한다(배경). 이미 이 영상을 돌고 있으면 False."""
+        if self._translate is None or video_id in self._translate_workers:
+            return False
+        from application.library.subtitle_commands import (  # noqa: PLC0415
+            TranslateSubtitlesCommand,
+        )
+
+        cmd = TranslateSubtitlesCommand(video_id=video_id, source_lang=source_lang)
+        worker = _TranslateWorker(self._translate, cmd)
+        worker.progress.connect(self._on_translate_progress)
+        worker.done.connect(self._on_translate_done)
+        self._translate_workers[video_id] = worker
+        self.translate_started.emit(video_id)
+        self._start_worker(worker)
+        return True
+
+    def stop_translate(self, video_id: UUID) -> None:
+        worker = self._translate_workers.get(video_id)
+        if worker is not None:
+            worker.stop()
+
+    def _on_translate_progress(self, ratio: float) -> None:
+        # 전사와 같은 이유로 지금 돌고 있는 것 하나를 골라 싣는다.
+        for video_id in list(self._translate_workers):
+            self.translate_progress.emit(video_id, ratio)
+            break
+
+    def _on_translate_done(self, video_id: object, count: int) -> None:
+        self._translate_workers.pop(video_id, None)
+        self.translate_finished.emit(video_id, count)
 
     # ── 전사 모델 관리(설정 화면) ─────────────────────────────────
     #

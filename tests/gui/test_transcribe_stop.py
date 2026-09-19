@@ -31,8 +31,17 @@ class _SubtitleVM(QObject):
     transcribe_model_downloading = pyqtSignal(str)
     transcribe_progress = pyqtSignal(object, float)
     transcribe_finished = pyqtSignal(object, int)
+    # 자막 번역 — 상세화면이 이 셋을 잇는다(계약이 늘면 가짜도 늘려야 한다).
+    translate_started = pyqtSignal(object)
+    translate_progress = pyqtSignal(object, float)
+    translate_finished = pyqtSignal(object, int)
 
     can_transcribe = True
+
+    can_translate = False
+
+    def translatable_sources(self, video_id):
+        return []
 
     def __init__(self):
         super().__init__()

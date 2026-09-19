@@ -114,6 +114,7 @@ online_video_clipper/
 │   │   (도메인) bookmarks.py         # 브라우저 북마크 HTML 파싱 + '영상일 법한 호스트' 판정
 │   │   (도메인) filters.py           # 복합 필터 프리셋 ↔ 값 변환(날짜·길이·다운로드·시청)
 │   │   (도메인) saved_search.py      # 저장된 검색 값 객체 + JSON 직렬화(프리셋 키로 담는다)
+│   │   (도메인) subtitle_translate.py # 자막 번역 묶기·정렬 검증(어긋나면 줄 단위로 되돌린다)
 │   ├── download/
 │   │   ├── commands.py              # StartDownload, CancelDownload, RetryDownload
 │   │   ├── queries.py               # GetDownloadQueue, GetDownloadHistory

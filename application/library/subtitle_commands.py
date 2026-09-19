@@ -272,3 +272,147 @@ class TranscribeVideoHandler:
         )
         logger.info("음성 인식 색인: %s (%d줄, %s)", cmd.media_path, len(lines), model.key)
         return len(lines)
+
+
+@dataclass
+class TranslateSubtitlesCommand:
+    """색인된 자막을 번역해 **별도 언어 키**로 저장한다. 배경 QThread 전용.
+
+    `source_lang`을 비우면 색인된 것 중 번역본이 아닌 첫 언어를 쓴다.
+    """
+
+    video_id: UUID
+    source_lang: str = ""
+    target: str = "ko"
+
+
+class TranslateSubtitlesHandler:
+    """자막 번역 — 묶어 보내되, 정렬이 깨지면 그 묶음만 한 줄씩 다시 한다.
+
+    **원본을 덮지 않는다.** 번역은 원문을 대체하는 것이 아니다 — 원문으로 검색하고
+    싶을 수도 있고 번역이 엉망일 수도 있다(음성 인식이 `asr-auto`를 쓰는 것과 같다).
+    """
+
+    def __init__(self, repo: ISubtitleRepository, translator) -> None:
+        self._repo = repo
+        self._translator = translator
+
+    def source_candidates(self, video_id: UUID) -> list:
+        """번역할 수 있는 원본 자막 목록(번역본은 뺀다)."""
+        from domain.library.subtitle_translate import is_translated_lang  # noqa: PLC0415
+
+        try:
+            return [
+                info for info in self._repo.list_indexes(video_id)
+                if not is_translated_lang(info.lang)
+            ]
+        except Exception:
+            logger.exception("자막 색인 조회 실패: %s", video_id)
+            return []
+
+    def handle(
+        self,
+        cmd: TranslateSubtitlesCommand,
+        on_progress: "Callable[[float], None] | None" = None,
+        should_stop: "Callable[[], bool] | None" = None,
+    ) -> int:
+        """번역해 색인한 줄 수(못 했으면 0). 예외를 밖으로 내지 않는다."""
+        from domain.library.subtitle_translate import (  # noqa: PLC0415
+            chunks,
+            merge,
+            needs_translation,
+            translated_lang,
+        )
+
+        if self._translator is None:
+            return 0
+        source = cmd.source_lang or self._pick_source(cmd.video_id)
+        if not source:
+            logger.info("번역할 원본 자막이 없다: %s", cmd.video_id)
+            return 0
+
+        try:
+            lines = self._repo.list_lines(cmd.video_id, source)
+        except Exception:
+            logger.exception("자막 줄 조회 실패: %s", cmd.video_id)
+            return 0
+        if not lines:
+            return 0
+
+        texts = [line.text for line in lines]
+        detected = self._detect(texts)
+        if not needs_translation(texts, detected, cmd.target):
+            logger.info("번역이 필요 없다(이미 %s): %s", cmd.target, cmd.video_id)
+            return 0
+
+        out = list(texts)
+        parts = chunks(texts)
+        for done, (start, block) in enumerate(parts, 1):
+            if should_stop is not None and should_stop():
+                logger.info("자막 번역 중단: %s (%d/%d 묶음)", cmd.video_id, done, len(parts))
+                break
+            translated = self._translate_block(block, cmd.target)
+            out[start : start + len(block)] = merge(block, translated)
+            if on_progress is not None:
+                on_progress(done / len(parts))
+
+        if out == texts:
+            logger.info("번역 결과가 원문과 같다 — 저장하지 않는다: %s", cmd.video_id)
+            return 0
+
+        translated_lines = [
+            SubtitleLine(line.start_ms, line.end_ms, text)
+            for line, text in zip(lines, out)
+            if text and text.strip()
+        ]
+        if not translated_lines:
+            return 0
+        self._repo.replace_lines(
+            cmd.video_id,
+            translated_lang(cmd.target),
+            f"번역 ({source} → {cmd.target})",
+            translated_lines,
+        )
+        logger.info(
+            "자막 번역 색인: %s (%d줄, %s → %s)",
+            cmd.video_id, len(translated_lines), source, cmd.target,
+        )
+        return len(translated_lines)
+
+    # ── 내부 ──────────────────────────────────────────────────────
+
+    def _pick_source(self, video_id: UUID) -> str:
+        candidates = self.source_candidates(video_id)
+        return candidates[0].lang if candidates else ""
+
+    def _detect(self, texts: list[str]) -> str:
+        """앞쪽 줄을 모아 언어를 본다 — 한 줄만으로는 흔들린다."""
+        sample = " ".join(t for t in texts[:20] if t)[:500]
+        try:
+            return self._translator.detect_language(sample) or ""
+        except Exception:
+            logger.exception("자막 언어 판별 실패 (무시)")
+            return ""
+
+    def _translate_block(self, block: list[str], target: str) -> list[str]:
+        """묶음 하나를 번역한다.
+
+        한 번에 보내 보고 **줄 수가 맞지 않으면 그 묶음만 한 줄씩** 다시 한다.
+        억지로 맞추면 엉뚱한 시점에 엉뚱한 말이 뜨는데, 그건 틀렸다는 티조차 나지 않는다.
+        """
+        from domain.library.subtitle_translate import join_chunk, split_chunk  # noqa: PLC0415
+
+        try:
+            joined = self._translator.translate([join_chunk(block)], target=target)
+            merged = split_chunk(block, joined[0] if joined else "")
+            if merged is not None:
+                return merged
+        except Exception:
+            logger.exception("자막 묶음 번역 실패 — 줄 단위로 다시 시도")
+
+        logger.debug("묶음 정렬이 맞지 않아 줄 단위로 되돌린다(%d줄)", len(block))
+        try:
+            return self._translator.translate(list(block), target=target)
+        except Exception:
+            logger.exception("자막 줄 단위 번역도 실패 — 원문 유지")
+            return list(block)

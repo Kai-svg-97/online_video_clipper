@@ -155,6 +155,7 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             bulk_handler=handlers.library.bulk_index_subtitles,
             coverage_handler=handlers.library.subtitle_coverage,
             transcribe_handler=handlers.library.transcribe_video,
+            translate_handler=handlers.library.translate_subtitles,
             transcriber=services.transcriber,
         ),
     )

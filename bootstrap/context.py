@@ -139,6 +139,7 @@ class LibraryHandlers:
     get_subtitle_indexes: Any
     bulk_index_subtitles: Any
     transcribe_video: Any
+    translate_subtitles: Any
     subtitle_coverage: Any
     # 라이브러리 정리 — (중복찾기, 끊긴파일찾기, 일괄삭제, 원본소실찾기) 콜백 4종.
     # 찾아 주기만 하고 삭제는 사용자가 고른 것만 수행한다(자동 삭제 없음).

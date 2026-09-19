@@ -276,6 +276,11 @@ class PlayerControlMixin:
         self._subtitle_tab.set_transcribe_available(
             self._subtitle_vm.can_transcribe and bool(self._clip_source_file)
         )
+        # 번역은 **원문 자막이 있을 때만** 쓸모가 있다(번역본은 후보가 아니다).
+        self._subtitle_tab.set_translate_available(
+            self._subtitle_vm.can_translate
+            and bool(self._subtitle_vm.translatable_sources(self._detail.id))
+        )
         if self._subtitle_vm.has_index(self._detail.id):
             self._subtitle_vm.load_lines(self._detail.id)
         else:
@@ -326,6 +331,36 @@ class PlayerControlMixin:
         if self._subtitle_vm is None or self._detail is None or self._streaming:
             return
         self._subtitle_vm.index_cues(self._detail.id, lang, label, cues)
+
+    # ── 자막 번역 ──────────────────────────────────────────────────
+
+    def _on_translate_requested(self) -> None:
+        """이 자막을 한글로 옮긴다 — **원문은 그대로 남는다**."""
+        if self._subtitle_vm is None or self._detail is None:
+            return
+        if not self._subtitle_vm.translate_subtitles(self._detail.id):
+            self._subtitle_tab.show_transcribing("이미 번역 중입니다…")
+            return
+        self._subtitle_tab.show_transcribing("자막을 한글로 옮기는 중…")
+
+    def _on_translate_progress(self, video_id, ratio: float) -> None:
+        if self._detail is None or video_id != self._detail.id:
+            return
+        self._subtitle_tab.show_transcribing(
+            f"자막을 한글로 옮기는 중… {int(ratio * 100)}%"
+        )
+
+    def _on_translate_finished(self, video_id, count: int) -> None:
+        if self._detail is None or video_id != self._detail.id:
+            return
+        if count:
+            self._subtitle_vm.load_lines(self._detail.id)
+            show_toast(self, f"자막 {count}줄을 한글로 옮겼습니다")
+            return
+        # 0줄인 이유가 여럿이라 뭉뚱그리지 않는다.
+        self._subtitle_tab.show_transcribing(
+            "번역할 것이 없습니다.\n이미 한국어 자막이거나, 번역이 되지 않았습니다."
+        )
 
     # ── 음성 인식으로 자막 만들기 ──────────────────────────────────
 

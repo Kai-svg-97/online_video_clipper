@@ -44,6 +44,7 @@ class SubtitleTab(QWidget):
     index_requested = pyqtSignal()
     transcribe_requested = pyqtSignal()
     transcribe_stop_requested = pyqtSignal()
+    translate_requested = pyqtSignal()
     search_changed = pyqtSignal(str)
 
     _PAGE_EMPTY = 0
@@ -70,6 +71,15 @@ class SubtitleTab(QWidget):
         self._refresh_btn.clicked.connect(self.index_requested.emit)
         top.addWidget(self._search, 1)
         top.addWidget(self._count_lbl)
+        # 번역은 **색인이 있을 때만** 쓸모가 있다 — 원문이 있어야 옮긴다.
+        self._translate_btn = QPushButton("한글로 번역")
+        self._translate_btn.setFixedWidth(84)
+        self._translate_btn.setToolTip(
+            "이 자막을 한글로 옮겨 따로 저장합니다. 원문은 그대로 남습니다."
+        )
+        self._translate_btn.clicked.connect(self.translate_requested.emit)
+        self._translate_btn.setVisible(False)
+        top.addWidget(self._translate_btn)
         top.addWidget(self._refresh_btn)
         layout.addLayout(top)
 
@@ -122,6 +132,8 @@ class SubtitleTab(QWidget):
         layout.addWidget(self._stack, 1)
         # 받아 둔 파일이 있어야 음성 인식이 가능하다 — 상세화면이 알려 준다.
         self._can_transcribe = False
+        # 번역할 원본이 있는가 — 상세화면이 알려 준다.
+        self._can_translate = False
         self.set_lines([], indexed=False)
 
     # ── 표시 ──────────────────────────────────────────────────────
@@ -132,6 +144,7 @@ class SubtitleTab(QWidget):
         if not indexed:
             self._empty_lbl.setText("이 영상의 자막을 아직 가져오지 않았습니다.")
             self._index_btn.setVisible(True)
+            self._translate_btn.setVisible(False)
             self._asr_btn.setVisible(self._can_transcribe)
             self._stop_btn.setVisible(False)
             self._stack.setCurrentIndex(self._PAGE_EMPTY)
@@ -140,6 +153,7 @@ class SubtitleTab(QWidget):
             return
 
         self._refresh_btn.setVisible(True)
+        self._translate_btn.setVisible(self._can_translate)
         rows = list(lines or [])[:_MAX_ROWS]
         if not rows:
             # 색인은 있는데 결과가 없다 = 검색어가 안 맞은 것이다. 가져오기 버튼을
@@ -178,6 +192,13 @@ class SubtitleTab(QWidget):
         self._can_transcribe = bool(available)
         self._asr_btn.setVisible(
             self._can_transcribe and self._stack.currentIndex() == self._PAGE_EMPTY
+        )
+
+    def set_translate_available(self, available: bool) -> None:
+        """번역할 원본 자막이 있는가 — 없으면 버튼을 보여 줄 이유가 없다."""
+        self._can_translate = bool(available)
+        self._translate_btn.setVisible(
+            self._can_translate and self._stack.currentIndex() == self._PAGE_LIST
         )
 
     def show_transcribing(self, text: str, *, stoppable: bool = False) -> None:
@@ -226,6 +247,7 @@ class SubtitleTab(QWidget):
         self._index_btn.setVisible(False)
         self._asr_btn.setVisible(False)
         self._stop_btn.setVisible(False)
+        self._translate_btn.setVisible(False)
         self._refresh_btn.setVisible(False)
         self._count_lbl.setText("")
         self._stack.setCurrentIndex(self._PAGE_EMPTY)

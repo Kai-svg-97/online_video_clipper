@@ -35,6 +35,7 @@ from application.library.commands import (
 from application.library.subtitle_commands import (
     BulkIndexSubtitlesHandler,
     TranscribeVideoHandler,
+    TranslateSubtitlesHandler,
     FetchAndIndexSubtitlesHandler,
     IndexSubtitleCuesHandler,
 )
@@ -168,4 +169,6 @@ def build(
         get_subtitle_indexes=GetSubtitleIndexesHandler(repos.subtitle),
         subtitle_coverage=GetSubtitleCoverageHandler(video, repos.subtitle),
         transcribe_video=TranscribeVideoHandler(repos.subtitle, services.transcriber),
+        # 번역기는 가사와 **공유**한다 — 같은 외부 서비스를 두 번 잡을 이유가 없다.
+        translate_subtitles=TranslateSubtitlesHandler(repos.subtitle, services.translator),
     )
