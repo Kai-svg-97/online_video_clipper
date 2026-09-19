@@ -141,3 +141,139 @@ class TestSettingsHeaderStates:
         panel.set_update_available(_dto("1.11.0"))
         panel.set_update_busy(False)
         assert "1.11.0" in panel._upd_status_lbl.text()
+
+
+class TestClickToDownload:
+    """발견 즉시 받던 것을 **누를 때** 받도록 바꿨다.
+
+    그래야 진행률 연출이 항상 보이고, 업데이트를 원치 않는 사용자의 회선·디스크를
+    쓰지 않는다. 대신 "발견했는데 아무 일도 안 일어난다"로 보이면 안 되므로 배지와
+    설정 헤더가 즉시 켜져야 한다.
+    """
+
+    def test_발견해도_받지_않는다(self, controller, monkeypatch):
+        started: list = []
+        monkeypatch.setattr(
+            controller, "_start_download", lambda dto: started.append(dto)
+        )
+        controller._on_found(_dto(), interactive=False)
+        assert not started, "누르기 전에 179MB를 받으면 안 된다"
+
+    def test_발견하면_알린다(self, controller):
+        seen: list = []
+        controller.update_notification.connect(seen.append)
+        controller._on_found(_dto("2.0.0"), interactive=False)
+        assert [d.version for d in seen] == ["2.0.0"]
+
+    def test_발견은_인터벌을_소진하지_않는다(self, controller, saved):
+        """소진하면 앱을 껐다 켰을 때 확인을 건너뛰어 배지가 사라진다 —
+        그러면 사용자는 업데이트할 방법을 잃는다."""
+        controller._on_found(_dto(), interactive=False)
+        assert "last_update_check" not in saved
+
+    def test_확인_종료를_알린다(self, controller):
+        """안 그러면 설정 화면에 '확인 중…'이 남는다."""
+        finished: list = []
+        controller.check_finished.connect(lambda: finished.append(True))
+        controller._on_found(_dto(), interactive=False)
+        assert finished
+
+    def test_눌러야_받기_시작한다(self, controller, monkeypatch):
+        started: list = []
+        monkeypatch.setattr(
+            controller, "_start_download", lambda dto: started.append(dto)
+        )
+        controller._on_found(_dto("2.0.0"), interactive=False)
+        controller.start_download()
+        assert [d.version for d in started] == ["2.0.0"]
+
+    def test_찾은_것이_없으면_눌러도_조용하다(self, controller, monkeypatch):
+        started: list = []
+        monkeypatch.setattr(
+            controller, "_start_download", lambda dto: started.append(dto)
+        )
+        controller.start_download()
+        assert not started
+
+
+class TestProgressRelay:
+    def test_진행률을_밖으로_넘긴다(self, controller):
+        """예전에는 워커가 진행률을 내는데 아무도 듣지 않았다."""
+        seen: list = []
+        controller.download_progress.connect(lambda d, t: seen.append((d, t)))
+        controller._on_download_progress(50, 100)
+        assert seen == [(50, 100)]
+
+    def test_실패_사유를_밖으로_넘긴다(self, controller):
+        """이유를 모르면 사용자가 다시 시도할 근거가 없다."""
+        seen: list = []
+        controller.download_failed.connect(seen.append)
+        controller._on_download_failed("Read timed out.", _dto())
+        assert seen == ["Read timed out."]
+
+
+class TestCheckGuard:
+    def test_설치에_들어갔으면_확인하지_않는다(self, controller, monkeypatch):
+        ran: list = []
+        monkeypatch.setattr(controller, "_run_check", controller._run_check)
+        controller._installing = True
+        controller.check_started.connect(lambda: ran.append(True))
+        controller._run_check(interactive=False)
+        assert not ran
+
+    def test_받는_중에는_확인하지_않는다(self, controller):
+        """예전에는 확인 워커만 봐서, 받는 도중 1시간 타이머가 돌면 배지 상태가
+        진행률에서 '발견'으로 되돌아갔다."""
+        class _Busy:
+            @staticmethod
+            def isRunning():
+                return True
+
+        controller._dl_worker = _Busy()
+        ran: list = []
+        controller.check_started.connect(lambda: ran.append(True))
+        controller._run_check(interactive=False)
+        assert not ran
+
+
+class TestInstallAnnouncement:
+    def test_설치_착수를_먼저_알린다(self, controller, monkeypatch, tmp_path):
+        """말없이 창이 닫히면 사용자는 앱이 죽은 줄 안다."""
+        marker = tmp_path / "pending.txt"
+        marker.write_text("x", encoding="utf-8")
+        monkeypatch.setattr(ucmod, "pending_marker_path", lambda: marker)
+
+        order: list = []
+        controller.install_started.connect(lambda: order.append("announced"))
+        # `QApplication.instance` 자체를 갈아끼우면 pytest-qt 의 정리까지 망가진다
+        # (그쪽도 같은 것을 부른다). 컨트롤러 모듈이 들고 있는 이름만 바꾼다.
+        monkeypatch.setattr(ucmod, "QApplication", _FakeApp(order))
+
+        controller.install_now()
+        assert order == ["announced", "quit"], "안내보다 종료가 먼저면 아무도 못 본다"
+
+    def test_아직_안_받았으면_받기부터_한다(self, controller, monkeypatch, tmp_path):
+        """마커가 없는데 종료해 버리면 아무 일도 일어나지 않는다."""
+        monkeypatch.setattr(
+            ucmod, "pending_marker_path", lambda: tmp_path / "없음.txt"
+        )
+        started: list = []
+        monkeypatch.setattr(
+            controller, "_start_download", lambda dto: started.append(dto)
+        )
+        controller._last_dto = _dto("2.0.0")
+        controller.install_now()
+        assert [d.version for d in started] == ["2.0.0"]
+
+
+class _FakeApp:
+    """`ucmod.QApplication` 자리에 끼우는 가짜 — quit 순서만 기록한다."""
+
+    def __init__(self, log: list) -> None:
+        self._log = log
+
+    def instance(self):
+        return self
+
+    def quit(self) -> None:
+        self._log.append("quit")

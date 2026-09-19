@@ -318,6 +318,26 @@ def test_unselected_chip_has_visible_border(preset: str) -> None:
     )
 
 
+@pytest.mark.parametrize("preset", sorted(PRESETS))
+def test_badge_label_on_progress_fill(preset: str) -> None:
+    """업데이트 배지는 진행률만큼 `progress_fg`로 덮인다 — 그 위의 글자.
+
+    채움 경계가 글자 한가운데를 지나가므로 글자를 두 번 그린다 — 채워진 쪽은
+    `text_on_accent`, 나머지는 `text_primary`다. 여기서는 채워진 쪽만 본다
+    (나머지 쪽 `text_primary` on `bg_elevated`는 위 _TEXT_ON_BG가 이미 지킨다).
+
+    `progress_fg`는 `accent`와 별개 토큰이라 한쪽만 바꾸면 조용히 어긋난다.
+    한때 채움 위에 `text_primary`를 썼는데 11개 테마 전부 AA 미달이었다
+    (zinc 2.56:1) — 그래서 이 검사가 있다.
+    """
+    tokens = PRESETS[preset]
+    ratio = contrast(tokens.text_on_accent, tokens.progress_fg)
+    assert ratio >= _AA_NORMAL, (
+        f"{preset}: 배지 글자 text_on_accent({tokens.text_on_accent}) on "
+        f"progress_fg({tokens.progress_fg}) 대비 {ratio:.2f} < {_AA_NORMAL}"
+    )
+
+
 class TestCloseHoverReadable:
     """닫기 버튼 호버는 테마 토큰을 쓰지 않는다 — 그 예외를 대비로 고정한다.
 

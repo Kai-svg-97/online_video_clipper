@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config.settings import PIXMAP_CACHE_LIMIT_KB, THEME
+from domain.updater.badge_state import ClickAction
 # YouTubeAuthDialog는 단독 다이얼로그 대신 Settings 패널로 통합됨
 from gui.panels.download_panel import DownloadPanel
 from gui.panels.library_panel import LibraryPanel
@@ -29,6 +30,7 @@ from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isins
 from gui.panels.stats_panel import StatsPanel
 from gui.widgets.mini_player_bar import MiniPlayerBar
 from gui.widgets.title_bar import TitleBar
+from gui.widgets.update_badge import UpdateBadge
 from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.toast import KIND_ERROR, KIND_SUCCESS, show_toast
@@ -44,6 +46,7 @@ from gui.view_models.library_vm import LibraryViewModel
 from gui.view_models.monitoring_vm import MonitoringViewModel
 from gui.view_models.playlist_vm import PlaylistViewModel
 from infrastructure.auth.youtube_auth import YouTubeAuthService
+from version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -745,6 +748,17 @@ class MainWindow(QMainWindow):
     def set_update_controller(self, controller) -> None:
         """composition root에서 창 생성 후 주입. 시작 시 업데이트 체크를 예약한다."""
         self._update_controller = controller
+
+        # 타이틀바 배지 — 같은 상태의 또 다른 표면이다. 사이드바 기어의 빨간 점과
+        # 설정 헤더는 그대로 둔다(설정에는 자동 확인 토글·수동 확인 버튼이 있어야
+        # 하고, 배지는 업데이트가 있을 때만 존재한다).
+        self._update_badge = UpdateBadge(__version__, self._title_bar)
+        self._title_bar.set_leading_widget(self._update_badge)
+        self._update_badge.clicked.connect(self._on_update_badge_clicked)
+        controller.download_progress.connect(self._update_badge.show_progress)
+        controller.download_failed.connect(self._update_badge.show_failed)
+        controller.install_started.connect(self._update_badge.show_installing)
+
         QTimer.singleShot(2000, controller.check_silently)
         if hasattr(self._settings_panel, "check_update_requested"):
             self._settings_panel.check_update_requested.connect(
@@ -767,19 +781,34 @@ class MainWindow(QMainWindow):
         )
 
     def _on_update_ready(self, dto) -> None:
-        """자동 다운로드 완료 — 기어에 빨간 점+툴팁, 설정 헤더에 '지금 설치' 노출."""
+        """다운로드 완료 — 배지는 '설치', 기어에 빨간 점, 설정 헤더에 '지금 설치'."""
+        self._update_badge.show_ready(dto.version)
         self._sidebar.show_update_badge(True)
-        self._sidebar.set_settings_tooltip("업데이트 준비 완료 — 앱을 닫으면 자동 설치됩니다")
+        self._sidebar.set_settings_tooltip(
+            f"업데이트 준비 완료: v{dto.version} — 눌러서 설치"
+        )
         self._settings_panel.set_update_ready(dto)
 
     def _on_update_notification(self, dto) -> None:
-        """자동 설치 준비 실패 — 배지+툴팁에 더해 설정 헤더에 설치 버튼을 노출한다.
+        """새 버전을 찾았지만 아직 받지 않은 상태 — 배지·기어·설정 헤더를 모두 켠다.
 
         예전에는 배지만 켜져, 설정 화면을 열어도 업데이트를 진행할 방법이 없었다.
         """
+        self._update_badge.show_found(dto.version, getattr(dto, "size_bytes", 0))
         self._sidebar.show_update_badge(True)
-        self._sidebar.set_settings_tooltip(f"업데이트 발견: v{dto.version} — 설정에서 설치")
+        self._sidebar.set_settings_tooltip(f"업데이트 발견: v{dto.version} — 눌러서 설치")
         self._settings_panel.set_update_available(dto)
+
+    def _on_update_badge_clicked(self) -> None:
+        """배지 클릭 — 지금 상태가 무엇을 뜻하는지는 도메인이 정한다."""
+        controller = self._update_controller
+        if controller is None:
+            return
+        action = self._update_badge.action
+        if action is ClickAction.DOWNLOAD:
+            controller.start_download()
+        elif action is ClickAction.INSTALL:
+            controller.install_now()
 
     def _on_download_video_open(self, url: str) -> None:
         """다운로드 카드 클릭 → 라이브러리 영상 상세화면 오픈."""
