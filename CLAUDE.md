@@ -181,6 +181,22 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
   다운로드 카드가 하나라도 보이면 앱이 죽던 적이 있다(도메인 값 객체에만 있었다).
   회귀 테스트는 **실제로 그려 보는 것**이어야 한다(`tests/gui/test_download_card_paint.py`) —
   값 검사만으로는 이 경로를 밟지 않는다.
+- **`nativeEvent`에서 `super().nativeEvent(...)`를 부르지 않는다.** PyQt 6.11에서 그
+  호출은 **액세스 위반으로 프로세스를 죽인다**(0xC000041D — 창이 만들어지는 바로 그
+  순간, 화면에 아무것도 뜨지 않고 로그도 없다). `return False, 0`이 의미가 같다 —
+  Qt 기본 구현도 "처리하지 않았다"만 반환한다. `tests/gui/test_frameless_guard.py`가
+  `gui/` 전역을 AST로 훑어 되돌아가는 것을 막는다.
+- **네이티브 메시지 핸들러는 예외를 밖으로 내지 않는다.** `nativeEvent`는 메시지 루프
+  안이라 델리게이트 `paint()`와 같은 부류의 조용한 사망 경로다. 전부 감싸고, 한 번이라도
+  터지면 훅을 꺼서 네이티브 동작으로 떨어진다(`gui/frameless/__init__.py:safe_dispatch`).
+  위험한 산술은 순수 함수(`gui/frameless/geometry.py`)로 빼 검증 가능하게 둔다.
+- **캡션(타이틀바) 영역의 비대화형 자식에는 `WA_TransparentForMouseEvents`를 켠다.**
+  안 켜면 `childAt()` 히트테스트가 그 위젯을 돌려주어 `HTCLIENT`이 되고, **그 자리에서
+  창을 끌 수 없다**(제목 글자 위에서 드래그가 안 되는 형태로 나타난다).
+- **`setWindowFlags`는 창 생성 시 한 번만 호출한다.** HWND가 재생성되므로 나중에
+  건드리면 `gui/frameless/`가 걸어 둔 창 스타일 패치가 조용히 날아가고 Aero Snap만 죽는다.
+- **`showNormal()`은 최소화뿐 아니라 최대화까지 해제한다.** 트레이·중복 실행에서 창을
+  되부를 때는 `gui/window_state.py:restore_from_tray()`를 쓴다(최소화 비트만 지운다).
 - 백그라운드 워커를 만드는 뷰모델은 `shutdown()`을 제공하고 `MainWindow.closeEvent`에서 호출해 종료 시 워커를 정리한다. yt-dlp 다운로드처럼 협조적 취소 훅이 없으면 `terminate()` 후 `wait()`로 종료를 보장한다.
 - **`track_thread` 없이 리스트 하나로만 QThread를 붙드는 것은 이 규칙을 지킨 게 아니다.** `MainWindow.closeEvent`의 `wait_all(3000)`은 `gui/workers.py`의 `_RUNNING` 레지스트리만 안다 — 자체 리스트(GC 방지용)에만 담아 둔 워커는 종료 시 기다려지지 않는다. `gui/panels/library/mixins/video_list.py:_start_thumb_preload`의 `_ThumbBgLoader`가 `_active_thumb_loaders`(취소용 리스트)에만 담겨 있어 이 구멍이 있었다(2026-08 메모리 최적화 점검에서 발견) — `track_thread(loader)`를 추가로 호출해 고쳤다. 자체 리스트로 다른 목적(취소·중복 방지)을 관리하더라도, **실행 중 QThread라면 반드시 `track_thread`도 함께 호출**한다. 회귀 테스트: `tests/gui/test_memory_cleanup.py::TestWorkerReferenceRelease`.
 

@@ -117,9 +117,9 @@ def _make_activator(window):
     """
 
     def activate() -> None:
-        window.showNormal()
-        window.raise_()
-        window.activateWindow()
+        from gui.window_state import restore_from_tray  # noqa: PLC0415
+
+        restore_from_tray(window)
 
     return activate
 

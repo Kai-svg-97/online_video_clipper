@@ -29,6 +29,8 @@ from gui.panels.monitoring_panel import MonitoringPanel
 from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
 from gui.panels.stats_panel import StatsPanel
 from gui.widgets.mini_player_bar import MiniPlayerBar
+from gui.frameless import install_frameless, safe_dispatch
+from gui.window_state import restore_from_tray
 from gui.widgets.title_bar import TitleBar
 from gui.widgets.update_badge import UpdateBadge
 from gui.themes.colors import sem
@@ -490,6 +492,12 @@ class MainWindow(QMainWindow):
         # 통계 채널 섹션 → 카테고리 드릴다운 시 복귀할 페이지(라이브러리 뒤로가기 소진 후)
         self._return_to_page: int | None = None
 
+        # 프레임리스 플래그는 **여기서 한 번만** 세운다. `setWindowFlags`는 HWND를
+        # 재생성하므로, 나중에 다시 건드리면 `gui/frameless/`가 걸어 둔 창 스타일
+        # 패치가 조용히 날아가고 스냅만 죽는다.
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        self._frameless = None   # nativeEvent 가 _setup_ui 보다 먼저 불릴 수 있다
+
         self.setWindowTitle("YouTube Content Manager")
         self.setMinimumSize(1024, 680)
 
@@ -497,6 +505,13 @@ class MainWindow(QMainWindow):
         ThemeManager.instance().initialize(THEME)
 
         self._setup_ui()
+        # 타이틀바가 만들어진 뒤에 건다 — 히트테스트가 그 위젯에 묻는다.
+        self._frameless = install_frameless(self, self._title_bar)
+        if self._frameless is None:
+            # 걸지 못했다(비윈도우·offscreen·탈출구 등) — OS 타이틀바로 되돌리고
+            # 우리 띠는 숨긴다. 둘 다 보이면 제목이 두 줄이 된다.
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, False)
+            self._title_bar.hide()
         self._setup_signals()
         self._setup_clipboard_monitoring()
         # 첫 목록 조회가 끝난 뒤에 시작한다 — 시작 직후는 디스크가 가장 바쁘다.
@@ -1012,9 +1027,7 @@ class MainWindow(QMainWindow):
         self._tray.notify(f"구독 채널에 새 영상 {count}개", body, ok=True)
 
     def _on_tray_show(self) -> None:
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
+        restore_from_tray(self)
 
     # ── DB 백업 ──────────────────────────────────────────────────
 
@@ -1034,6 +1047,25 @@ class MainWindow(QMainWindow):
         self._backup_worker = None
         if made:
             logger.info("DB 백업 완료: %s", made)
+
+    def nativeEvent(self, event_type, message):  # type: ignore[override]
+        """프레임리스 훅에 네이티브 메시지를 넘긴다.
+
+        **여기서 예외가 새면 안 된다.** 메시지 루프 안이라 `paintEvent`와 같은
+        부류로 진단 불가능하게 죽는다. 한 번이라도 터지면 훅을 꺼서 네이티브
+        동작으로 떨어진다 — 창이 조금 이상해지는 편이 앱이 사라지는 것보다 낫다.
+        """
+        handled, result, keep = safe_dispatch(
+            getattr(self, "_frameless", None), event_type, message
+        )
+        self._frameless = keep
+        if handled:
+            return True, result
+        # **`super().nativeEvent(...)`를 부르지 않는다.** PyQt 6.11 에서 그 호출은
+        # 액세스 위반으로 프로세스를 죽인다(0xC000041D, 창이 만들어지는 순간 바로).
+        # `False`를 돌려주는 것과 의미가 같다 — Qt 기본 구현도 "처리하지 않았다"만
+        # 반환하고, 그러면 Qt 가 평소의 기본 창 절차로 넘긴다.
+        return False, 0
 
     def changeEvent(self, event) -> None:  # type: ignore[override]
         """최대화 글리프를 창 상태에 맞춘다.
