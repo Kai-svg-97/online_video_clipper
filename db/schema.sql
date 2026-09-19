@@ -366,3 +366,20 @@ CREATE TABLE IF NOT EXISTS subtitle_index (
     indexed_at TEXT   NOT NULL,
     PRIMARY KEY (video_id, lang)
 );
+
+-- =========================================================
+-- 저장된 검색 (북마크된 필터)
+-- =========================================================
+-- 조건은 JSON 한 덩어리로 담는다. **날짜·길이는 값이 아니라 프리셋 키**라
+-- ("7d", "long") 되부를 때마다 오늘 기준으로 다시 푼다 — 값으로 굳히면
+-- "최근 1주"가 저장한 그 주로 얼어붙는다(domain/library/saved_search.py).
+CREATE TABLE IF NOT EXISTS saved_searches (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    query_json  TEXT NOT NULL DEFAULT '{}',
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_searches_order
+    ON saved_searches(sort_order, created_at);
