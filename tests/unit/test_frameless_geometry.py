@@ -10,6 +10,11 @@ from __future__ import annotations
 import pytest
 
 from gui.frameless.geometry import (
+    ACT_CLICK,
+    ACT_HOVER_OFF,
+    ACT_HOVER_ON,
+    ACT_NONE,
+    ACT_SWALLOW,
     AUTOHIDE_INSET,
     EDGE_BOTTOM,
     EDGE_LEFT,
@@ -17,6 +22,8 @@ from gui.frameless.geometry import (
     EDGE_TOP,
     HTBOTTOM,
     HTBOTTOMLEFT,
+    HTCAPTION,
+    HTMAXBUTTON,
     HTBOTTOMRIGHT,
     HTLEFT,
     HTNOWHERE,
@@ -26,7 +33,12 @@ from gui.frameless.geometry import (
     HTTOPRIGHT,
     autohide_inset,
     deflate_maximized,
+    WM_NCLBUTTONDOWN,
+    WM_NCLBUTTONUP,
+    WM_NCMOUSELEAVE,
+    WM_NCMOUSEMOVE,
     edge_hit,
+    max_button_action,
     signed16,
 )
 
@@ -142,3 +154,37 @@ class TestSigned16:
     def test_상위_비트를_무시한다(self):
         """LPARAM 에서 꺼낼 때 상위 워드가 섞여 들어올 수 있다."""
         assert signed16(0x1234_0064) == 100
+
+
+class TestMaxButtonAction:
+    """최대화 버튼 위에서 `HTMAXBUTTON`을 돌려주면 Win11 이 분할 배치 메뉴를 띄운다.
+
+    대가로 **그 영역의 마우스를 OS 가 가져간다** — Qt 는 클릭도 호버도 받지 못하므로
+    비클라이언트 메시지를 직접 번역해 버튼을 살려 줘야 한다. 이 번역이 틀리면
+    스냅 메뉴는 뜨는데 **최대화 버튼이 먹통이 된다**.
+    """
+
+    def test_버튼_위로_오면_호버를_켠다(self):
+        assert max_button_action(WM_NCMOUSEMOVE, HTMAXBUTTON) == ACT_HOVER_ON
+
+    def test_버튼을_벗어나면_호버를_끈다(self):
+        """캡션으로 옮겨 갔는데 호버가 남으면 버튼이 계속 밝게 떠 있다."""
+        assert max_button_action(WM_NCMOUSEMOVE, HTCAPTION) == ACT_HOVER_OFF
+
+    def test_비클라이언트를_떠나면_호버를_끈다(self):
+        assert max_button_action(WM_NCMOUSELEAVE, 0) == ACT_HOVER_OFF
+
+    def test_누름은_삼킨다(self):
+        """기본 처리에 맡기면 OS 가 자기 방식으로 버튼을 그리려 한다."""
+        assert max_button_action(WM_NCLBUTTONDOWN, HTMAXBUTTON) == ACT_SWALLOW
+
+    def test_뗄_때_토글한다(self):
+        assert max_button_action(WM_NCLBUTTONUP, HTMAXBUTTON) == ACT_CLICK
+
+    def test_버튼_밖에서_누르고_떼는_것은_건드리지_않는다(self):
+        """캡션 클릭은 OS 의 것이다 — 삼키면 창 이동이 죽는다."""
+        assert max_button_action(WM_NCLBUTTONDOWN, HTCAPTION) == ACT_NONE
+        assert max_button_action(WM_NCLBUTTONUP, HTCAPTION) == ACT_NONE
+
+    def test_모르는_메시지는_넘긴다(self):
+        assert max_button_action(0x0999, HTMAXBUTTON) == ACT_NONE

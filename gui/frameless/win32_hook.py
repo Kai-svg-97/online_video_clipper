@@ -39,12 +39,23 @@ from ctypes import (
 from ctypes.wintypes import DWORD, HWND, LONG, LPARAM, POINT, RECT, UINT, WPARAM
 
 from gui.frameless.geometry import (
+    ACT_CLICK,
+    ACT_HOVER_OFF,
+    ACT_HOVER_ON,
+    ACT_NONE,
+    ACT_SWALLOW,
     HTCAPTION,
     HTCLIENT,
+    HTMAXBUTTON,
     HTNOWHERE,
+    WM_NCLBUTTONDOWN,
+    WM_NCLBUTTONUP,
+    WM_NCMOUSELEAVE,
+    WM_NCMOUSEMOVE,
     autohide_inset,
     deflate_maximized,
     edge_hit,
+    max_button_action,
     signed16,
 )
 
@@ -125,6 +136,15 @@ class APPBARDATA(Structure):
     ]
 
 
+class TRACKMOUSEEVENT(Structure):
+    _fields_ = [
+        ("cbSize", DWORD),
+        ("dwFlags", DWORD),
+        ("hwndTrack", HWND),
+        ("dwHoverTime", DWORD),
+    ]
+
+
 class MSG(Structure):
     _fields_ = [
         ("hWnd", HWND),
@@ -137,6 +157,14 @@ class MSG(Structure):
 
 
 _NATIVE_EVENT_TYPES = (b"windows_generic_MSG", b"windows_dispatcher_MSG")
+
+TME_LEAVE = 0x0000_0002
+TME_NONCLIENT = 0x0000_0010
+
+# 우리가 가로채는 비클라이언트 마우스 메시지.
+_NC_MOUSE_MESSAGES = frozenset(
+    {WM_NCMOUSEMOVE, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE}
+)
 
 
 def _frame_thickness(hwnd: int, *, horizontal: bool) -> int:
@@ -263,6 +291,8 @@ class FramelessHook:
             return self._on_nccalcsize(msg)
         if msg.message == WM_NCHITTEST:
             return self._on_nchittest(msg)
+        if msg.message in _NC_MOUSE_MESSAGES:
+            return self._on_nc_mouse(msg)
         return False, 0
 
     def _on_nccalcsize(self, msg) -> tuple[bool, int]:
@@ -322,9 +352,52 @@ class FramelessHook:
         # 논리 좌표로 바꿔서 위젯에 묻는다 — 125%·150% 배율에서 물리 픽셀을 그대로
         # 넘기면 버튼 판정이 어긋난다.
         ratio = self._window.devicePixelRatioF() or 1.0
-        if self._title_bar.hit_test(_QPoint(int(px / ratio), int(py / ratio))) == HTCAPTION:
+        code = self._title_bar.hit_test(_QPoint(int(px / ratio), int(py / ratio)))
+        if code == HTMAXBUTTON:
+            # Windows 11 이 여기에 분할 배치(스냅 레이아웃) 메뉴를 붙인다. 대신
+            # 그 영역의 마우스를 OS 가 가져가므로 아래 `_on_nc_mouse`가 호버·클릭을
+            # 되돌려 준다 — 그것이 없으면 스냅 메뉴는 뜨는데 버튼이 먹통이 된다.
+            return True, HTMAXBUTTON
+        if code == HTCAPTION:
             return True, HTCAPTION
         return False, HTCLIENT
+
+    def _on_nc_mouse(self, msg) -> tuple[bool, int]:
+        """최대화 버튼 위의 비클라이언트 마우스 — 호버·클릭을 Qt 쪽으로 되돌린다."""
+        action = max_button_action(msg.message, int(msg.wParam))
+        if action == ACT_NONE:
+            return False, 0
+
+        if action == ACT_HOVER_ON:
+            self._title_bar.set_max_hover(True)
+            self._track_nc_leave()
+            # 삼키지 않는다 — 캡션 위 움직임은 OS 도 봐야 한다(스냅 메뉴 타이밍 등).
+            return False, 0
+        if action == ACT_HOVER_OFF:
+            self._title_bar.set_max_hover(False)
+            return False, 0
+        if action == ACT_SWALLOW:
+            return True, 0
+        if action == ACT_CLICK:
+            # 뗄 때 토글한다 — 실제 버튼처럼 누른 뒤 밖에서 떼면 취소된다.
+            self._title_bar.set_max_hover(False)
+            self._title_bar.click_max()
+            return True, 0
+        # 모르는 지시는 삼키지 않는다 — 삼키면 그 메시지가 필요한 쪽이 조용히 죽는다.
+        return False, 0
+
+    def _track_nc_leave(self) -> None:
+        """커서가 비클라이언트 영역을 벗어나면 알려 달라고 등록한다.
+
+        등록하지 않으면 `WM_NCMOUSELEAVE`가 오지 않아, 버튼 밖으로 나가도 **호버가
+        켜진 채 남는다**.
+        """
+        track = TRACKMOUSEEVENT()
+        track.cbSize = sizeof(TRACKMOUSEEVENT)
+        track.dwFlags = TME_LEAVE | TME_NONCLIENT
+        track.hwndTrack = self._hwnd
+        track.dwHoverTime = 0
+        windll.user32.TrackMouseEvent(byref(track))
 
     # ── 창 상태 ───────────────────────────────────────────────────
     def _is_maximized(self) -> bool:
@@ -377,5 +450,6 @@ windll.user32.SetWindowPos.argtypes = [
 ]
 windll.user32.GetWindowRect.argtypes = [HWND, POINTER(RECT)]
 windll.user32.GetWindowPlacement.argtypes = [HWND, POINTER(WINDOWPLACEMENT)]
+windll.user32.TrackMouseEvent.argtypes = [POINTER(TRACKMOUSEEVENT)]
 windll.shell32.SHAppBarMessage.restype = LONG
 windll.shell32.SHAppBarMessage.argtypes = [DWORD, POINTER(APPBARDATA)]

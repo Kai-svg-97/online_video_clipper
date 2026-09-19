@@ -21,6 +21,7 @@ from gui.themes.tokens import PRESETS
 from gui.widgets.title_bar import (
     HTCAPTION,
     HTCLIENT,
+    HTMAXBUTTON,
     TITLE_BAR_HEIGHT,
     TitleBar,
 )
@@ -34,6 +35,10 @@ def bar(qtbot, qapp_instance):
     tb = TitleBar(win)
     win.setMenuWidget(tb)
     tb.resize(900, TITLE_BAR_HEIGHT)
+    # **레이아웃을 정산시킨다.** 안 하면 자식들이 전부 기본 위치(원점)에 겹쳐 있어
+    # `geometry().center()`가 세 버튼 모두 같은 점을 가리킨다 — 히트테스트 검사가
+    # 통과해도 실제 버튼 자리를 본 것이 아니다(여기서 실제로 그랬다).
+    tb.layout().activate()
     return tb
 
 
@@ -110,9 +115,14 @@ class TestHitTest:
         assert bar.hit_test(center) == HTCAPTION
 
     def test_캡션_버튼_위는_드래그가_아니다(self, bar):
+        """버튼 위에서 창이 끌리면 누를 수가 없다.
+
+        최대화만 `HTMAXBUTTON`(Win11 분할 배치 메뉴)이고 나머지는 `HTCLIENT`인데,
+        셋 다 캡션이 아니라는 점은 같다.
+        """
         for btn in (bar._btn_min, bar._btn_max, bar._btn_close):
             pos = btn.geometry().center()
-            assert bar.hit_test(pos) == HTCLIENT, "버튼이 클릭을 받아야 한다"
+            assert bar.hit_test(pos) != HTCAPTION, "버튼이 클릭을 받아야 한다"
 
     def test_배지_위는_드래그가_아니다(self, bar):
         badge = QLabel("v9.9.9")
@@ -154,3 +164,41 @@ class TestLeadingSlot:
         badge = QLabel("v9.9.9")
         bar.set_leading_widget(badge)
         assert badge.parent() is bar._slot
+
+
+class TestSnapLayouts:
+    """Win11 분할 배치 메뉴를 붙이면 **최대화 버튼의 마우스를 OS 가 가져간다**.
+
+    그래서 Qt 의 enterEvent/leaveEvent·클릭이 더 이상 오지 않는다. 밖에서 호버와
+    클릭을 되돌려 줄 길이 없으면 스냅 메뉴는 뜨는데 버튼이 먹통이 된다.
+    """
+
+    def test_최대화_버튼_위는_HTMAXBUTTON(self, bar):
+        pos = bar._btn_max.geometry().center()
+        assert bar.hit_test(pos) == HTMAXBUTTON
+
+    def test_나머지_캡션_버튼은_그대로(self, bar):
+        """최소화·닫기는 Qt 가 계속 받아야 한다 — 스냅 메뉴는 최대화에만 붙는다."""
+        for btn in (bar._btn_min, bar._btn_close):
+            assert bar.hit_test(btn.geometry().center()) == HTCLIENT
+
+    def test_호버를_밖에서_켜고_끌_수_있다(self, bar):
+        bar.set_max_hover(True)
+        assert bar._btn_max._hover is True
+        bar.set_max_hover(False)
+        assert bar._btn_max._hover is False
+
+    def test_같은_호버를_반복해도_다시_그리지_않는다(self, bar):
+        """비클라이언트 마우스 메시지는 움직일 때마다 쏟아진다."""
+        assert bar._btn_max.set_hover(True) is True
+        assert bar._btn_max.set_hover(True) is False, "안 바뀌었으면 repaint 하지 않는다"
+
+    def test_호버_상태로도_그려진다(self, bar):
+        bar.set_max_hover(True)
+        _paint(bar._btn_max)
+
+    def test_클릭을_밖에서_되돌려_받는다(self, bar):
+        bar.click_max()
+        assert bar._window.isMaximized()
+        bar.click_max()
+        assert not bar._window.isMaximized()

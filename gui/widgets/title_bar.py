@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 # 않기 위해서다 — 이 위젯은 플랫폼 코드에 의존하지 않는다.
 HTCLIENT = 1
 HTCAPTION = 2
+# 최대화 버튼 위에서 이 값을 돌려주면 Windows 11 이 분할 배치(스냅 레이아웃) 메뉴를
+# 띄운다. 대가로 그 영역의 마우스를 OS 가 가져가므로, 호버·클릭은 `gui/frameless/`가
+# 비클라이언트 메시지를 받아 아래 `set_max_hover`/`click_max`로 되돌려 준다.
+HTMAXBUTTON = 9
 
 TITLE_BAR_HEIGHT = 36
 _BTN_W, _BTN_H = 46, 36
@@ -75,6 +79,17 @@ class _CaptionButton(QWidget):
         self._on_click = fn
 
     # ── 이벤트 ────────────────────────────────────────────────────
+    def set_hover(self, hover: bool) -> bool:
+        """호버 상태를 바꾼다. **바뀌었으면 True** — 호출부가 repaint 를 아낀다.
+
+        비클라이언트 마우스 메시지는 움직일 때마다 쏟아지므로, 매번 다시 그리면
+        타이틀바가 계속 갱신된다.
+        """
+        if self._hover == hover:
+            return False
+        self._hover = hover
+        return True
+
     def enterEvent(self, event) -> None:  # type: ignore[override]
         self._hover = True
         self.update()
@@ -208,10 +223,26 @@ class TitleBar(QWidget):
         if not self.rect().contains(local):
             return HTCLIENT
         child = self.childAt(local)
+        # 최대화 버튼만 따로 답한다 — 스냅 레이아웃 메뉴가 여기에 붙는다.
+        if child is self._btn_max:
+            return HTMAXBUTTON
         # 제목 라벨은 마우스 투명이라 childAt이 self(또는 슬롯 컨테이너)를 돌려준다.
         if child is None or child is self or child is self._slot:
             return HTCAPTION
         return HTCLIENT
+
+    def set_max_hover(self, hover: bool) -> None:
+        """최대화 버튼 호버를 밖에서 켜고 끈다.
+
+        `HTMAXBUTTON`을 돌려준 뒤로는 Qt 가 그 영역의 `enterEvent`/`leaveEvent`를
+        받지 못한다 — 이 메서드가 없으면 버튼이 **호버에 반응하지 않는 것처럼** 보인다.
+        """
+        if self._btn_max.set_hover(hover):
+            self._btn_max.update()
+
+    def click_max(self) -> None:
+        """최대화 버튼을 누른 것으로 친다(비클라이언트 클릭을 되돌려 받는 자리)."""
+        self._on_toggle_max()
 
     # ── 내부 ──────────────────────────────────────────────────────
     def _on_minimize(self) -> None:

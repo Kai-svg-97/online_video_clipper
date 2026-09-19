@@ -113,3 +113,45 @@ def signed16(value: int) -> int:
     """
     value &= 0xFFFF
     return value - 0x10000 if value >= 0x8000 else value
+
+
+# ── Win11 스냅 레이아웃 ────────────────────────────────────────────
+#
+# 최대화 버튼 위에서 `HTMAXBUTTON`을 돌려주면 Windows 11 이 분할 배치 메뉴를 띄운다.
+# 대가로 **그 영역의 마우스를 OS 가 가져간다** — Qt 는 더 이상 클릭도 호버도 받지
+# 못하므로, 비클라이언트 마우스 메시지를 직접 받아 버튼을 살려 줘야 한다. 이걸
+# 빼먹으면 스냅 메뉴는 뜨는데 **버튼이 먹통이 된다**.
+HTMAXBUTTON = 9
+
+WM_NCMOUSEMOVE = 0x00A0
+WM_NCLBUTTONDOWN = 0x00A1
+WM_NCLBUTTONUP = 0x00A2
+WM_NCMOUSELEAVE = 0x02A2
+
+# `max_button_action`이 돌려주는 지시.
+ACT_NONE = "none"            # 우리가 할 일 없음 — Qt/OS 기본 처리로 넘긴다
+ACT_HOVER_ON = "hover_on"    # 버튼 호버 켜기
+ACT_HOVER_OFF = "hover_off"  # 버튼 호버 끄기
+ACT_SWALLOW = "swallow"      # 삼키기(기본 처리를 막되 아무것도 하지 않는다)
+ACT_CLICK = "click"          # 최대화 토글
+
+
+def max_button_action(message: int, hit_code: int) -> str:
+    """비클라이언트 마우스 메시지를 최대화 버튼 동작으로 옮긴다 — **순수 판정**.
+
+    `hit_code`는 그 메시지의 `wParam`(= 직전 히트테스트 결과)이다.
+
+    누름(`WM_NCLBUTTONDOWN`)을 삼키는 이유는 기본 처리에 맡기면 OS 가 자기 방식으로
+    버튼을 그리려 하기 때문이다 — 우리 버튼은 Qt 가 그리므로 토글은 **뗄 때**
+    직접 한다(실제 버튼처럼 눌렀다가 밖에서 떼면 취소되는 동작도 이쪽이 자연스럽다).
+    """
+    over = hit_code == HTMAXBUTTON
+    if message == WM_NCMOUSEMOVE:
+        return ACT_HOVER_ON if over else ACT_HOVER_OFF
+    if message == WM_NCMOUSELEAVE:
+        return ACT_HOVER_OFF
+    if message == WM_NCLBUTTONDOWN:
+        return ACT_SWALLOW if over else ACT_NONE
+    if message == WM_NCLBUTTONUP:
+        return ACT_CLICK if over else ACT_NONE
+    return ACT_NONE
