@@ -1448,13 +1448,40 @@ class SettingsPanel(QWidget):
             if cookiefile:
                 self._feed_cookie_edit.setText(cookiefile)
             profile = getattr(s, "YT_AUTH_PROFILE", None)
-            self._feed_status_lbl.setText(
-                f"프로필: {profile}" if profile else
-                (f"쿠키 파일: {cookiefile}" if cookiefile else "미설정")
-            )
+            self._feed_status_lbl.setText(self._cookie_status_text(profile, cookiefile))
             self._reload_cookie_candidates()
         except Exception:
             logger.exception("브라우저 쿠키 설정 UI 반영 실패")
+
+    @staticmethod
+    def _cookie_status_text(profile: "str | None", cookiefile: "str | None") -> str:
+        """지금 무엇으로 인증하는지 + **그게 쓸 수 있는 상태인지**.
+
+        예전에는 경로만 적었다. 그래서 다른 PC에서 등록한 경로가 그대로 남아 있어도
+        멀쩡해 보였고, 요약이 "로그인된 브라우저를 찾지 못했습니다"로 실패하는데
+        설정 화면만 봐서는 원인을 알 수 없었다(실제 신고).
+        """
+        from infrastructure.auth.youtube_auth import (  # noqa: PLC0415
+            COOKIE_EMPTY,
+            COOKIE_NOT_COOKIES,
+            COOKIE_NOT_FOUND,
+            COOKIE_OK,
+            cookie_file_state,
+        )
+
+        if cookiefile:
+            state = cookie_file_state(cookiefile)
+            if state == COOKIE_OK:
+                return f"쿠키 파일: {cookiefile}"
+            trouble = {
+                COOKIE_NOT_FOUND: "이 경로에 파일이 없습니다(다른 PC에서 등록했거나 지워졌습니다)",
+                COOKIE_EMPTY: "파일이 비어 있습니다",
+                COOKIE_NOT_COOKIES: "쿠키 파일 형식이 아닙니다",
+            }.get(state, "쓸 수 없는 파일입니다")
+            return f"⚠ 쿠키 파일을 쓸 수 없습니다 — {trouble}\n{cookiefile}"
+        if profile:
+            return f"프로필: {profile}"
+        return "미설정 — 로그인된 브라우저를 자동으로 찾습니다"
 
     def _reload_cookie_candidates(self) -> None:
         """다운로드·데스크톱 폴더에서 쿠키 파일 후보를 다시 스캔해 목록에 채운다."""

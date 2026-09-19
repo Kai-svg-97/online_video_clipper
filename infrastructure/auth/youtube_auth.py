@@ -224,6 +224,40 @@ _COOKIE_SCAN_DIR_NAMES = ("Downloads", "Desktop")
 _COOKIE_CONTENT_SCAN_BYTES = 65536
 
 
+# ── 등록된 쿠키 파일의 상태 ────────────────────────────────────────────
+# 설정 화면이 경로만 적어 두면 **죽은 경로가 멀쩡한 것처럼 보인다**. 실제로 다른
+# PC에서 등록한 경로(`C:\Users\<남의계정>\...`)가 그대로 남아, 요약이 "로그인된
+# 브라우저를 찾지 못했습니다"로 실패하는데 사용자는 설정만 보고는 원인을 알 수
+# 없었다. 그래서 경로와 함께 **지금 쓸 수 있는 상태인지**를 같이 보여준다.
+COOKIE_UNSET = "unset"        # 등록한 적이 없다
+COOKIE_NOT_FOUND = "not_found"  # 경로는 있는데 파일이 없다(다른 PC·삭제됨)
+COOKIE_EMPTY = "empty"          # 파일은 있는데 비었다
+COOKIE_NOT_COOKIES = "not_cookies"  # 쿠키 파일 형식이 아니다
+COOKIE_OK = "ok"
+
+
+def cookie_file_state(path: "str | Path | None") -> str:
+    """등록된 쿠키 파일이 지금 쓸 수 있는 상태인가 — 문구가 아니라 **판정**만 준다.
+
+    표시 문구는 화면이 정한다(레이어 분리). 판정이 여기 있는 이유는 파일을 봐야
+    알 수 있기 때문이다.
+    """
+    if not path:
+        return COOKIE_UNSET
+    try:
+        target = Path(path)
+        if not target.is_file():
+            return COOKIE_NOT_FOUND
+        if target.stat().st_size <= 0:
+            return COOKIE_EMPTY
+        if not _looks_like_youtube_cookie_file(target):
+            return COOKIE_NOT_COOKIES
+    except OSError:
+        logger.exception("쿠키 파일 상태 확인 실패: %s", path)
+        return COOKIE_NOT_FOUND
+    return COOKIE_OK
+
+
 def _looks_like_youtube_cookie_file(path: Path) -> bool:
     """파일이 YouTube 쿠키를 담은 Netscape 포맷 파일처럼 보이는지 판정한다."""
     try:

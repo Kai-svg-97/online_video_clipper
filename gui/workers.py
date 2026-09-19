@@ -90,7 +90,19 @@ def running_count() -> int:
 
 
 def wait_all(msec: int = 3000) -> None:
-    """남은 워커가 끝나기를 기다린다(앱 종료 시 마지막 정리용)."""
+    """남은 워커가 끝나기를 기다린다(앱 종료 시 마지막 정리용).
+
+    **죽은 워커 하나가 종료 전체를 막지 않게 한다.** 레지스트리에는 원래 살아 있는
+    워커만 있어야 하지만, 어느 호출부가 규칙을 어기고 `deleteLater`를 걸면 C++ 객체가
+    사라진 채로 남는다. 그때 `isRunning()`이 ``RuntimeError``를 내고, 그것이
+    `closeEvent` 밖으로 새어 나가면 **나머지 워커를 아무도 기다려 주지 않는다** —
+    실행 중 QThread가 파괴되며 프로세스가 죽는 바로 그 경로다.
+    """
     for thread in list(_RUNNING):
-        if thread.isRunning():
-            thread.wait(msec)
+        try:
+            if thread.isRunning():
+                thread.wait(msec)
+        except RuntimeError:
+            # 이미 파괴된 워커 — 레지스트리에서 걷어내고 계속한다.
+            logger.debug("이미 파괴된 워커를 레지스트리에서 제거한다")
+            _RUNNING.discard(thread)
