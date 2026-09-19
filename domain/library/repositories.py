@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from domain.library.saved_search import SavedSearch
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -43,6 +47,16 @@ class SearchQuery:
     sort_asc: bool = False
     min_duration_sec: int | None = None
     max_duration_sec: int | None = None
+    # ── 복합 필터 ──────────────────────────────────────────────────────
+    # 업로드 날짜 범위(YYYY-MM-DD). 비교는 앞 10글자로 한다 — `published_at`이
+    # "2026-09-18T10:00:00Z" 처럼 시각까지 담고 있어, 문자열 그대로 `<=` 하면
+    # 그 날 올라온 영상이 통째로 빠진다.
+    published_from: str = ""
+    published_to: str = ""
+    # 채널 이름 부분 일치(빈 문자열 = 필터 없음).
+    channel_name: str = ""
+    # 받아 둔 파일이 있는가. None = 상관없음.
+    downloaded: bool | None = None
 
 
 class IVideoRepository(ABC):
@@ -214,3 +228,22 @@ class IPlaylistFolderRepository(ABC):
 
     @abstractmethod
     def delete(self, folder_id: UUID) -> None: ...
+
+
+class ISavedSearchRepository(ABC):
+    """저장된 검색 보관소.
+
+    구현체: infrastructure.persistence.sqlite_saved_search_repository
+    """
+
+    @abstractmethod
+    def list_all(self) -> list["SavedSearch"]: ...
+
+    @abstractmethod
+    def save(self, search: "SavedSearch") -> None: ...
+
+    @abstractmethod
+    def delete(self, search_id: UUID) -> None: ...
+
+    @abstractmethod
+    def rename(self, search_id: UUID, name: str) -> None: ...

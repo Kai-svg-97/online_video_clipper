@@ -63,6 +63,15 @@ def _vm(total: int) -> tuple[LibraryViewModel, _Fake]:
     vm._filter_playlist_video_ids = []
     vm._filter_tag_ids = []
     vm._filter_categorized_only = False
+    # 복합 필터 상태 — `_cache_key`가 전부 읽는다(빠뜨리면 조회 자체가 터진다).
+    vm._filter_published_from = ""
+    vm._filter_published_to = ""
+    vm._filter_channel = ""
+    vm._filter_downloaded = None
+    vm._filter_favorite_only = False
+    vm._filter_watched = None
+    vm._filter_min_duration = None
+    vm._filter_max_duration = None
     vm._sort_by, vm._sort_asc = "created_at", False
     vm._get_videos = fake
     vm._search_videos = fake

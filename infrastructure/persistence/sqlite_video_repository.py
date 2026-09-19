@@ -757,6 +757,30 @@ class SqliteVideoRepository(IVideoRepository):
             where.append("videos.duration_sec <= ?")
             params.append(query.max_duration_sec)
 
+        # ── 복합 필터 ──────────────────────────────────────────────
+        # 날짜는 **앞 10글자로 자른 뒤** 비교한다. `published_at`이
+        # "2026-09-18T10:00:00Z" 처럼 시각까지 담고 있어 문자열 그대로 `<=` 하면
+        # 그 날 올라온 영상이 통째로 빠진다.
+        if query.published_from:
+            where.append("substr(videos.published_at, 1, 10) >= ?")
+            params.append(query.published_from)
+
+        if query.published_to:
+            where.append("substr(videos.published_at, 1, 10) <= ?")
+            params.append(query.published_to)
+
+        if query.channel_name:
+            where.append("videos.channel_name LIKE ? ESCAPE '\\'")
+            params.append(_like_pattern(query.channel_name))
+
+        if query.downloaded is not None:
+            # 다운로드 이력은 video_id 가 아니라 **주소**로 이어진다.
+            exists = (
+                "EXISTS (SELECT 1 FROM download_history dh "
+                "WHERE dh.url = videos.url AND dh.status = 'completed')"
+            )
+            where.append(exists if query.downloaded else f"NOT {exists}")
+
         where_clause = ("WHERE " + " AND ".join(where)) if where else ""
         join_clause = " ".join(joins)
 

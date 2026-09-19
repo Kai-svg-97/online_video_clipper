@@ -421,6 +421,15 @@ class LibraryPanel(
         self._sort_combo.setFixedWidth(90)
         toolbar.addWidget(self._sort_combo)
 
+        # 복합 필터 토글 — 걸린 개수를 버튼에 적어, 접혀 있어도 알 수 있게 한다.
+        toolbar.addSpacing(8)
+        self._btn_filter = QToolButton()
+        self._btn_filter.setText("필터")
+        self._btn_filter.setToolTip("업로드 날짜·길이·채널·다운로드 여부로 좁히기")
+        self._btn_filter.setCheckable(True)
+        self._btn_filter.setChecked(False)
+        toolbar.addWidget(self._btn_filter)
+
         toolbar.addSpacing(8)
         self._btn_reorder = QToolButton()
         self._btn_reorder.setText("⇅")
@@ -433,6 +442,14 @@ class LibraryPanel(
 
 
         centre_layout.addLayout(toolbar)
+
+        # 기본은 접힌 상태 — 늘 펴 두면 목록이 그만큼 좁아지는데, 대부분의 시간에는
+        # 필터를 쓰지 않는다.
+        from gui.panels.library.filter_bar import FilterBar  # noqa: PLC0415
+
+        self._filter_bar = FilterBar()
+        self._filter_bar.setVisible(False)
+        centre_layout.addWidget(self._filter_bar)
 
         self._view_stack = QStackedWidget()
         self._model = VideoListModel()
@@ -730,6 +747,9 @@ class LibraryPanel(
             _scroll_view.verticalScrollBar().valueChanged.connect(
                 self._on_list_scrolled
             )
+
+        self._btn_filter.toggled.connect(self._on_filter_toggled)
+        self._filter_bar.changed.connect(self._on_filters_changed)
 
         self._table.clicked.connect(self._on_table_clicked)
         self._table.doubleClicked.connect(self._on_table_double_click)

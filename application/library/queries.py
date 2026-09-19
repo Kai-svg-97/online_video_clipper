@@ -58,6 +58,16 @@ class GetVideosQuery:
     sort_asc: bool = False
     min_duration_sec: int | None = None
     max_duration_sec: int | None = None
+    # ── 복합 필터 ──────────────────────────────────────────────────────
+    # 업로드 날짜 범위(YYYY-MM-DD). 비교는 앞 10글자로 한다 — `published_at`이
+    # "2026-09-18T10:00:00Z" 처럼 시각까지 담고 있어, 문자열 그대로 `<=` 하면
+    # 그 날 올라온 영상이 통째로 빠진다.
+    published_from: str = ""
+    published_to: str = ""
+    # 채널 이름 부분 일치(빈 문자열 = 필터 없음).
+    channel_name: str = ""
+    # 받아 둔 파일이 있는가. None = 상관없음.
+    downloaded: bool | None = None
     # 이어보기만 — 보던 지점이 남아 있는 영상으로 좁힌다(빠른 이동의 기본 목록).
     in_progress_only: bool = False
 
@@ -71,12 +81,25 @@ class SearchVideosQuery:
     video_ids: list[UUID] = field(default_factory=list)
     categorized_only: bool = False
     favorite_only: bool = False
+    # 검색 중에도 같은 필터를 쓸 수 있어야 한다 — 없으면 검색어를 넣는 순간
+    # 필터가 조용히 풀린다.
+    watched: bool | None = None
     limit: int = 50
     offset: int = 0
     sort_by: str = "created_at"
     sort_asc: bool = False
     min_duration_sec: int | None = None
     max_duration_sec: int | None = None
+    # ── 복합 필터 ──────────────────────────────────────────────────────
+    # 업로드 날짜 범위(YYYY-MM-DD). 비교는 앞 10글자로 한다 — `published_at`이
+    # "2026-09-18T10:00:00Z" 처럼 시각까지 담고 있어, 문자열 그대로 `<=` 하면
+    # 그 날 올라온 영상이 통째로 빠진다.
+    published_from: str = ""
+    published_to: str = ""
+    # 채널 이름 부분 일치(빈 문자열 = 필터 없음).
+    channel_name: str = ""
+    # 받아 둔 파일이 있는가. None = 상관없음.
+    downloaded: bool | None = None
 
 
 def _to_dto(
@@ -148,6 +171,10 @@ class GetVideosHandler:
                     sort_asc=query.sort_asc,
                     min_duration_sec=query.min_duration_sec,
                     max_duration_sec=query.max_duration_sec,
+                    published_from=query.published_from,
+                    published_to=query.published_to,
+                    channel_name=query.channel_name,
+                    downloaded=query.downloaded,
                     in_progress_only=getattr(query, "in_progress_only", False),
                 )
             )
@@ -170,12 +197,17 @@ class SearchVideosHandler:
                 video_ids=query.video_ids,
                 categorized_only=query.categorized_only,
                 favorite_only=query.favorite_only,
+                watched=query.watched,
                 limit=query.limit,
                 offset=query.offset,
                 sort_by=query.sort_by,
                 sort_asc=query.sort_asc,
                 min_duration_sec=query.min_duration_sec,
                 max_duration_sec=query.max_duration_sec,
+                published_from=query.published_from,
+                published_to=query.published_to,
+                channel_name=query.channel_name,
+                downloaded=query.downloaded,
             )
         )
         dtos = [_to_dto(agg, cats, tag_id_to_name) for agg in aggs]

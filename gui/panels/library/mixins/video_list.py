@@ -247,6 +247,13 @@ class VideoListMixin:
                 "검색 결과가 없습니다.\n"
                 "아래 '추천 영상' 띠에 이 낱말의 YouTube 검색 결과를 채웁니다."
             )
+        elif self._filter_bar.active_count():
+            # 필터 때문에 비었는데 그 말을 안 하면 "영상이 사라졌다"가 된다.
+            overlay.show_message(
+                "필터에 맞는 영상이 없습니다.\n"
+                f"({self._filter_bar.summary()})\n"
+                "툴바의 '필터'에서 조건을 바꾸거나 초기화해 보세요."
+            )
         elif self._active_tag_ids:
             overlay.show_message("이 태그에 해당하는 영상이 없습니다.")
         else:
@@ -254,6 +261,28 @@ class VideoListMixin:
                 "이 목록에는 아직 영상이 없습니다.\n"
                 "브라우저에서 주소를 끌어다 놓거나, 좌측 트리에 URL을 떨어뜨려 담아 보세요."
             )
+
+    # ── 복합 필터 ──────────────────────────────────────────────────
+
+    def _on_filter_toggled(self, shown: bool) -> None:
+        self._filter_bar.setVisible(shown)
+
+    def _on_filters_changed(self) -> None:
+        """막대의 값을 뷰모델에 넘긴다 — 바뀐 게 없으면 뷰모델이 재조회를 건너뛴다."""
+        self._vm.set_advanced_filters(**self._filter_bar.filters())
+        self._refresh_filter_badge()
+        self._refresh_list_overlay()
+
+    def _refresh_filter_badge(self) -> None:
+        """접혀 있어도 필터가 걸린 것을 알 수 있게 버튼에 개수를 적는다.
+
+        이게 없으면 "왜 영상이 몇 개 없지"의 원인을 찾을 길이 없다.
+        """
+        count = self._filter_bar.active_count()
+        self._btn_filter.setText(f"필터 {count}" if count else "필터")
+        self._btn_filter.setToolTip(
+            self._filter_bar.summary() or "업로드 날짜·길이·채널·다운로드 여부로 좁히기"
+        )
 
     # ── 무한 스크롤 ────────────────────────────────────────────────
     #

@@ -330,6 +330,17 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         # 본다. 총 개수를 따로 세지 않는 이유는 COUNT(*) 한 번이 목록 조회와
         # 맞먹기 때문이다(필터·검색이 걸리면 특히).
         self._has_more: bool = False
+        # ── 복합 필터 ─────────────────────────────────────────────
+        # 엔진(SearchQuery·리포지토리 SQL)에는 처음부터 있었는데 **화면에서 넘기는
+        # 곳이 없어** 쓸 수 없었다. 여기서 모아 두고 조회마다 함께 넘긴다.
+        self._filter_published_from: str = ""
+        self._filter_published_to: str = ""
+        self._filter_channel: str = ""
+        self._filter_downloaded: bool | None = None
+        self._filter_favorite_only: bool = False
+        self._filter_watched: bool | None = None
+        self._filter_min_duration: int | None = None
+        self._filter_max_duration: int | None = None
         self._search_text: str = ""
         self._filter_category_id: UUID | None = None
         # "로컬" 루트 뷰 — 카테고리에 속한 영상만 표시(미분류·재생목록 전용 제외). 기본 진입 뷰.
@@ -474,6 +485,60 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         self._search_text = text
         self._current_page = 0
         self._refresh_videos()
+
+    def set_advanced_filters(
+        self,
+        *,
+        published_from: str = "",
+        published_to: str = "",
+        channel_name: str = "",
+        downloaded: bool | None = None,
+        favorite_only: bool = False,
+        watched: bool | None = None,
+        min_duration_sec: int | None = None,
+        max_duration_sec: int | None = None,
+    ) -> None:
+        """복합 필터를 한 번에 적용한다(바뀐 게 없으면 재조회하지 않는다).
+
+        **하나씩 거는 setter 를 두지 않는다.** 화면에서 여러 칸을 동시에 바꾸는데
+        칸마다 조회가 나가면 같은 목록을 네다섯 번 읽는다.
+        """
+        new_state = (
+            published_from, published_to, channel_name, downloaded,
+            favorite_only, watched, min_duration_sec, max_duration_sec,
+        )
+        if new_state == self.advanced_filters:
+            return
+        (
+            self._filter_published_from, self._filter_published_to,
+            self._filter_channel, self._filter_downloaded,
+            self._filter_favorite_only, self._filter_watched,
+            self._filter_min_duration, self._filter_max_duration,
+        ) = new_state
+        self._current_page = 0
+        self._refresh_videos()
+
+    @property
+    def advanced_filters(self) -> tuple:
+        """지금 걸린 복합 필터 — 화면이 '몇 개 걸렸나'를 표시한다."""
+        return (
+            self._filter_published_from, self._filter_published_to,
+            self._filter_channel, self._filter_downloaded,
+            self._filter_favorite_only, self._filter_watched,
+            self._filter_min_duration, self._filter_max_duration,
+        )
+
+    @property
+    def advanced_filter_count(self) -> int:
+        """걸린 필터 개수 — 0이면 화면이 배지를 숨긴다."""
+        pf, pt, ch, dl, fav, watched, lo, hi = self.advanced_filters
+        return sum(
+            1 for v in (pf, pt, ch, dl, fav or None, watched, lo, hi)
+            if v not in (None, "", False)
+        )
+
+    def clear_advanced_filters(self) -> None:
+        self.set_advanced_filters()
 
     def set_category_filter(self, category_id: UUID | None, node_key: str | None = None) -> None:
         self._filter_category_id = category_id
@@ -864,11 +929,22 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         cat = str(self._filter_category_id) if self._filter_category_id else ""
         tag = ",".join(sorted(str(t) for t in self._filter_tag_ids))
         pl  = str(self._filter_playlist_id) if self._filter_playlist_id else ""
+        # **복합 필터도 키에 넣는다.** 빠뜨리면 필터를 바꿔도 같은 키가 나와
+        # 이전 결과가 그대로 다시 표시된다("필터가 안 먹는다"로 보인다).
+        adv = (
+            f"{self._filter_published_from}~{self._filter_published_to}"
+            f"|ch={self._filter_channel}"
+            f"|dl={self._filter_downloaded}"
+            f"|fav={self._filter_favorite_only}"
+            f"|watched={self._filter_watched}"
+            f"|dur={self._filter_min_duration}-{self._filter_max_duration}"
+        )
         return (
             f"cat={cat}|tag={tag}|pl={pl}"
             f"|sort={self._sort_by}:{self._sort_asc}"
             f"|q={self._search_text}"
             f"|cat_only={self._filter_categorized_only}"
+            f"|adv={adv}"
         )
 
     def set_sort(self, sort_by: str, sort_asc: bool) -> None:
@@ -923,6 +999,17 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         explicit_video_ids = list(self._filter_playlist_video_ids)
         tag_ids = list(self._filter_tag_ids)
         categorized_only_base = self._filter_categorized_only
+        # 필터도 호출 시점에 캡처한다 — `fetch`는 워커 스레드에서 실행된다.
+        advanced = dict(
+            published_from=self._filter_published_from,
+            published_to=self._filter_published_to,
+            channel_name=self._filter_channel,
+            downloaded=self._filter_downloaded,
+            favorite_only=self._filter_favorite_only,
+            watched=self._filter_watched,
+            min_duration_sec=self._filter_min_duration,
+            max_duration_sec=self._filter_max_duration,
+        )
         sort_by, sort_asc = self._sort_by, self._sort_asc
 
         def fetch() -> list:
@@ -956,6 +1043,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
                 offset=offset,
                 sort_by=sort_by,
                 sort_asc=sort_asc,
+                **advanced,
             )
             if search_text:
                 return self._search_videos.handle(SearchVideosQuery(text=search_text, **common))
