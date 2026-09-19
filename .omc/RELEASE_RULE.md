@@ -28,7 +28,7 @@ version.py does not contain 'X.Y.Z' — update version.py before tagging
 
 ## Test Gate
 - CI 릴리즈 워크플로우에 test step 없음 — 빌드 성공만이 게이트다.
-  따라서 **로컬에서 전체 테스트를 돌리고 릴리즈해야 한다**: `pytest` (2026-09-19 기준 2,642건)
+  따라서 **로컬에서 전체 테스트를 돌리고 릴리즈해야 한다**: `pytest` (2026-09-19 기준 2,837건)
 - 린트: `ruff check gui/ application/` — 이 저장소는 `ruff format` 미적용이라
   기존 E402가 기준선이다(2026-09-18 기준 10건 — 조립 루트 분해로 main.py 8건이 사라졌다).
   "새 위반이 늘지 않았는가"로만 판단한다.
@@ -47,6 +47,15 @@ dist\windows\YouTubeContentManager\YouTubeContentManager.exe   # 실제 실행 �
   폴더 존재로 판정하면 오탐이다.
 - 네이티브 확장은 **import 성공만으로 부족**하다. 함수를 실제로 호출해 봐야 한다
   (예: `ctranslate2.get_supported_compute_types('cpu')`).
+
+## 창 생성 경로를 건드렸을 때의 추가 게이트 (v1.30.0~)
+프레임리스 타이틀바처럼 **창이 만들어지는 경로**를 바꾸면, 실패가 "기능이 안 된다"가
+아니라 **"앱이 아예 안 뜬다"**로 나타난다. 개발 실행에서 멀쩡해도 번들에서는 다를 수
+있으므로(모듈 누락·경로 해석), 위와 같은 로컬 빌드 + **실제 실행**으로 확인한다.
+
+v1.30.0 작업에서 `super().nativeEvent(...)` 한 줄이 창 생성 순간 프로세스를 죽였다
+(0xC000041D). 화면에도 로그에도 아무것도 남지 않아 최소 재현으로 좁혀서야 드러났다 —
+이런 종류는 테스트가 아니라 **띄워 보는 것**만이 잡는다.
 
 ## Registry / Distribution
 - GitHub Releases — `softprops/action-gh-release@v2`
