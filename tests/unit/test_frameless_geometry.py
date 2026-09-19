@@ -37,8 +37,15 @@ from gui.frameless.geometry import (
     WM_NCLBUTTONUP,
     WM_NCMOUSELEAVE,
     WM_NCMOUSEMOVE,
+    WS_CAPTION,
+    WS_MAXIMIZEBOX,
+    WS_MINIMIZEBOX,
+    WS_POPUP,
+    WS_SYSMENU,
+    WS_THICKFRAME,
     edge_hit,
     max_button_action,
+    patched_style,
     signed16,
 )
 
@@ -188,3 +195,42 @@ class TestMaxButtonAction:
 
     def test_모르는_메시지는_넘긴다(self):
         assert max_button_action(0x0999, HTMAXBUTTON) == ACT_NONE
+
+
+class TestPatchedStyle:
+    """창 스타일을 잘못 잡으면 **스냅 메뉴가 조용히 사라진다**.
+
+    `HTMAXBUTTON`을 아무리 정확히 돌려줘도, 창이 팝업이면 셸이 분할 배치 메뉴를
+    붙이지 않는다. 실제로 그래서 안 떴다 — 메모장 0x14CF0000 vs 우리 0x96CF0000,
+    차이는 `WS_POPUP` 하나였다. 화면만 봐서는 원인을 알 수 없는 종류라 여기서 고정한다.
+    """
+
+    QT_FRAMELESS = 0x96CF0000   # Qt 가 FramelessWindowHint 로 만든 실제 값
+
+    def test_팝업_비트를_끈다(self):
+        assert patched_style(self.QT_FRAMELESS) & WS_POPUP == 0
+
+    def test_스냅에_필요한_비트를_남긴다(self):
+        got = patched_style(self.QT_FRAMELESS)
+        assert got & WS_CAPTION == WS_CAPTION, "최대화 애니메이션·DWM 그림자에 필요"
+        assert got & WS_THICKFRAME, "Aero Snap·리사이즈의 실제 주체"
+        assert got & WS_MAXIMIZEBOX, "없으면 스냅 메뉴가 붙지 않는다"
+        assert got & WS_MINIMIZEBOX
+        assert got & WS_SYSMENU, "Alt+Space·우클릭 시스템 메뉴"
+
+    def test_보통_창과_같아진다(self):
+        """메모장(스냅이 되는 창)과 같은 모양이어야 한다."""
+        assert patched_style(self.QT_FRAMELESS) == 0x16CF0000
+
+    def test_이미_보통_창이면_건드리지_않는다(self):
+        notepad = 0x14CF0000
+        assert patched_style(notepad) == notepad
+
+    def test_다른_비트는_보존한다(self):
+        """WS_VISIBLE·WS_CLIPSIBLINGS 등을 지우면 창이 이상해진다."""
+        assert patched_style(self.QT_FRAMELESS) & 0x10000000  # WS_VISIBLE
+        assert patched_style(self.QT_FRAMELESS) & 0x04000000  # WS_CLIPSIBLINGS
+
+    def test_두_번_걸어도_같다(self):
+        once = patched_style(self.QT_FRAMELESS)
+        assert patched_style(once) == once

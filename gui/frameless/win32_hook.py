@@ -56,6 +56,7 @@ from gui.frameless.geometry import (
     deflate_maximized,
     edge_hit,
     max_button_action,
+    patched_style,
     signed16,
 )
 
@@ -63,11 +64,6 @@ logger = logging.getLogger(__name__)
 
 # ── Win32 상수 ───────────────────────────────────────────────────────
 GWL_STYLE = -16
-WS_CAPTION = 0x00C00000
-WS_THICKFRAME = 0x00040000
-WS_MINIMIZEBOX = 0x00020000
-WS_MAXIMIZEBOX = 0x00010000
-WS_SYSMENU = 0x00080000
 
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
@@ -232,19 +228,9 @@ class FramelessHook:
         # `or 0` — 스타일이 0이면 restype(c_void_p)이 None 을 돌려주고,
         # 그대로 `|` 를 걸면 TypeError 가 난다.
         style = windll.user32.GetWindowLongPtrW(self._hwnd, GWL_STYLE) or 0
-        # `WS_THICKFRAME`이 스냅·리사이즈·최대화 애니메이션의 실제 주체다.
-        # `WS_CAPTION`은 최대화 애니메이션과 DWM 그림자에 필요하다 — 프레임 자체는
-        # 아래 `WM_NCCALCSIZE`에서 지운다.
-        windll.user32.SetWindowLongPtrW(
-            self._hwnd,
-            GWL_STYLE,
-            style
-            | WS_THICKFRAME
-            | WS_CAPTION
-            | WS_MINIMIZEBOX
-            | WS_MAXIMIZEBOX
-            | WS_SYSMENU,
-        )
+        # 어떤 비트를 남기고 무엇을 끄는지, 그리고 그 이유는 `patched_style`에 있다
+        # (프레임 자체는 아래 `WM_NCCALCSIZE`에서 지운다).
+        windll.user32.SetWindowLongPtrW(self._hwnd, GWL_STYLE, patched_style(style))
 
         # 그림자. DWM 이 꺼져 있으면(원격 데스크톱 등) 실패하지만 기능만 빠진다.
         try:

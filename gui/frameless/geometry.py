@@ -155,3 +155,31 @@ def max_button_action(message: int, hit_code: int) -> str:
     if message == WM_NCLBUTTONUP:
         return ACT_CLICK if over else ACT_NONE
     return ACT_NONE
+
+
+# ── 창 스타일 ──────────────────────────────────────────────────────
+WS_POPUP = 0x80000000
+WS_CAPTION = 0x00C00000
+WS_THICKFRAME = 0x00040000
+WS_MINIMIZEBOX = 0x00020000
+WS_MAXIMIZEBOX = 0x00010000
+WS_SYSMENU = 0x00080000
+
+
+def patched_style(current: int) -> int:
+    """프레임리스 창에 걸 창 스타일 — **순수 계산**.
+
+    남기는 것과 그 이유:
+      · `WS_THICKFRAME` — Aero Snap·8방향 리사이즈·최대화 애니메이션의 실제 주체
+      · `WS_CAPTION` — 최대화 애니메이션과 DWM 그림자에 필요
+      · `WS_MINIMIZEBOX`/`WS_MAXIMIZEBOX` — 없으면 스냅 메뉴가 붙지 않는다
+      · `WS_SYSMENU` — Alt+Space·우클릭 시스템 메뉴
+
+    **끄는 것**: `WS_POPUP`. Qt 가 `FramelessWindowHint` 때문에 창을 팝업으로
+    만드는데, 셸은 팝업 창을 평범한 앱 창으로 보지 않아 **Win11 분할 배치 메뉴를
+    붙이지 않는다** — `HTMAXBUTTON`을 아무리 정확히 돌려줘도 소용없다.
+    실측: 메모장 `0x14CF0000` vs 우리 `0x96CF0000`, 차이는 이 비트 하나였다.
+    """
+    return (current & ~WS_POPUP) | (
+        WS_THICKFRAME | WS_CAPTION | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU
+    )
