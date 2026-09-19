@@ -150,6 +150,9 @@ _COLOR_LITERAL_ALLOWLIST = {
     "gui/panels/library/tree.py": "태그 칩 흰 글자",
     # 밝기 어느 쪽 배경에도 섞이는 중립 회색 틴트(교대 음영)
     "gui/panels/detail/song_tab.py": "중립 회색 틴트",
+    # 플랫폼 관례 고정색 — Windows 표준 닫기 호버색. sem("danger")는 어두운 테마에서
+    # #f87171이라 흰 글리프가 2.3:1로 묻힌다(TestCloseHoverReadable이 대비를 고정).
+    "gui/widgets/title_bar.py": "닫기 버튼 호버(Windows 표준색) + 그 위의 흰 글리프",
 }
 
 _COLOR_LITERAL = re.compile(
@@ -313,3 +316,29 @@ def test_unselected_chip_has_visible_border(preset: str) -> None:
         f"{preset}: 칩 테두리({c['border']}) 대비 채움({c['bg']}) {ratio:.2f} "
         f"< {_AA_NON_TEXT} — 칩 경계가 보이지 않는다"
     )
+
+
+class TestCloseHoverReadable:
+    """닫기 버튼 호버는 테마 토큰을 쓰지 않는다 — 그 예외를 대비로 고정한다.
+
+    `_CLOSE_HOVER_BG`는 Windows 표준 닫기 호버색이고 글리프는 항상 흰색이다.
+    테마 토큰(`sem("danger")`)을 쓰면 어두운 테마에서 `#f87171`이 되어 흰 글리프가
+    2.3:1로 묻힌다 — 그래서 고정색을 쓰는 것이고, 고정인 이상 여기서 지켜야 한다.
+    """
+
+    def test_white_glyph_on_close_hover(self) -> None:
+        from gui.widgets.title_bar import _CLOSE_HOVER_BG, _CLOSE_HOVER_FG
+
+        ratio = contrast(_CLOSE_HOVER_FG, _CLOSE_HOVER_BG)
+        assert ratio >= 4.5, f"닫기 글리프 대비 미달: {ratio:.2f}:1"
+
+    def test_close_hover_stands_out_from_every_theme_surface(self) -> None:
+        """호버가 띠 배경과 구분돼야 '눌릴 것 같다'는 신호가 된다."""
+        from gui.widgets.title_bar import _CLOSE_HOVER_BG
+
+        failures = [
+            (name, round(contrast(_CLOSE_HOVER_BG, tokens.bg_surface), 2))
+            for name, tokens in PRESETS.items()
+            if contrast(_CLOSE_HOVER_BG, tokens.bg_surface) < 1.5
+        ]
+        assert not failures, f"닫기 호버가 띠 배경에 묻힌다: {failures}"

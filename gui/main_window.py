@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import QSize, QThread, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QColor, QIcon, QPainter, QPen, QPixmap, QPixmapCache
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
@@ -28,6 +28,7 @@ from gui.panels.monitoring_panel import MonitoringPanel
 from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
 from gui.panels.stats_panel import StatsPanel
 from gui.widgets.mini_player_bar import MiniPlayerBar
+from gui.widgets.title_bar import TitleBar
 from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.toast import KIND_ERROR, KIND_SUCCESS, show_toast
@@ -289,43 +290,6 @@ class _SideBar(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# 경로 표시 바 (브레드크럼)
-# ---------------------------------------------------------------------------
-
-class _PathBar(QWidget):
-    """영상 목록 상단 현재 위치 경로 표시 바."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setFixedHeight(32)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(6)
-
-        self._path_lbl = QLabel("라이브러리")
-        self._path_lbl.setStyleSheet("font-size: 11px;")
-        layout.addWidget(self._path_lbl)
-        layout.addStretch()
-
-        self._apply_theme(ThemeManager.instance().current())
-        ThemeManager.instance().theme_changed.connect(self._apply_theme)
-
-    def set_path(self, path: str) -> None:
-        self._path_lbl.setText(path)
-
-    def _apply_theme(self, tokens: ThemeTokens) -> None:
-        self.setObjectName("pathbar")
-        self.setAutoFillBackground(True)
-        self.setStyleSheet(f"""
-            #pathbar {{
-                background-color: {tokens.bg_surface};
-                border-bottom: 1px solid {tokens.border};
-            }}
-        """)
-        self._path_lbl.setStyleSheet(f"font-size:11px; color:{tokens.text_secondary};")
-
-
-# ---------------------------------------------------------------------------
 # 다운로드 상태바
 # ---------------------------------------------------------------------------
 
@@ -540,6 +504,11 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
+        # 커스텀 타이틀바 — 창 맨 위 전폭 행. `setMenuWidget`을 쓰면 아래 `outer`
+        # 레이아웃을 건드리지 않아 미니바·상태바 위치가 그대로 유지된다.
+        self._title_bar = TitleBar(self)
+        self.setMenuWidget(self._title_bar)
+
         central = QWidget()
         self.setCentralWidget(central)
 
@@ -631,6 +600,9 @@ class MainWindow(QMainWindow):
 
         # 상태 표시줄
         self.setStatusBar(QStatusBar())
+        # 프레임리스에서 우하단 리사이즈는 `WM_NCHITTEST`가 맡는다 —
+        # 크기 그립을 남겨 두면 같은 자리에서 둘이 겹쳐 다툰다.
+        self.statusBar().setSizeGripEnabled(False)
 
         # 영상 등록 중 마퀴 진행 바 (상태바 우측 고정)
         self._add_progress = QProgressBar()
@@ -1009,6 +981,18 @@ class MainWindow(QMainWindow):
         self._backup_worker = None
         if made:
             logger.info("DB 백업 완료: %s", made)
+
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        """최대화 글리프를 창 상태에 맞춘다.
+
+        Aero Snap·`Win+↑`·더블클릭은 캡션 버튼을 거치지 않으므로, 버튼 쪽에서만
+        글리프를 바꾸면 조용히 어긋난다.
+        """
+        if event.type() == QEvent.Type.WindowStateChange:
+            title_bar = getattr(self, "_title_bar", None)
+            if title_bar is not None:
+                title_bar.set_maximized(self.isMaximized())
+        super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # 감시 타이머를 먼저 멈춘다 — 정리 중에 새 조회가 시작되면 그 워커를
