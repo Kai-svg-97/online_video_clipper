@@ -31,6 +31,11 @@ a = Analysis(
         *collect_submodules("yt_dlp"),
         "PyQt6.sip",
         "sqlite3",
+        # 프레임리스 타이틀바: `gui.frameless.win32_hook`은 **함수 안에서** 임포트되고
+        # (비윈도우에서 `ctypes.windll` 때문에 모듈 로드가 실패하므로 지연시킨다),
+        # 빠지면 설치가 조용히 실패해 OS 타이틀바로 되돌아간다 — 앱은 뜨지만 사용자가
+        # 요청한 화면이 아니다. 윈도우 빌드에서만 명시한다.
+        *(["gui.frameless.win32_hook"] if _win else []),
         # 클라우드 동기화: keyring 백엔드·msal·google API는 지연/동적 import라 명시 수집
         "keyring",
         *collect_submodules("keyring.backends"),
