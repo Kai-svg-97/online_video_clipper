@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import QWidget
 from domain.updater.badge_state import BadgeState, BadgeView, ClickAction, describe
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
+from gui.text.messages import render
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class UpdateBadge(QWidget):
         # 속성 하나가 비면 예외가 아니라 **프로세스 종료**가 된다. 그래서 그릴 때
         # 읽는 것(_view·색·폰트)을 전부 먼저 채운다.
         self._view: BadgeView = describe(BadgeState.HIDDEN)
+        self._label_text: str = ""     # paint 가 읽는 값 — 갱신 시점에 만든다
         tokens = ThemeManager.instance().current()
         self._apply_theme(tokens)
         ThemeManager.instance().theme_changed.connect(self._apply_theme)
@@ -116,10 +118,15 @@ class UpdateBadge(QWidget):
             size_bytes=self._size_bytes,
             error=self._error,
         )
+        # **문장은 여기서 한 번만 만든다.** `paintEvent` 안에서 렌더하면 거기서 난
+        # 예외가 로그도 없이 프로세스를 죽인다(0xC0000409) — `render()` 가 예외를
+        # 내지 않도록 짜여 있긴 하지만, paint 경로에 계산을 두지 않는 편이 안전하고
+        # 매 프레임 같은 문자열을 다시 만들 이유도 없다.
+        self._label_text = render(self._view.label)
         self.setVisible(self._view.visible)
-        self.setToolTip(self._view.tooltip)
+        self.setToolTip(render(self._view.tooltip))
         if self._view.visible:
-            self.setFixedWidth(self._width_for(self._view.label))
+            self.setFixedWidth(self._width_for(self._label_text))
         self.update()
 
     def _width_for(self, text: str) -> int:
@@ -217,5 +224,5 @@ class UpdateBadge(QWidget):
         p.save()
         p.setClipRect(clip)
         p.setPen(color)
-        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._view.label)
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._label_text)
         p.restore()

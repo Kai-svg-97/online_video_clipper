@@ -20,6 +20,7 @@ from collections.abc import Sequence
 
 from domain.shared.messages import Message
 from gui.text import _
+from gui.text.formats import ByteUnit, format_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,42 @@ _TEMPLATES: dict[str, str] = {
     "watch.count_only": "새 영상 {total}개",
     "watch.titles": "{titles}",
     "watch.titles_and_rest": "{titles}\n… 외 {rest}개",
+
+    # ── 자동 업데이트 배지 ────────────────────────────────────────
+    # 크기를 아는지·이유를 아는지에 따라 **키가 갈린다**. " (179.4MB)" 같은 조각을
+    # 문장에 끼워 넣으면 언어가 바뀔 때 꽂을 자리가 없다.
+    "update.badge.found": "⭳ v{version}",
+    "update.found_tooltip": "현재 v{current} → v{new} 으로 업데이트됩니다\n눌러서 내려받기",
+    "update.found_tooltip_sized":
+        "현재 v{current} → v{new} 으로 업데이트됩니다 ({size_bytes})\n눌러서 내려받기",
+    "update.badge.downloading_size": "v{version} · {downloaded_bytes}",
+    "update.badge.downloading_pct": "v{version} · {percent}%",
+    "update.downloading_unknown": "내려받는 중… {downloaded_bytes}",
+    "update.downloading": "내려받는 중… {downloaded_bytes} / {total_bytes}",
+    "update.badge.ready": "✓ v{version} 설치",
+    "update.ready_tooltip": "v{new} 설치를 시작합니다\n앱이 닫히고 자동으로 다시 시작됩니다",
+    "update.badge.installing": "설치 중…",
+    "update.installing_tooltip": "잠시 후 자동으로 다시 시작됩니다",
+    "update.badge.failed": "⟳ v{version}",
+    "update.failed_tooltip": "내려받지 못했습니다: {reason}\n눌러서 다시 시도",
+    "update.failed_tooltip_unknown": "내려받지 못했습니다: 알 수 없는 오류\n눌러서 다시 시도",
 }
 
 # 여러 조각을 한 줄로 이을 때 쓰는 구분자. 구분자도 언어 설정이라 여기 둔다.
 JOIN_SEPARATOR = " · "
+
+
+def _prepare(params: dict[str, object]) -> dict[str, object]:
+    """파라미터 이름의 **접미사가 포맷을 고른다**.
+
+    도메인이 "179.4MB" 같은 문자열을 만들지 않게 하는 장치다 — 바이트 수만 넘기면
+    단위 표기는 여기서 붙는다(단위 표기도 언어 설정이다).
+    """
+    out = dict(params)
+    for name, value in params.items():
+        if name.endswith("_bytes") and isinstance(value, (int, float)):
+            out[name] = format_bytes(value, unit=ByteUnit.MB)
+    return out
 
 
 def render(msg: Message | None) -> str:
@@ -74,7 +107,7 @@ def render(msg: Message | None) -> str:
         logger.warning("표시 문구 템플릿이 없다: %s", msg.key)
         return msg.key
     try:
-        return _(template).format(**msg.as_dict())
+        return _(template).format(**_prepare(msg.as_dict()))
     except (KeyError, IndexError, ValueError):
         # 파라미터가 모자라거나 형식이 안 맞는다. 채우지 못한 원문이라도 돌려준다.
         logger.exception("표시 문구를 채우지 못했다: %s", msg.key)

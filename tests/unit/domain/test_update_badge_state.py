@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pytest
 
+from domain.shared.messages import Message
+
 from domain.updater.badge_state import (
     MAX_VERSION_CHARS,
     BadgeState,
@@ -45,22 +47,26 @@ class TestFound:
         )
 
     def test_새_버전_번호를_보여_준다(self):
-        assert "1.30.0" in self._view().label
+        assert self._view().label == Message.of("update.badge.found", version="1.30.0")
 
     def test_툴팁에_현재_버전과_새_버전이_모두_있다(self):
         """어느 버전에서 어느 버전으로 가는지 모르면 누를 이유가 없다."""
         tip = self._view().tooltip
-        assert "1.29.0" in tip and "1.30.0" in tip
+        assert tip.as_dict()["current"] == "1.29.0"
+        assert tip.as_dict()["new"] == "1.30.0"
 
     def test_툴팁에_받을_크기를_알려_준다(self):
-        assert "179.0MB" in self._view().tooltip
+        tip = self._view().tooltip
+        # 도메인은 바이트 수만 싣는다 — "179.0MB" 로 만드는 일은 화면 몫이다.
+        assert tip.key == "update.found_tooltip_sized"
+        assert tip.as_dict()["size_bytes"] == 179 * 1024 * 1024
 
     def test_크기를_모르면_크기를_말하지_않는다(self):
         view = describe(
             BadgeState.FOUND, current_version="1.29.0",
             new_version="1.30.0", size_bytes=0,
         )
-        assert "MB" not in view.tooltip
+        assert view.tooltip.key == "update.found_tooltip"   # 크기 없는 키
 
     def test_누르면_다운로드가_시작된다(self):
         assert self._view().action is ClickAction.DOWNLOAD
@@ -78,17 +84,21 @@ class TestDownloading:
 
     def test_진행률을_백분율로_보여_준다(self):
         view = self._view(50, 100)
-        assert "50%" in view.label
+        assert view.label == Message.of(
+            "update.badge.downloading_pct", version="1.30.0", percent=50
+        )
         assert view.fill == pytest.approx(0.5)
 
     def test_받은_양과_전체를_툴팁에_적는다(self):
         tip = self._view(10 * 1024 * 1024, 100 * 1024 * 1024).tooltip
-        assert "10.0MB" in tip and "100.0MB" in tip
+        assert tip.key == "update.downloading"
+        assert tip.as_dict()["downloaded_bytes"] == 10 * 1024 * 1024
+        assert tip.as_dict()["total_bytes"] == 100 * 1024 * 1024
 
     def test_총량을_모르면_백분율을_지어내지_않는다(self):
         """Content-Length 가 없는 응답이 있다 — 0으로 나누지도 않는다."""
         view = self._view(5 * 1024 * 1024, 0)
-        assert "%" not in view.label
+        assert view.label.key == "update.badge.downloading_size"   # 백분율 키가 아니다
         assert view.indeterminate is True
         assert view.fill == 0.0
 
@@ -96,7 +106,7 @@ class TestDownloading:
         """이어받기 뒤 서버가 Range를 무시하면 받은 양이 전체보다 커 보인다."""
         view = self._view(150, 100)
         assert view.fill == 1.0
-        assert "100%" in view.label
+        assert view.label.as_dict()["percent"] == 100
 
     def test_받는_중에는_눌러도_아무_일이_없다(self):
         """두 번 누르면 워커가 둘이 된다."""
@@ -113,11 +123,11 @@ class TestReady:
         return describe(BadgeState.READY, new_version="1.30.0")
 
     def test_설치하라고_말한다(self):
-        assert "설치" in self._view().label
+        assert self._view().label.key == "update.badge.ready"
 
     def test_앱이_다시_시작된다고_알린다(self):
         """말없이 앱이 닫히면 사용자는 앱이 죽은 줄 안다."""
-        assert "다시 시작" in self._view().tooltip
+        assert self._view().tooltip.key == "update.ready_tooltip"
 
     def test_가득_차_있다(self):
         assert self._view().fill == 1.0
@@ -132,7 +142,7 @@ class TestInstalling:
 
     def test_설치_중임을_보여_준다(self):
         assert self._view().visible is True
-        assert "설치" in self._view().label
+        assert self._view().label.key == "update.badge.installing"
 
     def test_누르는_것을_막는다(self):
         """이미 종료 절차가 시작됐다."""
@@ -145,7 +155,7 @@ class TestFailed:
 
     def test_이유를_알려_준다(self):
         """왜 실패했는지 모르면 사용자가 할 수 있는 일이 없다."""
-        assert "Read timed out." in self._view().tooltip
+        assert self._view().tooltip.as_dict()["reason"] == "Read timed out."
 
     def test_이유가_비어도_안전하다(self):
         assert self._view(error="").tooltip

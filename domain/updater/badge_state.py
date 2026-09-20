@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from domain.shared.messages import Message
+
 # 배지에 적는 버전 문자열의 최대 길이. 넘으면 줄인다 — 프리릴리스 태그가 붙으면
 # (`1.30.0-rc1`) 띠 안에서 폭이 무너진다.
 MAX_VERSION_CHARS = 14
@@ -49,8 +51,8 @@ class BadgeView:
     """화면이 읽는 값 묶음 — 위젯은 이것만 보고 그린다."""
 
     visible: bool
-    label: str
-    tooltip: str
+    label: Message | None
+    tooltip: Message | None
     fill: float          # 0.0~1.0 — 진행률 채움 비율
     indeterminate: bool  # 총량을 모른다(채움 대신 다른 표시)
     action: ClickAction
@@ -78,10 +80,6 @@ def progress_fraction(downloaded: int, total: int) -> float:
     return min(1.0, downloaded / total)
 
 
-def _mb(n: int) -> str:
-    return f"{n / _MB:.1f}MB"
-
-
 def describe(
     state: BadgeState,
     *,
@@ -101,18 +99,19 @@ def describe(
 
     if state is BadgeState.HIDDEN or not short:
         return BadgeView(
-            visible=False, label="", tooltip="", fill=0.0,
+            visible=False, label=None, tooltip=None, fill=0.0,
             indeterminate=False, action=ClickAction.NOTHING,
         )
 
     if state is BadgeState.FOUND:
-        size = f" ({_mb(size_bytes)})" if size_bytes > 0 else ""
+        # 크기를 아는지에 따라 **키가 갈린다** — " (179.4MB)" 같은 조각을 문장에
+        # 끼워 넣으면 언어가 바뀔 때 꽂을 자리가 없다.
+        key = "update.found_tooltip_sized" if size_bytes > 0 else "update.found_tooltip"
         return BadgeView(
             visible=True,
-            label=f"⭳ v{short}",
-            tooltip=(
-                f"현재 v{current_version} → v{new_version} 으로 업데이트됩니다{size}\n"
-                "눌러서 내려받기"
+            label=Message.of("update.badge.found", version=short),
+            tooltip=Message.of(
+                key, current=current_version, new=new_version, size_bytes=size_bytes
             ),
             fill=0.0,
             indeterminate=False,
@@ -124,8 +123,13 @@ def describe(
             # 총량을 모르면 백분율이 거짓말이 된다 — 받은 양만 정직하게 보여 준다.
             return BadgeView(
                 visible=True,
-                label=f"v{short} · {_mb(downloaded)}",
-                tooltip=f"내려받는 중… {_mb(downloaded)}",
+                label=Message.of(
+                    "update.badge.downloading_size",
+                    version=short, downloaded_bytes=downloaded,
+                ),
+                tooltip=Message.of(
+                    "update.downloading_unknown", downloaded_bytes=downloaded
+                ),
                 fill=0.0,
                 indeterminate=True,
                 action=ClickAction.NOTHING,
@@ -133,8 +137,12 @@ def describe(
         frac = progress_fraction(downloaded, total)
         return BadgeView(
             visible=True,
-            label=f"v{short} · {int(frac * 100)}%",
-            tooltip=f"내려받는 중… {_mb(downloaded)} / {_mb(total)}",
+            label=Message.of(
+                "update.badge.downloading_pct", version=short, percent=int(frac * 100)
+            ),
+            tooltip=Message.of(
+                "update.downloading", downloaded_bytes=downloaded, total_bytes=total
+            ),
             fill=frac,
             indeterminate=False,
             action=ClickAction.NOTHING,
@@ -143,11 +151,8 @@ def describe(
     if state is BadgeState.READY:
         return BadgeView(
             visible=True,
-            label=f"✓ v{short} 설치",
-            tooltip=(
-                f"v{new_version} 설치를 시작합니다\n"
-                "앱이 닫히고 자동으로 다시 시작됩니다"
-            ),
+            label=Message.of("update.badge.ready", version=short),
+            tooltip=Message.of("update.ready_tooltip", new=new_version),
             fill=1.0,
             indeterminate=False,
             action=ClickAction.INSTALL,
@@ -156,19 +161,24 @@ def describe(
     if state is BadgeState.INSTALLING:
         return BadgeView(
             visible=True,
-            label="설치 중…",
-            tooltip="잠시 후 자동으로 다시 시작됩니다",
+            label=Message.of("update.badge.installing"),
+            tooltip=Message.of("update.installing_tooltip"),
             fill=1.0,
             indeterminate=False,
             action=ClickAction.NOTHING,
         )
 
     # FAILED — 왜 실패했는지 말해 주지 않으면 사용자가 할 수 있는 일이 없다.
-    reason = (error or "알 수 없는 오류").strip()
+    # 이유를 모를 때도 조각을 채워 넣지 않고 **다른 키**를 쓴다.
+    reason = (error or "").strip()
+    tooltip = (
+        Message.of("update.failed_tooltip", reason=reason) if reason
+        else Message.of("update.failed_tooltip_unknown")
+    )
     return BadgeView(
         visible=True,
-        label=f"⟳ v{short}",
-        tooltip=f"내려받지 못했습니다: {reason}\n눌러서 다시 시도",
+        label=Message.of("update.badge.failed", version=short),
+        tooltip=tooltip,
         fill=0.0,
         indeterminate=False,
         action=ClickAction.DOWNLOAD,
