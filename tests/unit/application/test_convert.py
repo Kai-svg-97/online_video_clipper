@@ -86,4 +86,5 @@ class TestProgress:
 class TestCatalogExposure:
     def test_화면이_쓸_목록을_돌려준다(self):
         presets = list_presets()
-        assert presets and all(p.key and p.name for p in presets)
+        assert presets and all(p.key for p in presets)
+        # 표시 이름은 도메인이 갖지 않는다 — gui/text/labels.py 가 갖는다

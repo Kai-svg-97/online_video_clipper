@@ -35,6 +35,7 @@ from gui.workers import track_thread
 from gui.themes.tokens import PRESETS, ThemeTokens
 from version import __version__
 from gui.themes.colors import sem
+from gui.text.labels import transcribe_model_name, transcribe_model_note
 
 
 # ── 분할된 부품 (gui/panels/settings/*) ─────────────────────────────
@@ -1951,7 +1952,7 @@ class SettingsPanel(QWidget):
         self._asr_model_combo = QComboBox()
         for model in MODELS:
             self._asr_model_combo.addItem(
-                f"{model.name} · {model.disk_mb}MB", model.key
+                f"{transcribe_model_name(model.key)} · {model.disk_mb}MB", model.key
             )
         current = self._subtitle_vm.transcribe_model_key if self._subtitle_vm else ""
         idx = self._asr_model_combo.findData(current)
@@ -1997,10 +1998,8 @@ class SettingsPanel(QWidget):
 
     def _refresh_transcribe_rows(self) -> None:
         """고른 모델의 설명과 '받아 둔 모델' 표시를 다시 채운다."""
-        from domain.library.transcribe import resolve_model  # noqa: PLC0415
-
         key = self._asr_model_combo.currentData() or ""
-        self._asr_model_note.setText(resolve_model(key).note)
+        self._asr_model_note.setText(transcribe_model_note(key))
 
         installed = self._subtitle_vm.installed_models() if self._subtitle_vm else set()
         if key in installed:

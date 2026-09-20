@@ -74,3 +74,39 @@ FILTER_PRESET_LABELS: dict[tuple[str, str], str] = {
 
 def filter_preset_label(group: str, key: str) -> str:
     return FILTER_PRESET_LABELS.get((group, key), key)
+
+
+# ── 포맷 변환 프리셋 ──────────────────────────────────────────────
+# 키는 `domain/clip/presets.py` 의 ConvertPreset.key. (이름, 설명) 짝이다.
+CONVERT_PRESET_LABELS: dict[str, tuple[str, str]] = {
+    "mp4-1080p": ("일반 재생용 (1080p mp4)", "H.264+AAC — 폰·TV·차량에서 거의 항상 열립니다"),
+    "mp4-720p": ("용량 줄이기 (720p mp4)", "같은 조합에 해상도만 낮춰 파일을 작게 만듭니다"),
+    "mp4-480p": ("많이 줄이기 (480p mp4)", "화질을 크게 낮추는 대신 가장 작습니다"),
+    "mp3": ("소리만 (mp3)", "어디서나 열리는 음원. 호환이 가장 넓습니다"),
+    "m4a": ("소리만 (m4a)", "같은 용량에서 mp3보다 낫습니다. 애플 기기에 잘 맞습니다"),
+}
+
+
+def convert_preset_name(key: str) -> str:
+    return CONVERT_PRESET_LABELS.get(key, (key, ""))[0]
+
+
+def convert_preset_description(key: str) -> str:
+    return CONVERT_PRESET_LABELS.get(key, (key, ""))[1]
+
+
+# ── 음성 인식 모델 ────────────────────────────────────────────────
+# 키는 `domain/library/transcribe.py` 의 TranscribeModel.key. (이름, 설명) 짝이다.
+TRANSCRIBE_MODEL_LABELS: dict[str, tuple[str, str]] = {
+    "tiny": ("가장 빠름 (tiny)", "빠르지만 정확도가 낮습니다. 무슨 말인지 훑어볼 때."),
+    "base": ("권장 (base)", "속도와 정확도가 무난합니다. 대부분 이걸로 충분합니다."),
+    "small": ("정확함 (small)", "느리지만 정확합니다. 저사양 PC에서는 오래 걸립니다."),
+}
+
+
+def transcribe_model_name(key: str) -> str:
+    return TRANSCRIBE_MODEL_LABELS.get(key, (key, ""))[0]
+
+
+def transcribe_model_note(key: str) -> str:
+    return TRANSCRIBE_MODEL_LABELS.get(key, (key, ""))[1]

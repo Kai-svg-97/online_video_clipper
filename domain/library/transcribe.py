@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from domain.shared.messages import Message
+
 # 모델을 두는 곳(‘DATA_DIR/models/whisper’). 사용자의 HuggingFace 캐시를 쓰지 않는다 —
 # 앱이 받은 것을 앱이 관리해야 지울 때도 한 곳만 보면 된다.
 MODEL_DIR_NAME = "whisper"
@@ -28,49 +30,46 @@ class TranscribeModel:
     """
 
     key: str
-    name: str
     disk_mb: int
     realtime_ratio: float
-    note: str
 
     def estimate_sec(self, media_duration_sec: float) -> float:
         return max(0.0, media_duration_sec) * self.realtime_ratio
 
-    def estimate_text(self, media_duration_sec: float) -> str:
-        """이 모델로 이 영상을 전사하면 대략 얼마나 걸리는지."""
+    def estimate(self, media_duration_sec: float) -> Message:
+        """이 모델로 이 영상을 전사하면 대략 얼마나 걸리는지.
+
+        문장이 아니라 키+숫자를 돌려준다 — "약 3분"과 "about 3 minutes"는 단어만
+        바꿔서는 안 되고(복수형·어순), 그 판단은 화면 몫이다.
+        """
         seconds = self.estimate_sec(media_duration_sec)
         if seconds < 60:
-            return "1분 미만"
+            return Message.of("transcribe.under_a_minute")
         minutes = int(seconds // 60)
         if minutes < 60:
-            return f"약 {minutes}분"
+            return Message.of("transcribe.about_minutes", minutes=minutes)
         hours, rem = divmod(minutes, 60)
-        return f"약 {hours}시간 {rem}분"
+        return Message.of("transcribe.about_hours", hours=hours, minutes=rem)
 
 
 # CPU(int8) 기준 대략치. 정확한 값은 기기마다 다르지만, **고를 때 필요한 것은
 # 상대적인 크기 차이**라 보수적으로 잡았다.
+# **이름·설명은 여기 없다** — `gui/text/labels.py` 의 `TRANSCRIBE_MODEL_LABELS`.
 MODELS: tuple[TranscribeModel, ...] = (
     TranscribeModel(
         key="tiny",
-        name="가장 빠름 (tiny)",
         disk_mb=75,
         realtime_ratio=0.06,
-        note="빠르지만 정확도가 낮습니다. 무슨 말인지 훑어볼 때.",
     ),
     TranscribeModel(
         key="base",
-        name="권장 (base)",
         disk_mb=145,
         realtime_ratio=0.12,
-        note="속도와 정확도가 무난합니다. 대부분 이걸로 충분합니다.",
     ),
     TranscribeModel(
         key="small",
-        name="정확함 (small)",
         disk_mb=484,
         realtime_ratio=0.35,
-        note="느리지만 정확합니다. 저사양 PC에서는 오래 걸립니다.",
     ),
 )
 

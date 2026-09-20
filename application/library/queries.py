@@ -6,6 +6,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import UUID
 
+from domain.download.entities import JobStatus
+
 _QUALITY_LABELS = frozenset({"UHD (4K)", "QHD (2K)", "FHD", "HD", "SD", "LD"})
 _BRACKET_RE = re.compile(r'\[([^\]]+)\]')
 
@@ -35,7 +37,6 @@ from application.library.dtos import (
     VideoDTO,
     VideoDetailDTO,
 )
-from domain.download.entities import JobStatus
 from domain.download.repositories import IDownloadRepository
 from domain.download.value_objects import AUDIO_FORMAT_VALUES
 from domain.library.aggregates import VideoAggregate

@@ -43,6 +43,11 @@ _TEMPLATES: dict[str, str] = {
     "filter.watched.no": "안 본 것만",
     "filter.channel": "채널 '{name}'",
     "filter.favorite": "즐겨찾기",
+
+    # ── 음성 인식 예상 소요 ───────────────────────────────────────
+    "transcribe.under_a_minute": "1분 미만",
+    "transcribe.about_minutes": "약 {minutes}분",
+    "transcribe.about_hours": "약 {hours}시간 {minutes}분",
 }
 
 # 여러 조각을 한 줄로 이을 때 쓰는 구분자. 구분자도 언어 설정이라 여기 둔다.

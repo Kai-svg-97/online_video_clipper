@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 from application.library.dtos import FailedDownloadInfoDTO
 from gui.themes.colors import sem
 from gui.toast import show_toast
+from gui.text.labels import convert_preset_description, convert_preset_name
 
 
 # ── 분할된 부품 (gui/panels/detail/*) ─────────────────────────────
@@ -519,10 +520,10 @@ class FilesTabMixin:
         row.setSpacing(8)
         self._convert_combo = QComboBox()
         for preset in list_presets():
-            self._convert_combo.addItem(preset.name, preset.key)
+            self._convert_combo.addItem(convert_preset_name(preset.key), preset.key)
             self._convert_combo.setItemData(
                 self._convert_combo.count() - 1,
-                preset.description,
+                convert_preset_description(preset.key),
                 Qt.ItemDataRole.ToolTipRole,
             )
         self._convert_btn = QPushButton("변환")

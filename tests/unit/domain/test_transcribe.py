@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from domain.shared.messages import Message
 from domain.library.transcribe import (
     DEFAULT_MODEL_KEY,
     MODELS,
@@ -29,11 +30,14 @@ class TestCatalog:
     def test_기본값이_목록에_있다(self):
         assert DEFAULT_MODEL_KEY in MODELS_BY_KEY
 
-    def test_모든_모델에_크기와_설명이_있다(self):
-        """무엇을 고르는지 모르면 고를 수 없다."""
+    def test_모든_모델에_크기가_있다(self):
+        """무엇을 고르는지 모르면 고를 수 없다.
+
+        이름·설명은 도메인이 갖지 않는다(`gui/text/labels.py`) — 키마다 라벨이
+        있는지는 `tests/unit/gui/test_label_coverage.py` 가 지킨다.
+        """
         for model in MODELS:
             assert model.disk_mb > 0, model.key
-            assert model.name and model.note, model.key
 
     def test_클수록_느리다(self):
         """크기와 속도가 역전되면 사용자가 잘못된 판단을 한다."""
@@ -62,16 +66,21 @@ class TestResolve:
 
 
 class TestEstimate:
+    """**키와 숫자를 단언한다** — 문구는 화면 몫이다."""
+
     def test_짧으면_1분_미만으로_알린다(self):
-        assert find_model("tiny").estimate_text(60) == "1분 미만"
+        assert find_model("tiny").estimate(60) == Message.of("transcribe.under_a_minute")
 
     def test_분_단위로_알린다(self):
         # base: 0.12 → 30분 영상이면 약 3.6분
-        assert find_model("base").estimate_text(30 * 60).startswith("약 3분")
+        assert find_model("base").estimate(30 * 60) == Message.of(
+            "transcribe.about_minutes", minutes=3
+        )
 
     def test_한_시간을_넘으면_시간으로_알린다(self):
-        text = find_model("small").estimate_text(10 * 3600)   # 0.35 → 3.5시간
-        assert "시간" in text
+        got = find_model("small").estimate(10 * 3600)   # 0.35 → 3.5시간
+        assert got.key == "transcribe.about_hours"
+        assert got.as_dict()["hours"] == 3
 
     def test_길이를_모르면_0으로_본다(self):
         assert find_model("base").estimate_sec(0) == 0.0

@@ -268,7 +268,7 @@ class TranscribeVideoHandler:
             return 0
         lang = f"{self.LANG_PREFIX}{cmd.language}" if cmd.language else f"{self.LANG_PREFIX}auto"
         self._repo.replace_lines(
-            cmd.video_id, lang, f"음성 인식 ({model.name})", lines
+            cmd.video_id, lang, f"음성 인식 ({model.key})", lines
         )
         logger.info("음성 인식 색인: %s (%d줄, %s)", cmd.media_path, len(lines), model.key)
         return len(lines)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from domain.clip.presets import PRESETS
 from domain.clip.sponsor import SKIP_CATEGORIES
 from domain.library.availability import (
     STATUS_OK,
@@ -23,10 +24,13 @@ from domain.library.filters import (
     DURATION_PRESETS,
     WATCHED_PRESETS,
 )
+from domain.library.transcribe import MODELS_BY_KEY
 from gui.text.labels import (
     AVAILABILITY_LABELS,
     FILTER_PRESET_LABELS,
+    CONVERT_PRESET_LABELS,
     SPONSOR_CATEGORY_LABELS,
+    TRANSCRIBE_MODEL_LABELS,
     availability_label,
     filter_preset_label,
     sponsor_category_label,
@@ -45,6 +49,8 @@ _FILTER_KEYS = (
     (set(SKIP_CATEGORIES), SPONSOR_CATEGORY_LABELS, "SponsorBlock 카테고리"),
     (_AVAILABILITY_KEYS, AVAILABILITY_LABELS, "원본 확인 상태"),
     (_FILTER_KEYS, FILTER_PRESET_LABELS, "복합 필터 프리셋"),
+    ({p.key for p in PRESETS}, CONVERT_PRESET_LABELS, "포맷 변환 프리셋"),
+    (set(MODELS_BY_KEY), TRANSCRIBE_MODEL_LABELS, "음성 인식 모델"),
 ])
 class TestCoverage:
     def test_키마다_라벨이_있다(self, keys, labels, name):
@@ -56,7 +62,11 @@ class TestCoverage:
         assert not extra, f"{name}: 도메인에 없는 라벨 {sorted(extra)}"
 
     def test_빈_라벨이_없다(self, keys, labels, name):
-        blank = [k for k in keys if not labels.get(k, "").strip()]
+        def _blank(v) -> bool:
+            # (이름, 설명) 짝인 표도 있다 — 둘 다 채워져 있어야 한다.
+            return not all(part.strip() for part in (v if isinstance(v, tuple) else (v,)))
+
+        blank = [k for k in keys if _blank(labels.get(k, ""))]
         assert not blank, f"{name}: 빈 라벨 {sorted(blank)}"
 
 

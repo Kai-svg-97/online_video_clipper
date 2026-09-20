@@ -26,8 +26,6 @@ class ConvertPreset:
     """
 
     key: str
-    name: str
-    description: str
     ext: str
     video_codec: str = ""
     audio_codec: str = "aac"
@@ -44,19 +42,16 @@ class ConvertPreset:
         return f"{stem} [{self.key}].{self.ext}"
 
 
+# **이름·설명은 여기 없다** — `gui/text/labels.py` 의 `CONVERT_PRESET_LABELS`.
 PRESETS: tuple[ConvertPreset, ...] = (
     ConvertPreset(
         key="mp4-1080p",
-        name="일반 재생용 (1080p mp4)",
-        description="H.264+AAC — 폰·TV·차량에서 거의 항상 열립니다",
         ext="mp4",
         video_codec="libx264",
         max_height=1080,
     ),
     ConvertPreset(
         key="mp4-720p",
-        name="용량 줄이기 (720p mp4)",
-        description="같은 조합에 해상도만 낮춰 파일을 작게 만듭니다",
         ext="mp4",
         video_codec="libx264",
         max_height=720,
@@ -64,8 +59,6 @@ PRESETS: tuple[ConvertPreset, ...] = (
     ),
     ConvertPreset(
         key="mp4-480p",
-        name="휴대용 (480p mp4)",
-        description="이동 중 보기·용량이 빠듯할 때",
         ext="mp4",
         video_codec="libx264",
         max_height=480,
@@ -73,16 +66,12 @@ PRESETS: tuple[ConvertPreset, ...] = (
     ),
     ConvertPreset(
         key="mp3",
-        name="음원만 (mp3)",
-        description="영상을 버리고 소리만 남깁니다",
         ext="mp3",
         video_codec="",
         audio_codec="libmp3lame",
     ),
     ConvertPreset(
         key="m4a",
-        name="음원만 (m4a)",
-        description="같은 용량에서 mp3보다 소리가 낫습니다",
         ext="m4a",
         video_codec="",
         audio_codec="aac",

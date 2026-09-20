@@ -36,9 +36,13 @@ class TestCatalog:
             if preset.is_audio_only:
                 assert preset.ext in AUDIO_EXTS, preset.key
 
-    def test_모든_프리셋에_설명이_있다(self):
-        """무엇을 고르는지 모르면 고를 수 없다."""
-        assert all(p.name and p.description for p in PRESETS)
+    def test_모든_프리셋에_키가_있다(self):
+        """이름·설명은 도메인이 갖지 않는다 — `gui/text/labels.py` 가 갖는다.
+
+        무엇을 고르는지 알려 주는 일(이름·설명)은 화면 몫이고, 키마다 라벨이 있는지는
+        `tests/unit/gui/test_label_coverage.py` 가 지킨다.
+        """
+        assert all(p.key for p in PRESETS)
 
     def test_키로_찾는다(self):
         assert find_preset("mp3").ext == "mp3"
@@ -59,7 +63,7 @@ class TestOutputName:
 
 class TestScaleFilter:
     def test_높이_제한이_없으면_필터도_없다(self):
-        assert scale_filter(ConvertPreset("x", "x", "x", "mp4", "libx264")) is None
+        assert scale_filter(ConvertPreset("x", "mp4", "libx264")) is None
 
     def test_음원은_필터가_없다(self):
         assert scale_filter(find_preset("mp3")) is None
