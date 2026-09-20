@@ -164,9 +164,33 @@ def main() -> int:
         print(f"- {label}")
         _grab(window, name)
 
-    window.close()
-    app.processEvents()
+    _teardown(app, window)
     return 0
+
+
+def _teardown(app, window) -> None:
+    """실행 중인 워커를 끝까지 기다렸다가 내려온다.
+
+    **왜 이걸 따로 두는가**: 이 스크립트가 세그멘테이션 폴트로 죽은 적이 있다(5회 중
+    1회, 갈무리 5장을 다 저장한 **뒤**에). 라이브러리 화면의 추천 띠가 네트워크 조회를
+    띄우는데, `closeEvent` 의 `wait_all(3000)` 안에 끝나지 못하면 실행 중인 QThread가
+    파괴되며 Qt가 프로세스를 죽인다(`gui/workers.py` 문서의 exit 0xC0000409).
+
+    빌드 보조 스크립트가 어쩌다 한 번 죽으면 원인을 찾기 어려우므로, 넉넉히 기다리고
+    그래도 남으면 **조용히 죽는 대신 말로 알린다**.
+    """
+    from gui.workers import running_count, wait_all
+
+    window.close()
+    for _ in range(20):          # 최대 10초
+        app.processEvents()
+        if running_count() == 0:
+            break
+        wait_all(500)
+    left = running_count()
+    if left:
+        print(f"  경고: 워커 {left}개가 아직 돌고 있습니다 — 종료가 불안정할 수 있습니다")
+    app.processEvents()
 
 
 if __name__ == "__main__":
