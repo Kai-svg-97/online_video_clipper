@@ -19,13 +19,8 @@ STATUS_REMOVED = "removed"
 STATUS_PRIVATE = "private"
 STATUS_UNKNOWN = "unknown"
 
-# 화면에 보여줄 이름.
-STATUS_LABELS: dict[str, str] = {
-    STATUS_OK: "정상",
-    STATUS_REMOVED: "삭제됨",
-    STATUS_PRIVATE: "비공개",
-    STATUS_UNKNOWN: "확인 불가",
-}
+# 화면에 보여줄 이름은 여기 없다 — `gui/text/labels.py` 의 `AVAILABILITY_LABELS`.
+# 값 객체가 표시명을 돌려주면 그 값이 DTO를 타고 화면까지 흘러가 번역할 수 없다.
 
 # 사용자에게 "사라졌다"고 보고할 상태. `UNKNOWN`은 **포함하지 않는다**.
 MISSING_STATUSES: frozenset[str] = frozenset({STATUS_REMOVED, STATUS_PRIVATE})
@@ -41,10 +36,6 @@ class AvailabilityResult:
     @property
     def is_missing(self) -> bool:
         return self.status in MISSING_STATUSES
-
-    @property
-    def label(self) -> str:
-        return STATUS_LABELS.get(self.status, self.status)
 
 
 def classify_http_status(code: int) -> AvailabilityResult:

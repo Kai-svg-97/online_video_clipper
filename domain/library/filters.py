@@ -17,38 +17,43 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from domain.shared.messages import Message
+
 # ── 업로드 날짜 ────────────────────────────────────────────────────
-# (키, 표시 이름, 며칠 전부터). None = 제한 없음.
-DATE_PRESETS: tuple[tuple[str, str, int | None], ...] = (
-    ("all", "전체 기간", None),
-    ("7d", "최근 1주", 7),
-    ("30d", "최근 1개월", 30),
-    ("90d", "최근 3개월", 90),
-    ("365d", "최근 1년", 365),
+# (키, 며칠 전부터). None = 제한 없음.
+#
+# **표시 이름은 여기 없다.** 화면 문구는 `gui/text/labels.py` 가 갖는다 — 도메인이
+# 한국어를 들고 있으면 화면 언어를 바꿀 수 없다.
+DATE_PRESETS: tuple[tuple[str, int | None], ...] = (
+    ("all", None),
+    ("7d", 7),
+    ("30d", 30),
+    ("90d", 90),
+    ("365d", 365),
 )
 
 # ── 영상 길이 ──────────────────────────────────────────────────────
 # (키, 표시 이름, 최소초, 최대초). 경계는 YouTube 의 흔한 구분(4분·20분)을 따른다 —
 # 4분 미만은 쇼츠·클립, 20분 이상은 강의·팟캐스트·실황이 몰린다.
-DURATION_PRESETS: tuple[tuple[str, str, int | None, int | None], ...] = (
-    ("all", "전체 길이", None, None),
-    ("short", "4분 미만", None, 239),
-    ("medium", "4~20분", 240, 1199),
-    ("long", "20분 이상", 1200, None),
+DURATION_PRESETS: tuple[tuple[str, int | None, int | None], ...] = (
+    ("all", None, None),
+    ("short", None, 239),
+    ("medium", 240, 1199),
+    ("long", 1200, None),
 )
 
 # ── 다운로드 여부 ──────────────────────────────────────────────────
-DOWNLOAD_PRESETS: tuple[tuple[str, str, bool | None], ...] = (
-    ("all", "전체", None),
-    ("yes", "받아 둔 것만", True),
-    ("no", "안 받은 것만", False),
+DOWNLOAD_PRESETS: tuple[tuple[str, bool | None], ...] = (
+    ("all", None),
+    ("yes", True),
+    ("no", False),
 )
 
 # ── 시청 여부 ──────────────────────────────────────────────────────
-WATCHED_PRESETS: tuple[tuple[str, str, bool | None], ...] = (
-    ("all", "전체", None),
-    ("yes", "본 것만", True),
-    ("no", "안 본 것만", False),
+WATCHED_PRESETS: tuple[tuple[str, bool | None], ...] = (
+    ("all", None),
+    ("yes", True),
+    ("no", False),
 )
 
 
@@ -68,7 +73,7 @@ def resolve_date_preset(key: str, today: date | None = None) -> tuple[str, str]:
 
 def resolve_duration_preset(key: str) -> tuple[int | None, int | None]:
     """길이 프리셋 → `(min_duration_sec, max_duration_sec)`."""
-    for k, _name, lo, hi in DURATION_PRESETS:
+    for k, lo, hi in DURATION_PRESETS:
         if k == key:
             return lo, hi
     return None, None
@@ -82,7 +87,7 @@ def resolve_watched_preset(key: str) -> bool | None:
     return _lookup(WATCHED_PRESETS, key)
 
 
-def describe(
+def describe_filters(
     *,
     date_key: str = "all",
     duration_key: str = "all",
@@ -90,38 +95,39 @@ def describe(
     watched_key: str = "all",
     channel_name: str = "",
     favorite_only: bool = False,
-) -> str:
-    """지금 걸린 필터를 한 줄로 — 화면이 "무엇으로 좁혔는지" 보여준다.
+) -> tuple[Message, ...]:
+    """지금 걸린 필터를 **조각 목록으로** 돌려준다 — 화면이 한 줄로 잇는다.
 
     목록이 비었을 때 **왜 비었는지**를 말해 주는 근거다(CLAUDE.md — 상태를 말하지
     않는 화면을 만들지 않는다).
+
+    문장이 아니라 조각 목록인 이유: 잇는 구분자(` · `)도 언어 설정이고, 조각마다
+    번역이 달라야 한다. 여기서 한 줄로 만들어 버리면 화면이 손댈 수 없다.
     """
-    parts: list[str] = []
-    for presets, key in (
-        (DATE_PRESETS, date_key),
-        (DURATION_PRESETS, duration_key),
+    out: list[Message] = []
+    for group, key in (
+        ("date", date_key),
+        ("duration", duration_key),
+        ("download", download_key),
+        ("watched", watched_key),
     ):
         if key and key != "all":
-            name = next((p[1] for p in presets if p[0] == key), "")
-            if name:
-                parts.append(name)
-    if download_key and download_key != "all":
-        parts.append(_name_of(DOWNLOAD_PRESETS, download_key))
-    if watched_key and watched_key != "all":
-        parts.append(_name_of(WATCHED_PRESETS, watched_key))
+            out.append(Message.of(f"filter.{group}.{key}"))
     if channel_name.strip():
-        parts.append(f"채널 '{channel_name.strip()}'")
+        out.append(Message.of("filter.channel", name=channel_name.strip()))
     if favorite_only:
-        parts.append("즐겨찾기")
-    return " · ".join(p for p in parts if p)
+        out.append(Message.of("filter.favorite"))
+    return tuple(out)
 
 
 def _lookup(presets, key: str):
+    """(키, 값) 짝에서 값을 꺼낸다. 모르는 키면 첫 줄(= `all`)로 떨어진다.
+
+    표시 이름을 걷어내면서 값의 자리가 `row[2]` 에서 `row[1]` 로 당겨졌다.
+    """
     for row in presets:
         if row[0] == key:
-            return row[2]
-    return presets[0][2]
+            return row[1]
+    return presets[0][1]
 
 
-def _name_of(presets, key: str) -> str:
-    return next((p[1] for p in presets if p[0] == key), "")

@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 from domain.library.duplicates import DUPLICATE_EXACT
 from gui.smooth_scroll import apply_smooth_scroll
 from gui.themes.manager import ThemeManager
+from gui.text.labels import availability_label
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +293,9 @@ class LibraryCleanupDialog(QDialog):
         self._missing_btn.setText("원본 확인 시작")
         self._missing_btn.setEnabled(True)
         for item in found or []:
-            row = QTreeWidgetItem([item.title, item.status_label, item.detail])
+            row = QTreeWidgetItem(
+                [item.title, availability_label(item.status), item.detail]
+            )
             row.setData(0, _ROLE_VIDEO_ID, item.video_id)
             row.setFlags(row.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             # **기본은 선택 안 함.** 비공개는 나중에 다시 공개될 수 있고, 삭제된

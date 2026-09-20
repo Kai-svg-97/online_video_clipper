@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from datetime import date
 
+from domain.shared.messages import Message
+
 from domain.library.filters import (
     DATE_PRESETS,
     DOWNLOAD_PRESETS,
     DURATION_PRESETS,
     WATCHED_PRESETS,
-    describe,
+    describe_filters,
     resolve_date_preset,
     resolve_download_preset,
     resolve_duration_preset,
@@ -42,8 +44,10 @@ class TestDatePreset:
         """설정이 낡거나 손으로 고쳐져도 목록이 비지 않아야 한다."""
         assert resolve_date_preset("지난주쯤", TODAY) == ("", "")
 
-    def test_표시_이름이_모두_있다(self):
-        assert all(name for _k, name, _v in DATE_PRESETS)
+    def test_표시_이름은_도메인이_갖지_않는다(self):
+        """프리셋은 (키, 값) 짝이다 — 화면 문구는 `gui/text/labels.py` 가 갖는다."""
+        assert all(len(row) == 2 for row in DATE_PRESETS)
+        assert all(isinstance(row[0], str) for row in DATE_PRESETS)
 
 
 class TestDurationPreset:
@@ -87,29 +91,42 @@ class TestBooleanPresets:
         assert resolve_watched_preset("몰라") is None
 
     def test_첫_항목이_전체다(self):
-        """화면이 첫 항목을 기본 선택으로 두므로, 그게 '제한 없음'이어야 한다."""
-        assert DOWNLOAD_PRESETS[0][2] is None
-        assert WATCHED_PRESETS[0][2] is None
-        assert DURATION_PRESETS[0][2] is None and DURATION_PRESETS[0][3] is None
+        """화면이 첫 항목을 기본 선택으로 두므로, 그게 '제한 없음'이어야 한다.
+
+        표시 이름을 걷어내면서 값의 자리가 한 칸씩 당겨졌다.
+        """
+        assert DOWNLOAD_PRESETS[0][1] is None
+        assert WATCHED_PRESETS[0][1] is None
+        assert DURATION_PRESETS[0][1] is None and DURATION_PRESETS[0][2] is None
 
 
 class TestDescribe:
     def test_아무것도_안_걸면_빈_문자열(self):
-        assert describe() == ""
+        assert describe_filters() == ()
 
     def test_걸린_것만_적는다(self):
-        text = describe(date_key="7d", download_key="yes")
-        assert "최근 1주" in text
-        assert "받아 둔 것만" in text
-        assert "전체" not in text
+        """**키를 단언한다.** 문구는 화면 것이라 도메인 시험이 알 바가 아니고,
+        `Message` 동등성은 부분문자열 `in` 보다 강한 단언이다."""
+        assert describe_filters(date_key="7d", download_key="yes") == (
+            Message.of("filter.date.7d"),
+            Message.of("filter.download.yes"),
+        )
+
+    def test_전체는_적지_않는다(self):
+        assert describe_filters(date_key="all", watched_key="all") == ()
 
     def test_채널과_즐겨찾기도_적는다(self):
-        text = describe(channel_name="  침착맨 ", favorite_only=True)
-        assert "채널 '침착맨'" in text
-        assert "즐겨찾기" in text
+        assert describe_filters(channel_name="  침착맨 ", favorite_only=True) == (
+            Message.of("filter.channel", name="침착맨"),   # 앞뒤 공백 정리도 함께 지킨다
+            Message.of("filter.favorite"),
+        )
 
     def test_공백뿐인_채널은_세지_않는다(self):
-        assert describe(channel_name="   ") == ""
+        assert describe_filters(channel_name="   ") == ()
 
-    def test_여러_개는_가운뎃점으로_잇는다(self):
-        assert " · " in describe(date_key="7d", duration_key="long")
+    def test_걸린_순서대로_돌려준다(self):
+        """잇는 일은 화면이 한다 — 여기서는 순서만 약속한다."""
+        assert describe_filters(date_key="7d", duration_key="long") == (
+            Message.of("filter.date.7d"),
+            Message.of("filter.duration.long"),
+        )

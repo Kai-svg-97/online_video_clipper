@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from domain.clip.sponsor import (
     DEFAULT_SKIP_CATEGORIES,
-    SKIP_CATEGORY_NAMES,
+    SKIP_CATEGORIES,
     SkipSegment,
     normalize_segments,
     segment_at,
@@ -86,14 +86,19 @@ class TestSegmentAt:
 
 class TestMetadata:
     def test_표시_이름은_한글이다(self):
-        assert SkipSegment("sponsor", 0, 10).display_name == "스폰서 광고"
+        from gui.text.labels import sponsor_category_label
+
+        assert sponsor_category_label("sponsor") == "스폰서 광고"
 
     def test_모르는_카테고리는_키를_그대로_보여준다(self):
-        assert SkipSegment("unknown", 0, 10).display_name == "unknown"
+        """API 가 새 값을 추가해도 화면이 비지 않는다."""
+        from gui.text.labels import sponsor_category_label
+
+        assert sponsor_category_label("nope") == "nope"
 
     def test_기본_카테고리는_광고성만_고른다(self):
         """인트로·잡담은 그걸 보려고 튼 사람도 있어 기본에서 뺀다."""
-        assert set(DEFAULT_SKIP_CATEGORIES) <= set(SKIP_CATEGORY_NAMES)
+        assert set(DEFAULT_SKIP_CATEGORIES) <= SKIP_CATEGORIES
         assert "intro" not in DEFAULT_SKIP_CATEGORIES
         assert "sponsor" in DEFAULT_SKIP_CATEGORIES
 

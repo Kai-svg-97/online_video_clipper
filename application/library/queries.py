@@ -35,6 +35,7 @@ from application.library.dtos import (
     VideoDTO,
     VideoDetailDTO,
 )
+from domain.download.entities import JobStatus
 from domain.download.repositories import IDownloadRepository
 from domain.download.value_objects import AUDIO_FORMAT_VALUES
 from domain.library.aggregates import VideoAggregate
@@ -392,7 +393,9 @@ class LibraryStatsHandler:
         # 다운로드 통계
         try:
             dl_history = self._dl_repo.get_history(limit=10000, offset=0)
-            total_dl = len(dl_history)
+            # **완료된 것만 센다.** 화면 라벨이 "완료 다운로드"인데 이력 전체를 세고
+            # 있어서 실패·대기 중인 건까지 포함됐다(실패 1건이 섞이면 그만큼 부풀었다).
+            total_dl = sum(1 for j in dl_history if j.status == JobStatus.COMPLETED)
             total_bytes = 0
             from pathlib import Path  # noqa: PLC0415
 

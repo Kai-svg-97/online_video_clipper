@@ -909,7 +909,7 @@ class SettingsPanel(QWidget):
 
     def _build_sponsorblock_rows(self, layout) -> None:
         """SponsorBlock — 재생 중 건너뛰기 / 다운로드 시 잘라내기."""
-        from domain.clip.sponsor import SKIP_CATEGORY_NAMES  # noqa: PLC0415
+        from gui.text.labels import SPONSOR_CATEGORY_LABELS  # noqa: PLC0415
 
         try:
             from config import settings as s
@@ -943,7 +943,7 @@ class SettingsPanel(QWidget):
         cat_box = QVBoxLayout()
         cat_box.setContentsMargins(22, 4, 0, 0)
         cat_box.setSpacing(2)
-        for key, name in SKIP_CATEGORY_NAMES.items():
+        for key, name in SPONSOR_CATEGORY_LABELS.items():
             check = QCheckBox(name)
             check.setChecked(key in cur_cats)
             check.checkStateChanged.connect(self._on_sb_categories_changed)

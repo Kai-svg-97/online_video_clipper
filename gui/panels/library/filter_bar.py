@@ -28,13 +28,15 @@ from domain.library.filters import (
     DOWNLOAD_PRESETS,
     DURATION_PRESETS,
     WATCHED_PRESETS,
-    describe,
+    describe_filters,
     resolve_date_preset,
     resolve_download_preset,
     resolve_duration_preset,
     resolve_watched_preset,
 )
 from gui.panels.library.formatting import _t
+from gui.text.labels import filter_preset_label
+from gui.text.messages import render_all
 
 
 class FilterBar(QWidget):
@@ -51,10 +53,10 @@ class FilterBar(QWidget):
         row.setContentsMargins(4, 2, 4, 6)
         row.setSpacing(6)
 
-        self._date = self._combo(DATE_PRESETS, "업로드")
-        self._duration = self._combo(DURATION_PRESETS, "길이")
-        self._download = self._combo(DOWNLOAD_PRESETS, "다운로드")
-        self._watched = self._combo(WATCHED_PRESETS, "시청")
+        self._date = self._combo("date", DATE_PRESETS, "업로드")
+        self._duration = self._combo("duration", DURATION_PRESETS, "길이")
+        self._download = self._combo("download", DOWNLOAD_PRESETS, "다운로드")
+        self._watched = self._combo("watched", WATCHED_PRESETS, "시청")
 
         self._channel = QLineEdit()
         self._channel.setPlaceholderText("채널 이름…")
@@ -89,10 +91,11 @@ class FilterBar(QWidget):
 
     # ── 조립 도우미 ───────────────────────────────────────────────
 
-    def _combo(self, presets, tooltip: str) -> QComboBox:
+    def _combo(self, group: str, presets, tooltip: str) -> QComboBox:
+        """항목 글자는 라벨 표에서, userData 는 영문 키 그대로."""
         combo = QComboBox()
         for row in presets:
-            combo.addItem(row[1], row[0])
+            combo.addItem(filter_preset_label(group, row[0]), row[0])
         combo.setToolTip(tooltip)
         combo.currentIndexChanged.connect(self.changed)
         return combo
@@ -133,14 +136,14 @@ class FilterBar(QWidget):
 
     def summary(self) -> str:
         """걸린 필터를 한 줄로 — 목록이 비었을 때 왜 비었는지 말해 준다."""
-        return describe(
+        return render_all(describe_filters(
             date_key=self._date.currentData(),
             duration_key=self._duration.currentData(),
             download_key=self._download.currentData(),
             watched_key=self._watched.currentData(),
             channel_name=self._channel.text(),
             favorite_only=self._favorite.isChecked(),
-        )
+        ))
 
     def apply_saved(self, search) -> None:
         """저장된 검색을 막대에 얹는다. **신호는 한 번만** 낸다.

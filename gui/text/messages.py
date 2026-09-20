@@ -25,7 +25,25 @@ logger = logging.getLogger(__name__)
 
 # 키 → 문장. **키 하나가 완성된 문장 하나를 고른다** — 조각을 이어 붙이지 않는다.
 # 덩어리 C3~C6에서 채워진다.
-_TEMPLATES: dict[str, str] = {}
+_TEMPLATES: dict[str, str] = {
+    # ── 복합 필터 요약 ────────────────────────────────────────────
+    # 프리셋 조각은 라벨 표(`labels.FILTER_PRESET_LABELS`)와 같은 말이지만 **키가
+    # 다르다** — 저쪽은 콤보박스 항목, 이쪽은 "무엇으로 좁혔는지" 요약이다. 영어로
+    # 가면 갈릴 수 있어(고르는 말 vs 걸린 상태) 처음부터 나눠 둔다.
+    "filter.date.7d": "최근 1주",
+    "filter.date.30d": "최근 1개월",
+    "filter.date.90d": "최근 3개월",
+    "filter.date.365d": "최근 1년",
+    "filter.duration.short": "4분 미만",
+    "filter.duration.medium": "4~20분",
+    "filter.duration.long": "20분 이상",
+    "filter.download.yes": "받아 둔 것만",
+    "filter.download.no": "안 받은 것만",
+    "filter.watched.yes": "본 것만",
+    "filter.watched.no": "안 본 것만",
+    "filter.channel": "채널 '{name}'",
+    "filter.favorite": "즐겨찾기",
+}
 
 # 여러 조각을 한 줄로 이을 때 쓰는 구분자. 구분자도 언어 설정이라 여기 둔다.
 JOIN_SEPARATOR = " · "

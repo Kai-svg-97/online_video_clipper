@@ -16,18 +16,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# 화면에 보여줄 이름. 키는 SponsorBlock API의 category 값 그대로다.
+# 우리가 아는 카테고리. 키는 SponsorBlock API의 category 값 그대로다.
 # 이 목록에 없는 카테고리는 무시한다(API가 새 값을 추가해도 조용히 지나간다).
-SKIP_CATEGORY_NAMES: dict[str, str] = {
-    "sponsor": "스폰서 광고",
-    "selfpromo": "자기 홍보·후원",
-    "interaction": "구독 요청",
-    "intro": "인트로·오프닝",
-    "outro": "아웃트로·엔딩",
-    "preview": "예고·재탕 요약",
-    "filler": "잡담·곁가지",
-    "music_offtopic": "음악 외 구간",
-}
+#
+# **화면에 보여줄 이름은 여기 없다** — `gui/text/labels.py` 의
+# `SPONSOR_CATEGORY_LABELS` 가 갖는다. 키마다 라벨이 있는지는 테스트가 지킨다.
+SKIP_CATEGORIES: frozenset[str] = frozenset({
+    "sponsor", "selfpromo", "interaction", "intro",
+    "outro", "preview", "filler", "music_offtopic",
+})
 
 # 기본으로 켜 두는 카테고리 — 광고성만 고른다.
 # 인트로·아웃트로·잡담은 "그걸 보려고 튼" 사람도 있어 기본에서 뺀다.
@@ -50,10 +47,6 @@ class SkipSegment:
     def duration_sec(self) -> float:
         return self.end_sec - self.start_sec
 
-    @property
-    def display_name(self) -> str:
-        return SKIP_CATEGORY_NAMES.get(self.category, self.category)
-
 
 def normalize_segments(
     raw: list[tuple[str, float, float]],
@@ -69,12 +62,12 @@ def normalize_segments(
 
     합쳐진 구간의 카테고리는 **먼저 시작한 쪽**을 쓴다(안내 문구용이라 하나면 된다).
     """
-    allowed = set(categories) if categories else set(SKIP_CATEGORY_NAMES)
+    allowed = set(categories) if categories else set(SKIP_CATEGORIES)
     clean = [
         SkipSegment(cat, float(start), float(end))
         for cat, start, end in raw
         if cat in allowed
-        and cat in SKIP_CATEGORY_NAMES
+        and cat in SKIP_CATEGORIES
         and end - start >= MIN_SEGMENT_SEC
         and start >= 0
     ]

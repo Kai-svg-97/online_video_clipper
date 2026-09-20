@@ -1,0 +1,86 @@
+"""도메인 키마다 표시 이름이 있는가 — 그리고 남는 라벨은 없는가.
+
+도메인이 영어 키를 갖고 표시 문자열은 GUI가 갖는 구조라, **키를 하나 더하고 라벨을
+빠뜨리면 화면에 `music_offtopic` 같은 키가 그대로 뜬다.** 오류도 나지 않는다.
+
+반대쪽도 본다 — 도메인에서 사라진 키의 라벨이 남아 있으면 죽은 문구를 번역하게 된다.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from domain.clip.sponsor import SKIP_CATEGORIES
+from domain.library.availability import (
+    STATUS_OK,
+    STATUS_PRIVATE,
+    STATUS_REMOVED,
+    STATUS_UNKNOWN,
+)
+from domain.library.filters import (
+    DATE_PRESETS,
+    DOWNLOAD_PRESETS,
+    DURATION_PRESETS,
+    WATCHED_PRESETS,
+)
+from gui.text.labels import (
+    AVAILABILITY_LABELS,
+    FILTER_PRESET_LABELS,
+    SPONSOR_CATEGORY_LABELS,
+    availability_label,
+    filter_preset_label,
+    sponsor_category_label,
+)
+
+_AVAILABILITY_KEYS = {STATUS_OK, STATUS_REMOVED, STATUS_PRIVATE, STATUS_UNKNOWN}
+_FILTER_KEYS = (
+    {("date", k) for k, *_ in DATE_PRESETS}
+    | {("duration", k) for k, *_ in DURATION_PRESETS}
+    | {("download", k) for k, *_ in DOWNLOAD_PRESETS}
+    | {("watched", k) for k, *_ in WATCHED_PRESETS}
+)
+
+
+@pytest.mark.parametrize("keys, labels, name", [
+    (set(SKIP_CATEGORIES), SPONSOR_CATEGORY_LABELS, "SponsorBlock 카테고리"),
+    (_AVAILABILITY_KEYS, AVAILABILITY_LABELS, "원본 확인 상태"),
+    (_FILTER_KEYS, FILTER_PRESET_LABELS, "복합 필터 프리셋"),
+])
+class TestCoverage:
+    def test_키마다_라벨이_있다(self, keys, labels, name):
+        missing = keys - set(labels)
+        assert not missing, f"{name}: 라벨 없는 키 {sorted(missing)}"
+
+    def test_남는_라벨이_없다(self, keys, labels, name):
+        extra = set(labels) - keys
+        assert not extra, f"{name}: 도메인에 없는 라벨 {sorted(extra)}"
+
+    def test_빈_라벨이_없다(self, keys, labels, name):
+        blank = [k for k in keys if not labels.get(k, "").strip()]
+        assert not blank, f"{name}: 빈 라벨 {sorted(blank)}"
+
+
+class TestUnknownKeyFallback:
+    """모르는 키에도 화면이 비지 않는다 — 키를 그대로 보여 준다."""
+
+    def test_sponsor(self):
+        assert sponsor_category_label("새로운_카테고리") == "새로운_카테고리"
+
+    def test_availability(self):
+        assert availability_label("새_상태") == "새_상태"
+
+    def test_filter(self):
+        assert filter_preset_label("date", "새_프리셋") == "새_프리셋"
+
+
+class TestDomainKeysStayAscii:
+    """도메인 키에 한글이 들어가면 그 자체가 번역 불가 지점이 된다."""
+
+    def test_sponsor_키(self):
+        assert all(k.isascii() for k in SKIP_CATEGORIES)
+
+    def test_availability_키(self):
+        assert all(k.isascii() for k in _AVAILABILITY_KEYS)
+
+    def test_filter_키(self):
+        assert all(g.isascii() and k.isascii() for g, k in _FILTER_KEYS)

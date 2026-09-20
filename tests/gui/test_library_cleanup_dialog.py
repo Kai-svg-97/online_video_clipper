@@ -110,10 +110,10 @@ class TestFailureIsolation:
 from application.library.maintenance import MissingSourceDTO  # noqa: E402
 
 
-def _missing(title="사라진 영상", status="removed", label="삭제됨"):
+def _missing(title="사라진 영상", status="removed"):
     return MissingSourceDTO(
         video_id=uuid4(), title=title, url="https://youtu.be/x",
-        status=status, status_label=label, detail="원본이 삭제되었습니다",
+            status=status, detail="원본이 삭제되었습니다",
     )
 
 
@@ -137,7 +137,7 @@ class TestMissingSources:
 
     def test_결과를_목록에_채운다(self, qtbot):
         dlg = _dialog_with_missing(qtbot)
-        dlg._on_missing_done([_missing("A"), _missing("B", "private", "비공개")])
+        dlg._on_missing_done([_missing("A"), _missing("B", "private")])
         assert dlg._missing_tree.topLevelItemCount() == 2
         assert dlg._missing_tree.topLevelItem(1).text(1) == "비공개"
 

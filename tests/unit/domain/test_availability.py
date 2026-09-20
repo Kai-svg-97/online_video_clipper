@@ -55,13 +55,17 @@ class TestMissing:
 
 
 class TestLabels:
-    @pytest.mark.parametrize(
-        "status,label",
-        [(STATUS_OK, "정상"), (STATUS_REMOVED, "삭제됨"),
-         (STATUS_PRIVATE, "비공개"), (STATUS_UNKNOWN, "확인 불가")],
-    )
-    def test_한글_라벨(self, status, label):
-        assert AvailabilityResult(status).label == label
+    """표시 이름은 도메인이 갖지 않는다 — `gui/text/labels.py` 로 옮겼다.
 
-    def test_모르는_상태는_키를_그대로_보여준다(self):
-        assert AvailabilityResult("weird").label == "weird"
+    도메인은 `STATUS_*` 키만 갖고, 키마다 라벨이 있는지는
+    `tests/unit/gui/test_label_coverage.py` 가 지킨다.
+    """
+
+    def test_상태_키는_영문이다(self):
+        for key in (STATUS_OK, STATUS_REMOVED, STATUS_PRIVATE, STATUS_UNKNOWN):
+            assert key.isascii(), f"도메인 키에 한글이 들어갔다: {key}"
+
+    def test_값_객체가_표시명을_돌려주지_않는다(self):
+        """`.label` 이 있으면 그 문자열이 DTO를 타고 화면까지 흘러가 번역할 수 없다."""
+        assert not hasattr(AvailabilityResult(STATUS_OK), "label")
+

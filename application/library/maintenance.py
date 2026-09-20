@@ -146,7 +146,6 @@ class MissingSourceDTO:
     title: str
     url: str
     status: str
-    status_label: str
     detail: str
 
 
@@ -195,7 +194,6 @@ class FindMissingSourcesHandler:
                         title=video.title,
                         url=video.url,
                         status=result.status,
-                        status_label=result.label,
                         detail=getattr(result, "detail", ""),
                     )
                 )

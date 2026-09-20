@@ -34,6 +34,7 @@ from application.library.dtos import DownloadInfoDTO
 from config import settings
 from domain.download.value_objects import DownloadSettings
 from gui.workers import retire_thread, track_thread
+from gui.text.labels import sponsor_category_label
 from gui.themes.colors import tok
 from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
 
@@ -1349,7 +1350,7 @@ class InlinePlayer(QWidget):
             return
         self._skipped_once.add(seg)
         self._seek_to(int(seg.end_sec * 1000))
-        self.segment_skipped.emit(seg.display_name)
+        self.segment_skipped.emit(sponsor_category_label(seg.category))
 
     def _effective_duration(self) -> int:
         """영상 길이(ms). 실시간 remux 스트림은 재생기가 모르므로 yt-dlp 값을 쓴다.

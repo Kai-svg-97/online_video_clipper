@@ -68,7 +68,7 @@ class TestFiltering:
         found = _handler(1, [STATUS_REMOVED]).handle()
         assert found[0].title == "영상0"
         assert found[0].url.startswith("https://youtu.be/")
-        assert found[0].status_label == "삭제됨"
+        assert found[0].status == "removed"   # DTO 는 식별자만 싣는다
 
 
 class TestProgressAndStop:
