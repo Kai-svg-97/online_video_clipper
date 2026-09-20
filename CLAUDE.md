@@ -201,6 +201,36 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
 - 백그라운드 워커를 만드는 뷰모델은 `shutdown()`을 제공하고 `MainWindow.closeEvent`에서 호출해 종료 시 워커를 정리한다. yt-dlp 다운로드처럼 협조적 취소 훅이 없으면 `terminate()` 후 `wait()`로 종료를 보장한다.
 - **`track_thread` 없이 리스트 하나로만 QThread를 붙드는 것은 이 규칙을 지킨 게 아니다.** `MainWindow.closeEvent`의 `wait_all(3000)`은 `gui/workers.py`의 `_RUNNING` 레지스트리만 안다 — 자체 리스트(GC 방지용)에만 담아 둔 워커는 종료 시 기다려지지 않는다. `gui/panels/library/mixins/video_list.py:_start_thumb_preload`의 `_ThumbBgLoader`가 `_active_thumb_loaders`(취소용 리스트)에만 담겨 있어 이 구멍이 있었다(2026-08 메모리 최적화 점검에서 발견) — `track_thread(loader)`를 추가로 호출해 고쳤다. 자체 리스트로 다른 목적(취소·중복 방지)을 관리하더라도, **실행 중 QThread라면 반드시 `track_thread`도 함께 호출**한다. 회귀 테스트: `tests/gui/test_memory_cleanup.py::TestWorkerReferenceRelease`.
 
+## 표시 문구 규칙 (mandatory)
+
+다국어화를 대비해 **화면에 나가는 말은 `gui/text/`에만 산다.** 되돌아가면
+`tests/unit/test_no_display_text_in_domain.py`가 실패한다.
+
+- **`domain/`·`application/`·`infrastructure/`에 한국어 표시 문자열을 두지 않는다.**
+  도메인은 **영어 키**를 갖고(`STATUS_OK = "ok"`) 표시 이름은 `gui/text/labels.py`가
+  갖는다. 예외는 **언어 데이터**뿐이다 — 불용어·토크나이저 정규식처럼 한국어 텍스트를
+  *처리하기 위한* 값. 그건 위 테스트의 허용 목록에 이름을 적는다.
+- **문장을 만들어야 하면 `Message`(키+파라미터)를 돌려준다**(`domain/shared/messages.py`).
+  `gui/text/messages.py`의 `render()`가 문장으로 바꾼다.
+- **키 하나가 완성된 문장 하나를 고른다. 조각을 파라미터로 넘기지 않는다.**
+  `" (다음 날)"` 같은 조각을 f-string으로 끼워 넣으면 언어가 바뀔 때 꽂을 자리가 없다 —
+  그런 경우는 **키를 둘로 쪼갠다**(`schedule.window` / `schedule.window_crossing`).
+- **위젯의 표시 텍스트로 상태를 판정하지 않는다.** `if lbl.text() == "받는 중…"`은
+  번역하는 순간 조용히 어긋난다(로딩 표시가 영영 안 지워진다). 상태는 값으로 들고 있는다
+  (`_FeedStatus`). 같은 이유로 **표시 문자열을 식별자로 쓰지 않는다** — 화질은
+  `"자동"`이 아니라 `"auto"` 키로 고른다.
+- **저장되는 이름은 번역 대상이 아니다.** 사용자가 붙인 프리셋·검색 이름, 디스크 폴더
+  이름(`"처리됨"`), DB에 남는 자막 트랙 라벨은 그대로 둔다 — 언어를 바꿨다고 저장된
+  값이 바뀌면 안 된다. 빈 이름의 기본값은 **화면이 `fallback`으로 준다.**
+- **`render()`는 예외를 내지 않는다.** 업데이트 배지가 `paintEvent` 경로에서 쓰는데
+  거기서 난 예외는 로그도 없이 프로세스를 죽인다(0xC0000409). 문장은 **paint 밖에서
+  한 번만** 만들어 캐시한다.
+- **표시 포맷은 `gui/text/formats.py` 하나뿐이다.** 재생시간·용량·상대시간·조회수를
+  화면마다 다시 구현하지 않는다. 화면마다 잣대가 달랐다면(상대시간의 *주* 단위 유무)
+  **파라미터로 남긴다** — 뭉개면 표시가 조용히 바뀐다.
+- **`gui/text/`는 PyQt6를 임포트하지 않는다**(`tests/unit/gui/test_gui_text.py`가 강제).
+  순수 파이썬이라 헤드리스 시험이 되고, 나중에 `presentation/` 계층으로 승격할 여지가 남는다.
+
 ## 재생 스트림 규칙 (mandatory)
 
 - **재생 위치를 `self._player.position()`으로 직접 읽지 않는다 — `position_ms`를 쓴다.**
