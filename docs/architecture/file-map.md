@@ -27,7 +27,7 @@ online_video_clipper/
 ├── requirements.txt
 ├── requirements-dev.txt             # PyInstaller, ruff, pytest (not bundled)
 ├── config/
-│   └── settings.py                  # User preferences; uses platformdirs for data paths
+│   └── settings.py                  # 사용자 설정과 데이터 경로 상수. **`OVC_DATA_DIR` 로 데이터 디렉터리를 통째로 갈아끼울 수 있다** — "사용자의 실제 설정을 절대 읽으면 안 되는 실행"(설명서 갈무리)을 위한 단일 스위치다. 경로 상수는 **모듈을 불러올 때** 정해지므로 그 변수는 `config.settings` 임포트보다 먼저 세워야 한다. `application/library/favorites.py`도 같은 변수를 본다(그 파일만 `DATA_DIR` 밖, OS 사용자 데이터 경로를 쓴다 — 이것 때문에 v1.32.0 갈무리에 사용자 즐겨찾기가 찍혔다). 계약: `tests/unit/test_capture_isolation.py`
 ├── utils/
 │   ├── resources.py                 # get_resource_path() — handles dev vs. PyInstaller bundle
 │   └── logging_config.py            # setup_logging() — 회전 파일(LOG_DIR/app.log)+콘솔 로거 (진입점에서 1회 호출)

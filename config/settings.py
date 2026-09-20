@@ -1,3 +1,4 @@
+import os
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -12,7 +13,23 @@ def _app_root() -> Path:
     return Path(__file__).parent.parent
 
 
-DATA_DIR: Path = _app_root() / "data"
+def _data_dir() -> Path:
+    """사용자 데이터 디렉터리(DB·설정·다운로드·로그).
+
+    `OVC_DATA_DIR` 로 통째로 갈아끼울 수 있다. **사용자의 실제 설정을 절대 읽으면 안
+    되는 실행**을 위한 것이다 — 설명서 갈무리(`scripts/capture_screenshots.py`)가 그
+    경우다. `config.yaml` 에는 태그 목록·브라우저 프로필 경로처럼 개인적인 값이 들어
+    있어서, DB만 임시본으로 바꾸는 것으로는 부족하다(실제로 갈무리에 사용자의 태그가
+    찍혔다).
+
+    **읽는 시점이 중요하다**: 이 값으로 아래 경로 상수들이 모듈을 불러올 때 정해지므로,
+    환경 변수는 `config.settings` 가 처음 임포트되기 **전에** 설정해야 한다.
+    """
+    override = os.environ.get("OVC_DATA_DIR")
+    return Path(override) if override else _app_root() / "data"
+
+
+DATA_DIR: Path = _data_dir()
 _CONFIG_FILE: Path = DATA_DIR / "config.yaml"
 
 

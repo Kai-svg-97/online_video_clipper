@@ -3,18 +3,33 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-try:
-    from platformdirs import user_data_dir
-    _DATA_ROOT = Path(user_data_dir("online_video_clipper", "kai"))
-except Exception:
-    _DATA_ROOT = Path.home() / ".online_video_clipper"
+def _data_root() -> Path:
+    """즐겨찾기 파일이 사는 곳.
 
+    **여기만 `config.settings.DATA_DIR` 이 아니다** — OS 표준 사용자 데이터 경로를
+    쓴다(패키징 규칙). 그래서 `OVC_DATA_DIR` 로 데이터 디렉터리를 갈아끼워도 이 파일은
+    따라오지 않아, 설명서 갈무리에 **사용자의 실제 즐겨찾기가 찍혔다**(v1.32.0).
+    같은 환경 변수를 여기서도 본다 — 격리하려는 쪽이 한 군데만 보면 되게 한다.
+    """
+    override = os.environ.get("OVC_DATA_DIR")
+    if override:
+        return Path(override)
+    try:
+        from platformdirs import user_data_dir  # noqa: PLC0415
+
+        return Path(user_data_dir("online_video_clipper", "kai"))
+    except Exception:
+        return Path.home() / ".online_video_clipper"
+
+
+_DATA_ROOT = _data_root()
 _STORE_PATH: Path = _DATA_ROOT / "favorites.json"
 
 _ICONS = {"category": "🏷", "playlist": "▶", "tag": "#"}

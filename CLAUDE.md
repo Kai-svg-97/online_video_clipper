@@ -233,6 +233,14 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
   빌드가 그 파일을 번들한다(`packaging/online_video_clipper.spec`).
 - **화면이 바뀌면 `python scripts/capture_screenshots.py`로 갈무리를 다시 만든다.** 손으로
   찍지 않는다 — 사용자의 실제 라이브러리가 찍힐 수 있고 조용히 낡는다.
+- **사용자 자료를 읽는 새 저장소를 만들면 `OVC_DATA_DIR`를 보게 한다.** 이 환경 변수는
+  "사용자의 실제 설정을 절대 읽으면 안 되는 실행"을 위한 단일 스위치다(갈무리 스크립트가
+  쓴다). DB·`config.yaml`·즐겨찾기가 이미 따른다. **`config.settings.DATA_DIR` 밖에 파일을
+  두는 코드가 특히 위험하다** — `application/library/favorites.py`가 OS 사용자 데이터
+  경로를 쓰는 바람에 격리를 빠져나가, v1.32.0 갈무리에 사용자의 즐겨찾기가 찍혀 공개
+  저장소와 설치본에 들어갔다. 계약은 `tests/unit/test_capture_isolation.py`가 강제한다.
+- **갈무리 스크립트 위쪽에 앱 모듈을 임포트하지 않는다.** 경로 상수는 모듈을 불러올 때
+  정해지므로, 환경 변수를 세우기 전에 한 줄이라도 앱을 불러오면 격리가 **조용히** 깨진다.
 - **설명서에 새 마크다운 문법을 쓰기 전에 렌더러가 그것을 아는지 확인한다.** 모르는 문법은
   오류 없이 **글자 그대로** 나온다(`| 키 | 동작 |`이 표가 아니라 문장으로 보이는 식).
   `tests/unit/test_build_manual.py`가 실제 설명서를 렌더해 남은 마크다운이 없는지 지킨다.
