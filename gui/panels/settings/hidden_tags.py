@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 
 from gui.panels.settings.helpers import _t
+from gui.text import tr
 
 _MOVE_MIME = "application/x-settings-tag-name"
 
@@ -136,7 +137,7 @@ class _HiddenTagsSection(QWidget):
 
         # 안내 문구
         hint = QLabel(
-            "표시 태그를 더블클릭하거나 오른쪽으로 드래그하면 태그 목록에서 숨겨집니다."
+            tr("표시 태그를 더블클릭하거나 오른쪽으로 드래그하면 태그 목록에서 숨겨집니다.")
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary}; margin-bottom: 4px;")
@@ -148,7 +149,7 @@ class _HiddenTagsSection(QWidget):
         # ── 표시 태그 ──────────────────────────────────
         vis_col = QVBoxLayout()
         vis_col.setSpacing(4)
-        vis_lbl = QLabel("표시 태그  (더블클릭 → 숨기기)")
+        vis_lbl = QLabel(tr("표시 태그  (더블클릭 → 숨기기)"))
         vis_lbl.setStyleSheet("font-size: 10px; font-weight: 600;")
         self._vis_list = _TagMoveList()
         self._vis_list.setMinimumHeight(200)
@@ -178,7 +179,7 @@ class _HiddenTagsSection(QWidget):
         # ── 숨긴 태그 ──────────────────────────────────
         hid_col = QVBoxLayout()
         hid_col.setSpacing(4)
-        hid_lbl = QLabel("숨긴 태그  (더블클릭 → 표시)")
+        hid_lbl = QLabel(tr("숨긴 태그  (더블클릭 → 표시)"))
         hid_lbl.setStyleSheet("font-size: 10px; font-weight: 600;")
         self._hid_list = _TagMoveList()
         self._hid_list.setMinimumHeight(200)

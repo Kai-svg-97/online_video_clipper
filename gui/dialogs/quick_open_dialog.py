@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from gui.smooth_scroll import apply_smooth_scroll
 from gui.themes.manager import ThemeManager
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ class QuickOpenDialog(QDialog):
     def __init__(self, search: Callable[[str], list[QuickHit]], parent=None) -> None:
         super().__init__(parent)
         self._search = search
-        self.setWindowTitle("빠른 이동")
+        self.setWindowTitle(tr("빠른 이동"))
         self.setModal(True)
         self.setMinimumWidth(520)
 
@@ -72,7 +73,7 @@ class QuickOpenDialog(QDialog):
         layout.setSpacing(8)
 
         self._input = QLineEdit()
-        self._input.setPlaceholderText("카테고리·재생목록·영상 이름을 입력하세요")
+        self._input.setPlaceholderText(tr("카테고리·재생목록·영상 이름을 입력하세요"))
         self._input.textChanged.connect(self._on_text)
         self._input.returnPressed.connect(self._accept_current)
         layout.addWidget(self._input)
@@ -83,7 +84,7 @@ class QuickOpenDialog(QDialog):
         apply_smooth_scroll(self._list)
         layout.addWidget(self._list, 1)
 
-        self._hint = QLabel("↑↓ 이동 · Enter 열기 · Esc 닫기")
+        self._hint = QLabel(tr("↑↓ 이동 · Enter 열기 · Esc 닫기"))
         layout.addWidget(self._hint)
 
         self._timer = QTimer(self)

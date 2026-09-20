@@ -129,6 +129,7 @@ from gui.panels.detail.text_format import (  # noqa: F401
     summary_failure_status_label,
     summary_placeholder,
 )
+from gui.text import tr
 
 # 이어보기 위치를 알리는 주기(ms) — 자주 쓰면 낭비, 드물면 마지막 지점을 잃는다.
 _POSITION_SAVE_MS = 5_000
@@ -336,7 +337,7 @@ class VideoDetailWidget(
         top_row = QHBoxLayout()
         self._btn_back = QPushButton("‹")
         self._btn_back.setFixedSize(28, 28)
-        self._btn_back.setToolTip("목록으로 (Esc)")
+        self._btn_back.setToolTip(tr("목록으로 (Esc)"))
         self._btn_back.clicked.connect(self.back_requested.emit)
         top_row.addWidget(self._btn_back)
         self._crumb_bar = QFrame()
@@ -388,17 +389,17 @@ class VideoDetailWidget(
         # 📁 카테고리 지정 — 로컬 영상은 이동, 스트리밍 영상은 등록까지 함께 이뤄진다.
         self._btn_category = QPushButton("📁")
         self._btn_category.setFixedSize(28, 28)
-        self._btn_category.setToolTip("카테고리 지정")
+        self._btn_category.setToolTip(tr("카테고리 지정"))
         self._btn_category.clicked.connect(self._on_category_clicked)
         title_row.addWidget(self._btn_category, 0, Qt.AlignmentFlag.AlignTop)
         self._btn_refresh = QPushButton("⟳")
         self._btn_refresh.setFixedSize(28, 28)
-        self._btn_refresh.setToolTip("상세 정보 갱신")
+        self._btn_refresh.setToolTip(tr("상세 정보 갱신"))
         self._btn_refresh.clicked.connect(self._on_refresh_detail)
         title_row.addWidget(self._btn_refresh, 0, Qt.AlignmentFlag.AlignTop)
         self._btn_browser = QPushButton("🌐")
         self._btn_browser.setFixedSize(28, 28)
-        self._btn_browser.setToolTip("브라우저에서 열기")
+        self._btn_browser.setToolTip(tr("브라우저에서 열기"))
         self._btn_browser.clicked.connect(self._on_open_browser)
         title_row.addWidget(self._btn_browser, 0, Qt.AlignmentFlag.AlignTop)
         left_layout.addLayout(title_row)
@@ -423,7 +424,7 @@ class VideoDetailWidget(
         info_col.setContentsMargins(6, 6, 6, 6)
         info_col.setSpacing(4)
 
-        self._tags_header = QLabel("<b>태그</b>")
+        self._tags_header = QLabel(tr("<b>태그</b>"))
         info_col.addWidget(self._tags_header)
         self._tags_scroll = QScrollArea()
         self._tags_scroll.setWidgetResizable(True)
@@ -447,16 +448,16 @@ class VideoDetailWidget(
         self._tag_add_layout.setSpacing(4)
         info_col.addWidget(self._tag_add_container)
 
-        self._desc_header = QLabel("<b>설명</b>")
+        self._desc_header = QLabel(tr("<b>설명</b>"))
         info_col.addWidget(self._desc_header)
         self._desc_view = _AutoHeightBrowser(min_h=48)
         self._desc_view.anchorClicked.connect(self._on_summary_anchor_clicked)
         info_col.addWidget(self._desc_view)
 
-        self._notes_header = QLabel("<b>메모</b>")
+        self._notes_header = QLabel(tr("<b>메모</b>"))
         info_col.addWidget(self._notes_header)
         self._notes_edit = _AutoHeightPlainEdit(min_lines=1, max_lines=5)
-        self._notes_edit.setPlaceholderText("메모를 입력하세요…")
+        self._notes_edit.setPlaceholderText(tr("메모를 입력하세요…"))
         self._notes_edit.textChanged.connect(self._on_notes_changed)
         info_col.addWidget(self._notes_edit)
 
@@ -464,7 +465,7 @@ class VideoDetailWidget(
         # 설명 바로 아래에 오게 하고, 설명이 길면 stretch가 0이 되며 설명이 공간을
         # 최대로 차지한다(그때만 설명 내부 스크롤).
         info_col.addStretch(1)
-        self._tabs.addTab(info_tab, "설명")
+        self._tabs.addTab(info_tab, tr("설명"))
 
         # 탭1: 요약 (헤더 라벨 + ⟳ 아이콘 갱신 버튼 + 상태 라벨)
         summary_tab = QWidget()
@@ -472,8 +473,8 @@ class VideoDetailWidget(
         summary_layout.setContentsMargins(8, 8, 8, 8)
         summary_layout.setSpacing(6)
         refresh_row = QHBoxLayout()
-        refresh_row.addWidget(QLabel("<b>요약</b>"))
-        edit_hint = QLabel("(더블클릭하여 편집)")
+        refresh_row.addWidget(QLabel(tr("<b>요약</b>")))
+        edit_hint = QLabel(tr("(더블클릭하여 편집)"))
         edit_hint.setStyleSheet(f"font-size: 8pt; color: {_t().text_secondary};")
         refresh_row.addWidget(edit_hint)
         refresh_row.addStretch()
@@ -489,7 +490,7 @@ class VideoDetailWidget(
         refresh_row.addWidget(self._summary_zoom_btn)
         self._summary_refresh_btn = QPushButton("⟳")
         self._summary_refresh_btn.setFixedSize(28, 28)
-        self._summary_refresh_btn.setToolTip("Gemini 요약 갱신")
+        self._summary_refresh_btn.setToolTip(tr("Gemini 요약 갱신"))
         self._summary_refresh_btn.clicked.connect(self._on_refresh_summary)
         refresh_row.addWidget(self._summary_refresh_btn)
         summary_layout.addLayout(refresh_row)
@@ -504,7 +505,7 @@ class VideoDetailWidget(
         self._summary_edit.anchorClicked.connect(self._on_summary_anchor_clicked)
         self._summary_stack.addWidget(self._summary_edit)      # index 0: 표시
         self._summary_editor = QPlainTextEdit()
-        self._summary_editor.setPlaceholderText("요약 내용을 입력하세요…")
+        self._summary_editor.setPlaceholderText(tr("요약 내용을 입력하세요…"))
         self._summary_stack.addWidget(self._summary_editor)    # index 1: 편집
         # index 2: 카테고리 미지정 안내 — 요약도 영상별로 저장되므로 로컬 영상이어야 한다.
         self._summary_locked = _LockedNotice(
@@ -514,7 +515,7 @@ class VideoDetailWidget(
         self._summary_locked.action_clicked.connect(self._on_category_clicked)
         self._summary_stack.addWidget(self._summary_locked)
         summary_layout.addWidget(self._summary_stack)
-        self._tabs.addTab(_wrap(summary_tab), "요약")
+        self._tabs.addTab(_wrap(summary_tab), tr("요약"))
 
         # 탭2: 다운로드(상단) + 클립(하단) 병합 — 수직 스플리터
         files_split = QSplitter(Qt.Orientation.Vertical)
@@ -526,7 +527,7 @@ class VideoDetailWidget(
         files_split.addWidget(self._clip_tab_widget)
         files_split.setStretchFactor(0, 1)   # 다운로드 우선
         files_split.setStretchFactor(1, 1)
-        self._tabs.addTab(_wrap(files_split), "다운로드 / 클립")
+        self._tabs.addTab(_wrap(files_split), tr("다운로드 / 클립"))
 
         # 탭3: 노래 (가수·앨범·제목·가사)
         self._song_tab = _SongTab()
@@ -546,7 +547,7 @@ class VideoDetailWidget(
         # 가사 헤더의 배율 버튼도 요약 쪽 버튼과 같은 곳으로 — 두 영역이 한 배율을 쓴다.
         self._song_tab.font_scale_reset_requested.connect(self.reset_text_scale)
         self._song_tab.category_requested.connect(self._on_category_clicked)
-        self._tabs.addTab(_wrap(self._song_tab), "노래")
+        self._tabs.addTab(_wrap(self._song_tab), tr("노래"))
 
         # 탭4: 자막 — 대사를 찾아 그 시점으로 점프한다.
         self._subtitle_tab = SubtitleTab()
@@ -558,7 +559,7 @@ class VideoDetailWidget(
         )
         self._subtitle_tab.translate_requested.connect(self._on_translate_requested)
         self._subtitle_tab.search_changed.connect(self._on_subtitle_search)
-        self._tabs.addTab(self._subtitle_tab, "자막")
+        self._tabs.addTab(self._subtitle_tab, tr("자막"))
 
         self._tabs.currentChanged.connect(self._on_tab_changed)
         left_layout.addWidget(self._tabs, stretch=1)

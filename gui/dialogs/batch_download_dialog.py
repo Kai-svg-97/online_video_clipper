@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 )
 
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
+from gui.text import tr
 
 
 class BatchDownloadDialog(QDialog):
@@ -19,7 +20,7 @@ class BatchDownloadDialog(QDialog):
 
     def __init__(self, count: int, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("일괄 다운로드")
+        self.setWindowTitle(tr("일괄 다운로드"))
         self.setMinimumWidth(320)
         self._build_ui(count)
 
@@ -53,11 +54,11 @@ class BatchDownloadDialog(QDialog):
 
         layout.addLayout(form)
 
-        self._skip_check = QCheckBox("이미 다운로드된 항목 건너뜀")
+        self._skip_check = QCheckBox(tr("이미 다운로드된 항목 건너뜀"))
         self._skip_check.setChecked(True)
         layout.addWidget(self._skip_check)
 
-        self._gemini_check = QCheckBox("Gemini AI 요약을 메모에 자동 저장 (YouTube 로그인 필요)")
+        self._gemini_check = QCheckBox(tr("Gemini AI 요약을 메모에 자동 저장 (YouTube 로그인 필요)"))
         self._gemini_check.setChecked(False)
         self._gemini_check.setToolTip(
             "다운로드 완료 후 YouTube의 Gemini Ask 버튼을 자동으로 클릭해\n"

@@ -22,6 +22,7 @@ from application.library.queries import LibraryStatsHandler
 from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.text.formats import format_bytes, format_long_duration
+from gui.text import tr
 
 
 def _card_qss(tokens) -> str:
@@ -218,11 +219,11 @@ class StatsPanel(QWidget):
         # 헤더
         header_row = QHBoxLayout()
         header_row.setContentsMargins(16, 12, 16, 8)
-        header_lbl = QLabel("통계")
+        header_lbl = QLabel(tr("통계"))
         header_lbl.setStyleSheet("font-size: 13pt; font-weight: 600;")
         header_row.addWidget(header_lbl)
         header_row.addStretch()
-        refresh_btn = QPushButton("새로고침")
+        refresh_btn = QPushButton(tr("새로고침"))
         refresh_btn.setFixedHeight(28)
         refresh_btn.clicked.connect(self._refresh)
         header_row.addWidget(refresh_btn)
@@ -274,7 +275,7 @@ class StatsPanel(QWidget):
 
         # 카테고리별 차트
         if stats.category_stats:
-            chart_lbl = QLabel("카테고리별 영상 수")
+            chart_lbl = QLabel(tr("카테고리별 영상 수"))
             chart_lbl.setStyleSheet(section_qss)
             self._content_layout.addWidget(chart_lbl)
             chart = _BarChart(stats.category_stats, tokens)
@@ -282,14 +283,14 @@ class StatsPanel(QWidget):
 
         # 채널별 카테고리 섹션
         if stats.channel_stats:
-            ch_lbl = QLabel("채널별 카테고리")
+            ch_lbl = QLabel(tr("채널별 카테고리"))
             ch_lbl.setStyleSheet(section_qss)
             self._content_layout.addWidget(ch_lbl)
             for ch in stats.channel_stats:
                 self._content_layout.addWidget(self._make_channel_row(ch, tokens))
 
         # 다운로드 요약
-        dl_lbl = QLabel("다운로드 통계")
+        dl_lbl = QLabel(tr("다운로드 통계"))
         dl_lbl.setStyleSheet(section_qss)
         self._content_layout.addWidget(dl_lbl)
 
@@ -353,7 +354,7 @@ class StatsPanel(QWidget):
             copy_btn = QToolButton()
             copy_btn.setText("📋")
             copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            copy_btn.setToolTip("채널 URL 복사")
+            copy_btn.setToolTip(tr("채널 URL 복사"))
             copy_btn.setAutoRaise(True)
             copy_btn.setStyleSheet(
                 "QToolButton { background:transparent; border:none; padding:0 2px;"

@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import (
 
 from gui.themes.manager import ThemeManager
 from gui.text.formats import format_bytes
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +286,7 @@ class _EditableField(QStackedWidget):
         # 평문으로 렌더 — 값에 &, ', < 등이 있어도 그대로 보이게(HTML 엔티티 오표기 방지)
         self._lbl.setTextFormat(Qt.TextFormat.PlainText)
         self._lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-        self._lbl.setToolTip("더블클릭하여 편집")
+        self._lbl.setToolTip(tr("더블클릭하여 편집"))
         self._lbl.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._lbl.double_clicked.connect(self._enter_edit)
         dl.addWidget(self._lbl)

@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from application.transfer.dtos import ImportConflictDTO, ImportFieldDiffDTO
+from gui.text import tr
 
 
 class CategorySelectDialog(QDialog):
@@ -43,8 +44,8 @@ class CategorySelectDialog(QDialog):
         root = QVBoxLayout(self)
 
         btn_row = QHBoxLayout()
-        self._select_all_btn = QPushButton("전체 선택")
-        self._select_none_btn = QPushButton("전체 해제")
+        self._select_all_btn = QPushButton(tr("전체 선택"))
+        self._select_none_btn = QPushButton(tr("전체 해제"))
         self._select_all_btn.clicked.connect(lambda: self._set_all(Qt.CheckState.Checked))
         self._select_none_btn.clicked.connect(lambda: self._set_all(Qt.CheckState.Unchecked))
         btn_row.addWidget(self._select_all_btn)
@@ -170,7 +171,7 @@ class ImportConflictResolutionDialog(QDialog):
 
     def __init__(self, conflicts: tuple[ImportConflictDTO, ...], parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("가져오기 — 값이 다른 영상 확인")
+        self.setWindowTitle(tr("가져오기 — 값이 다른 영상 확인"))
         self.setMinimumSize(680, 440)
         self._conflicts = list(conflicts)
         self._choices: dict[str, dict[str, str]] = {
@@ -190,8 +191,8 @@ class ImportConflictResolutionDialog(QDialog):
         root.addWidget(info)
 
         bulk_row = QHBoxLayout()
-        self._all_incoming_btn = QPushButton("전체 가져오기값 사용")
-        self._all_existing_btn = QPushButton("전체 기존값 유지")
+        self._all_incoming_btn = QPushButton(tr("전체 가져오기값 사용"))
+        self._all_existing_btn = QPushButton(tr("전체 기존값 유지"))
         self._all_incoming_btn.clicked.connect(lambda: self._apply_bulk("incoming"))
         self._all_existing_btn.clicked.connect(lambda: self._apply_bulk("existing"))
         bulk_row.addWidget(self._all_incoming_btn)

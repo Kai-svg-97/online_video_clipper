@@ -43,6 +43,7 @@ from gui.text.formats import (
     format_relative_time,
     views_label,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -192,12 +193,12 @@ class _ThumbLoader(QThread):
 class _CategoryPickDialog(QDialog):
     def __init__(self, categories: list[CategoryDTO], parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("카테고리 선택")
+        self.setWindowTitle(tr("카테고리 선택"))
         self.setMinimumWidth(280)
         self._selected_id: UUID | None = None
 
         layout = QVBoxLayout(self)
-        lbl = QLabel("추가할 카테고리를 선택하세요:")
+        lbl = QLabel(tr("추가할 카테고리를 선택하세요:"))
         layout.addWidget(lbl)
 
         self._tree = QTreeWidget()
@@ -411,7 +412,7 @@ class _FeedCard(QFrame):
         layout.addWidget(self._meta_lbl)
 
         if self._dto.in_library:
-            badge = QLabel("✓ 라이브러리")
+            badge = QLabel(tr("✓ 라이브러리"))
             f4 = QFont()
             f4.setPointSize(8)
             badge.setFont(f4)
@@ -524,20 +525,20 @@ class _FeedCard(QFrame):
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
         menu.addAction(
-            "브라우저에서 열기",
+            tr("브라우저에서 열기"),
             lambda: QDesktopServices.openUrl(QUrl(self._dto.url)),
         )
         menu.addAction(
-            "다운로드",
+            tr("다운로드"),
             lambda: self.download_requested.emit(self._dto.url, self._dto.title),
         )
         menu.addSeparator()
         menu.addAction(
-            "카테고리에 추가",
+            tr("카테고리에 추가"),
             lambda: self.add_to_category_requested.emit(self._dto.url),
         )
         menu.addAction(
-            "재생목록에 추가",
+            tr("재생목록에 추가"),
             lambda: self.add_to_playlist_requested.emit(self._dto.url),
         )
         menu.exec(event.globalPos())
@@ -693,18 +694,18 @@ class RecommendStrip(QWidget):
         self._toggle_btn.setText("▾")
         self._toggle_btn.setFixedSize(18, 18)
         self._toggle_btn.setAutoRaise(True)
-        self._toggle_btn.setToolTip("추천 영상 접기/펼치기")
+        self._toggle_btn.setToolTip(tr("추천 영상 접기/펼치기"))
         self._toggle_btn.clicked.connect(self.toggle)
         bar_row.addWidget(self._toggle_btn)
 
-        self._title_lbl = QLabel("추천 영상")
+        self._title_lbl = QLabel(tr("추천 영상"))
         f = QFont()
         f.setPointSize(9)
         f.setWeight(QFont.Weight.DemiBold)
         self._title_lbl.setFont(f)
         bar_row.addWidget(self._title_lbl)
 
-        self._hint_lbl = QLabel("— 카드를 왼쪽 카테고리로 끌어다 놓으면 담깁니다")
+        self._hint_lbl = QLabel(tr("— 카드를 왼쪽 카테고리로 끌어다 놓으면 담깁니다"))
         fh = QFont()
         fh.setPointSize(8)
         self._hint_lbl.setFont(fh)
@@ -721,7 +722,7 @@ class RecommendStrip(QWidget):
         self._refresh_btn.setText("⟳")
         self._refresh_btn.setFixedSize(20, 20)
         self._refresh_btn.setAutoRaise(True)
-        self._refresh_btn.setToolTip("추천 다시 받기")
+        self._refresh_btn.setToolTip(tr("추천 다시 받기"))
         self._refresh_btn.clicked.connect(self.refresh_requested)
         bar_row.addWidget(self._refresh_btn)
 
@@ -747,7 +748,7 @@ class RecommendStrip(QWidget):
         self._scroll.horizontalScrollBar().valueChanged.connect(self._on_hscroll)
         root.addWidget(self._scroll, stretch=1)
 
-        self._empty_lbl = QLabel("추천할 영상이 없습니다.")
+        self._empty_lbl = QLabel(tr("추천할 영상이 없습니다."))
         self._empty_lbl.setFont(fh)
         self._empty_lbl.setContentsMargins(12, 8, 12, 8)
         self._empty_lbl.hide()

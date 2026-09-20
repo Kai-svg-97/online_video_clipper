@@ -22,6 +22,7 @@ from application.monitoring.dtos import SubscriptionDTO
 from domain.monitoring.value_objects import MonitoringRule
 from gui.view_models.monitoring_vm import MonitoringViewModel
 from gui.themes.colors import sem, tok
+from gui.text import tr
 
 
 class _SubscriptionRow(QWidget):
@@ -46,10 +47,10 @@ class _SubscriptionRow(QWidget):
         url_lbl.setMaximumWidth(240)
         auto_lbl = QLabel("자동DL" if sub.auto_download else "수동")
         auto_lbl.setFixedWidth(52)
-        edit_btn = QPushButton("규칙 설정")
+        edit_btn = QPushButton(tr("규칙 설정"))
         edit_btn.setFixedWidth(68)
         edit_btn.clicked.connect(lambda: on_select(sub.id))
-        unsub_btn = QPushButton("해제")
+        unsub_btn = QPushButton(tr("해제"))
         unsub_btn.setFixedWidth(44)
         unsub_btn.clicked.connect(lambda: on_unsubscribe(sub.id))
 
@@ -75,7 +76,7 @@ class _RuleEditor(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        header = QLabel("모니터링 규칙")
+        header = QLabel(tr("모니터링 규칙"))
         header.setStyleSheet("font-size: 11pt; font-weight: 600;")
         layout.addWidget(header)
 
@@ -84,23 +85,23 @@ class _RuleEditor(QWidget):
         layout.addWidget(sep)
 
         # 키워드
-        kw_lbl = QLabel("키워드 필터 (쉼표 구분)")
+        kw_lbl = QLabel(tr("키워드 필터 (쉼표 구분)"))
         kw_lbl.setStyleSheet("font-size: 9pt;")
         layout.addWidget(kw_lbl)
         self._kw_edit = QLineEdit()
-        self._kw_edit.setPlaceholderText("예: 리뷰, 언박싱")
+        self._kw_edit.setPlaceholderText(tr("예: 리뷰, 언박싱"))
         layout.addWidget(self._kw_edit)
 
         # 최소/최대 길이
         dur_row = QHBoxLayout()
         dur_row.setContentsMargins(0, 0, 0, 0)
-        min_lbl = QLabel("최소(분)")
+        min_lbl = QLabel(tr("최소(분)"))
         min_lbl.setFixedWidth(56)
         min_lbl.setStyleSheet("font-size: 9pt;")
         self._min_spin = QSpinBox()
         self._min_spin.setRange(0, 600)
         self._min_spin.setSpecialValueText("없음")
-        max_lbl = QLabel("최대(분)")
+        max_lbl = QLabel(tr("최대(분)"))
         max_lbl.setFixedWidth(56)
         max_lbl.setStyleSheet("font-size: 9pt;")
         self._max_spin = QSpinBox()
@@ -115,11 +116,11 @@ class _RuleEditor(QWidget):
         layout.addLayout(dur_row)
 
         # 자동 다운로드
-        self._auto_dl_check = QCheckBox("조건 충족 시 자동 다운로드")
+        self._auto_dl_check = QCheckBox(tr("조건 충족 시 자동 다운로드"))
         layout.addWidget(self._auto_dl_check)
 
         # 저장 버튼
-        save_btn = QPushButton("저장")
+        save_btn = QPushButton(tr("저장"))
         save_btn.setFixedWidth(72)
         save_btn.clicked.connect(self._save)
         layout.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -153,7 +154,7 @@ class _RuleEditor(QWidget):
             auto_download=self._auto_dl_check.isChecked(),
         )
         self._vm.set_rule(self._sub_id, rule)
-        self._status_lbl.setText("저장되었습니다.")
+        self._status_lbl.setText(tr("저장되었습니다."))
 
 
 class MonitoringPanel(QWidget):
@@ -175,7 +176,7 @@ class MonitoringPanel(QWidget):
         outer.setSpacing(0)
 
         # 헤더
-        header = QLabel("채널 모니터링")
+        header = QLabel(tr("채널 모니터링"))
         header.setStyleSheet("font-size: 13pt; font-weight: 600; padding: 12px 16px 8px 16px;")
         outer.addWidget(header)
 
@@ -184,9 +185,9 @@ class MonitoringPanel(QWidget):
         input_row.setContentsMargins(12, 4, 12, 8)
         input_row.setSpacing(8)
         self._url_input = QLineEdit()
-        self._url_input.setPlaceholderText("채널 URL 입력 (예: https://www.youtube.com/@channel)")
+        self._url_input.setPlaceholderText(tr("채널 URL 입력 (예: https://www.youtube.com/@channel)"))
         self._url_input.returnPressed.connect(self._subscribe)
-        sub_btn = QPushButton("구독")
+        sub_btn = QPushButton(tr("구독"))
         sub_btn.setFixedWidth(60)
         sub_btn.clicked.connect(self._subscribe)
         input_row.addWidget(self._url_input, 1)
@@ -198,7 +199,7 @@ class MonitoringPanel(QWidget):
         yt_row.setContentsMargins(12, 0, 12, 6)
         yt_row.setSpacing(8)
 
-        self._yt_import_btn = QPushButton("YouTube 구독 채널 가져오기")
+        self._yt_import_btn = QPushButton(tr("YouTube 구독 채널 가져오기"))
         self._yt_import_btn.clicked.connect(self._import_from_youtube)
         yt_row.addWidget(self._yt_import_btn)
         yt_row.addStretch()
@@ -222,7 +223,7 @@ class MonitoringPanel(QWidget):
         list_layout.setContentsMargins(0, 0, 0, 0)
         list_layout.setSpacing(0)
 
-        list_header = QLabel("구독 채널")
+        list_header = QLabel(tr("구독 채널"))
         list_header.setStyleSheet(f"font-size: 9pt; font-weight: 600; padding: 6px 8px; color: {tok().text_secondary};")
         list_layout.addWidget(list_header)
 
@@ -234,7 +235,7 @@ class MonitoringPanel(QWidget):
         self._list_layout.setContentsMargins(0, 0, 0, 0)
         self._list_layout.setSpacing(0)
         self._list_layout.addStretch()
-        self._empty_lbl = QLabel("구독 중인 채널이 없습니다.")
+        self._empty_lbl = QLabel(tr("구독 중인 채널이 없습니다."))
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_lbl.setStyleSheet(f"color: {tok().text_secondary}; font-size: 10pt; padding: 32px;")
         self._list_layout.insertWidget(0, self._empty_lbl)
@@ -283,7 +284,7 @@ class MonitoringPanel(QWidget):
     def _show_error(self, msg: str) -> None:
         if "Could not copy" in msg and "cookie" in msg.lower():
             self._error_lbl.setText(
-                "쿠키 읽기 실패 — 사이드바 계정 버튼에서 로그인하세요."
+                tr("쿠키 읽기 실패 — 사이드바 계정 버튼에서 로그인하세요.")
             )
         else:
             self._error_lbl.setText(f"오류: {msg}")
@@ -291,11 +292,11 @@ class MonitoringPanel(QWidget):
     def _import_from_youtube(self) -> None:
         self._error_lbl.clear()
         self._yt_import_btn.setEnabled(False)
-        self._yt_import_btn.setText("가져오는 중…")
+        self._yt_import_btn.setText(tr("가져오는 중…"))
         self._vm.import_from_youtube()
 
     def _on_import_finished(self, count: int) -> None:
         self._yt_import_btn.setEnabled(True)
-        self._yt_import_btn.setText("YouTube 구독 채널 가져오기")
+        self._yt_import_btn.setText(tr("YouTube 구독 채널 가져오기"))
         self._error_lbl.setStyleSheet(f"color: {sem('success')}; font-size: 9pt; padding: 0 12px;")
         self._error_lbl.setText(f"YouTube 구독 채널 {count}개를 가져왔습니다.")

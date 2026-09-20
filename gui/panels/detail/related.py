@@ -37,6 +37,7 @@ from gui.panels.detail.widgets import _clear_layout, _t
 
 from gui.anim import fade_in
 from gui.text.formats import format_duration
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +255,7 @@ class _RelatedList(QScrollArea):
         hf.setPointSize(10)
         hf.setWeight(QFont.Weight.Bold)
 
-        self._header = QLabel("연관 영상")
+        self._header = QLabel(tr("연관 영상"))
         self._header.setFont(hf)
         self._layout.addWidget(self._header)
 
@@ -264,7 +265,7 @@ class _RelatedList(QScrollArea):
         self._rel_layout.setSpacing(4)
         self._layout.addWidget(self._rel_box)
 
-        self._rec_header = QLabel("추천 영상")
+        self._rec_header = QLabel(tr("추천 영상"))
         self._rec_header.setFont(hf)
         self._rec_header.setContentsMargins(0, 10, 0, 0)
         self._rec_header.hide()
@@ -286,7 +287,7 @@ class _RelatedList(QScrollArea):
     def set_items(self, items: list[RelatedItem], current_key: str | None = None) -> None:
         _clear_layout(self._rel_layout)
         if not items:
-            empty = QLabel("표시할 영상이 없습니다.")
+            empty = QLabel(tr("표시할 영상이 없습니다."))
             empty.setStyleSheet(f"color:{_t().text_secondary};padding:8px;")
             self._rel_layout.addWidget(empty)
             return

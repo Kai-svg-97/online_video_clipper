@@ -229,6 +229,17 @@ SNOOZED_UPDATE_VERSION: str = _resolve_str("snoozed_update_version", "")
 THEME: str = _resolve_str("theme", "slate")
 
 # ---------------------------------------------------------------------------
+# 화면 언어
+# ---------------------------------------------------------------------------
+#
+# **"앱 언어"다** — 자막 파일 언어(`DOWNLOAD_SUBTITLE_LANGS`)나 자막 번역 대상과
+# 다르다. 설정 화면에서 셋이 나란히 보이므로 라벨로 분명히 갈라 둔다.
+#
+# 기본값이 `"ko"` 인 이유: 이 앱은 한국어로 만들어졌고 원문이 한국어다. 번역이 없는
+# 문자열은 한국어로 남으므로, 다른 언어를 골라도 화면이 비지 않는다.
+UI_LANGUAGE: str = _resolve_str("ui_language", "ko")
+
+# ---------------------------------------------------------------------------
 # YouTube 인증 설정
 # ---------------------------------------------------------------------------
 
@@ -258,6 +269,7 @@ def save_setting(key: str, value) -> None:
         "default_quality": "DEFAULT_QUALITY",
         "default_format": "DEFAULT_FORMAT",
         "theme": "THEME",
+        "ui_language": "UI_LANGUAGE",
         "auto_update_check": "AUTO_UPDATE_CHECK",
         "auto_enrich_on_add": "AUTO_ENRICH_ON_ADD",
         "download_subtitle_langs": "DOWNLOAD_SUBTITLE_LANGS",
@@ -330,6 +342,11 @@ def save_path_setting(key: str, path_str: str) -> None:
 def save_theme(name: str) -> None:
     """선택한 테마 이름을 config.yaml에 저장한다."""
     save_setting("theme", name)
+
+
+def save_ui_language(code: str) -> None:
+    """화면 언어를 config.yaml에 저장한다. 적용은 **다시 시작할 때**다."""
+    save_setting("ui_language", code)
 
 
 # ---------------------------------------------------------------------------

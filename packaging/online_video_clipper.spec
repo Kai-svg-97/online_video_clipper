@@ -27,6 +27,8 @@ a = Analysis(
         # 보내는데, 그쪽은 이미 다음 버전을 설명하고 있을 수 있고 오프라인에서는
         # 아예 열리지 않는다. `scripts/build_manual.py`가 만들어 두어야 한다.
         ("../docs/manual", "docs/manual"),
+        # 번역 카탈로그. 빠지면 영어를 골라도 한국어가 그대로 나온다(원문 폴백).
+        ("../gui/text/locales", "gui/text/locales"),
         (_oauth_src,   "config"),
         *collect_data_files("yt_dlp"),
         *collect_data_files("PyQt6"),

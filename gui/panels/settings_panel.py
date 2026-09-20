@@ -66,6 +66,7 @@ from gui.panels.settings.helpers import (  # noqa: F401
     _t,
     open_folder,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ class SettingsPanel(QWidget):
 
         # 헤더 + 우측 컴팩트 업데이트 상태
         header_row = QHBoxLayout()
-        header = QLabel("설정")
+        header = QLabel(tr("설정"))
         header.setStyleSheet("font-size: 16px; font-weight: 600;")
         header_row.addWidget(header)
         header_row.addStretch()
@@ -190,6 +191,8 @@ class SettingsPanel(QWidget):
         layout.addSpacing(20)
 
         self._build_help_section(layout)
+        self._add_divider(layout)
+        self._build_language_section(layout)
         self._add_divider(layout)
         self._build_theme_section(layout)
         self._add_divider(layout)
@@ -225,7 +228,7 @@ class SettingsPanel(QWidget):
 
         설정은 "어디서 찾지?"를 가장 먼저 열어 보는 화면이라 맨 위에 둔다.
         """
-        label = QLabel("도움말")
+        label = QLabel(tr("도움말"))
         label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 8px;"
@@ -238,8 +241,8 @@ class SettingsPanel(QWidget):
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
         layout.addWidget(hint)
-        button = QPushButton("상세 설명서 열기  (F1)")
-        button.setToolTip("상세 설명서를 기본 브라우저로 엽니다 (F1)")
+        button = QPushButton(tr("상세 설명서 열기  (F1)"))
+        button.setToolTip(tr("상세 설명서를 기본 브라우저로 엽니다 (F1)"))
         button.clicked.connect(self._open_manual)
         layout.addWidget(button)
         layout.addSpacing(4)
@@ -249,10 +252,63 @@ class SettingsPanel(QWidget):
 
         open_manual()
 
+    def _build_language_section(self, layout) -> None:
+        """화면 언어.
+
+        **"앱 언어"라고 분명히 적는다.** 이 화면에는 언어 설정이 이미 둘 더 있다 —
+        다운로드용 "자막 언어"와 재생 화면의 자막 트랙 선택. 그냥 "언어"라고 두면
+        무엇을 바꾸는 항목인지 알 수 없다.
+        """
+        from config import settings as cfg  # noqa: PLC0415
+        from gui.text.catalog import AVAILABLE_LANGUAGES  # noqa: PLC0415
+
+        label = QLabel(tr("앱 언어"))
+        label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 8px;"
+        )
+        layout.addWidget(label)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self._lang_combo = QComboBox()
+        for code, name in AVAILABLE_LANGUAGES:
+            self._lang_combo.addItem(name, code)
+        idx = self._lang_combo.findData(cfg.UI_LANGUAGE)
+        self._lang_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._lang_combo.setMinimumWidth(160)
+        self._lang_combo.currentIndexChanged.connect(self._on_language_changed)
+        row.addWidget(self._lang_combo)
+        row.addStretch()
+        layout.addLayout(row)
+
+        self._lang_hint = QLabel(
+            tr("화면에 보이는 글의 언어입니다. 자막 파일 언어나 자막 번역 대상과는 다릅니다.")
+        )
+        self._lang_hint.setWordWrap(True)
+        self._lang_hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
+        layout.addWidget(self._lang_hint)
+        layout.addSpacing(4)
+
+    def _on_language_changed(self) -> None:
+        """고른 언어를 저장한다 — **적용은 다시 시작할 때**.
+
+        즉시 바꾸지 않는 이유: 이 앱의 위젯은 `setText()`로 생성 시점에 문자열을 박아
+        넣으므로, 언어만 갈아 끼워도 이미 만들어진 화면은 그대로다. 되지도 않는
+        즉시 전환을 흉내 내는 것보다 **언제 반영되는지 말해 주는** 편이 낫다.
+        """
+        from config import settings as cfg  # noqa: PLC0415
+
+        code = self._lang_combo.currentData() or "ko"
+        cfg.save_ui_language(code)
+        self._lang_hint.setText(
+            tr("다시 시작하면 적용됩니다. 번역이 없는 문구는 한국어로 남습니다.")
+        )
+
     def _build_theme_section(self, layout) -> None:
         """테마 프리셋 격자."""
         # ── 테마 섹션 ──
-        theme_label = QLabel("테마")
+        theme_label = QLabel(tr("테마"))
         theme_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
@@ -275,7 +331,7 @@ class SettingsPanel(QWidget):
         layout.addLayout(cards_grid)
         layout.addSpacing(8)
 
-        hint = QLabel("클릭하면 즉시 적용됩니다. 재시작 후에도 유지됩니다.")
+        hint = QLabel(tr("클릭하면 즉시 적용됩니다. 재시작 후에도 유지됩니다."))
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_muted}; margin-top: 4px;")
         layout.addWidget(hint)
         layout.addSpacing(28)
@@ -283,7 +339,7 @@ class SettingsPanel(QWidget):
     def _build_paths_section(self, layout) -> None:
         """저장 경로(DB·다운로드·썸네일·로그) + 폴더 열기 버튼."""
         # ── 저장 경로 섹션 ──
-        path_label = QLabel("저장 경로")
+        path_label = QLabel(tr("저장 경로"))
         path_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
@@ -318,8 +374,11 @@ class SettingsPanel(QWidget):
             val.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
-            open_btn = QPushButton("열기")
-            open_btn.setFixedWidth(48)
+            open_btn = QPushButton(tr("열기"))
+            # **고정 폭을 쓰지 않는다.** 한국어 "열기"에 맞춘 48px 에 영어 "Open"이
+            # 들어가지 않아 글자가 잘렸다(실측). 번역된 글이 들어가는 위젯은 최소 폭만
+            # 정하고 내용에 맞춰 늘어나게 둔다.
+            open_btn.setMinimumWidth(48)
             open_btn.clicked.connect(lambda _checked=False, p=path_text: open_folder(p))
             row.addWidget(lbl)
             row.addWidget(val, 1)
@@ -327,7 +386,7 @@ class SettingsPanel(QWidget):
             layout.addLayout(row)
             layout.addSpacing(6)
 
-        note = QLabel("경로를 변경하려면 data/config.yaml 을 편집하세요.")
+        note = QLabel(tr("경로를 변경하려면 data/config.yaml 을 편집하세요."))
         note.setStyleSheet(f"font-size: 10px; color: {_t().text_muted}; margin-top: 8px;")
         layout.addWidget(note)
         layout.addSpacing(28)
@@ -335,7 +394,7 @@ class SettingsPanel(QWidget):
     def _build_general_section(self, layout) -> None:
         """일반 설정(테마 적용 방식·자동 보강 등)."""
         # ── 일반 섹션 ──
-        gen_label = QLabel("일반")
+        gen_label = QLabel(tr("일반"))
         gen_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
@@ -359,7 +418,7 @@ class SettingsPanel(QWidget):
         # 동시 다운로드 수
         concurrent_row = QHBoxLayout()
         concurrent_row.setContentsMargins(0, 0, 0, 0)
-        concurrent_lbl = QLabel("동시 다운로드 수")
+        concurrent_lbl = QLabel(tr("동시 다운로드 수"))
         concurrent_lbl.setFixedWidth(130)
         concurrent_lbl.setStyleSheet("font-size: 11px;")
         self._concurrent_spin = QSpinBox()
@@ -376,7 +435,7 @@ class SettingsPanel(QWidget):
         # 노드 동시 로딩 수 (피드·채널·카테고리·재생목록 등 모든 트리 노드 공통)
         feed_workers_row = QHBoxLayout()
         feed_workers_row.setContentsMargins(0, 0, 0, 0)
-        feed_workers_lbl = QLabel("노드 동시 로딩 수")
+        feed_workers_lbl = QLabel(tr("노드 동시 로딩 수"))
         feed_workers_lbl.setFixedWidth(130)
         feed_workers_lbl.setStyleSheet("font-size: 11px;")
         self._feed_workers_spin = QSpinBox()
@@ -391,14 +450,14 @@ class SettingsPanel(QWidget):
         layout.addSpacing(10)
 
         # 클립보드 URL 자동 감지
-        self._clipboard_check = QCheckBox("클립보드 URL 자동 감지")
+        self._clipboard_check = QCheckBox(tr("클립보드 URL 자동 감지"))
         self._clipboard_check.setChecked(cur_clipboard)
         self._clipboard_check.checkStateChanged.connect(self._on_clipboard_changed)
         layout.addWidget(self._clipboard_check)
         layout.addSpacing(10)
 
         # 등록 시 요약·가사 자동 채우기
-        self._auto_enrich_check = QCheckBox("등록 시 요약·가사 자동 채우기")
+        self._auto_enrich_check = QCheckBox(tr("등록 시 요약·가사 자동 채우기"))
         self._auto_enrich_check.setChecked(cur_auto_enrich)
         self._auto_enrich_check.checkStateChanged.connect(self._on_auto_enrich_changed)
         layout.addWidget(self._auto_enrich_check)
@@ -433,7 +492,7 @@ class SettingsPanel(QWidget):
         from gui.tray import AppTray  # noqa: PLC0415
 
         layout.addSpacing(10)
-        self._tray_check = QCheckBox("작업이 끝나면 트레이로 알리기")
+        self._tray_check = QCheckBox(tr("작업이 끝나면 트레이로 알리기"))
         self._tray_check.setChecked(bool(cfg.TRAY_NOTIFICATIONS))
         self._tray_check.checkStateChanged.connect(self._on_tray_notify_changed)
         layout.addWidget(self._tray_check)
@@ -441,16 +500,16 @@ class SettingsPanel(QWidget):
         if not AppTray.is_available():
             # 트레이가 없는 데스크톱이 있다 — 켤 수 있게 두면 켜 놓고 안 온다고 한다.
             self._tray_check.setEnabled(False)
-            self._tray_check.setToolTip("이 환경에는 시스템 트레이가 없습니다.")
+            self._tray_check.setToolTip(tr("이 환경에는 시스템 트레이가 없습니다."))
 
-        self._watch_check = QCheckBox("구독 채널에 새 영상이 올라오면 알리기")
+        self._watch_check = QCheckBox(tr("구독 채널에 새 영상이 올라오면 알리기"))
         self._watch_check.setChecked(bool(cfg.WATCH_NEW_VIDEOS))
         self._watch_check.checkStateChanged.connect(self._on_watch_changed)
         layout.addWidget(self._watch_check)
 
         int_row = QHBoxLayout()
         int_row.setContentsMargins(22, 0, 0, 0)
-        int_lbl = QLabel("확인 주기(분)")
+        int_lbl = QLabel(tr("확인 주기(분)"))
         int_lbl.setFixedWidth(100)
         self._watch_spin = QSpinBox()
         self._watch_spin.setRange(MIN_INTERVAL_MIN, MAX_INTERVAL_MIN)
@@ -485,7 +544,7 @@ class SettingsPanel(QWidget):
     def _build_download_section(self, layout) -> None:
         """다운로드 기본값(화질·형식·경로)."""
         # ── 다운로드 섹션 ──
-        dl_label = QLabel("다운로드")
+        dl_label = QLabel(tr("다운로드"))
         dl_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
@@ -507,13 +566,13 @@ class SettingsPanel(QWidget):
         # 다운로드 폴더
         folder_row = QHBoxLayout()
         folder_row.setContentsMargins(0, 0, 0, 0)
-        folder_lbl = QLabel("다운로드 폴더")
+        folder_lbl = QLabel(tr("다운로드 폴더"))
         folder_lbl.setFixedWidth(100)
         folder_lbl.setStyleSheet("font-size: 11px;")
         self._folder_edit = QLineEdit(cur_dl_dir)
         self._folder_edit.setReadOnly(True)
         self._folder_edit.setStyleSheet("font-size: 10px; font-family: monospace;")
-        browse_btn = QPushButton("찾아보기")
+        browse_btn = QPushButton(tr("찾아보기"))
         browse_btn.setFixedWidth(72)
         browse_btn.clicked.connect(self._on_browse_folder)
         folder_row.addWidget(folder_lbl)
@@ -525,7 +584,7 @@ class SettingsPanel(QWidget):
         # 기본 품질
         quality_row = QHBoxLayout()
         quality_row.setContentsMargins(0, 0, 0, 0)
-        quality_lbl = QLabel("기본 품질")
+        quality_lbl = QLabel(tr("기본 품질"))
         quality_lbl.setFixedWidth(100)
         quality_lbl.setStyleSheet("font-size: 11px;")
         self._quality_combo = QComboBox()
@@ -552,7 +611,7 @@ class SettingsPanel(QWidget):
         # 기본 포맷
         format_row = QHBoxLayout()
         format_row.setContentsMargins(0, 0, 0, 0)
-        format_lbl = QLabel("기본 포맷")
+        format_lbl = QLabel(tr("기본 포맷"))
         format_lbl.setFixedWidth(100)
         format_lbl.setStyleSheet("font-size: 11px;")
         self._format_combo = QComboBox()
@@ -585,10 +644,10 @@ class SettingsPanel(QWidget):
 
         layout.addSpacing(10)
         row = QHBoxLayout()
-        lbl = QLabel("받는 방식")
+        lbl = QLabel(tr("받는 방식"))
         lbl.setFixedWidth(100)
         self._preset_combo = QComboBox()
-        self._preset_combo.addItem("프리셋 없음 (아래 설정 그대로)", "")
+        self._preset_combo.addItem(tr("프리셋 없음 (아래 설정 그대로)"), "")
         for preset in available_presets():
             self._preset_combo.addItem(download_preset_name(preset), preset.key)
         idx = self._preset_combo.findData(cfg.ACTIVE_PRESET_KEY or "")
@@ -599,12 +658,12 @@ class SettingsPanel(QWidget):
         row.addWidget(self._preset_combo)
         row.addStretch()
 
-        self._preset_save_btn = QPushButton("지금 설정을 프리셋으로…")
+        self._preset_save_btn = QPushButton(tr("지금 설정을 프리셋으로…"))
         self._preset_save_btn.setFixedWidth(160)
         self._preset_save_btn.clicked.connect(self._on_preset_save)
         row.addWidget(self._preset_save_btn)
 
-        self._preset_del_btn = QPushButton("프리셋 지우기")
+        self._preset_del_btn = QPushButton(tr("프리셋 지우기"))
         self._preset_del_btn.setFixedWidth(100)
         self._preset_del_btn.clicked.connect(self._on_preset_delete)
         row.addWidget(self._preset_del_btn)
@@ -711,7 +770,7 @@ class SettingsPanel(QWidget):
             cur_sub_langs = ""
             cur_embed_subs = cur_embed_thumb = cur_embed_chapters = cur_song_tags = True
 
-        embed_lbl = QLabel("파일에 포함")
+        embed_lbl = QLabel(tr("파일에 포함"))
         embed_lbl.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted};"
@@ -722,33 +781,33 @@ class SettingsPanel(QWidget):
         # 자막 언어 — 비우면 자막을 아예 받지 않는다(굽기 체크도 무의미해진다).
         sub_row = QHBoxLayout()
         sub_row.setContentsMargins(0, 0, 0, 0)
-        sub_lbl = QLabel("자막 언어")
+        sub_lbl = QLabel(tr("자막 언어"))
         sub_lbl.setFixedWidth(100)
         sub_lbl.setStyleSheet("font-size: 11px;")
         self._sub_langs_edit = QLineEdit(cur_sub_langs)
-        self._sub_langs_edit.setPlaceholderText("비우면 자막을 받지 않습니다 (예: ko,en)")
+        self._sub_langs_edit.setPlaceholderText(tr("비우면 자막을 받지 않습니다 (예: ko,en)"))
         self._sub_langs_edit.editingFinished.connect(self._on_sub_langs_changed)
         sub_row.addWidget(sub_lbl)
         sub_row.addWidget(self._sub_langs_edit, 1)
         layout.addLayout(sub_row)
         layout.addSpacing(10)
 
-        self._embed_subs_check = QCheckBox("자막을 영상 파일에 포함")
+        self._embed_subs_check = QCheckBox(tr("자막을 영상 파일에 포함"))
         self._embed_subs_check.setChecked(cur_embed_subs)
         self._embed_subs_check.checkStateChanged.connect(self._on_embed_subs_changed)
         layout.addWidget(self._embed_subs_check)
 
-        self._embed_thumb_check = QCheckBox("썸네일을 표지로 포함")
+        self._embed_thumb_check = QCheckBox(tr("썸네일을 표지로 포함"))
         self._embed_thumb_check.setChecked(cur_embed_thumb)
         self._embed_thumb_check.checkStateChanged.connect(self._on_embed_thumb_changed)
         layout.addWidget(self._embed_thumb_check)
 
-        self._embed_chapters_check = QCheckBox("챕터 정보를 포함")
+        self._embed_chapters_check = QCheckBox(tr("챕터 정보를 포함"))
         self._embed_chapters_check.setChecked(cur_embed_chapters)
         self._embed_chapters_check.checkStateChanged.connect(self._on_embed_chapters_changed)
         layout.addWidget(self._embed_chapters_check)
 
-        self._song_tags_check = QCheckBox("음원에 노래 정보(가수·앨범·가사·표지) 기록")
+        self._song_tags_check = QCheckBox(tr("음원에 노래 정보(가수·앨범·가사·표지) 기록"))
         self._song_tags_check.setChecked(cur_song_tags)
         self._song_tags_check.checkStateChanged.connect(self._on_song_tags_changed)
         layout.addWidget(self._song_tags_check)
@@ -785,7 +844,7 @@ class SettingsPanel(QWidget):
             cur_rate, cur_frag, cur_proxy = "", 1, ""
             cur_win_on, cur_win_start, cur_win_end = False, 23, 7
 
-        tr_lbl = QLabel("전송")
+        tr_lbl = QLabel(tr("전송"))
         tr_lbl.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted};"
@@ -795,11 +854,11 @@ class SettingsPanel(QWidget):
 
         rate_row = QHBoxLayout()
         rate_row.setContentsMargins(0, 0, 0, 0)
-        rate_lbl = QLabel("속도 제한")
+        rate_lbl = QLabel(tr("속도 제한"))
         rate_lbl.setFixedWidth(100)
         rate_lbl.setStyleSheet("font-size: 11px;")
         self._rate_edit = QLineEdit(cur_rate)
-        self._rate_edit.setPlaceholderText("비우면 무제한 (예: 2M, 500K)")
+        self._rate_edit.setPlaceholderText(tr("비우면 무제한 (예: 2M, 500K)"))
         self._rate_edit.editingFinished.connect(self._on_rate_limit_changed)
         rate_row.addWidget(rate_lbl)
         rate_row.addWidget(self._rate_edit, 1)
@@ -808,7 +867,7 @@ class SettingsPanel(QWidget):
 
         frag_row = QHBoxLayout()
         frag_row.setContentsMargins(0, 0, 0, 0)
-        frag_lbl = QLabel("조각 동시 수")
+        frag_lbl = QLabel(tr("조각 동시 수"))
         frag_lbl.setFixedWidth(100)
         frag_lbl.setStyleSheet("font-size: 11px;")
         self._frag_spin = QSpinBox()
@@ -816,7 +875,7 @@ class SettingsPanel(QWidget):
         self._frag_spin.setValue(max(1, int(cur_frag or 1)))
         self._frag_spin.setFixedWidth(64)
         self._frag_spin.valueChanged.connect(self._on_fragments_changed)
-        frag_hint = QLabel("1이면 끕니다. 고화질 영상에서 체감이 큽니다.")
+        frag_hint = QLabel(tr("1이면 끕니다. 고화질 영상에서 체감이 큽니다."))
         frag_hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
         frag_row.addWidget(frag_lbl)
         frag_row.addWidget(self._frag_spin)
@@ -827,11 +886,11 @@ class SettingsPanel(QWidget):
 
         proxy_row = QHBoxLayout()
         proxy_row.setContentsMargins(0, 0, 0, 0)
-        proxy_lbl = QLabel("프록시")
+        proxy_lbl = QLabel(tr("프록시"))
         proxy_lbl.setFixedWidth(100)
         proxy_lbl.setStyleSheet("font-size: 11px;")
         self._proxy_edit = QLineEdit(cur_proxy)
-        self._proxy_edit.setPlaceholderText("비우면 사용 안 함 (예: socks5://127.0.0.1:1080)")
+        self._proxy_edit.setPlaceholderText(tr("비우면 사용 안 함 (예: socks5://127.0.0.1:1080)"))
         self._proxy_edit.editingFinished.connect(self._on_proxy_changed)
         proxy_row.addWidget(proxy_lbl)
         proxy_row.addWidget(self._proxy_edit, 1)
@@ -839,7 +898,7 @@ class SettingsPanel(QWidget):
         layout.addSpacing(14)
 
         # ── 예약 시간대 ──
-        self._window_check = QCheckBox("정해진 시간대에만 받기")
+        self._window_check = QCheckBox(tr("정해진 시간대에만 받기"))
         self._window_check.setChecked(cur_win_on)
         self._window_check.checkStateChanged.connect(self._on_window_toggled)
         layout.addWidget(self._window_check)
@@ -849,13 +908,13 @@ class SettingsPanel(QWidget):
         self._win_start_spin = QSpinBox()
         self._win_start_spin.setRange(0, 23)
         self._win_start_spin.setValue(int(cur_win_start) % 24)
-        self._win_start_spin.setSuffix("시")
+        self._win_start_spin.setSuffix(tr("시"))
         self._win_start_spin.setFixedWidth(64)
         self._win_start_spin.valueChanged.connect(self._on_window_hours_changed)
         self._win_end_spin = QSpinBox()
         self._win_end_spin.setRange(0, 23)
         self._win_end_spin.setValue(int(cur_win_end) % 24)
-        self._win_end_spin.setSuffix("시")
+        self._win_end_spin.setSuffix(tr("시"))
         self._win_end_spin.setFixedWidth(64)
         self._win_end_spin.valueChanged.connect(self._on_window_hours_changed)
         win_row.addWidget(self._win_start_spin)
@@ -931,12 +990,12 @@ class SettingsPanel(QWidget):
         layout.addWidget(sb_lbl)
         layout.addSpacing(8)
 
-        self._sb_skip_check = QCheckBox("재생 중 자동으로 건너뛰기")
+        self._sb_skip_check = QCheckBox(tr("재생 중 자동으로 건너뛰기"))
         self._sb_skip_check.setChecked(cur_skip)
         self._sb_skip_check.checkStateChanged.connect(self._on_sb_skip_changed)
         layout.addWidget(self._sb_skip_check)
 
-        self._sb_remove_check = QCheckBox("다운로드한 파일에서 잘라내기")
+        self._sb_remove_check = QCheckBox(tr("다운로드한 파일에서 잘라내기"))
         self._sb_remove_check.setChecked(cur_remove)
         self._sb_remove_check.checkStateChanged.connect(self._on_sb_remove_changed)
         layout.addWidget(self._sb_remove_check)
@@ -1005,7 +1064,7 @@ class SettingsPanel(QWidget):
             sep_lyr.setStyleSheet(f"color: {_t().border};")
             layout.addWidget(sep_lyr)
             layout.addSpacing(24)
-            lyr_label = QLabel("가사 출처 관리")
+            lyr_label = QLabel(tr("가사 출처 관리"))
             lyr_label.setStyleSheet(
                 "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
                 f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
@@ -1025,7 +1084,7 @@ class SettingsPanel(QWidget):
             sep_sync.setStyleSheet(f"color: {_t().border};")
             layout.addWidget(sep_sync)
             layout.addSpacing(24)
-            sync_label = QLabel("클라우드 동기화")
+            sync_label = QLabel(tr("클라우드 동기화"))
             sync_label.setStyleSheet(
                 "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
                 f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
@@ -1045,7 +1104,7 @@ class SettingsPanel(QWidget):
             sep_transfer.setStyleSheet(f"color: {_t().border};")
             layout.addWidget(sep_transfer)
             layout.addSpacing(24)
-            transfer_label = QLabel("라이브러리 가져오기/내보내기")
+            transfer_label = QLabel(tr("라이브러리 가져오기/내보내기"))
             transfer_label.setStyleSheet(
                 "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
                 f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
@@ -1072,7 +1131,7 @@ class SettingsPanel(QWidget):
         )
 
         self._add_divider(layout)
-        label = QLabel("워치 폴더")
+        label = QLabel(tr("워치 폴더"))
         label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted};"
@@ -1093,13 +1152,13 @@ class SettingsPanel(QWidget):
         row = QHBoxLayout()
         row.setContentsMargins(0, 6, 0, 0)
         self._watch_edit = QLineEdit()
-        self._watch_edit.setPlaceholderText("비워 두면 쓰지 않습니다")
+        self._watch_edit.setPlaceholderText(tr("비워 두면 쓰지 않습니다"))
         self._watch_edit.setText(cfg.WATCH_FOLDER or "")
         self._watch_edit.editingFinished.connect(self._on_watch_folder_changed)
-        browse = QPushButton("찾기…")
+        browse = QPushButton(tr("찾기…"))
         browse.setFixedWidth(60)
         browse.clicked.connect(self._on_watch_folder_browse)
-        clear = QPushButton("사용 안 함")
+        clear = QPushButton(tr("사용 안 함"))
         clear.setFixedWidth(80)
         clear.clicked.connect(self._on_watch_folder_clear)
         row.addWidget(self._watch_edit, 1)
@@ -1126,13 +1185,13 @@ class SettingsPanel(QWidget):
 
         raw = self._watch_edit.text().strip()
         if not raw:
-            self._watch_status.setText("쓰지 않는 중입니다.")
+            self._watch_status.setText(tr("쓰지 않는 중입니다."))
             return
         if not _Path(raw).is_dir():
-            self._watch_status.setText("⚠ 이 경로에 폴더가 없습니다.")
+            self._watch_status.setText(tr("⚠ 이 경로에 폴더가 없습니다."))
             return
         self._watch_status.setText(
-            "폴더를 확인했습니다. 바뀐 설정은 앱을 다시 켤 때 적용됩니다."
+            tr("폴더를 확인했습니다. 바뀐 설정은 앱을 다시 켤 때 적용됩니다.")
         )
 
     def _on_watch_folder_changed(self) -> None:
@@ -1162,7 +1221,7 @@ class SettingsPanel(QWidget):
             return
 
         self._add_divider(layout)
-        label = QLabel("북마크에서 가져오기")
+        label = QLabel(tr("북마크에서 가져오기"))
         label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted};"
@@ -1181,7 +1240,7 @@ class SettingsPanel(QWidget):
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 6, 0, 0)
-        self._bookmark_btn = QPushButton("북마크 파일 고르기…")
+        self._bookmark_btn = QPushButton(tr("북마크 파일 고르기…"))
         self._bookmark_btn.clicked.connect(self._on_bookmark_import_clicked)
         row.addWidget(self._bookmark_btn)
         row.addStretch()
@@ -1243,18 +1302,18 @@ class SettingsPanel(QWidget):
         """
         if self._cleanup_fns is None:
             return
-        label = QLabel("라이브러리 정리")
+        label = QLabel(tr("라이브러리 정리"))
         label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 8px;"
         )
         layout.addWidget(label)
         hint = QLabel(
-            "같은 영상이 두 번 들어왔거나, 다운로드한 파일이 사라진 기록을 찾습니다."
+            tr("같은 영상이 두 번 들어왔거나, 다운로드한 파일이 사라진 기록을 찾습니다.")
         )
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
         layout.addWidget(hint)
-        button = QPushButton("라이브러리 정리 열기…")
+        button = QPushButton(tr("라이브러리 정리 열기…"))
         button.clicked.connect(self._open_cleanup_dialog)
         layout.addWidget(button)
         layout.addSpacing(24)
@@ -1278,7 +1337,7 @@ class SettingsPanel(QWidget):
         """YouTube API 연동(번들 OAuth 로그인)."""
         # ── YouTube API 연동 섹션 ──
         layout.addSpacing(20)
-        yt_label = QLabel("YouTube API 연동")
+        yt_label = QLabel(tr("YouTube API 연동"))
         yt_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
@@ -1297,12 +1356,12 @@ class SettingsPanel(QWidget):
         layout.addSpacing(8)
 
         yt_btn_row = QHBoxLayout()
-        self._yt_auth_btn = QPushButton("Google 계정으로 연결")
+        self._yt_auth_btn = QPushButton(tr("Google 계정으로 연결"))
         self._yt_auth_btn.setFixedWidth(160)
         self._yt_auth_btn.clicked.connect(self._on_yt_auth)
         yt_btn_row.addWidget(self._yt_auth_btn)
 
-        self._yt_disconnect_btn = QPushButton("연결 해제")
+        self._yt_disconnect_btn = QPushButton(tr("연결 해제"))
         self._yt_disconnect_btn.setFixedWidth(80)
         self._yt_disconnect_btn.clicked.connect(self._on_yt_disconnect)
         yt_btn_row.addWidget(self._yt_disconnect_btn)
@@ -1319,7 +1378,7 @@ class SettingsPanel(QWidget):
         """구독 피드용 브라우저 쿠키(YouTube API에 피드 엔드포인트가 없다)."""
         # ── 구독 피드 브라우저 쿠키 (YouTube API에는 피드 엔드포인트 없음) ──
         layout.addSpacing(16)
-        feed_label = QLabel("구독 피드 — 브라우저 쿠키 (선택)")
+        feed_label = QLabel(tr("구독 피드 — 브라우저 쿠키 (선택)"))
         feed_label.setStyleSheet(
             f"font-size: 9px; font-weight: 600; letter-spacing: 0.5px; color: {_t().text_secondary};"
         )
@@ -1335,7 +1394,7 @@ class SettingsPanel(QWidget):
         layout.addWidget(feed_hint)
         layout.addSpacing(6)
 
-        self._browser_login_btn = QPushButton("브라우저 열어서 로그인")
+        self._browser_login_btn = QPushButton(tr("브라우저 열어서 로그인"))
         self._browser_login_btn.setToolTip(
             "이 앱이 직접 띄운 브라우저 창에서 로그인합니다. Google이 자동화된\n"
             "브라우저로 판단해 \"로그인할 수 없음\"으로 거부할 수 있습니다 —\n"
@@ -1345,12 +1404,12 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._browser_login_btn)
         layout.addSpacing(10)
 
-        adv_label = QLabel("고급: 기존 브라우저 프로필 직접 선택")
+        adv_label = QLabel(tr("고급: 기존 브라우저 프로필 직접 선택"))
         adv_label.setStyleSheet(f"font-size: 8pt; color: {_t().text_muted};")
         layout.addWidget(adv_label)
 
         browser_row = QHBoxLayout()
-        b_lbl = QLabel("브라우저")
+        b_lbl = QLabel(tr("브라우저"))
         b_lbl.setFixedWidth(100)
         self._feed_browser_combo = QComboBox()
         self._feed_browser_combo.addItems(["firefox", "chrome", "edge", "chromium"])
@@ -1362,18 +1421,18 @@ class SettingsPanel(QWidget):
         layout.addLayout(browser_row)
 
         profile_row = QHBoxLayout()
-        p_lbl = QLabel("프로필")
+        p_lbl = QLabel(tr("프로필"))
         p_lbl.setFixedWidth(100)
         self._feed_profile_combo = QComboBox()
         self._feed_profile_combo.setFixedWidth(220)
-        self._feed_profile_combo.setToolTip("브라우저 프로필을 선택하세요")
+        self._feed_profile_combo.setToolTip(tr("브라우저 프로필을 선택하세요"))
         self._feed_profile_combo.currentIndexChanged.connect(self._on_feed_profile_changed)
         profile_row.addWidget(p_lbl)
         profile_row.addWidget(self._feed_profile_combo, 1)
         layout.addLayout(profile_row)
 
         cand_row = QHBoxLayout()
-        cand_lbl = QLabel("감지된 쿠키 파일")
+        cand_lbl = QLabel(tr("감지된 쿠키 파일"))
         cand_lbl.setFixedWidth(100)
         self._feed_cookie_candidates_combo = QComboBox()
         self._feed_cookie_candidates_combo.setToolTip(
@@ -1383,7 +1442,7 @@ class SettingsPanel(QWidget):
         self._feed_cookie_candidates_combo.currentIndexChanged.connect(
             self._on_cookie_candidate_selected
         )
-        cand_refresh = QPushButton("다시 검색")
+        cand_refresh = QPushButton(tr("다시 검색"))
         cand_refresh.setFixedWidth(70)
         cand_refresh.clicked.connect(self._reload_cookie_candidates)
         cand_row.addWidget(cand_lbl)
@@ -1392,11 +1451,11 @@ class SettingsPanel(QWidget):
         layout.addLayout(cand_row)
 
         cookie_row = QHBoxLayout()
-        ck_lbl = QLabel("또는 쿠키 파일")
+        ck_lbl = QLabel(tr("또는 쿠키 파일"))
         ck_lbl.setFixedWidth(100)
         self._feed_cookie_edit = QLineEdit()
-        self._feed_cookie_edit.setPlaceholderText("Netscape 포맷 쿠키 파일 경로 (선택)")
-        ck_browse = QPushButton("찾기…")
+        self._feed_cookie_edit.setPlaceholderText(tr("Netscape 포맷 쿠키 파일 경로 (선택)"))
+        ck_browse = QPushButton(tr("찾기…"))
         ck_browse.setFixedWidth(48)
         ck_browse.clicked.connect(self._on_browse_cookie_file)
         cookie_row.addWidget(ck_lbl)
@@ -1404,16 +1463,16 @@ class SettingsPanel(QWidget):
         cookie_row.addWidget(ck_browse)
         layout.addLayout(cookie_row)
 
-        ck_apply = QPushButton("쿠키 파일 적용")
+        ck_apply = QPushButton(tr("쿠키 파일 적용"))
         ck_apply.setFixedWidth(110)
         ck_apply.clicked.connect(self._on_apply_cookie_file)
         layout.addWidget(ck_apply)
 
         help_row = QHBoxLayout()
-        self._cookie_help_btn = QPushButton("쿠키 파일 등록 방법 보기")
+        self._cookie_help_btn = QPushButton(tr("쿠키 파일 등록 방법 보기"))
         self._cookie_help_btn.setFixedWidth(160)
         self._cookie_help_btn.clicked.connect(self._on_show_cookie_help)
-        self._open_log_dir_btn = QPushButton("로그 폴더 열기")
+        self._open_log_dir_btn = QPushButton(tr("로그 폴더 열기"))
         self._open_log_dir_btn.setFixedWidth(100)
         self._open_log_dir_btn.clicked.connect(self._on_open_log_dir)
         help_row.addWidget(self._cookie_help_btn)
@@ -1437,7 +1496,7 @@ class SettingsPanel(QWidget):
         layout.addWidget(sep_hidden)
         layout.addSpacing(24)
 
-        hidden_label = QLabel("숨김 태그 관리")
+        hidden_label = QLabel(tr("숨김 태그 관리"))
         hidden_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 12px;"
@@ -1450,7 +1509,7 @@ class SettingsPanel(QWidget):
             self._hidden_tags_section.changed.connect(self.hidden_tags_changed.emit)
             layout.addWidget(self._hidden_tags_section)
         else:
-            no_tags_lbl = QLabel("태그 목록을 불러올 수 없습니다.")
+            no_tags_lbl = QLabel(tr("태그 목록을 불러올 수 없습니다."))
             no_tags_lbl.setStyleSheet(f"font-size: 10px; color: {_t().text_muted};")
             layout.addWidget(no_tags_lbl)
             self._hidden_tags_section = None
@@ -1468,11 +1527,11 @@ class SettingsPanel(QWidget):
         row = QHBoxLayout(w)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
-        self._auto_update_check = QCheckBox("자동 업데이트")
+        self._auto_update_check = QCheckBox(tr("자동 업데이트"))
         # 확인만 자동이고 **받는 것은 누를 때**다 — 문구가 동작과 어긋나면
         # 사용자는 받는 줄 알고 기다린다.
         self._auto_update_check.setToolTip(
-            "새 버전이 나왔는지 자동으로 확인합니다(내려받기는 눌러야 시작됩니다)"
+            tr("새 버전이 나왔는지 자동으로 확인합니다(내려받기는 눌러야 시작됩니다)")
         )
         self._auto_update_check.setChecked(cur_auto)
         self._auto_update_check.checkStateChanged.connect(self._on_auto_update_changed)
@@ -1481,12 +1540,12 @@ class SettingsPanel(QWidget):
         self._upd_status_lbl.setStyleSheet(f"font-size: 11px; color: {_t().text_secondary};")
         row.addWidget(self._upd_status_lbl)
         # 수동 확인 — 자동 확인은 1시간 간격이라, 실패한 뒤 바로 다시 시도할 길이 필요하다.
-        self._upd_check_btn = QPushButton("확인")
-        self._upd_check_btn.setToolTip("지금 업데이트를 확인합니다")
+        self._upd_check_btn = QPushButton(tr("확인"))
+        self._upd_check_btn.setToolTip(tr("지금 업데이트를 확인합니다"))
         self._upd_check_btn.clicked.connect(self.check_update_requested.emit)
         row.addWidget(self._upd_check_btn)
-        self._upd_install_btn = QPushButton("지금 설치")
-        self._upd_install_btn.setToolTip("앱을 재시작하여 업데이트를 설치합니다")
+        self._upd_install_btn = QPushButton(tr("지금 설치"))
+        self._upd_install_btn.setToolTip(tr("앱을 재시작하여 업데이트를 설치합니다"))
         self._upd_install_btn.clicked.connect(self._on_install_update)
         self._upd_install_btn.hide()
         row.addWidget(self._upd_install_btn)
@@ -1500,8 +1559,8 @@ class SettingsPanel(QWidget):
         self._upd_status_lbl.setStyleSheet(
             f"font-size: 11px; color: {sem('danger')}; font-weight: 600;"
         )
-        self._upd_install_btn.setText("지금 설치")
-        self._upd_install_btn.setToolTip("앱을 재시작하여 업데이트를 설치합니다")
+        self._upd_install_btn.setText(tr("지금 설치"))
+        self._upd_install_btn.setToolTip(tr("앱을 재시작하여 업데이트를 설치합니다"))
         self._upd_install_btn.show()
 
     def set_update_available(self, dto) -> None:
@@ -1515,15 +1574,15 @@ class SettingsPanel(QWidget):
         self._upd_status_lbl.setStyleSheet(
             f"font-size: 11px; color: {sem('warning')}; font-weight: 600;"
         )
-        self._upd_install_btn.setText("설치하기")
-        self._upd_install_btn.setToolTip("업데이트를 내려받아 설치합니다")
+        self._upd_install_btn.setText(tr("설치하기"))
+        self._upd_install_btn.setToolTip(tr("업데이트를 내려받아 설치합니다"))
         self._upd_install_btn.show()
 
     def set_update_busy(self, busy: bool) -> None:
         """확인·다운로드 진행 중 표시(중복 요청 방지)."""
         self._upd_check_btn.setEnabled(not busy)
         if busy:
-            self._upd_status_lbl.setText("확인 중…")
+            self._upd_status_lbl.setText(tr("확인 중…"))
             self._upd_status_lbl.setStyleSheet(
                 f"font-size: 11px; color: {_t().text_secondary};"
             )
@@ -1609,13 +1668,13 @@ class SettingsPanel(QWidget):
 
     def _refresh_yt_status(self) -> None:
         if self._yt_oauth is None:
-            self._yt_status_lbl.setText("○ YouTube API 미초기화")
+            self._yt_status_lbl.setText(tr("○ YouTube API 미초기화"))
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
             self._yt_auth_btn.setEnabled(False)
             return
         if not self._yt_oauth.has_client_config():
             self._yt_status_lbl.setText(
-                "YouTube OAuth 설정이 앱에 포함되지 않았습니다. 배포자에게 문의하세요."
+                tr("YouTube OAuth 설정이 앱에 포함되지 않았습니다. 배포자에게 문의하세요.")
             )
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('warning')};")
             self._yt_auth_btn.setEnabled(False)
@@ -1630,7 +1689,7 @@ class SettingsPanel(QWidget):
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('success')};")
             self._yt_auth_btn.setText(self._YT_BTN_CONNECTED)
         else:
-            self._yt_status_lbl.setText("○ 미연결 — Google 계정으로 연결하세요")
+            self._yt_status_lbl.setText(tr("○ 미연결 — Google 계정으로 연결하세요"))
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('danger')};")
             self._yt_auth_btn.setText(self._YT_BTN_DISCONNECTED)
 
@@ -1659,7 +1718,7 @@ class SettingsPanel(QWidget):
 
         self._yt_auth_btn.setEnabled(False)
         self._yt_auth_btn.setText(self._YT_BTN_WORKING)
-        self._yt_status_lbl.setText("브라우저에서 Google 계정으로 승인하세요…")
+        self._yt_status_lbl.setText(tr("브라우저에서 Google 계정으로 승인하세요…"))
         self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
 
         # 인증 창이 떠 있는 동안 설정 화면을 떠나도 스레드가 파괴되지 않게 등록한다.
@@ -1756,14 +1815,14 @@ class SettingsPanel(QWidget):
             logger.exception("쿠키 파일 후보 탐색 실패")
             candidates = []
         if candidates:
-            self._feed_cookie_candidates_combo.addItem("아래에서 선택하세요", None)
+            self._feed_cookie_candidates_combo.addItem(tr("아래에서 선택하세요"), None)
             for path in candidates:
                 self._feed_cookie_candidates_combo.addItem(
                     f"{path.name}  ({path.parent.name})", str(path)
                 )
         else:
             self._feed_cookie_candidates_combo.addItem(
-                "다운로드·데스크톱에서 찾지 못함 — 아래 '찾기…'로 직접 선택", None
+                tr("다운로드·데스크톱에서 찾지 못함 — 아래 '찾기…'로 직접 선택"), None
             )
         self._feed_cookie_candidates_combo.blockSignals(False)
 
@@ -1794,7 +1853,7 @@ class SettingsPanel(QWidget):
         import config.settings as s  # noqa: PLC0415
         self._feed_profile_combo.blockSignals(True)
         self._feed_profile_combo.clear()
-        self._feed_profile_combo.addItem("(선택 안 함)", None)
+        self._feed_profile_combo.addItem(tr("(선택 안 함)"), None)
         try:
             profiles = YouTubeAuthService().detect_profiles(browser)
             for p in profiles:
@@ -1841,20 +1900,20 @@ class SettingsPanel(QWidget):
         from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
         browser = self._feed_browser_combo.currentText()
         YouTubeAuthService().save_auth(browser=browser, profile_key=None, cookiefile=cookiefile)
-        self._feed_status_lbl.setText("쿠키 파일이 설정되었습니다.")
+        self._feed_status_lbl.setText(tr("쿠키 파일이 설정되었습니다."))
         self._feed_status_lbl.setStyleSheet(f"font-size: 8pt; color: {sem('success')};")
 
     def _on_show_cookie_help(self) -> None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("쿠키 파일 등록 방법")
+        dialog.setWindowTitle(tr("쿠키 파일 등록 방법"))
         v = QVBoxLayout(dialog)
         text_lbl = QLabel(COOKIE_HELP_TEXT)
         text_lbl.setWordWrap(True)
         v.addWidget(text_lbl)
         btn_row = QHBoxLayout()
-        dl_btn = QPushButton("다운로드 폴더 열기")
+        dl_btn = QPushButton(tr("다운로드 폴더 열기"))
         dl_btn.clicked.connect(lambda: open_folder(Path.home() / "Downloads"))
-        close_btn = QPushButton("닫기")
+        close_btn = QPushButton(tr("닫기"))
         close_btn.clicked.connect(dialog.accept)
         btn_row.addWidget(dl_btn)
         btn_row.addStretch()
@@ -1877,7 +1936,7 @@ class SettingsPanel(QWidget):
             return
 
         self._add_divider(layout)
-        sub_label = QLabel("자막 색인")
+        sub_label = QLabel(tr("자막 색인"))
         sub_label.setStyleSheet(
             "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
             f"text-transform: uppercase; color: {_t().text_muted};"
@@ -1891,7 +1950,7 @@ class SettingsPanel(QWidget):
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 6, 0, 0)
-        self._sub_index_btn = QPushButton("전체 자막 색인 시작")
+        self._sub_index_btn = QPushButton(tr("전체 자막 색인 시작"))
         self._sub_index_btn.clicked.connect(self._on_bulk_subtitle_clicked)
         row.addWidget(self._sub_index_btn)
         row.addStretch()
@@ -1941,7 +2000,7 @@ class SettingsPanel(QWidget):
         from domain.library.transcribe import MODELS  # noqa: PLC0415 (도메인 카탈로그)
 
         layout.addSpacing(14)
-        asr_label = QLabel("음성 인식으로 자막 만들기")
+        asr_label = QLabel(tr("음성 인식으로 자막 만들기"))
         asr_label.setStyleSheet(
             f"font-size: 9px; font-weight: 600; letter-spacing: 0.5px; "
             f"color: {_t().text_secondary};"
@@ -1949,7 +2008,7 @@ class SettingsPanel(QWidget):
         layout.addWidget(asr_label)
 
         model_row = QHBoxLayout()
-        m_lbl = QLabel("모델")
+        m_lbl = QLabel(tr("모델"))
         m_lbl.setFixedWidth(100)
         self._asr_model_combo = QComboBox()
         for model in MODELS:
@@ -1980,7 +2039,7 @@ class SettingsPanel(QWidget):
         self._asr_installed_lbl.setStyleSheet(
             f"font-size: 10px; color: {_t().text_secondary};"
         )
-        self._asr_delete_btn = QPushButton("받아 둔 모델 지우기")
+        self._asr_delete_btn = QPushButton(tr("받아 둔 모델 지우기"))
         self._asr_delete_btn.setFixedWidth(140)
         self._asr_delete_btn.clicked.connect(self._on_asr_delete_clicked)
         del_row.addWidget(self._asr_installed_lbl, 1)
@@ -2035,15 +2094,15 @@ class SettingsPanel(QWidget):
         if not key:
             return
         if self._subtitle_vm.delete_model(key):
-            self._asr_installed_lbl.setText("지웠습니다. 다음에 쓸 때 다시 받습니다.")
+            self._asr_installed_lbl.setText(tr("지웠습니다. 다음에 쓸 때 다시 받습니다."))
             self._asr_delete_btn.setEnabled(False)
         else:
-            self._asr_installed_lbl.setText("지우지 못했습니다. 로그를 확인하세요.")
+            self._asr_installed_lbl.setText(tr("지우지 못했습니다. 로그를 확인하세요."))
 
     def _refresh_subtitle_coverage(self) -> None:
         coverage = self._subtitle_vm.coverage() if self._subtitle_vm else None
         if coverage is None:
-            self._sub_cover_lbl.setText("색인 현황을 읽을 수 없습니다.")
+            self._sub_cover_lbl.setText(tr("색인 현황을 읽을 수 없습니다."))
             return
         self._sub_cover_lbl.setText(
             f"영상 {coverage.total_videos}개 중 {coverage.indexed_videos}개 색인됨 "
@@ -2055,16 +2114,16 @@ class SettingsPanel(QWidget):
             return
         if self._subtitle_vm.is_bulk_running:
             self._subtitle_vm.stop_bulk_index()
-            self._sub_index_btn.setText("중지하는 중…")
+            self._sub_index_btn.setText(tr("중지하는 중…"))
             self._sub_index_btn.setEnabled(False)
             return
         if not self._subtitle_vm.start_bulk_index():
-            self._sub_index_status.setText("색인을 시작할 수 없습니다.")
+            self._sub_index_status.setText(tr("색인을 시작할 수 없습니다."))
             return
         self._sub_index_bar.setValue(0)
         self._sub_index_bar.setVisible(True)
-        self._sub_index_btn.setText("중지")
-        self._sub_index_status.setText("색인 중…")
+        self._sub_index_btn.setText(tr("중지"))
+        self._sub_index_status.setText(tr("색인 중…"))
 
     def _on_bulk_subtitle_progress(self, current: int, total: int, title: str) -> None:
         self._sub_index_bar.setMaximum(max(1, total))
@@ -2074,10 +2133,10 @@ class SettingsPanel(QWidget):
 
     def _on_bulk_subtitle_finished(self, result) -> None:
         self._sub_index_bar.setVisible(False)
-        self._sub_index_btn.setText("전체 자막 색인 시작")
+        self._sub_index_btn.setText(tr("전체 자막 색인 시작"))
         self._sub_index_btn.setEnabled(True)
         if result is None:
-            self._sub_index_status.setText("색인 중 오류가 발생했습니다. 로그를 확인하세요.")
+            self._sub_index_status.setText(tr("색인 중 오류가 발생했습니다. 로그를 확인하세요."))
             return
         parts = [f"{result.indexed}개 색인"]
         if result.no_subtitle:

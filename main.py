@@ -49,6 +49,15 @@ def main() -> int:
     ensure_data_dirs()
     setup_logging()
 
+    # 3-1. 화면 언어 — **화면을 만들기 전에** 잡는다. 이 앱의 위젯은 `setText()`로
+    #      생성 시점에 문자열을 박아 넣으므로, 창이 생긴 뒤에 바꿔도 반영되지 않는다.
+    #      (스플래시의 "로딩 중…"은 이보다 앞서 그려지므로 번역되지 않는다 — 한 줄
+    #      때문에 설정 파일을 두 번 읽는 것보다 낫다고 봤다.)
+    from config.settings import UI_LANGUAGE
+    from gui.text import set_language
+
+    set_language(UI_LANGUAGE)
+
     # 4. 중복 실행 가드 — **DB를 열기 전에** 판단한다. 업데이트 직후 인스톨러와
     #    배치가 겹쳐 실행되거나 사용자가 아이콘을 연달아 눌러도, 두 프로세스가 같은
     #    DB를 동시에 건드리는 일이 없어야 한다.

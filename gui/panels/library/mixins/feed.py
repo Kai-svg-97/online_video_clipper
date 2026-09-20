@@ -140,6 +140,7 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistPanel,
     _PlaylistTree,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ class FeedViewMixin:
             return
         yt_pls = [pl for pl in self._playlist_vm.playlists if pl.source == "youtube" and pl.yt_playlist_id]
         if not yt_pls:
-            QMessageBox.information(self, "동기화", "동기화할 YouTube 재생목록이 없습니다.")
+            QMessageBox.information(self, tr("동기화"), tr("동기화할 YouTube 재생목록이 없습니다."))
             return
         for pl in yt_pls:
             self._playlist_vm.import_youtube_playlist(pl.yt_playlist_id)
@@ -290,7 +291,7 @@ class FeedViewMixin:
 
         if not channels:
             self._channel_grid.set_channels([])
-            self._channels_status.setText("구독 중인 채널이 없습니다.")
+            self._channels_status.setText(tr("구독 중인 채널이 없습니다."))
             self._channels_status.setVisible(True)
             return
 
@@ -333,7 +334,7 @@ class FeedViewMixin:
         if self._monitoring_vm is None:
             return
         if self._view_stack.currentIndex() == _VIEW_CHANNELS:
-            self._channels_status.setText("YouTube 구독 채널을 동기화하는 중…")
+            self._channels_status.setText(tr("YouTube 구독 채널을 동기화하는 중…"))
             self._channels_status.setVisible(True)
         self._monitoring_vm.import_from_youtube()
 
@@ -355,7 +356,7 @@ class FeedViewMixin:
             return
         infos = self._feed_vm.channel_infos
         if not infos:
-            self._channels_status.setText("채널 정보를 가져오지 못했습니다.")
+            self._channels_status.setText(tr("채널 정보를 가져오지 못했습니다."))
             self._channels_status.show()
             return
         self._channels_status.hide()
@@ -426,7 +427,7 @@ class FeedViewMixin:
         # 스피너는 loading_key_changed 전담; 상태 텍스트만 유지
         if loading and self._view_stack.currentIndex() == _VIEW_FEED:
             if not self._feed_vm.get_cached(self._current_feed_key):
-                self._feed_status.setText("로딩 중…")
+                self._feed_status.setText(tr("로딩 중…"))
                 self._feed_status.show()
 
     def _on_feed_loading_key_changed(self, key: str, loading: bool) -> None:

@@ -37,6 +37,7 @@ from gui.widgets.player.constants import (
 )
 from gui.text.labels import quality_menu_label
 from gui.text.labels import subtitle_track_label
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +248,7 @@ class _ControlBar(QWidget):
         # Progress slider (full width)
         self._progress = _TrackSlider(Qt.Orientation.Horizontal)
         self._progress.setRange(0, 0)
-        self._progress.setToolTip("재생 위치")
+        self._progress.setToolTip(tr("재생 위치"))
         self._progress.sliderPressed.connect(lambda: setattr(self, "_dragging", True))
         self._progress.sliderReleased.connect(self._on_seek_released)
         outer.addWidget(self._progress)
@@ -273,7 +274,7 @@ class _ControlBar(QWidget):
         self._vol.setRange(0, 100)
         self._vol.setValue(100)
         self._vol.setFixedWidth(68)
-        self._vol.setToolTip("볼륨  (↑/↓)")
+        self._vol.setToolTip(tr("볼륨  (↑/↓)"))
         self._vol.valueChanged.connect(self.volume_changed.emit)
 
         self._time_lbl = QLabel("0:00 / 0:00")
@@ -284,7 +285,7 @@ class _ControlBar(QWidget):
 
         self._btn_quality = QToolButton()
         self._btn_quality.setText(quality_menu_label(QUALITY_AUTO))
-        self._btn_quality.setToolTip("재생 품질")
+        self._btn_quality.setToolTip(tr("재생 품질"))
         self._btn_quality.setStyleSheet(_quality_btn_style())
         self._btn_quality.clicked.connect(self._show_quality_menu)
 
@@ -434,7 +435,7 @@ class _ControlBar(QWidget):
             sub = menu.addMenu(f"자막 {slot + 1}" + ("" if slot == 0 else " (동시 표시)"))
             group = QActionGroup(sub)
             group.setExclusive(True)
-            off = sub.addAction("끄기")
+            off = sub.addAction(tr("끄기"))
             off.setCheckable(True)
             off.setChecked(not self._vsub_keys[slot])
             off.triggered.connect(
@@ -452,10 +453,10 @@ class _ControlBar(QWidget):
                 )
                 group.addAction(act)
             sub.addSeparator()
-            trans = sub.addMenu("자동 번역")
+            trans = sub.addMenu(tr("자동 번역"))
             tgroup = QActionGroup(trans)
             tgroup.setExclusive(True)
-            none_act = trans.addAction("번역 안 함")
+            none_act = trans.addAction(tr("번역 안 함"))
             none_act.setCheckable(True)
             none_act.setChecked(not self._vsub_langs[slot])
             none_act.triggered.connect(
@@ -494,12 +495,12 @@ class _ControlBar(QWidget):
             sec = self._subtitle_offset_ms / 1000.0
             menu.addAction(f"싱크: {sec:+.2f}초").setEnabled(False)
             menu.addSeparator()
-            menu.addAction("−0.25초  ( [ / , )", lambda: self.subtitle_offset_nudged.emit(-250))
-            menu.addAction("+0.25초  ( ] / . )", lambda: self.subtitle_offset_nudged.emit(250))
-            menu.addAction("현재 위치를 이 줄에 맞춤  ( \\ )", self.subtitle_sync_here.emit)
+            menu.addAction(tr("−0.25초  ( [ / , )"), lambda: self.subtitle_offset_nudged.emit(-250))
+            menu.addAction(tr("+0.25초  ( ] / . )"), lambda: self.subtitle_offset_nudged.emit(250))
+            menu.addAction(tr("현재 위치를 이 줄에 맞춤  ( \\ )"), self.subtitle_sync_here.emit)
             menu.addSeparator()
-            menu.addAction("초기화", self.subtitle_offset_reset.emit)
-        menu.addAction("자막 크기·위치 초기화", self.subtitle_prefs_reset.emit)
+            menu.addAction(tr("초기화"), self.subtitle_offset_reset.emit)
+        menu.addAction(tr("자막 크기·위치 초기화"), self.subtitle_prefs_reset.emit)
         return menu
 
     def _show_subtitle_menu(self) -> None:
@@ -567,7 +568,7 @@ class _ControlBar(QWidget):
             f"QMenu::item:selected{{background:{tok.bg_overlay};}}"
         )
 
-        vm = menu.addMenu("🎬  동영상")
+        vm = menu.addMenu(tr("🎬  동영상"))
         top = self._max_height()
         best_label = f"최고 화질  ({top}p)" if top else "최고 화질"
         for quality, height, label in [
@@ -587,7 +588,7 @@ class _ControlBar(QWidget):
                 )
             )
 
-        am = menu.addMenu("🎵  오디오")
+        am = menu.addMenu(tr("🎵  오디오"))
         for fmt, label in [(MediaFormat.MP3, "MP3"), (MediaFormat.M4A, "M4A")]:
             act = am.addAction(label)
             act.triggered.connect(

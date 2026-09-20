@@ -37,6 +37,7 @@ from domain.library.filters import (
 from gui.panels.library.formatting import _t
 from gui.text.labels import filter_preset_label
 from gui.text.messages import render_all
+from gui.text import tr
 
 
 class FilterBar(QWidget):
@@ -59,21 +60,21 @@ class FilterBar(QWidget):
         self._watched = self._combo("watched", WATCHED_PRESETS, "시청")
 
         self._channel = QLineEdit()
-        self._channel.setPlaceholderText("채널 이름…")
+        self._channel.setPlaceholderText(tr("채널 이름…"))
         self._channel.setClearButtonEnabled(True)
         self._channel.setFixedWidth(150)
         # 입력 중마다 조회하면 글자마다 DB를 읽는다 — 엔터·포커스 이동에만 건다.
         self._channel.editingFinished.connect(self.changed)
 
-        self._favorite = QCheckBox("즐겨찾기만")
+        self._favorite = QCheckBox(tr("즐겨찾기만"))
         self._favorite.checkStateChanged.connect(self.changed)
 
-        self._save = QPushButton("검색 저장…")
+        self._save = QPushButton(tr("검색 저장…"))
         self._save.setFixedWidth(84)
-        self._save.setToolTip("지금 조건에 이름을 붙여 저장합니다")
+        self._save.setToolTip(tr("지금 조건에 이름을 붙여 저장합니다"))
         self._save.clicked.connect(self.save_requested)
 
-        self._reset = QPushButton("필터 초기화")
+        self._reset = QPushButton(tr("필터 초기화"))
         self._reset.setFixedWidth(90)
         self._reset.clicked.connect(self.reset)
 

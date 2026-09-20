@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
 )
 
 from gui.themes.colors import sem
+from gui.text import tr
 
 _PAGE_LIST   = 0
 _PAGE_DETAIL = 1
@@ -569,9 +570,9 @@ class DownloadPanel(QWidget):
 
         header_row = QHBoxLayout()
         header_row.setContentsMargins(2, 0, 2, 0)
-        hdr = QLabel("다운로드")
+        hdr = QLabel(tr("다운로드"))
         hdr.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        refresh_btn = QPushButton("새로고침")
+        refresh_btn = QPushButton(tr("새로고침"))
         refresh_btn.setFixedHeight(24)
         refresh_btn.clicked.connect(self.refresh)
         header_row.addWidget(hdr)

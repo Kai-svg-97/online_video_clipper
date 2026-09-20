@@ -41,6 +41,7 @@ from gui.anim import fade_in
 from gui.themes.manager import ThemeManager
 from gui.widgets.skeleton import ShimmerEffect, SkeletonRow
 from gui.text.formats import format_duration_minutes
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -411,7 +412,7 @@ class _TrackRow(QFrame):
         # '없음'은 애초에 지울 대상이 없다. 잘못 붙은 음원(동명이곡·커버 등)만 대상이다.
         self._delete_btn = QToolButton()
         self._delete_btn.setText("✕")
-        self._delete_btn.setToolTip("이 자동 매핑을 지웁니다(다시 '없음'으로 돌아갑니다)")
+        self._delete_btn.setToolTip(tr("이 자동 매핑을 지웁니다(다시 '없음'으로 돌아갑니다)"))
         self._delete_btn.setFixedSize(22, 22)
         self._delete_btn.setAutoRaise(True)
         self._delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -502,7 +503,7 @@ class AlbumDetailPanel(QWidget):
         top = QHBoxLayout()
         self._btn_back = QPushButton("‹")
         self._btn_back.setFixedSize(28, 28)
-        self._btn_back.setToolTip("앨범 목록으로")
+        self._btn_back.setToolTip(tr("앨범 목록으로"))
         self._btn_back.clicked.connect(self.back_requested.emit)
         top.addWidget(self._btn_back)
         self._crumb = QLabel("")
@@ -541,20 +542,20 @@ class AlbumDetailPanel(QWidget):
         self._desc_lbl.setWordWrap(True)
         left.addWidget(self._desc_lbl)
 
-        self._btn_play = QPushButton("▶  앨범 재생")
+        self._btn_play = QPushButton(tr("▶  앨범 재생"))
         self._btn_play.clicked.connect(self._on_play)
         left.addWidget(self._btn_play)
 
         btn_row = QHBoxLayout()
-        self._btn_fill = QPushButton("빠진 곡 찾기")
-        self._btn_fill.setToolTip("라이브러리에 없는 수록곡의 공식 음원 영상을 찾아 붙인다")
+        self._btn_fill = QPushButton(tr("빠진 곡 찾기"))
+        self._btn_fill.setToolTip(tr("라이브러리에 없는 수록곡의 공식 음원 영상을 찾아 붙인다"))
         self._btn_fill.clicked.connect(
             lambda: self.fill_requested.emit(self._detail.key if self._detail else "")
         )
         btn_row.addWidget(self._btn_fill)
         self._btn_refresh = QPushButton("⟳")
         self._btn_refresh.setFixedWidth(32)
-        self._btn_refresh.setToolTip("앨범 정보 다시 받기")
+        self._btn_refresh.setToolTip(tr("앨범 정보 다시 받기"))
         self._btn_refresh.clicked.connect(
             lambda: self.refresh_requested.emit(self._detail.key if self._detail else "")
         )
@@ -570,7 +571,7 @@ class AlbumDetailPanel(QWidget):
         right = QVBoxLayout()
         right.setSpacing(4)
         header_row = QHBoxLayout()
-        self._tracks_header = QLabel("수록곡")
+        self._tracks_header = QLabel(tr("수록곡"))
         hf = QFont()
         hf.setPointSize(10)
         hf.setWeight(QFont.Weight.Bold)
@@ -579,15 +580,15 @@ class AlbumDetailPanel(QWidget):
         header_row.addStretch(1)
         # 수정 모드 — 잘못 붙은 자동 매핑(동명이곡·커버 등)을 쉽게 지우기 위한 토글.
         # 켜기 전에는 삭제 버튼이 전혀 보이지 않는다(실수로 지우는 사고 방지).
-        self._btn_edit = QPushButton("✎ 수정")
+        self._btn_edit = QPushButton(tr("✎ 수정"))
         self._btn_edit.setCheckable(True)
-        self._btn_edit.setToolTip("수정 모드 — 잘못 붙은 자동 매핑 음원을 지울 수 있습니다")
+        self._btn_edit.setToolTip(tr("수정 모드 — 잘못 붙은 자동 매핑 음원을 지울 수 있습니다"))
         self._btn_edit.toggled.connect(self._on_edit_toggled)
         header_row.addWidget(self._btn_edit)
         # 자동 매핑된 곡(내 라이브러리에 없는 곡)을 현재 카테고리로 한꺼번에 담는다.
-        self._btn_add_all = QPushButton("＋ 현재 카테고리에 등록")
+        self._btn_add_all = QPushButton(tr("＋ 현재 카테고리에 등록"))
         self._btn_add_all.setToolTip(
-            "이 앨범에서 아직 라이브러리에 없는 곡을 현재 카테고리에 등록합니다"
+            tr("이 앨범에서 아직 라이브러리에 없는 곡을 현재 카테고리에 등록합니다")
         )
         self._btn_add_all.clicked.connect(self._on_add_all)
         header_row.addWidget(self._btn_add_all)
@@ -624,7 +625,7 @@ class AlbumDetailPanel(QWidget):
         # 방금 연 앨범에서 실수로 잘못 누를 수 있다.
         self._btn_edit.setChecked(False)
         if detail is None:
-            self._title_lbl.setText("앨범을 찾을 수 없습니다.")
+            self._title_lbl.setText(tr("앨범을 찾을 수 없습니다."))
             self._artist_lbl.setText("")
             self._desc_lbl.setText("")
             self._render_tracks([])

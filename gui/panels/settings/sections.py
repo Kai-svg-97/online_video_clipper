@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 
 from gui.panels.settings.helpers import _t
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,10 @@ class _LyricsSourcesSection(QWidget):
         add_row = QHBoxLayout()
         add_row.setSpacing(6)
         self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("이름 (예: 가사위키)")
+        self._name_edit.setPlaceholderText(tr("이름 (예: 가사위키)"))
         self._key_edit = QLineEdit()
         self._key_edit.setPlaceholderText("provider_key (lrclib/genius/melon/bugs/genie)")
-        add_btn = QPushButton("추가")
+        add_btn = QPushButton(tr("추가"))
         add_btn.clicked.connect(self._on_add)
         add_row.addWidget(self._name_edit, 2)
         add_row.addWidget(self._key_edit, 2)
@@ -64,7 +65,7 @@ class _LyricsSourcesSection(QWidget):
         root.addLayout(add_row)
 
         hint = QLabel(
-            "위에서 아래 순서로 조회하며 부족한 항목을 채웁니다. 체크 해제 시 건너뜁니다."
+            tr("위에서 아래 순서로 조회하며 부족한 항목을 채웁니다. 체크 해제 시 건너뜁니다.")
         )
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_muted};")
         hint.setWordWrap(True)
@@ -95,7 +96,7 @@ class _LyricsSourcesSection(QWidget):
 
         chk = QCheckBox()
         chk.setChecked(src.enabled)
-        chk.setToolTip("이 출처 사용")
+        chk.setToolTip(tr("이 출처 사용"))
         chk.toggled.connect(lambda on, sid=src.id: self._vm.update_lyrics_source(sid, enabled=on))
         rl.addWidget(chk)
 
@@ -113,7 +114,7 @@ class _LyricsSourcesSection(QWidget):
         down.setEnabled(idx < total - 1)
         down.clicked.connect(lambda _, i=idx: self._move(i, +1))
         rl.addWidget(down)
-        dele = QPushButton("삭제")
+        dele = QPushButton(tr("삭제"))
         dele.setFixedHeight(24)
         dele.clicked.connect(lambda _, sid=src.id: self._vm.delete_lyrics_source(sid))
         rl.addWidget(dele)
@@ -173,8 +174,8 @@ class _CloudSyncSection(QWidget):
         detected = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
         if detected:
             self._folder_path.setText(str(Path(detected) / "ovc-sync"))
-        self._folder_path.setPlaceholderText("예: C:/Users/나/OneDrive/ovc-sync")
-        self._browse_btn = QPushButton("찾아보기…")
+        self._folder_path.setPlaceholderText(tr("예: C:/Users/나/OneDrive/ovc-sync"))
+        self._browse_btn = QPushButton(tr("찾아보기…"))
         self._browse_btn.clicked.connect(self._on_browse)
         folder_row.addWidget(self._folder_path, 1)
         folder_row.addWidget(self._browse_btn)
@@ -183,7 +184,7 @@ class _CloudSyncSection(QWidget):
         root.addWidget(self._folder_row_widget)
 
         # 고급: 클라우드 API 직접 연결(OAuth) — 기본 숨김.
-        self._advanced_check = QCheckBox("고급: 클라우드 API로 직접 연결 (OAuth)")
+        self._advanced_check = QCheckBox(tr("고급: 클라우드 API로 직접 연결 (OAuth)"))
         self._advanced_check.toggled.connect(self._on_advanced_toggled)
         root.addWidget(self._advanced_check)
 
@@ -191,7 +192,7 @@ class _CloudSyncSection(QWidget):
         api_layout = QVBoxLayout(self._api_box)
         api_layout.setContentsMargins(0, 0, 0, 0)
         prov_row = QHBoxLayout()
-        prov_row.addWidget(QLabel("제공자"))
+        prov_row.addWidget(QLabel(tr("제공자")))
         self._provider_combo = QComboBox()
         self._provider_combo.addItem("Google Drive", "gdrive")
         self._provider_combo.addItem("OneDrive", "onedrive")
@@ -210,11 +211,11 @@ class _CloudSyncSection(QWidget):
         root.addWidget(self._api_box)
 
         btn_row = QHBoxLayout()
-        self._connect_btn = QPushButton("연결")
+        self._connect_btn = QPushButton(tr("연결"))
         self._connect_btn.clicked.connect(self._on_connect)
-        self._disconnect_btn = QPushButton("연결 해제")
+        self._disconnect_btn = QPushButton(tr("연결 해제"))
         self._disconnect_btn.clicked.connect(self._vm.disconnect)
-        self._sync_btn = QPushButton("지금 동기화")
+        self._sync_btn = QPushButton(tr("지금 동기화"))
         self._sync_btn.clicked.connect(self._vm.sync_now)
         btn_row.addWidget(self._connect_btn)
         btn_row.addWidget(self._disconnect_btn)
@@ -222,7 +223,7 @@ class _CloudSyncSection(QWidget):
         btn_row.addStretch()
         root.addLayout(btn_row)
 
-        self._status_lbl = QLabel("상태 확인 중…")
+        self._status_lbl = QLabel(tr("상태 확인 중…"))
         self._status_lbl.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
         self._status_lbl.setWordWrap(True)
         root.addWidget(self._status_lbl)
@@ -247,25 +248,25 @@ class _CloudSyncSection(QWidget):
         if not self._advanced_check.isChecked():
             path = self._folder_path.text().strip()
             if not path:
-                self._status_lbl.setText("동기화 폴더를 선택하세요.")
+                self._status_lbl.setText(tr("동기화 폴더를 선택하세요."))
                 return
             self._vm.connect("folder", folder_path=path)
-            self._status_lbl.setText("폴더 연결 중…")
+            self._status_lbl.setText(tr("폴더 연결 중…"))
             return
         key = self._provider_combo.currentData()
         cid = self._client_id.text().strip()
         if not cid:
-            self._status_lbl.setText("Client ID를 입력하세요.")
+            self._status_lbl.setText(tr("Client ID를 입력하세요."))
             return
         if key == "gdrive":
             secret = self._client_secret.text().strip()
             if not secret:
-                self._status_lbl.setText("Google Drive는 Client Secret이 필요합니다.")
+                self._status_lbl.setText(tr("Google Drive는 Client Secret이 필요합니다."))
                 return
             self._vm.connect(key, client_id=cid, client_secret=secret)
         else:
             self._vm.connect(key, client_id=cid)
-        self._status_lbl.setText("브라우저에서 인증을 진행하세요…")
+        self._status_lbl.setText(tr("브라우저에서 인증을 진행하세요…"))
 
     def _on_status(self, dto) -> None:
         if dto is None:
@@ -278,7 +279,7 @@ class _CloudSyncSection(QWidget):
             self._disconnect_btn.setEnabled(True)
             self._sync_btn.setEnabled(True)
         else:
-            self._status_lbl.setText("연결 안 됨")
+            self._status_lbl.setText(tr("연결 안 됨"))
             self._connect_btn.setEnabled(True)
             self._disconnect_btn.setEnabled(False)
             self._sync_btn.setEnabled(False)
@@ -334,8 +335,8 @@ class _ImportExportSection(QWidget):
         root.addWidget(help_lbl)
 
         btn_row = QHBoxLayout()
-        self._export_btn = QPushButton("내보내기…")
-        self._import_btn = QPushButton("가져오기…")
+        self._export_btn = QPushButton(tr("내보내기…"))
+        self._import_btn = QPushButton(tr("가져오기…"))
         self._export_btn.clicked.connect(self._on_export_clicked)
         self._import_btn.clicked.connect(self._on_import_clicked)
         btn_row.addWidget(self._export_btn)
@@ -355,7 +356,7 @@ class _ImportExportSection(QWidget):
         root.addWidget(media_help)
 
         media_row = QHBoxLayout()
-        self._media_btn = QPushButton("미디어 서버용 내보내기…")
+        self._media_btn = QPushButton(tr("미디어 서버용 내보내기…"))
         self._media_btn.clicked.connect(self._on_media_server_clicked)
         media_row.addWidget(self._media_btn)
         media_row.addStretch()
@@ -373,14 +374,14 @@ class _ImportExportSection(QWidget):
 
         categories = self._get_categories_fn() if self._get_categories_fn else []
         if not categories:
-            self._status_lbl.setText("내보낼 카테고리가 없습니다.")
+            self._status_lbl.setText(tr("내보낼 카테고리가 없습니다."))
             return
         dlg = CategorySelectDialog(categories, "내보낼 카테고리 선택", self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         selected = dlg.selected_category_ids()
         if not selected:
-            self._status_lbl.setText("내보낼 카테고리를 선택하세요.")
+            self._status_lbl.setText(tr("내보낼 카테고리를 선택하세요."))
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "내보내기", "", "라이브러리 패키지 (*.ovcpkg)"
@@ -389,7 +390,7 @@ class _ImportExportSection(QWidget):
             return
         if not path.lower().endswith(".ovcpkg"):
             path += ".ovcpkg"
-        self._status_lbl.setText("내보내는 중…")
+        self._status_lbl.setText(tr("내보내는 중…"))
         self._vm.export_library(selected, path)
 
     def _on_export_finished(self, result) -> None:
@@ -410,14 +411,14 @@ class _ImportExportSection(QWidget):
 
         categories = self._get_categories_fn() if self._get_categories_fn else []
         if not categories:
-            self._status_lbl.setText("내보낼 카테고리가 없습니다.")
+            self._status_lbl.setText(tr("내보낼 카테고리가 없습니다."))
             return
         dlg = CategorySelectDialog(categories, "정보 파일을 만들 카테고리 선택", self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         selected = dlg.selected_category_ids()
         if not selected:
-            self._status_lbl.setText("카테고리를 선택하세요.")
+            self._status_lbl.setText(tr("카테고리를 선택하세요."))
             return
 
         # 재생목록은 선택 사항 — 취소하면 .nfo 만 만든다.
@@ -427,9 +428,9 @@ class _ImportExportSection(QWidget):
         if m3u_path and not m3u_path.lower().endswith(".m3u"):
             m3u_path += ".m3u"
 
-        self._status_lbl.setText("정보 파일을 만드는 중…")
+        self._status_lbl.setText(tr("정보 파일을 만드는 중…"))
         if not self._vm.export_media_server(selected, True, m3u_path):
-            self._status_lbl.setText("미디어 서버 내보내기를 쓸 수 없습니다.")
+            self._status_lbl.setText(tr("미디어 서버 내보내기를 쓸 수 없습니다."))
 
     def _on_media_server_finished(self, result) -> None:
         parts = [f"● 정보 파일 {result.nfo_written}개 생성"]
@@ -451,14 +452,14 @@ class _ImportExportSection(QWidget):
         if not path:
             return
         self._archive_path = path
-        self._status_lbl.setText("패키지 확인 중…")
+        self._status_lbl.setText(tr("패키지 확인 중…"))
         self._vm.preview_import(path)
 
     def _on_preview_ready(self, preview) -> None:
         from gui.dialogs.library_transfer_dialogs import CategorySelectDialog  # noqa: PLC0415
 
         if not preview.categories:
-            self._status_lbl.setText("패키지에 카테고리가 없습니다.")
+            self._status_lbl.setText(tr("패키지에 카테고리가 없습니다."))
             return
         dlg = CategorySelectDialog(list(preview.categories), "가져올 카테고리 선택", self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -466,10 +467,10 @@ class _ImportExportSection(QWidget):
             return
         selected = dlg.selected_category_ids()
         if not selected:
-            self._status_lbl.setText("가져올 카테고리를 선택하세요.")
+            self._status_lbl.setText(tr("가져올 카테고리를 선택하세요."))
             return
         self._import_category_ids = selected
-        self._status_lbl.setText("겹치는 영상 확인 중…")
+        self._status_lbl.setText(tr("겹치는 영상 확인 중…"))
         self._vm.detect_conflicts(self._archive_path, selected)
 
     def _on_conflicts_ready(self, conflicts_dto) -> None:
@@ -481,10 +482,10 @@ class _ImportExportSection(QWidget):
         if conflicts_dto.conflicts:
             dlg = ImportConflictResolutionDialog(conflicts_dto.conflicts, self)
             if dlg.exec() != QDialog.DialogCode.Accepted:
-                self._status_lbl.setText("가져오기를 취소했습니다.")
+                self._status_lbl.setText(tr("가져오기를 취소했습니다."))
                 return
             resolutions = dlg.resolutions()
-        self._status_lbl.setText("가져오는 중…")
+        self._status_lbl.setText(tr("가져오는 중…"))
         self._vm.import_library(self._archive_path, self._import_category_ids, resolutions)
 
     def _on_import_finished(self, result) -> None:

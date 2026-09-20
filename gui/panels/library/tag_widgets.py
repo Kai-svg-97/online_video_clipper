@@ -32,6 +32,7 @@ from gui.themes.tokens import ThemeTokens
 from gui.panels.library.constants import _FAV_BADGE_W, _TAG_COUNT_W
 from gui.panels.library.delegates import _FavChipDelegate, _TagChipDelegate
 from gui.panels.library.formatting import chip_colors, tag_color
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +255,7 @@ class _ActiveTagsBar(QWidget):
         self._dot = QLabel("◆")
         self._dot.setFixedWidth(10)
         title_row.addWidget(self._dot)
-        self._title_lbl = QLabel("활성 태그 필터")
+        self._title_lbl = QLabel(tr("활성 태그 필터"))
         title_row.addWidget(self._title_lbl)
         title_row.addStretch()
 

@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from gui.themes.manager import ThemeManager
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ class MiniPlayerBar(QWidget):
         self._click_area.setSizePolicy(QSizePolicy.Policy.Preferred,
                                        QSizePolicy.Policy.Preferred)
         self._click_area.setMinimumWidth(180)
-        self._click_area.setToolTip("클릭하면 보던 화면으로 돌아갑니다")
+        self._click_area.setToolTip(tr("클릭하면 보던 화면으로 돌아갑니다"))
         root.addWidget(self._click_area)
 
         self._btn_play = self._tool_button("⏸", "재생/일시정지", self.play_toggled.emit)

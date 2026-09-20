@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 from gui.widgets.lyrics_overlay import LyricsOverlay
 
 from gui.widgets.player.controls import _ControlBar
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +223,7 @@ class _PipWindow(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint,
         )
         self.setStyleSheet("background:#000;")
-        self.setWindowTitle("화면 속 화면")
+        self.setWindowTitle(tr("화면 속 화면"))
         self._player = player
         self._key_handler = key_handler
         self._wheel_handler = wheel_handler
@@ -241,7 +242,7 @@ class _PipWindow(QWidget):
         self.bar = _ControlBar(self)
         # PiP 창에서는 전체화면 버튼 숨기고, PiP 버튼은 '인라인 복귀' 용도
         self.bar._btn_fs.hide()
-        self.bar._btn_pip.setToolTip("인라인으로 복귀")
+        self.bar._btn_pip.setToolTip(tr("인라인으로 복귀"))
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)

@@ -149,6 +149,7 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistPanel,
     _PlaylistTree,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -330,7 +331,7 @@ class SidebarTreeMixin:
     def _on_fav_unfav_requested(self, fav_type: str, fav_id: str, name: str) -> None:
         """즐겨찾기 바의 카운트 배지 클릭 → 해제 확인 후 제거."""
         reply = QMessageBox.question(
-            self, "즐겨찾기 해제",
+            self, tr("즐겨찾기 해제"),
             f"'{name}'을(를) 즐겨찾기에서 제거하시겠습니까?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -442,7 +443,7 @@ class SidebarTreeMixin:
         cats = self._vm.categories
         name = next((c.name for c in cats if c.id == category_id), "")
         reply = QMessageBox.question(
-            self, "카테고리 삭제",
+            self, tr("카테고리 삭제"),
             f"'{name}' 카테고리를 삭제하시겠습니까?\n영상은 '미분류'로 이동됩니다.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -482,8 +483,8 @@ class SidebarTreeMixin:
         if self._playlist_vm is None:
             return
         reply = QMessageBox.question(
-            self, "재생목록 삭제",
-            "이 재생목록을 삭제하시겠습니까?\n(라이브러리의 영상은 유지됩니다)",
+            self, tr("재생목록 삭제"),
+            tr("이 재생목록을 삭제하시겠습니까?\n(라이브러리의 영상은 유지됩니다)"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -522,8 +523,8 @@ class SidebarTreeMixin:
         if self._playlist_vm is None:
             return
         reply = QMessageBox.question(
-            self, "폴더 삭제",
-            "폴더를 삭제하시겠습니까?\n(폴더 안의 재생목록은 미분류로 이동됩니다)",
+            self, tr("폴더 삭제"),
+            tr("폴더를 삭제하시겠습니까?\n(폴더 안의 재생목록은 미분류로 이동됩니다)"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -553,7 +554,7 @@ class SidebarTreeMixin:
         video_ids = self._vm.get_playlist_video_ids(playlist_id)
         if not video_ids:
             QMessageBox.information(
-                self, "재생목록 복사",
+                self, tr("재생목록 복사"),
                 f"재생목록 '{playlist.title}'에 영상이 없습니다.",
             )
             return
@@ -576,19 +577,19 @@ class SidebarTreeMixin:
         categories = self._vm.categories
         if not categories:
             QMessageBox.information(
-                self, "카테고리 없음",
-                "카테고리가 없습니다.\n카테고리 트리에서 먼저 카테고리를 만들어 주세요.",
+                self, tr("카테고리 없음"),
+                tr("카테고리가 없습니다.\n카테고리 트리에서 먼저 카테고리를 만들어 주세요."),
             )
             return
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("가져올 카테고리 선택")
+        dlg.setWindowTitle(tr("가져올 카테고리 선택"))
         dlg.setMinimumWidth(360)
         dlg.setMinimumHeight(440)
         dlg_layout = QVBoxLayout(dlg)
         dlg_layout.setSpacing(8)
 
-        lbl = QLabel("YouTube 재생목록 영상들을 가져올 카테고리를 선택하세요:")
+        lbl = QLabel(tr("YouTube 재생목록 영상들을 가져올 카테고리를 선택하세요:"))
         lbl.setWordWrap(True)
         dlg_layout.addWidget(lbl)
 
@@ -678,12 +679,12 @@ class SidebarTreeMixin:
                 if video_ids:
                     self._vm.assign_category_bulk(video_ids, category_id)
                     QMessageBox.information(
-                        self, "복사 완료",
+                        self, tr("복사 완료"),
                         f"영상 {len(video_ids)}개를 카테고리로 복사했습니다.",
                     )
                     return
                 QMessageBox.information(
-                    self, "알림",
+                    self, tr("알림"),
                     f"재생목록 '{local_pl.title}'에 영상이 없습니다.",
                 )
                 return
@@ -695,7 +696,7 @@ class SidebarTreeMixin:
     def _on_yt_import_finished(self, count: int) -> None:
         if count > 0:
             QMessageBox.information(
-                self, "가져오기 완료",
+                self, tr("가져오기 완료"),
                 f"YouTube 재생목록에서 영상 {count}개를 카테고리로 가져왔습니다.",
             )
 
@@ -810,7 +811,7 @@ class SidebarTreeMixin:
         if self._playlist_vm is None:
             return
         reply = QMessageBox.question(
-            self, "일괄 제거",
+            self, tr("일괄 제거"),
             f"{len(video_ids)}개 영상을 재생목록에서 제거하시겠습니까?\n"
             "(YouTube 재생목록이면 YouTube에도 반영됩니다)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -837,7 +838,7 @@ class SidebarTreeMixin:
             except Exception:
                 logger.exception("재생목록으로 영상 일괄 복사 실패")
         if count > 0:
-            QMessageBox.information(self, "복사 완료", f"{count}개 영상을 재생목록에 복사했습니다.")
+            QMessageBox.information(self, tr("복사 완료"), f"{count}개 영상을 재생목록에 복사했습니다.")
 
     def _on_import_yt_playlist(self) -> None:
         if self._playlist_vm is None:
@@ -868,7 +869,7 @@ class SidebarTreeMixin:
         # 재생목록 선택 다이얼로그
         from PyQt6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QScrollArea  # noqa: PLC0415
         dlg = QDialog(self)
-        dlg.setWindowTitle("YouTube 재생목록 가져오기")
+        dlg.setWindowTitle(tr("YouTube 재생목록 가져오기"))
         dlg.setMinimumWidth(400)
         dlg.setMinimumHeight(360)
         layout = QVBoxLayout(dlg)
@@ -901,8 +902,8 @@ class SidebarTreeMixin:
         layout.addWidget(scroll, 1)
 
         sel_row = QHBoxLayout()
-        btn_all = QPushButton("전체 선택")
-        btn_none = QPushButton("전체 해제")
+        btn_all = QPushButton(tr("전체 선택"))
+        btn_none = QPushButton(tr("전체 해제"))
         btn_all.setFixedWidth(80)
         btn_none.setFixedWidth(80)
         btn_all.clicked.connect(lambda: [cb.setChecked(True) for cb, _ in checkboxes])

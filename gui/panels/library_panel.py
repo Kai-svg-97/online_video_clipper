@@ -181,6 +181,7 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistPanel,
     _PlaylistTree,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +319,7 @@ class LibraryPanel(
         tag_section_layout.setContentsMargins(0, 0, 0, 0)
         tag_section_layout.setSpacing(4)
 
-        self._popular_hdr = QLabel("인기 태그")
+        self._popular_hdr = QLabel(tr("인기 태그"))
         self._popular_hdr.setStyleSheet(
             f"font-size:8pt;color:{_t().text_muted};font-weight:600;padding:2px 4px;"
         )
@@ -330,12 +331,12 @@ class LibraryPanel(
         self._popular_tags_layout.setSpacing(2)
         tag_section_layout.addWidget(self._popular_tags_widget)
 
-        tag_hdr = QLabel("전체 태그")
+        tag_hdr = QLabel(tr("전체 태그"))
         tag_hdr.setStyleSheet(f"font-size:8pt;color:{_t().text_muted};padding:2px 4px;")
         tag_section_layout.addWidget(tag_hdr)
 
         self._tag_filter_input = QLineEdit()
-        self._tag_filter_input.setPlaceholderText("태그 검색...")
+        self._tag_filter_input.setPlaceholderText(tr("태그 검색..."))
         self._tag_filter_input.setClearButtonEnabled(True)
         self._tag_filter_input.setStyleSheet("font-size:8pt;")
         tag_section_layout.addWidget(self._tag_filter_input)
@@ -377,7 +378,7 @@ class LibraryPanel(
         # 앨범 보기 — 음악 계열 카테고리에서만 나타난다(_update_view_options).
         self._btn_album = QToolButton()
         self._btn_album.setText("💿")
-        self._btn_album.setToolTip("앨범 보기 (음악 카테고리)")
+        self._btn_album.setToolTip(tr("앨범 보기 (음악 카테고리)"))
         self._btn_album.hide()
         for btn in (self._btn_icon, self._btn_list, self._btn_table, self._btn_album):
             btn.setCheckable(True)
@@ -395,7 +396,7 @@ class LibraryPanel(
         toolbar.addSpacing(12)
 
         self._search_box = QLineEdit()
-        self._search_box.setPlaceholderText("검색  (Ctrl+F, Enter: 즉시 검색, Esc: 지우기)")
+        self._search_box.setPlaceholderText(tr("검색  (Ctrl+F, Enter: 즉시 검색, Esc: 지우기)"))
         self._search_box.setClearButtonEnabled(True)
         toolbar.addWidget(self._search_box, stretch=1)
         # 입력 디바운스 — 키를 누를 때마다 조회하면(한글 IME는 조합 중에도 방출)
@@ -408,32 +409,32 @@ class LibraryPanel(
         # 정렬 옵션
         toolbar.addSpacing(8)
         self._sort_combo = QComboBox()
-        self._sort_combo.addItem("최신순", ("created_at", False))
-        self._sort_combo.addItem("오래된순", ("created_at", True))
-        self._sort_combo.addItem("제목순 ↑", ("title", True))
-        self._sort_combo.addItem("제목순 ↓", ("title", False))
-        self._sort_combo.addItem("채널순 ↑", ("channel_name", True))
-        self._sort_combo.addItem("채널순 ↓", ("channel_name", False))
-        self._sort_combo.addItem("길이 길순", ("duration_sec", False))
-        self._sort_combo.addItem("길이 짧순", ("duration_sec", True))
+        self._sort_combo.addItem(tr("최신순"), ("created_at", False))
+        self._sort_combo.addItem(tr("오래된순"), ("created_at", True))
+        self._sort_combo.addItem(tr("제목순 ↑"), ("title", True))
+        self._sort_combo.addItem(tr("제목순 ↓"), ("title", False))
+        self._sort_combo.addItem(tr("채널순 ↑"), ("channel_name", True))
+        self._sort_combo.addItem(tr("채널순 ↓"), ("channel_name", False))
+        self._sort_combo.addItem(tr("길이 길순"), ("duration_sec", False))
+        self._sort_combo.addItem(tr("길이 짧순"), ("duration_sec", True))
         # 이어보기 흐름 — 최근에 보던 것부터 다시 집어 들 수 있게.
-        self._sort_combo.addItem("최근 재생순", ("last_played_at", False))
+        self._sort_combo.addItem(tr("최근 재생순"), ("last_played_at", False))
         self._sort_combo.setFixedWidth(90)
         toolbar.addWidget(self._sort_combo)
 
         # 복합 필터 토글 — 걸린 개수를 버튼에 적어, 접혀 있어도 알 수 있게 한다.
         toolbar.addSpacing(8)
         self._btn_filter = QToolButton()
-        self._btn_filter.setText("필터")
-        self._btn_filter.setToolTip("업로드 날짜·길이·채널·다운로드 여부로 좁히기")
+        self._btn_filter.setText(tr("필터"))
+        self._btn_filter.setToolTip(tr("업로드 날짜·길이·채널·다운로드 여부로 좁히기"))
         self._btn_filter.setCheckable(True)
         self._btn_filter.setChecked(False)
         toolbar.addWidget(self._btn_filter)
 
         # 저장된 검색 — 뷰모델이 기능을 갖고 있을 때만 만든다.
         self._btn_saved = QToolButton()
-        self._btn_saved.setText("저장된 검색")
-        self._btn_saved.setToolTip("이름 붙여 둔 검색 조건을 되부릅니다")
+        self._btn_saved.setText(tr("저장된 검색"))
+        self._btn_saved.setToolTip(tr("이름 붙여 둔 검색 조건을 되부릅니다"))
         self._btn_saved.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._btn_saved.setVisible(bool(getattr(self._vm, "can_save_searches", False)))
         toolbar.addWidget(self._btn_saved)
@@ -441,7 +442,7 @@ class LibraryPanel(
         toolbar.addSpacing(8)
         self._btn_reorder = QToolButton()
         self._btn_reorder.setText("⇅")
-        self._btn_reorder.setToolTip("카테고리 영상 순서 편집 (드래그로 재정렬)")
+        self._btn_reorder.setToolTip(tr("카테고리 영상 순서 편집 (드래그로 재정렬)"))
         self._btn_reorder.setCheckable(True)
         self._btn_reorder.setChecked(False)
         self._btn_reorder.setFixedSize(28, 28)
@@ -680,7 +681,7 @@ class LibraryPanel(
                 self._recommend_strip.set_more_loading)
             self._recommend_vm.more_exhausted.connect(self._on_recommend_exhausted)
         else:
-            self._recommend_strip.set_status("추천 기능을 사용할 수 없습니다.")
+            self._recommend_strip.set_status(tr("추천 기능을 사용할 수 없습니다."))
             # 조회가 아예 없으므로 노출 조건(결과 도착)이 영영 오지 않는다 —
             # 안내 문구를 보여줘야 하니 헤더 높이만큼 바로 띄운다.
             self._reveal_recommend_strip(False)

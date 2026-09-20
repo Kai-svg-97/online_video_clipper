@@ -49,6 +49,7 @@ from gui.view_models.monitoring_vm import MonitoringViewModel
 from gui.view_models.playlist_vm import PlaylistViewModel
 from infrastructure.auth.youtube_auth import YouTubeAuthService
 from version import __version__
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +326,7 @@ class _DownloadBar(QWidget):
         self._dot.setStyleSheet("font-size: 8px;")
         layout.addWidget(self._dot)
 
-        self._msg = QLabel("다운로드 없음")
+        self._msg = QLabel(tr("다운로드 없음"))
         self._msg.setStyleSheet("font-size: 10px;")
         layout.addWidget(self._msg)
         layout.addStretch()
@@ -586,7 +587,7 @@ class MainWindow(QMainWindow):
         else:
             from PyQt6.QtWidgets import QLabel  # noqa: PLC0415
             stub = QWidget()
-            QVBoxLayout(stub).addWidget(QLabel("통계 기능 준비 중"))
+            QVBoxLayout(stub).addWidget(QLabel(tr("통계 기능 준비 중")))
             self._stack.addWidget(stub)                              # 3
             self._stats_panel = None
 
@@ -839,7 +840,7 @@ class MainWindow(QMainWindow):
 
     def _on_install_started(self) -> None:
         """설치 착수 — 창이 곧 닫힌다. 말없이 닫히면 앱이 죽은 줄 안다."""
-        self.statusBar().showMessage("설치 중입니다. 잠시 후 자동으로 다시 시작됩니다…")
+        self.statusBar().showMessage(tr("설치 중입니다. 잠시 후 자동으로 다시 시작됩니다…"))
         show_toast(self, "설치 중입니다. 잠시 후 자동으로 다시 시작됩니다", KIND_SUCCESS)
 
     def _report_failed_install(self) -> None:

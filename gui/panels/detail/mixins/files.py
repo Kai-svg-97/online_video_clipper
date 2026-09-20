@@ -75,6 +75,7 @@ from gui.panels.detail.song_tab import (  # noqa: F401
 from gui.panels.detail.workers import (  # noqa: F401
     _GeminiSummaryWorker,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ class FilesTabMixin:
         active_row = QHBoxLayout(active_frame)
         active_row.setContentsMargins(0, 0, 0, 4)
         active_row.setSpacing(8)
-        active_lbl = QLabel("⬇ 다운로드 중")
+        active_lbl = QLabel(tr("⬇ 다운로드 중"))
         active_lbl.setStyleSheet("font-size:9pt; font-weight:bold;")
         active_bar = QProgressBar()
         active_bar.setRange(0, 100)
@@ -148,9 +149,9 @@ class FilesTabMixin:
             hdr_row = QHBoxLayout()
             hdr_row.addStretch()
             if first_folder:
-                folder_btn = QPushButton("폴더 열기")
+                folder_btn = QPushButton(tr("폴더 열기"))
                 folder_btn.setFixedHeight(26)
-                folder_btn.setToolTip("파일 위치를 탐색기에서 열기")
+                folder_btn.setToolTip(tr("파일 위치를 탐색기에서 열기"))
                 folder_btn.clicked.connect(lambda _, f=first_folder: _open_folder(f))
                 hdr_row.addWidget(folder_btn)
             dl_layout.addLayout(hdr_row)
@@ -181,22 +182,22 @@ class FilesTabMixin:
                     grid.addWidget(lbl, row_idx, col_idx)
 
                 if exists:
-                    open_btn = QPushButton("파일 열기")
+                    open_btn = QPushButton(tr("파일 열기"))
                     open_btn.setFixedHeight(24)
                     open_btn.clicked.connect(lambda _, p=dl.file_path: _open_file(p))
                     grid.addWidget(open_btn, row_idx, 3, Qt.AlignmentFlag.AlignLeft)
                 else:
-                    na_lbl = QLabel("파일 없음")
+                    na_lbl = QLabel(tr("파일 없음"))
                     na_lbl.setStyleSheet(f"color:{sem('danger')}; font-size:8pt;")
                     grid.addWidget(na_lbl, row_idx, 3)
 
             dl_layout.addWidget(grid_w)
         else:
-            dl_layout.addWidget(QLabel("다운로드된 파일이 없습니다."))
+            dl_layout.addWidget(QLabel(tr("다운로드된 파일이 없습니다.")))
 
         # 실패 이력 섹션
         if failed_downloads:
-            fail_hdr = QLabel("다운로드 실패 이력")
+            fail_hdr = QLabel(tr("다운로드 실패 이력"))
             fail_hdr.setStyleSheet(
                 f"color:{sem('danger')}; font-weight:bold; font-size:9pt; margin-top:8px;"
             )
@@ -248,12 +249,12 @@ class FilesTabMixin:
         _clear_layout(self._clip_tab_layout)
 
         if self._clip_vm is None or self._detail is None:
-            self._clip_tab_layout.addWidget(QLabel("클립 기능을 사용할 수 없습니다."))
+            self._clip_tab_layout.addWidget(QLabel(tr("클립 기능을 사용할 수 없습니다.")))
             self._clip_tab_layout.addStretch()
             return
 
         if not self._clip_source_file:
-            info = QLabel("로컬 파일이 있어야 클립 추출이 가능합니다.\n다운로드 후 다시 시도해 주세요.")
+            info = QLabel(tr("로컬 파일이 있어야 클립 추출이 가능합니다.\n다운로드 후 다시 시도해 주세요."))
             info.setAlignment(Qt.AlignmentFlag.AlignCenter)
             info.setStyleSheet(f"color: {_t().text_secondary}; font-size: 10pt; padding: 24px;")
             self._clip_tab_layout.addWidget(info)
@@ -262,7 +263,7 @@ class FilesTabMixin:
 
         # ── 설명 속 챕터 → 클립 ─────────────────────────────────────
         # 목록은 비어 있을 수 있으므로 자리만 먼저 만들고 내용은 신호로 채운다.
-        self._chapter_grp = QGroupBox("설명 속 챕터")
+        self._chapter_grp = QGroupBox(tr("설명 속 챕터"))
         self._chapter_layout = QVBoxLayout(self._chapter_grp)
         self._chapter_layout.setContentsMargins(10, 18, 10, 10)
         self._chapter_layout.setSpacing(6)
@@ -271,7 +272,7 @@ class FilesTabMixin:
         self._build_highlight_row(self._clip_tab_layout)
 
         # ── 구간 설정 영역 ──────────────────────────────────────────
-        range_grp = QGroupBox("구간 설정")
+        range_grp = QGroupBox(tr("구간 설정"))
         range_layout = QVBoxLayout(range_grp)
         # 상단 여백을 넉넉히 둬 QGroupBox 제목이 첫 행(시작 시간)과 겹치지 않게 한다.
         range_layout.setContentsMargins(10, 18, 10, 10)
@@ -279,11 +280,11 @@ class FilesTabMixin:
 
         time_row = QHBoxLayout()
         time_row.setSpacing(12)
-        start_lbl = QLabel("시작")
+        start_lbl = QLabel(tr("시작"))
         start_lbl.setFixedWidth(30)
         self._start_edit = QTimeEdit(QTime(0, 0, 0))
         self._start_edit.setDisplayFormat("HH:mm:ss")
-        end_lbl = QLabel("끝")
+        end_lbl = QLabel(tr("끝"))
         end_lbl.setFixedWidth(20)
         self._end_edit = QTimeEdit(QTime(0, 0, 0))
         self._end_edit.setDisplayFormat("HH:mm:ss")
@@ -296,9 +297,9 @@ class FilesTabMixin:
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        set_start_btn = QPushButton("현재 위치 → 시작")
+        set_start_btn = QPushButton(tr("현재 위치 → 시작"))
         set_start_btn.clicked.connect(self._set_start_from_player)
-        set_end_btn = QPushButton("현재 위치 → 끝")
+        set_end_btn = QPushButton(tr("현재 위치 → 끝"))
         set_end_btn.clicked.connect(self._set_end_from_player)
         btn_row.addWidget(set_start_btn)
         btn_row.addWidget(set_end_btn)
@@ -307,13 +308,13 @@ class FilesTabMixin:
 
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        title_row.addWidget(QLabel("클립 제목"))
+        title_row.addWidget(QLabel(tr("클립 제목")))
         self._clip_title_edit = QLineEdit()
-        self._clip_title_edit.setPlaceholderText("클립 제목 입력…")
+        self._clip_title_edit.setPlaceholderText(tr("클립 제목 입력…"))
         title_row.addWidget(self._clip_title_edit, 1)
         range_layout.addLayout(title_row)
 
-        extract_btn = QPushButton("클립 추출")
+        extract_btn = QPushButton(tr("클립 추출"))
         extract_btn.setFixedHeight(28)
         extract_btn.clicked.connect(self._on_extract_clip)
         range_layout.addWidget(extract_btn, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -325,7 +326,7 @@ class FilesTabMixin:
         self._clip_tab_layout.addWidget(range_grp)
 
         # ── 클립 목록 ──────────────────────────────────────────────
-        list_grp = QGroupBox("추출된 클립 목록")
+        list_grp = QGroupBox(tr("추출된 클립 목록"))
         self._clip_list_layout = QVBoxLayout(list_grp)
         # 제목이 목록 첫 항목("추출된 클립이 없습니다.")과 겹치지 않게 상단 여백 확보.
         self._clip_list_layout.setContentsMargins(10, 18, 10, 10)
@@ -376,9 +377,9 @@ class FilesTabMixin:
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        toggle_btn = QPushButton("전체 선택/해제")
+        toggle_btn = QPushButton(tr("전체 선택/해제"))
         toggle_btn.clicked.connect(self._on_toggle_all_chapters)
-        self._chapter_extract_btn = QPushButton("선택한 구간 추출")
+        self._chapter_extract_btn = QPushButton(tr("선택한 구간 추출"))
         self._chapter_extract_btn.clicked.connect(self._on_extract_chapters)
         btn_row.addWidget(toggle_btn)
         btn_row.addWidget(self._chapter_extract_btn)
@@ -402,7 +403,7 @@ class FilesTabMixin:
             return
         chosen = [chapter for check, chapter in self._chapter_checks if check.isChecked()]
         if not chosen:
-            self._chapter_status_lbl.setText("추출할 챕터를 하나 이상 고르세요.")
+            self._chapter_status_lbl.setText(tr("추출할 챕터를 하나 이상 고르세요."))
             return
         self._chapter_extract_btn.setEnabled(False)
         self._chapter_status_lbl.setText(f"{len(chosen)}개 추출 준비 중…")
@@ -430,10 +431,10 @@ class FilesTabMixin:
         start_sec = start_t.hour() * 3600 + start_t.minute() * 60 + start_t.second()
         end_sec = end_t.hour() * 3600 + end_t.minute() * 60 + end_t.second()
         if end_sec <= start_sec:
-            self._clip_status_lbl.setText("끝 시간은 시작 시간보다 커야 합니다.")
+            self._clip_status_lbl.setText(tr("끝 시간은 시작 시간보다 커야 합니다."))
             return
         title = self._clip_title_edit.text().strip() or f"clip_{start_sec}_{end_sec}"
-        self._clip_status_lbl.setText("추출 중…")
+        self._clip_status_lbl.setText(tr("추출 중…"))
         self._clip_vm.extract_clip(
             self._detail.id,
             self._clip_source_file,
@@ -453,7 +454,7 @@ class FilesTabMixin:
         self._clip_status_lbl.setText("")
         clips = self._clip_vm.clips if self._clip_vm else []
         if not clips:
-            self._clip_list_layout.addWidget(QLabel("추출된 클립이 없습니다."))
+            self._clip_list_layout.addWidget(QLabel(tr("추출된 클립이 없습니다.")))
             return
         for clip in clips:
             row = QHBoxLayout()
@@ -471,12 +472,12 @@ class FilesTabMixin:
             size_lbl.setFixedWidth(72)
             folder_btn = QPushButton("📂")
             folder_btn.setFixedSize(28, 28)
-            folder_btn.setToolTip("파일 위치 열기")
+            folder_btn.setToolTip(tr("파일 위치 열기"))
             if fp and fp.exists():
                 folder_btn.clicked.connect(lambda _, p=str(fp): _open_folder(p))
             else:
                 folder_btn.setEnabled(False)
-            del_btn = QPushButton("삭제")
+            del_btn = QPushButton(tr("삭제"))
             del_btn.setFixedWidth(48)
             cid = clip.id
             del_btn.clicked.connect(lambda _, i=cid: self._clip_vm.delete_clip(i, delete_file=True))
@@ -515,7 +516,7 @@ class FilesTabMixin:
         if self._clip_vm is None or not self._convert_source:
             return
 
-        hdr = QLabel("다른 기기용으로 변환")
+        hdr = QLabel(tr("다른 기기용으로 변환"))
         hdr.setStyleSheet("font-size:9pt; font-weight:bold; margin-top:8px;")
         layout.addWidget(hdr)
 
@@ -529,7 +530,7 @@ class FilesTabMixin:
                 convert_preset_description(preset.key),
                 Qt.ItemDataRole.ToolTipRole,
             )
-        self._convert_btn = QPushButton("변환")
+        self._convert_btn = QPushButton(tr("변환"))
         self._convert_btn.setFixedHeight(26)
         self._convert_btn.clicked.connect(self._on_convert_clicked)
         row.addWidget(self._convert_combo, 1)
@@ -564,12 +565,12 @@ class FilesTabMixin:
             return
         preset_key = self._convert_combo.currentData()
         if not self._clip_vm.convert_media(self._convert_source, preset_key):
-            self._convert_status.setText("이미 변환이 진행 중입니다.")
+            self._convert_status.setText(tr("이미 변환이 진행 중입니다."))
             return
         self._convert_btn.setEnabled(False)
         self._convert_bar.setValue(0)
         self._convert_bar.setVisible(True)
-        self._convert_status.setText("변환 중… (영상 길이에 따라 몇 분이 걸릴 수 있습니다)")
+        self._convert_status.setText(tr("변환 중… (영상 길이에 따라 몇 분이 걸릴 수 있습니다)"))
 
     def _on_convert_progress(self, percent: int) -> None:
         if hasattr(self, "_convert_bar"):
@@ -600,7 +601,7 @@ class FilesTabMixin:
             return
         row = QHBoxLayout()
         row.setSpacing(8)
-        self._highlight_btn = QPushButton("자막에서 볼 만한 구간 찾기")
+        self._highlight_btn = QPushButton(tr("자막에서 볼 만한 구간 찾기"))
         self._highlight_btn.setToolTip(
             "자막에서 말이 몰린 곳을 찾아 구간으로 제안합니다. "
             "자막을 먼저 가져오거나 음성 인식으로 만들어야 합니다."
@@ -624,7 +625,7 @@ class FilesTabMixin:
             # 보여 주면 기능이 고장 난 것처럼 보인다.
             if hasattr(self, "_chapter_status_lbl"):
                 self._chapter_status_lbl.setText(
-                    "제안할 구간이 없습니다. 자막을 먼저 가져오거나 만들어 주세요."
+                    tr("제안할 구간이 없습니다. 자막을 먼저 가져오거나 만들어 주세요.")
                 )
             else:
                 self._chapter_grp.setVisible(True)

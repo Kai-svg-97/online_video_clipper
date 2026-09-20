@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from domain.library.bookmarks import Bookmark
 from gui.smooth_scroll import apply_smooth_scroll
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class BookmarkImportDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("북마크에서 가져오기")
+        self.setWindowTitle(tr("북마크에서 가져오기"))
         self.setMinimumSize(620, 480)
         self._bookmarks = list(bookmarks)
         self._categories = list(categories or [])
@@ -66,11 +67,11 @@ class BookmarkImportDialog(QDialog):
         root.addWidget(self._summary)
 
         top = QHBoxLayout()
-        self._video_only = QCheckBox("영상으로 보이는 것만 보기")
+        self._video_only = QCheckBox(tr("영상으로 보이는 것만 보기"))
         self._video_only.setChecked(True)
         self._video_only.checkStateChanged.connect(self._fill)
-        all_btn = QPushButton("전체 선택")
-        none_btn = QPushButton("전체 해제")
+        all_btn = QPushButton(tr("전체 선택"))
+        none_btn = QPushButton(tr("전체 해제"))
         all_btn.clicked.connect(lambda: self._set_all(True))
         none_btn.clicked.connect(lambda: self._set_all(False))
         top.addWidget(self._video_only)
@@ -89,9 +90,9 @@ class BookmarkImportDialog(QDialog):
         root.addWidget(self._tree, 1)
 
         cat_row = QHBoxLayout()
-        cat_row.addWidget(QLabel("담을 카테고리"))
+        cat_row.addWidget(QLabel(tr("담을 카테고리")))
         self._cat_combo = QComboBox()
-        self._cat_combo.addItem("담지 않음 (미분류)", None)
+        self._cat_combo.addItem(tr("담지 않음 (미분류)"), None)
         for cat in self._categories:
             self._cat_combo.addItem(cat.name, cat.id)
         cat_row.addWidget(self._cat_combo, 1)
@@ -107,8 +108,8 @@ class BookmarkImportDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("가져오기")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("가져오기"))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("취소"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         self._buttons = buttons

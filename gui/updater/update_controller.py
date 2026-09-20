@@ -16,6 +16,7 @@ from domain.shared.ports import UpdateInfo
 from gui.updater.pending import pending_marker_path, write_pending_update
 from gui.updater.update_checker_worker import UpdateCheckWorker, UpdateDownloadWorker
 from gui.updater.update_dialog import UpdateDialog
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -251,8 +252,8 @@ class UpdateController(QObject):
         if interactive:
             QMessageBox.information(
                 self._parent_window,
-                "업데이트 확인",
-                "현재 최신 버전을 사용 중입니다.",
+                tr("업데이트 확인"),
+                tr("현재 최신 버전을 사용 중입니다."),
             )
 
     def _on_failed(self, msg: str, *, interactive: bool) -> None:

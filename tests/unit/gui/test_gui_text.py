@@ -16,7 +16,7 @@ import ast
 from pathlib import Path
 
 from domain.shared.messages import Message
-from gui.text import _
+from gui.text import tr
 from gui.text import messages as msg_mod
 from gui.text.messages import render, render_all
 
@@ -56,7 +56,7 @@ class TestPurity:
 class TestTranslationHook:
     def test_지금은_원문_그대로다(self):
         """1단계의 성공 기준은 '화면이 지금과 똑같다'이다."""
-        assert _("설정") == "설정"
+        assert tr("설정") == "설정"
 
 
 class TestRenderNeverRaises:

@@ -23,6 +23,7 @@ from application.updater.dtos import UpdateDTO
 from domain.shared.ports import UpdateInfo
 from gui.updater.update_checker_worker import UpdateDownloadWorker
 from gui.themes.colors import tok
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class UpdateDialog(QDialog):
         self._download_handler = download_handler
         self._worker: UpdateDownloadWorker | None = None
 
-        self.setWindowTitle("업데이트")
+        self.setWindowTitle(tr("업데이트"))
         self.setFixedWidth(360)
         self.setWindowFlags(
             self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
@@ -59,7 +60,7 @@ class UpdateDialog(QDialog):
         ver_lbl.setStyleSheet("font-size: 22px; font-weight: 700; margin-bottom: 2px;")
         layout.addWidget(ver_lbl)
 
-        sub_lbl = QLabel("새 버전이 출시되었습니다")
+        sub_lbl = QLabel(tr("새 버전이 출시되었습니다"))
         sub_lbl.setStyleSheet(f"font-size: 11px; color: {tok().text_secondary}; margin-bottom: 16px;")
         layout.addWidget(sub_lbl)
         layout.addSpacing(16)
@@ -98,14 +99,14 @@ class UpdateDialog(QDialog):
         btn_row.setSpacing(8)
         btn_row.addStretch()
 
-        self._later_btn = QPushButton("나중에")
+        self._later_btn = QPushButton(tr("나중에"))
         self._later_btn.setFixedWidth(72)
         self._later_btn.setFlat(True)
         self._later_btn.setStyleSheet(f"color: {tok().text_secondary};")
         self._later_btn.clicked.connect(self._on_later)
         btn_row.addWidget(self._later_btn)
 
-        self._install_btn = QPushButton("지금 업데이트")
+        self._install_btn = QPushButton(tr("지금 업데이트"))
         self._install_btn.setFixedWidth(110)
         self._install_btn.setDefault(True)
         self._install_btn.clicked.connect(self._start_download)
@@ -126,7 +127,7 @@ class UpdateDialog(QDialog):
         self._later_btn.setEnabled(False)
         self._progress.show()
         self._status_lbl.show()
-        self._status_lbl.setText("다운로드 준비 중…")
+        self._status_lbl.setText(tr("다운로드 준비 중…"))
 
         dest_dir = Path(tempfile.mkdtemp(prefix="ovc_update_"))
         self._worker = UpdateDownloadWorker(
@@ -150,7 +151,7 @@ class UpdateDialog(QDialog):
             self._status_lbl.setText(f"{mb_d:.1f} MB 다운로드 중…")
 
     def _on_done(self, installer_path: str) -> None:
-        self._status_lbl.setText("완료. 설치를 시작합니다…")
+        self._status_lbl.setText(tr("완료. 설치를 시작합니다…"))
         self._apply_update(installer_path)
 
     def _on_failed(self, msg: str) -> None:
@@ -167,11 +168,11 @@ class UpdateDialog(QDialog):
         from gui.updater.pending import write_pending_update  # noqa: PLC0415
 
         if write_pending_update(installer_path):
-            self._status_lbl.setText("앱 종료 후 설치가 자동으로 시작됩니다…")
+            self._status_lbl.setText(tr("앱 종료 후 설치가 자동으로 시작됩니다…"))
             QApplication.instance().quit()
         else:
             QMessageBox.information(
-                self, "다운로드 완료",
+                self, tr("다운로드 완료"),
                 f"업데이트 파일:\n{installer_path}\n\n앱을 종료하고 새 버전으로 교체하세요.",
             )
             self.accept()

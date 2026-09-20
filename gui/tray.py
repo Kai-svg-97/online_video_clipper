@@ -21,6 +21,7 @@ import logging
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +55,9 @@ class AppTray(QObject):
         self._icon.setToolTip("YouTube Content Manager")
 
         menu = QMenu()
-        open_act = QAction("창 열기", menu)
+        open_act = QAction(tr("창 열기"), menu)
         open_act.triggered.connect(self.show_requested)
-        quit_act = QAction("종료", menu)
+        quit_act = QAction(tr("종료"), menu)
         quit_act.triggered.connect(self.quit_requested)
         menu.addAction(open_act)
         menu.addSeparator()

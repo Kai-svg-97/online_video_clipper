@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 from gui.panels.detail.widgets import _t
 from gui.smooth_scroll import apply_smooth_scroll
+from gui.text import tr
 
 # 검색 결과 상한 — 색인 전체를 한 화면에 쏟으면 스크롤만 길어지고 못 찾는다.
 _MAX_ROWS = 500
@@ -60,22 +61,22 @@ class SubtitleTab(QWidget):
         top = QHBoxLayout()
         top.setSpacing(6)
         self._search = QLineEdit()
-        self._search.setPlaceholderText("자막에서 찾기…")
+        self._search.setPlaceholderText(tr("자막에서 찾기…"))
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self.search_changed.emit)
         self._count_lbl = QLabel("")
         self._count_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         self._refresh_btn = QPushButton("⟳")
         self._refresh_btn.setFixedWidth(30)
-        self._refresh_btn.setToolTip("자막을 다시 받아 색인합니다")
+        self._refresh_btn.setToolTip(tr("자막을 다시 받아 색인합니다"))
         self._refresh_btn.clicked.connect(self.index_requested.emit)
         top.addWidget(self._search, 1)
         top.addWidget(self._count_lbl)
         # 번역은 **색인이 있을 때만** 쓸모가 있다 — 원문이 있어야 옮긴다.
-        self._translate_btn = QPushButton("한글로 번역")
+        self._translate_btn = QPushButton(tr("한글로 번역"))
         self._translate_btn.setFixedWidth(84)
         self._translate_btn.setToolTip(
-            "이 자막을 한글로 옮겨 따로 저장합니다. 원문은 그대로 남습니다."
+            tr("이 자막을 한글로 옮겨 따로 저장합니다. 원문은 그대로 남습니다.")
         )
         self._translate_btn.clicked.connect(self.translate_requested.emit)
         self._translate_btn.setVisible(False)
@@ -89,18 +90,18 @@ class SubtitleTab(QWidget):
         empty = QWidget()
         empty_layout = QVBoxLayout(empty)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_lbl = QLabel("이 영상의 자막을 아직 가져오지 않았습니다.")
+        self._empty_lbl = QLabel(tr("이 영상의 자막을 아직 가져오지 않았습니다."))
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_lbl.setWordWrap(True)
         self._empty_lbl.setStyleSheet(
             f"color: {_t().text_secondary}; font-size: 10pt; padding: 12px;"
         )
-        self._index_btn = QPushButton("자막 가져오기")
+        self._index_btn = QPushButton(tr("자막 가져오기"))
         self._index_btn.setFixedWidth(140)
         self._index_btn.clicked.connect(self.index_requested.emit)
         # 음성 인식은 **대안**이다 — YouTube가 자막을 주지 않는 영상에서만 쓸모가 있고,
         # 몇 분이 걸리므로 첫 수단으로 권하지 않는다.
-        self._asr_btn = QPushButton("음성 인식으로 만들기")
+        self._asr_btn = QPushButton(tr("음성 인식으로 만들기"))
         self._asr_btn.setFixedWidth(180)
         self._asr_btn.setToolTip(
             "영상의 소리를 듣고 자막을 만듭니다. 받아 둔 파일이 있어야 하며 "
@@ -109,10 +110,10 @@ class SubtitleTab(QWidget):
         self._asr_btn.clicked.connect(self.transcribe_requested.emit)
         # 긴 영상은 몇십 분이 걸린다 — 시작한 사람이 되돌릴 길이 있어야 한다.
         # 중단해도 그때까지 인식한 부분은 남는다(어댑터가 모아 둔 것을 돌려준다).
-        self._stop_btn = QPushButton("중단")
+        self._stop_btn = QPushButton(tr("중단"))
         self._stop_btn.setFixedWidth(100)
         self._stop_btn.setToolTip(
-            "음성 인식을 멈춥니다. 그때까지 인식한 부분은 자막으로 남습니다."
+            tr("음성 인식을 멈춥니다. 그때까지 인식한 부분은 자막으로 남습니다.")
         )
         self._stop_btn.clicked.connect(self.transcribe_stop_requested.emit)
         self._stop_btn.setVisible(False)
@@ -142,7 +143,7 @@ class SubtitleTab(QWidget):
         """자막 줄을 채운다. `indexed`가 False면 안내판을 띄운다."""
         self._list.clear()
         if not indexed:
-            self._empty_lbl.setText("이 영상의 자막을 아직 가져오지 않았습니다.")
+            self._empty_lbl.setText(tr("이 영상의 자막을 아직 가져오지 않았습니다."))
             self._index_btn.setVisible(True)
             self._translate_btn.setVisible(False)
             self._asr_btn.setVisible(self._can_transcribe)
@@ -158,18 +159,18 @@ class SubtitleTab(QWidget):
         if not rows:
             # 색인은 있는데 결과가 없다 = 검색어가 안 맞은 것이다. 가져오기 버튼을
             # 띄우면 엉뚱한 해결책을 권하는 셈이라 숨긴다.
-            self._empty_lbl.setText("찾는 말이 든 자막 줄이 없습니다.")
+            self._empty_lbl.setText(tr("찾는 말이 든 자막 줄이 없습니다."))
             self._index_btn.setVisible(False)
             self._asr_btn.setVisible(False)
             self._stop_btn.setVisible(False)
             self._stack.setCurrentIndex(self._PAGE_EMPTY)
-            self._count_lbl.setText("0줄")
+            self._count_lbl.setText(tr("0줄"))
             return
 
         for line in rows:
             item = QListWidgetItem(f"{_fmt_ts(line.start_ms)}   {line.text}")
             item.setData(Qt.ItemDataRole.UserRole, int(line.start_ms))
-            item.setToolTip("클릭하면 이 시점부터 재생합니다")
+            item.setToolTip(tr("클릭하면 이 시점부터 재생합니다"))
             self._list.addItem(item)
         total = len(lines or [])
         self._count_lbl.setText(
@@ -183,7 +184,7 @@ class SubtitleTab(QWidget):
         self._asr_btn.setEnabled(not busy)
         self._refresh_btn.setEnabled(not busy)
         if busy:
-            self._empty_lbl.setText("자막을 가져오는 중…")
+            self._empty_lbl.setText(tr("자막을 가져오는 중…"))
             self._stop_btn.setVisible(False)
             self._stack.setCurrentIndex(self._PAGE_EMPTY)
 

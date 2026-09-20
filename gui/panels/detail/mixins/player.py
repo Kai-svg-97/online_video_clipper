@@ -61,6 +61,7 @@ from gui.panels.detail.song_tab import (  # noqa: F401
 from gui.panels.detail.workers import (  # noqa: F401
     _GeminiSummaryWorker,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ class PlayerControlMixin:
         self._notes_edit.blockSignals(False)
         self._clip_source_file = None
         _clear_layout(self._clip_tab_layout)
-        info = QLabel("스트리밍 영상은 클립을 추출할 수 없습니다.\n다운로드 후 다시 시도해 주세요.")
+        info = QLabel(tr("스트리밍 영상은 클립을 추출할 수 없습니다.\n다운로드 후 다시 시도해 주세요."))
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         info.setStyleSheet(f"color:{_t().text_secondary}; font-size:10pt; padding:24px;")
         self._clip_tab_layout.addWidget(info)

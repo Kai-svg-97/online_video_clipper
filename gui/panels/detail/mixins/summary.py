@@ -63,6 +63,7 @@ from gui.panels.detail.text_format import (
     summary_failure_status_label,
     summary_placeholder,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class SummaryTabMixin:
         """
         if self._detail is None:
             logger.info("요약 추출 요청을 무시한다 — 표시 중인 영상이 없다")
-            self._summary_status_lbl.setText("영상을 먼저 선택해 주세요.")
+            self._summary_status_lbl.setText(tr("영상을 먼저 선택해 주세요."))
             return
         if self._streaming:
             logger.info(
@@ -107,16 +108,16 @@ class SummaryTabMixin:
                 self._detail.url,
             )
             self._summary_status_lbl.setText(
-                "라이브러리에 담아야 요약을 만들 수 있습니다."
+                tr("라이브러리에 담아야 요약을 만들 수 있습니다.")
             )
             return
         if self._gemini_worker is not None:
             logger.info("요약 추출이 이미 진행 중이다 — 중복 요청 무시")
-            self._summary_status_lbl.setText("이미 추출 중입니다…")
+            self._summary_status_lbl.setText(tr("이미 추출 중입니다…"))
             return
         logger.info("요약 추출 시작: %s", self._detail.url)
         self._summary_refresh_btn.setEnabled(False)
-        self._summary_status_lbl.setText("추출 중…")
+        self._summary_status_lbl.setText(tr("추출 중…"))
         # 요약 추출은 수십 초 걸린다 — 그 사이 화면이 정리돼도 스레드가 파괴되지 않게.
         #
         # **`deleteLater`를 걸지 않는다.** 예전에는 `finished`에 걸어 뒀는데, 그러면

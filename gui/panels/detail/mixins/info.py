@@ -82,6 +82,7 @@ from gui.panels.detail.text_format import (
     _TS_RE,
     _URL_RE,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +158,7 @@ class DetailInfoMixin:
         self._tag_add_container.setVisible(allow_tag_edit)
         if allow_tag_edit:
             self._tag_add_input = QLineEdit()
-            self._tag_add_input.setPlaceholderText("태그 추가... (쉼표로 구분)")
+            self._tag_add_input.setPlaceholderText(tr("태그 추가... (쉼표로 구분)"))
             self._tag_add_input.setStyleSheet("font-size:8pt;")
             self._tag_add_input.returnPressed.connect(self._on_add_tag)
             self._tag_add_layout.addWidget(self._tag_add_input, 1)

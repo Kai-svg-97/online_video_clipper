@@ -105,7 +105,7 @@ def test_도메인에_화면_문구가_없다(path: Path):
     offenders = _offenders(path)
     assert not offenders, (
         "도메인에 한국어 표시 문자열이 있다 — `gui/text/` 로 옮기거나 "
-        f"Message 를 돌려주게 하라:\n  " + "\n  ".join(offenders)
+        "Message 를 돌려주게 하라:\n  " + "\n  ".join(offenders)
     )
 
 

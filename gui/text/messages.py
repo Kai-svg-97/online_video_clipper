@@ -19,7 +19,7 @@ import logging
 from collections.abc import Sequence
 
 from domain.shared.messages import Message
-from gui.text import _
+from gui.text import tr
 from gui.text.formats import ByteUnit, format_bytes
 
 logger = logging.getLogger(__name__)
@@ -112,11 +112,11 @@ def render(msg: Message | None) -> str:
         logger.warning("표시 문구 템플릿이 없다: %s", msg.key)
         return msg.key
     try:
-        return _(template).format(**_prepare(msg.as_dict()))
+        return tr(template).format(**_prepare(msg.as_dict()))
     except (KeyError, IndexError, ValueError):
         # 파라미터가 모자라거나 형식이 안 맞는다. 채우지 못한 원문이라도 돌려준다.
         logger.exception("표시 문구를 채우지 못했다: %s", msg.key)
-        return _(template)
+        return tr(template)
 
 
 def render_all(msgs: Sequence[Message], sep: str = JOIN_SEPARATOR) -> str:

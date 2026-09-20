@@ -154,6 +154,7 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistTree,
 )
 from gui.panels.library.skeleton_list import ListSkeleton  # noqa: F401
+from gui.text import tr
 
 # 목록 조회가 이보다 오래 걸릴 때만 스켈레톤을 띄운다(빠른 조회에서 깜빡임 방지).
 _LOADING_HINT_DELAY_MS = 250
@@ -302,8 +303,8 @@ class VideoListMixin:
         saved = self._vm.save_search(name, text=text, **keys)
         if saved is None:
             QMessageBox.information(
-                self, "검색 저장",
-                "저장할 조건이 없습니다. 검색어를 넣거나 필터를 걸어 주세요.",
+                self, tr("검색 저장"),
+                tr("저장할 조건이 없습니다. 검색어를 넣거나 필터를 걸어 주세요."),
             )
             return
         self._refresh_saved_menu()
@@ -316,18 +317,18 @@ class VideoListMixin:
         searches = self._vm.saved_searches()
         menu = QMenu(self)
         if not searches:
-            act = menu.addAction("저장된 검색이 없습니다")
+            act = menu.addAction(tr("저장된 검색이 없습니다"))
             act.setEnabled(False)
         for search in searches:
             sub = menu.addMenu(search.name)
-            sub.addAction("이 조건으로 보기").triggered.connect(
+            sub.addAction(tr("이 조건으로 보기")).triggered.connect(
                 lambda _=False, s=search: self._apply_saved_search(s)
             )
             sub.addSeparator()
-            sub.addAction("이름 바꾸기…").triggered.connect(
+            sub.addAction(tr("이름 바꾸기…")).triggered.connect(
                 lambda _=False, s=search: self._rename_saved_search(s)
             )
-            sub.addAction("삭제").triggered.connect(
+            sub.addAction(tr("삭제")).triggered.connect(
                 lambda _=False, s=search: self._delete_saved_search(s)
             )
         # 메뉴를 지역 변수로 두면 파이썬이 회수해 눌러도 아무 일이 없다.
@@ -349,7 +350,7 @@ class VideoListMixin:
 
     def _delete_saved_search(self, search) -> None:
         if QMessageBox.question(
-            self, "저장된 검색 삭제", f"'{search.name}'을(를) 지울까요?"
+            self, tr("저장된 검색 삭제"), f"'{search.name}'을(를) 지울까요?"
         ) != QMessageBox.StandardButton.Yes:
             return
         self._vm.delete_saved_search(search.id)
@@ -568,7 +569,7 @@ class VideoListMixin:
         if tag is None:
             return
         reply = QMessageBox.question(
-            self, "태그 삭제",
+            self, tr("태그 삭제"),
             f"태그 '#{tag.name}'을(를) 삭제하시겠습니까?\n모든 영상에서 이 태그가 제거됩니다.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -843,7 +844,7 @@ class VideoListMixin:
         self._refresh_dlg = QProgressDialog(
             "메타데이터 갱신 중...", None, 0, 100, self
         )
-        self._refresh_dlg.setWindowTitle("메타데이터 일괄 갱신")
+        self._refresh_dlg.setWindowTitle(tr("메타데이터 일괄 갱신"))
         self._refresh_dlg.setWindowModality(Qt.WindowModality.WindowModal)
         self._refresh_dlg.setMinimumDuration(0)
         self._refresh_dlg.setValue(0)

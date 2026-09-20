@@ -50,6 +50,7 @@ from gui.panels.detail.text_zoom import (
     scale_label,
     scaled_pt,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -144,18 +145,18 @@ class _LyricsCandidateList(QWidget):
         root.setSpacing(4)
 
         header = QHBoxLayout()
-        header.addWidget(QLabel("<b>가사 후보</b>"))
+        header.addWidget(QLabel(tr("<b>가사 후보</b>")))
         self._status_lbl = QLabel("")
         self._status_lbl.setStyleSheet(f"font-size:9pt; color:{_t().text_secondary};")
         header.addWidget(self._status_lbl)
         header.addStretch()
-        self._apply_btn = QPushButton("이 가사 사용")
+        self._apply_btn = QPushButton(tr("이 가사 사용"))
         self._apply_btn.setFixedHeight(24)
         self._apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._apply_btn.setEnabled(False)
         self._apply_btn.clicked.connect(self._emit_chosen)
         header.addWidget(self._apply_btn)
-        close_btn = QPushButton("닫기")
+        close_btn = QPushButton(tr("닫기"))
         close_btn.setFixedHeight(24)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.clicked.connect(self.closed.emit)
@@ -191,7 +192,7 @@ class _LyricsCandidateList(QWidget):
         self._selected = None
         self._rebuild()
         if not source_names:
-            self._status_lbl.setText("조회할 가사 출처가 없습니다 (설정에서 출처를 켜세요)")
+            self._status_lbl.setText(tr("조회할 가사 출처가 없습니다 (설정에서 출처를 켜세요)"))
 
     def add_result(self, source_name: str, dto: object) -> None:
         """후보 **한 건**을 목록에 더한다(한 출처가 여러 번 부를 수 있다).
@@ -382,10 +383,10 @@ class _SongTab(QWidget):
 
         # 헤더: 제목 + 노래 토글 + 상태 (가사 갱신 버튼은 아래 '가사' 레이블 옆으로 이동)
         header = QHBoxLayout()
-        header.addWidget(QLabel("<b>노래 정보</b>"))
+        header.addWidget(QLabel(tr("<b>노래 정보</b>")))
         header.addStretch()
-        self._flag_chk = QCheckBox("노래로 표시")
-        self._flag_chk.setToolTip("이 영상을 노래로 표시/해제 (영상 제목으로 가수·앨범·제목·발매년도를 채움)")
+        self._flag_chk = QCheckBox(tr("노래로 표시"))
+        self._flag_chk.setToolTip(tr("이 영상을 노래로 표시/해제 (영상 제목으로 가수·앨범·제목·발매년도를 채움)"))
         self._flag_chk.toggled.connect(self._on_flag_toggled)
         header.addWidget(self._flag_chk)
         self._status_lbl = QLabel("")
@@ -421,16 +422,16 @@ class _SongTab(QWidget):
 
         # 가사 헤더 ('가사' 레이블 + 가사 갱신 ⟳ + 출처 + 편집 힌트)
         lyr_header = QHBoxLayout()
-        lyr_header.addWidget(QLabel("<b>가사</b>"))
+        lyr_header.addWidget(QLabel(tr("<b>가사</b>")))
         self._lyrics_refresh_btn = _SpinRefreshButton()
         self._lyrics_refresh_btn.setFixedSize(26, 24)
-        self._lyrics_refresh_btn.setToolTip("가사 검색")
+        self._lyrics_refresh_btn.setToolTip(tr("가사 검색"))
         self._lyrics_refresh_btn.clicked.connect(self._on_lyrics_search_clicked)
         lyr_header.addWidget(self._lyrics_refresh_btn)
         # 번역 버튼 — 가사가 이미 있을 때만 노출(현재 가사를 한글로 재번역).
-        self._translate_btn = QPushButton("번역")
+        self._translate_btn = QPushButton(tr("번역"))
         self._translate_btn.setFixedHeight(24)
-        self._translate_btn.setToolTip("현재 가사를 한글로 다시 번역")
+        self._translate_btn.setToolTip(tr("현재 가사를 한글로 다시 번역"))
         self._translate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._translate_btn.clicked.connect(self.translate_requested.emit)
         self._translate_btn.setVisible(False)
@@ -438,7 +439,7 @@ class _SongTab(QWidget):
         # 싱크 가사 찾기 — 시간 정보가 없는 가사일 때만 노출(자막 기능의 전제).
         self._synced_btn = QPushButton("⏱")
         self._synced_btn.setFixedSize(26, 24)
-        self._synced_btn.setToolTip("싱크(시간 정보) 가사 찾기 — 자막 표시에 필요합니다")
+        self._synced_btn.setToolTip(tr("싱크(시간 정보) 가사 찾기 — 자막 표시에 필요합니다"))
         self._synced_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._synced_btn.clicked.connect(self.synced_requested.emit)
         self._synced_btn.setVisible(False)
@@ -463,7 +464,7 @@ class _SongTab(QWidget):
         self._src_lbl.setOpenExternalLinks(True)
         lyr_header.addWidget(self._src_lbl)
         lyr_header.addStretch()
-        hint = QLabel("(더블클릭하여 편집)")
+        hint = QLabel(tr("(더블클릭하여 편집)"))
         hint.setStyleSheet(f"font-size:8pt; color:{_t().text_secondary};")
         lyr_header.addWidget(hint)
         # 글자 크기 — 지금 배율을 보여 주고, 누르면 기본값으로 되돌린다.
@@ -479,7 +480,7 @@ class _SongTab(QWidget):
         self._layout_btn.setFixedSize(24, 22)
         self._layout_btn.setFlat(True)
         self._layout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._layout_btn.setToolTip("번역을 오른쪽에 표시")
+        self._layout_btn.setToolTip(tr("번역을 오른쪽에 표시"))
         self._layout_btn.clicked.connect(self._toggle_lyrics_layout)
         self._layout_btn.setVisible(False)
         lyr_header.addWidget(self._layout_btn)
@@ -505,7 +506,7 @@ class _SongTab(QWidget):
         )
 
         self._lyrics_editor = QPlainTextEdit()
-        self._lyrics_editor.setPlaceholderText("가사를 입력하세요 (한 줄당 한 줄)…")
+        self._lyrics_editor.setPlaceholderText(tr("가사를 입력하세요 (한 줄당 한 줄)…"))
         self._lyrics_stack.addWidget(self._lyrics_editor)     # index 1: 편집
         # index 2: 가사 검색 후보 목록 — 가사 영역을 그대로 쓰므로 레이아웃이 흔들리지 않는다.
         self._candidates = _LyricsCandidateList()

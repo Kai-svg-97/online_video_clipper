@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from config.settings import THUMBNAIL_DIR
 
 from gui.panels.library.formatting import _fmt_elapsed, _t
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +282,7 @@ class _FolderContentsView(QScrollArea):
         self._grid = grid
 
         if idx == 0:
-            lbl = QLabel("이 폴더에 재생목록이 없습니다.")
+            lbl = QLabel(tr("이 폴더에 재생목록이 없습니다."))
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(f"color:{_t().text_secondary}; font-size:11pt;")
             grid.addWidget(lbl, 0, 0)

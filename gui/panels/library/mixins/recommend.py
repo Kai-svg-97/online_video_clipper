@@ -134,6 +134,7 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistPanel,
     _PlaylistTree,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +228,7 @@ class RecommendStripMixin:
             self._recommend_strip.set_title()
             if not titles and not channels and not tags:
                 self._recommend_strip.set_items([])
-                self._recommend_strip.set_status("목록이 비어 있어 추천할 기준이 없습니다.")
+                self._recommend_strip.set_status(tr("목록이 비어 있어 추천할 기준이 없습니다."))
                 self._reveal_recommend_strip(False)
                 return
         self._recommend_strip.set_status("")
@@ -287,9 +288,9 @@ class RecommendStripMixin:
         if items:
             self._recommend_strip.set_status("")
         elif self._recommend_search_text():
-            self._recommend_strip.set_status("이 검색어로 YouTube에서 찾은 영상이 없습니다.")
+            self._recommend_strip.set_status(tr("이 검색어로 YouTube에서 찾은 영상이 없습니다."))
         else:
-            self._recommend_strip.set_status("추천할 영상을 찾지 못했습니다.")
+            self._recommend_strip.set_status(tr("추천할 영상을 찾지 못했습니다."))
         self._reveal_recommend_strip(bool(items))
         # 상세화면이 열려 있으면 우측 목록 아래 추천 구역도 함께 갱신한다.
         if self._nav_stack.currentIndex() == 1:
@@ -319,7 +320,7 @@ class RecommendStripMixin:
 
     def _on_recommend_error(self, msg: str) -> None:
         logger.warning("추천 영상 조회 실패: %s", msg)
-        self._recommend_strip.set_status("추천을 받지 못했습니다.")
+        self._recommend_strip.set_status(tr("추천을 받지 못했습니다."))
         self._reveal_recommend_strip(False)
 
     def _reveal_recommend_strip(self, has_items: bool) -> None:

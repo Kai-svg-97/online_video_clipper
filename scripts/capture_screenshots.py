@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import sys
@@ -43,7 +44,13 @@ _SANDBOX.mkdir(parents=True, exist_ok=True)
 os.environ["OVC_DATA_DIR"] = str(_SANDBOX)
 assert "config.settings" not in sys.modules, "설정이 이미 로드됐다 — 격리가 깨졌다"
 
-OUT_DIR = _ROOT / "docs" / "manual" / "images"
+# 언어는 `config.settings` 임포트 전에 정해져야 한다(경로 상수와 같은 이유).
+_LANG = "ko"
+for _i, _a in enumerate(sys.argv):
+    if _a == "--lang" and _i + 1 < len(sys.argv):
+        _LANG = sys.argv[_i + 1]
+
+OUT_DIR = _ROOT / "docs" / "manual" / ("images" if _LANG == "ko" else f"images-{_LANG}")
 WINDOW_SIZE = (1280, 800)
 
 
@@ -121,13 +128,17 @@ def _grab(widget, name: str) -> None:
 
 
 def main() -> int:
+    argparse.ArgumentParser().parse_known_args()   # --lang 은 위에서 이미 읽었다
     from bootstrap import build_app_graph
     from bootstrap.runtime import create_qt_app, install_qt_message_filter, suppress_av_log
     from infrastructure.persistence.database import Database
 
+    from gui.text import set_language
+
+    set_language(_LANG)
     suppress_av_log()
     install_qt_message_filter()
-    app = create_qt_app(sys.argv)
+    app = create_qt_app([sys.argv[0]])
 
     # 경로는 전부 _SANDBOX 안이다(OVC_DATA_DIR) — 기본값을 그대로 쓴다.
     db = Database()

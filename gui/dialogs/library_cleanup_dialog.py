@@ -30,6 +30,7 @@ from gui.smooth_scroll import apply_smooth_scroll
 from gui.themes.manager import ThemeManager
 from gui.text.labels import availability_label
 from gui.text.messages import render
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -87,19 +88,19 @@ class LibraryCleanupDialog(QDialog):
         self._delete_videos = delete_videos
         self._find_missing = find_missing
         self._missing_worker: _MissingScanWorker | None = None
-        self.setWindowTitle("라이브러리 정리")
+        self.setWindowTitle(tr("라이브러리 정리"))
         self.setMinimumSize(720, 480)
 
         layout = QVBoxLayout(self)
         self._tabs = QTabWidget()
         self._dup_tree = self._make_tree(["영상", "채널", "주소"])
         self._broken_tree = self._make_tree(["영상", "사라진 파일"])
-        self._tabs.addTab(self._wrap(self._dup_tree, "중복으로 보이는 영상"), "중복 영상")
+        self._tabs.addTab(self._wrap(self._dup_tree, "중복으로 보이는 영상"), tr("중복 영상"))
         self._tabs.addTab(
-            self._wrap(self._broken_tree, "파일이 사라진 다운로드 기록"), "사라진 파일"
+            self._wrap(self._broken_tree, "파일이 사라진 다운로드 기록"), tr("사라진 파일")
         )
         self._missing_tree = self._make_tree(["영상", "상태", "설명"])
-        self._tabs.addTab(self._build_missing_tab(), "사라진 원본")
+        self._tabs.addTab(self._build_missing_tab(), tr("사라진 원본"))
         layout.addWidget(self._tabs, 1)
 
         self._status = QLabel("")
@@ -216,10 +217,10 @@ class LibraryCleanupDialog(QDialog):
     def _on_delete(self) -> None:
         ids = self.checked_video_ids()
         if not ids:
-            self._status.setText("선택된 영상이 없습니다.")
+            self._status.setText(tr("선택된 영상이 없습니다."))
             return
         answer = QMessageBox.question(
-            self, "영상 삭제",
+            self, tr("영상 삭제"),
             f"선택한 {len(ids)}개 영상을 라이브러리에서 삭제할까요?\n"
             "(다운로드한 파일은 그대로 남습니다.)",
         )
@@ -229,7 +230,7 @@ class LibraryCleanupDialog(QDialog):
             self._delete_videos(ids)
         except Exception:
             logger.exception("중복 영상 삭제 실패")
-            self._status.setText("삭제 중 오류가 발생했습니다. 로그를 확인하세요.")
+            self._status.setText(tr("삭제 중 오류가 발생했습니다. 로그를 확인하세요."))
             return
         self._status.setText(f"{len(ids)}개 영상을 삭제했습니다.")
         self.refresh()
@@ -240,10 +241,10 @@ class LibraryCleanupDialog(QDialog):
         col = QVBoxLayout(holder)
         col.setContentsMargins(0, 8, 0, 0)
         col.addWidget(
-            QLabel("원본이 삭제되었거나 비공개로 바뀐 영상")
+            QLabel(tr("원본이 삭제되었거나 비공개로 바뀐 영상"))
         )
 
-        self._missing_btn = QPushButton("원본 확인 시작")
+        self._missing_btn = QPushButton(tr("원본 확인 시작"))
         self._missing_btn.clicked.connect(self._on_missing_scan)
         col.addWidget(self._missing_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
@@ -267,16 +268,16 @@ class LibraryCleanupDialog(QDialog):
         """시작/중지 토글 — 긴 작업이라 그만둘 수 있어야 한다."""
         if self._missing_worker is not None:
             self._missing_worker.stop()
-            self._missing_btn.setText("중지하는 중…")
+            self._missing_btn.setText(tr("중지하는 중…"))
             self._missing_btn.setEnabled(False)
             return
         if self._find_missing is None:
-            self._status.setText("원본 확인 기능을 쓸 수 없습니다.")
+            self._status.setText(tr("원본 확인 기능을 쓸 수 없습니다."))
             return
         self._missing_tree.clear()
         self._missing_bar.setValue(0)
         self._missing_bar.setVisible(True)
-        self._missing_btn.setText("중지")
+        self._missing_btn.setText(tr("중지"))
         worker = _MissingScanWorker(self._find_missing)
         worker.progress.connect(self._on_missing_progress)
         worker.done.connect(self._on_missing_done)
@@ -291,7 +292,7 @@ class LibraryCleanupDialog(QDialog):
     def _on_missing_done(self, found) -> None:
         self._missing_worker = None
         self._missing_bar.setVisible(False)
-        self._missing_btn.setText("원본 확인 시작")
+        self._missing_btn.setText(tr("원본 확인 시작"))
         self._missing_btn.setEnabled(True)
         for item in found or []:
             row = QTreeWidgetItem(

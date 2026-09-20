@@ -133,6 +133,7 @@ from gui.panels.library.tree import (  # noqa: F401
 )
 
 from gui.anim import fade_switch
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ class AlbumViewMixin:
         self._btn_album.setChecked(True)
         self._leave_detail_if_open()
         self._switch_view(_VIEW_ALBUMS)
-        self._album_grid.set_status("앨범을 구성하는 중…")
+        self._album_grid.set_status(tr("앨범을 구성하는 중…"))
         self._load_albums()
         # 앨범 값이 빈 노래는 외부 조회로 추정해 채운다(백그라운드, 실패는 재조회 안 함).
         self._album_vm.resolve_unknown_albums(
@@ -264,7 +265,7 @@ class AlbumViewMixin:
 
     def _on_album_error(self, msg: str) -> None:
         logger.warning("앨범 조회 실패: %s", msg)
-        self._album_grid.set_status("앨범 정보를 가져오지 못했습니다.")
+        self._album_grid.set_status(tr("앨범 정보를 가져오지 못했습니다."))
         self._album_detail.set_busy(False)
 
     def _close_album_detail(self) -> None:
@@ -281,7 +282,7 @@ class AlbumViewMixin:
         if self._album_vm is None or detail is None:
             return
         self._album_detail.set_add_busy(True)
-        self._album_detail.set_status("카테고리에 담는 중…")
+        self._album_detail.set_status(tr("카테고리에 담는 중…"))
         self._album_vm.add_tracks_to_category(detail, category_id=self._current_cat_id)
 
     def _on_album_add_progress(self, done: int, total: int) -> None:
@@ -291,7 +292,7 @@ class AlbumViewMixin:
         """담기 완료 — 목록과 앨범 상세를 다시 읽어 '내 등록'으로 바뀌게 한다."""
         self._album_detail.set_add_busy(False)
         if not count:
-            self._album_detail.set_status("담을 곡이 없습니다.")
+            self._album_detail.set_status(tr("담을 곡이 없습니다."))
             return
         self._album_detail.set_status(f"{count}곡을 카테고리에 담았습니다.")
         self._vm.load()          # 라이브러리 목록·카테고리 개수 갱신

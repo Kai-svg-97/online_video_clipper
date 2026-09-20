@@ -85,6 +85,7 @@ from gui.widgets.player.constants import (  # noqa: F401
     _QUALITY_OPTIONS,
     _STREAM_CLIENTS,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -782,7 +783,7 @@ class InlinePlayer(QWidget):
 
         lang = self._vsub_langs[slot]
         track_info = translated(base, lang) if lang else base
-        self._status_lbl.setText("자막을 받는 중…")
+        self._status_lbl.setText(tr("자막을 받는 중…"))
         self._status_lbl.show()
         self._start_subtitle_fetch(slot, track_info)
 
@@ -1306,7 +1307,7 @@ class InlinePlayer(QWidget):
         if on:
             pm = self._thumb_label.pixmap()
             if pm is None or pm.isNull():
-                self._thumb_label.setText("화면 속 화면으로 재생 중")
+                self._thumb_label.setText(tr("화면 속 화면으로 재생 중"))
             self._visual_stack.setCurrentIndex(0)
         elif self._player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
             self._visual_stack.setCurrentIndex(1)
@@ -1566,7 +1567,7 @@ class InlinePlayer(QWidget):
         self._resume_ms = max(0, resume_ms)
         self._stream_retries = 0
         self._close_remux()
-        self._status_lbl.setText("스트림이 불안정해 고화질을 준비합니다…")
+        self._status_lbl.setText(tr("스트림이 불안정해 고화질을 준비합니다…"))
         self._status_lbl.show()
         self._fetch_stream()
 

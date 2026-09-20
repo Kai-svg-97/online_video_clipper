@@ -47,6 +47,7 @@ from gui.panels.library.tree_mixins import (
     _TreeItemsMixin,
     _TreeSpinnerMixin,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -479,17 +480,17 @@ class _PlaylistPanel(QWidget):
         local_layout.setSpacing(2)
         local_hdr_row = QHBoxLayout()
         local_hdr_row.setContentsMargins(0, 0, 0, 0)
-        self._local_hdr = QPushButton("📁  로컬")
+        self._local_hdr = QPushButton(tr("📁  로컬"))
         self._local_hdr.setObjectName("playlist_section_header_local")
         self._local_hdr.setFlat(True)
         self._local_hdr.setCheckable(True)   # QSS :checked 로 활성 표시
         self._local_hdr.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._local_hdr.setToolTip("클릭: 카테고리 전체 영상 표시")
+        self._local_hdr.setToolTip(tr("클릭: 카테고리 전체 영상 표시"))
         self._local_hdr.clicked.connect(self._on_local_root_clicked)
         local_hdr_row.addWidget(self._local_hdr, stretch=1)
         local_cat_btn = QToolButton()
         local_cat_btn.setText("🏷+")
-        local_cat_btn.setToolTip("새 카테고리 만들기")
+        local_cat_btn.setToolTip(tr("새 카테고리 만들기"))
         local_cat_btn.setFixedHeight(18)
         local_cat_btn.clicked.connect(lambda: self.add_category_req.emit(None))
         local_hdr_row.addWidget(local_cat_btn)
@@ -509,7 +510,7 @@ class _PlaylistPanel(QWidget):
         self._yt_toggle_btn = QToolButton()
         self._yt_toggle_btn.setObjectName("yt_toggle_arrow")
         self._yt_toggle_btn.setText("▸")   # 접힘 상태 표시(펼치면 ▾)
-        self._yt_toggle_btn.setToolTip("YouTube 구독 섹션 펼치기/접기")
+        self._yt_toggle_btn.setToolTip(tr("YouTube 구독 섹션 펼치기/접기"))
         self._yt_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._yt_toggle_btn.setAutoRaise(True)
         self._yt_toggle_btn.setFixedWidth(18)
@@ -520,19 +521,19 @@ class _PlaylistPanel(QWidget):
         self._yt_title_btn.setObjectName("playlist_section_header_yt_btn")
         self._yt_title_btn.setFlat(True)
         self._yt_title_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._yt_title_btn.setToolTip("클릭 — YouTube 재생목록 가져오기")
+        self._yt_title_btn.setToolTip(tr("클릭 — YouTube 재생목록 가져오기"))
         self._yt_title_btn.clicked.connect(self.import_yt_req)
         yt_bar_row.addWidget(self._yt_title_btn, stretch=1)
         # 동기화 버튼 (순환 화살표 ⟳)
         yt_sync_btn = QToolButton()
         yt_sync_btn.setText("⟳")
-        yt_sync_btn.setToolTip("YouTube 재생목록 전체 동기화")
+        yt_sync_btn.setToolTip(tr("YouTube 재생목록 전체 동기화"))
         yt_sync_btn.setFixedHeight(18)
         yt_sync_btn.clicked.connect(self.sync_all_yt_req)
         yt_bar_row.addWidget(yt_sync_btn)
         yt_folder_btn = QToolButton()
         yt_folder_btn.setText("📂+")
-        yt_folder_btn.setToolTip("새 YouTube 폴더 만들기")
+        yt_folder_btn.setToolTip(tr("새 YouTube 폴더 만들기"))
         yt_folder_btn.setFixedHeight(18)
         yt_folder_btn.clicked.connect(lambda: self.folder_create_req.emit("youtube"))
         yt_bar_row.addWidget(yt_folder_btn)
@@ -561,11 +562,11 @@ class _PlaylistPanel(QWidget):
         blockSignals로 감싸 currentItemChanged가 선택 핸들러를 재실행하지 않게 한다
         (select_snapshot이 쓰는 것과 같은 패턴).
         """
-        for tr in self.trees:
-            tr.blockSignals(True)
-            tr.clearSelection()
-            tr.setCurrentItem(None)
-            tr.blockSignals(False)
+        for tree_ in self.trees:
+            tree_.blockSignals(True)
+            tree_.clearSelection()
+            tree_.setCurrentItem(None)
+            tree_.blockSignals(False)
 
     def _on_local_root_clicked(self) -> None:
         """"로컬" 헤더 클릭 — 트리 선택을 지우고 헤더를 활성으로 표시한다."""
@@ -670,13 +671,13 @@ class _PlaylistPanel(QWidget):
         일치 노드를 찾은 트리만 선택하고 나머지 트리는 선택 해제한다.
         """
         matched = None
-        for tr in self.trees:
-            if matched is None and tr.select_for_snapshot(snap):
-                matched = tr
-        for tr in self.trees:
-            if tr is not matched:
-                tr.blockSignals(True)
-                tr.clearSelection()
-                tr.blockSignals(False)
+        for tree_ in self.trees:
+            if matched is None and tree_.select_for_snapshot(snap):
+                matched = tree_
+        for tree_ in self.trees:
+            if tree_ is not matched:
+                tree_.blockSignals(True)
+                tree_.clearSelection()
+                tree_.blockSignals(False)
         # 어떤 트리 노드와도 일치하지 않으면 "로컬" 루트 화면이다.
         self.set_local_root_active(matched is None)
