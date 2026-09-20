@@ -95,13 +95,13 @@ def normalize_name(name: str) -> str:
     return " ".join((name or "").split())[:MAX_NAME_LEN]
 
 
-def unique_name(name: str, existing: list[str]) -> str:
+def unique_name(name: str, existing: list[str], *, fallback: str = "") -> str:
     """같은 이름이 있으면 뒤에 번호를 붙인다.
 
     이름을 거절하고 다시 묻는 대신 붙여 준다 — 저장은 곁가지 행동이라, 거기서
     막아 세우면 하려던 일(영상 찾기)의 흐름이 끊긴다.
     """
-    base = normalize_name(name) or "저장된 검색"
+    base = normalize_name(name) or fallback
     taken = {n for n in existing}
     if base not in taken:
         return base

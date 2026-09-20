@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from domain.shared.messages import Message
+
 STATUS_OK = "ok"
 STATUS_REMOVED = "removed"
 STATUS_PRIVATE = "private"
@@ -31,7 +33,7 @@ class AvailabilityResult:
     """영상 1건의 확인 결과."""
 
     status: str
-    detail: str = ""
+    detail: Message | None = None
 
     @property
     def is_missing(self) -> bool:
@@ -48,7 +50,7 @@ def classify_http_status(code: int) -> AvailabilityResult:
     if code == 200:
         return AvailabilityResult(STATUS_OK)
     if code == 404:
-        return AvailabilityResult(STATUS_REMOVED, "원본이 삭제되었거나 주소가 바뀌었습니다")
+        return AvailabilityResult(STATUS_REMOVED, Message.of("availability.removed"))
     if code in (401, 403):
-        return AvailabilityResult(STATUS_PRIVATE, "비공개로 바뀌어 볼 수 없습니다")
-    return AvailabilityResult(STATUS_UNKNOWN, f"응답 코드 {code}")
+        return AvailabilityResult(STATUS_PRIVATE, Message.of("availability.private"))
+    return AvailabilityResult(STATUS_UNKNOWN, Message.of("availability.http_code", code=code))

@@ -36,6 +36,7 @@ from gui.widgets.player.constants import (
     _QUALITY_OPTIONS,
 )
 from gui.text.labels import quality_menu_label
+from gui.text.labels import subtitle_track_label
 
 logger = logging.getLogger(__name__)
 
@@ -442,7 +443,7 @@ class _ControlBar(QWidget):
             group.addAction(off)
             sub.addSeparator()
             for track in self._video_tracks:
-                act = sub.addAction(track.label)
+                act = sub.addAction(subtitle_track_label(track))
                 act.setCheckable(True)
                 act.setChecked(self._vsub_keys[slot] == track.key)
                 act.triggered.connect(

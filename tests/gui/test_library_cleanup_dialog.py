@@ -13,6 +13,7 @@ from uuid import uuid4
 from application.library.maintenance import BrokenDownloadDTO, DuplicateGroupDTO
 from domain.library.duplicates import DUPLICATE_EXACT, DUPLICATE_SIMILAR
 from gui.dialogs.library_cleanup_dialog import LibraryCleanupDialog
+from domain.shared.messages import Message
 
 
 def _vid(title="영상", url="https://youtu.be/x"):
@@ -113,7 +114,7 @@ from application.library.maintenance import MissingSourceDTO  # noqa: E402
 def _missing(title="사라진 영상", status="removed"):
     return MissingSourceDTO(
         video_id=uuid4(), title=title, url="https://youtu.be/x",
-            status=status, detail="원본이 삭제되었습니다",
+            status=status, detail=Message.of("availability.removed"),
     )
 
 

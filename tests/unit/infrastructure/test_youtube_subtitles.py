@@ -85,15 +85,33 @@ class TestListTracks:
 
 
 class TestLabels:
-    def test_자동_생성임을_표시한다(self):
+    """메뉴 이름은 인프라가 만들지 않는다 — `gui/text/labels.py` 로 옮겼다."""
+
+    def test_트랙은_원시_데이터만_싣는다(self):
         track = SubtitleTrackInfo("en", "English", "u", "json3", auto=True)
 
-        assert "자동 생성" in track.label
+        assert not hasattr(track, "label")
+        assert track.auto is True and track.name == "English"
+
+    def test_자동_생성임을_표시한다(self):
+        from gui.text.labels import subtitle_track_label
+
+        track = SubtitleTrackInfo("en", "English", "u", "json3", auto=True)
+        assert "자동 생성" in subtitle_track_label(track)
+
+    def test_이름에_한글이_있는지_보지_않는다(self):
+        """YouTube 가 준 이름은 사용자 계정 언어를 따라간다 — 믿을 수 없는 판정이었다."""
+        from gui.text.labels import subtitle_track_label
+
+        track = SubtitleTrackInfo("ko", "한국어 (자동 생성됨)", "u", "json3", auto=True)
+        assert subtitle_track_label(track).count("자동") == 2   # 원본 이름 + 우리 표시
 
     def test_번역_대상을_표시한다(self):
-        track = translated(SubtitleTrackInfo("en", "English", "u", "json3", True), "ko")
+        from gui.text.labels import subtitle_track_label
 
-        assert "한국어" in track.label and "번역" in track.label
+        track = translated(SubtitleTrackInfo("en", "English", "u", "json3", True), "ko")
+        label = subtitle_track_label(track)
+        assert "한국어" in label and "번역" in label
 
     def test_원본과_번역본은_다른_트랙으로_구분된다(self):
         base = SubtitleTrackInfo("en", "English", "u", "json3", True)

@@ -36,6 +36,7 @@ from gui.themes.manager import ThemeManager
 from gui.workers import track_thread
 
 from gui.themes.colors import sem, tok
+from enum import Enum
 from gui.text.formats import (
     format_compact_count,
     format_duration,
@@ -91,6 +92,19 @@ def _fmt_duration(sec: int | None) -> str:
 def _relative_time(date_str: str | None) -> str:
     """구현은 `gui/text/formats.py` 하나뿐이다(라이브러리 카드와 같은 잣대)."""
     return format_relative_time(date_str)
+
+
+
+class _FeedStatus(Enum):
+    """상태 띠가 지금 무엇을 보이고 있는가.
+
+    문구가 아니라 이 값으로 판정한다 — 번역해도 흐름이 깨지지 않게.
+    """
+
+    IDLE = "idle"
+    LOADING = "loading"      # 추천 받는 중
+    MORE = "more"            # 더 불러오는 중
+    CUSTOM = "custom"        # 밖에서 넣은 문구 — 로딩이 끝나도 지우지 않는다
 
 
 # ---------------------------------------------------------------------------
@@ -698,6 +712,7 @@ class RecommendStrip(QWidget):
 
         bar_row.addStretch(1)
 
+        self._status_kind = _FeedStatus.IDLE
         self._status_lbl = QLabel()
         self._status_lbl.setFont(fh)
         bar_row.addWidget(self._status_lbl)
@@ -766,6 +781,17 @@ class RecommendStrip(QWidget):
         self.set_expanded(not self._expanded)
 
     def set_status(self, text: str) -> None:
+        """밖에서 넣는 문구 — 로딩 표시가 끝나도 이건 지우지 않는다."""
+        self._set_status(_FeedStatus.CUSTOM, text)
+
+    def _set_status(self, kind: "_FeedStatus", text: str = "") -> None:
+        """**무엇을 보이고 있는지를 값으로 들고 있는다.**
+
+        예전에는 `if self._status_lbl.text() == "추천 받는 중…"` 처럼 위젯의 표시
+        텍스트를 읽어 상태를 판정했다. 문구를 번역하면 그 판정이 조용히 어긋나
+        로딩 표시가 영영 지워지지 않는다(무한 스피너).
+        """
+        self._status_kind = kind
         self._status_lbl.setText(text)
 
     # 검색어로 채워졌는지 목록 기반 추천인지 헤더에서 바로 알 수 있게 한다.
@@ -778,9 +804,9 @@ class RecommendStrip(QWidget):
     def set_loading(self, loading: bool) -> None:
         self._refresh_btn.setEnabled(not loading)
         if loading:
-            self._status_lbl.setText("추천 받는 중…")
-        elif self._status_lbl.text() == "추천 받는 중…":
-            self._status_lbl.setText("")
+            self._set_status(_FeedStatus.LOADING, "추천 받는 중…")
+        elif self._status_kind is _FeedStatus.LOADING:
+            self._set_status(_FeedStatus.IDLE)
 
     def count(self) -> int:
         return len(self._cards)
@@ -790,9 +816,9 @@ class RecommendStrip(QWidget):
         """추가분 조회 중 표시. 조회 중에는 다시 요청하지 않는다."""
         self._more_busy = loading
         if loading:
-            self._status_lbl.setText("더 불러오는 중…")
-        elif self._status_lbl.text() == "더 불러오는 중…":
-            self._status_lbl.setText("")
+            self._set_status(_FeedStatus.MORE, "더 불러오는 중…")
+        elif self._status_kind is _FeedStatus.MORE:
+            self._set_status(_FeedStatus.IDLE)
 
     def set_more_exhausted(self, exhausted: bool) -> None:
         """더 받을 게 없으면 스크롤할 때마다 헛되이 조회하지 않는다."""

@@ -72,22 +72,21 @@ class DownloadPreset:
             return None
 
 
+# 빌트인 프리셋의 **이름은 여기 없다** — `gui/text/labels.py` 의
+# `BUILTIN_PRESET_LABELS`. key 가 이미 안정적인 식별자다.
 BUILTIN_PRESETS: tuple[DownloadPreset, ...] = (
     DownloadPreset(
         key=f"{BUILTIN_PREFIX}archive",
-        name="보관용 (1080p·자막·챕터)",
         quality="1080p", fmt="mp4", subtitle_langs="ko,en",
         embed_subtitles=True, embed_thumbnail=True, embed_chapters=True,
     ),
     DownloadPreset(
         key=f"{BUILTIN_PREFIX}music",
-        name="음악 (m4a·표지·태그)",
         quality="best", fmt="m4a", subtitle_langs="",
         embed_subtitles=False, embed_thumbnail=True, embed_chapters=False,
     ),
     DownloadPreset(
         key=f"{BUILTIN_PREFIX}light",
-        name="가볍게 (720p·광고 잘라내기)",
         quality="720p", fmt="mp4", subtitle_langs="",
         embed_subtitles=False, embed_thumbnail=False, embed_chapters=False,
         sponsorblock_remove=True,
@@ -99,9 +98,13 @@ def normalize_name(name: str) -> str:
     return " ".join((name or "").split())[:MAX_NAME_LEN]
 
 
-def unique_name(name: str, existing: list[str]) -> str:
-    """겹치면 번호를 붙인다 — 저장을 거절하면 사용자가 뭘 고쳐야 할지 모른다."""
-    base = normalize_name(name) or "내 프리셋"
+def unique_name(name: str, existing: list[str], *, fallback: str = "") -> str:
+    """겹치면 번호를 붙인다 — 저장을 거절하면 사용자가 뭘 고쳐야 할지 모른다.
+
+    이름은 **사용자 데이터로 저장된다** — 언어를 바꿨다고 저장된 행 이름이 바뀌면
+    안 되므로, 빈 이름의 기본값은 화면이 준다.
+    """
+    base = normalize_name(name) or fallback
     taken = set(existing)
     if base not in taken:
         return base

@@ -27,15 +27,16 @@ class TestBuiltins:
     def test_전부_내장으로_표시된다(self):
         assert all(p.is_builtin for p in BUILTIN_PRESETS)
 
-    def test_이름과_키가_모두_있다(self):
-        assert all(p.name and p.key for p in BUILTIN_PRESETS)
+    def test_키가_모두_있다(self):
+        """빌트인 이름은 도메인이 갖지 않는다 — `gui/text/labels.py` 가 갖는다."""
+        assert all(p.key for p in BUILTIN_PRESETS)
 
     def test_키가_겹치지_않는다(self):
         keys = [p.key for p in BUILTIN_PRESETS]
         assert len(keys) == len(set(keys))
 
     def test_음악은_음원_형식이다(self):
-        music = next(p for p in BUILTIN_PRESETS if "음악" in p.name)
+        music = next(p for p in BUILTIN_PRESETS if p.key.endswith("music"))
         assert music.fmt in ("m4a", "mp3")
         assert music.subtitle_langs == ""      # 음원에 자막은 쓸모가 없다
 
@@ -49,7 +50,12 @@ class TestBuiltins:
 
 class TestSerialization:
     def test_왕복해도_같다(self):
-        original = BUILTIN_PRESETS[0]
+        """저장되는 것은 **사용자 프리셋**뿐이다 — 빌트인은 코드 상수라 직렬화하지 않고,
+        이름도 갖지 않는다(`gui/text/labels.py` 가 갖는다)."""
+        original = DownloadPreset(
+            key="user:1", name="내 것", quality="720p", fmt="mp4",
+            subtitle_langs="ko", embed_subtitles=True,
+        )
         assert DownloadPreset.from_payload(original.to_payload()) == original
 
     def test_이름이_없으면_버린다(self):
@@ -81,7 +87,7 @@ class TestNames:
         assert unique_name("내 것", ["내 것"]) == "내 것 2"
 
     def test_비면_기본값을_준다(self):
-        assert unique_name("  ", []) == "내 프리셋"
+        assert unique_name("  ", [], fallback="내 프리셋") == "내 프리셋"
 
 
 class TestMerge:

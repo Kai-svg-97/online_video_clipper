@@ -33,6 +33,7 @@ from application.library.dtos import FailedDownloadInfoDTO
 from gui.themes.colors import sem
 from gui.toast import show_toast
 from gui.text.labels import convert_preset_description, convert_preset_name
+from gui.text.labels import chapter_title
 
 
 # ── 분할된 부품 (gui/panels/detail/*) ─────────────────────────────
@@ -361,8 +362,10 @@ class FilesTabMixin:
         hint.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         self._chapter_layout.addWidget(hint)
 
-        for chapter in chapters:
-            check = QCheckBox(f"{_fmt_hms(chapter.start_sec)}  {chapter.title}")
+        for i, chapter in enumerate(chapters, start=1):
+            check = QCheckBox(
+                f"{_fmt_hms(chapter.start_sec)}  {chapter_title(chapter.title, i)}"
+            )
             check.setChecked(True)
             check.setToolTip(
                 f"{_fmt_hms(chapter.start_sec)} ~ {_fmt_hms(chapter.end_sec)} "

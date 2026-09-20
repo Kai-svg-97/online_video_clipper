@@ -107,7 +107,8 @@ def parse_chapters(description: str, duration_sec: float) -> list[Chapter]:
         else:
             break  # 끝을 모르는 마지막 구간은 버린다
         chapters.append(
-            Chapter(title=title or f"챕터 {i + 1}", start_sec=float(start), end_sec=float(end))
+            # 제목이 없으면 **비워 둔다** — "챕터 3" 같은 이름을 붙이는 일은 화면 몫이다.
+            Chapter(title=title, start_sec=float(start), end_sec=float(end))
         )
 
     # 마지막을 버리고 나서 1개만 남으면 챕터로 볼 수 없다.

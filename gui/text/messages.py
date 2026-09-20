@@ -79,6 +79,11 @@ _TEMPLATES: dict[str, str] = {
     "update.badge.failed": "⟳ v{version}",
     "update.failed_tooltip": "내려받지 못했습니다: {reason}\n눌러서 다시 시도",
     "update.failed_tooltip_unknown": "내려받지 못했습니다: 알 수 없는 오류\n눌러서 다시 시도",
+
+    # ── 원본 확인 결과의 자세한 사유 ──────────────────────────────
+    "availability.removed": "원본이 삭제되었거나 주소가 바뀌었습니다",
+    "availability.private": "비공개로 바뀌어 볼 수 없습니다",
+    "availability.http_code": "응답 코드 {code}",
 }
 
 # 여러 조각을 한 줄로 이을 때 쓰는 구분자. 구분자도 언어 설정이라 여기 둔다.

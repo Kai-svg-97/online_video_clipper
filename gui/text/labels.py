@@ -138,3 +138,56 @@ def quality_badge_text(key: str) -> str:
     흩어져 있었다.
     """
     return "" if key == "auto" else key
+
+
+# ── 자막 트랙 ─────────────────────────────────────────────────────
+# 자동 번역 대상 언어 이름은 **자국어 표기**를 쓴다 — 영어 UI 사용자도 "日本語"를
+# 보는 편이 "Japanese"보다 고르기 쉽다(언어 선택기의 일반적인 관행이다).
+LANGUAGE_NAMES: dict[str, str] = {
+    "ko": "한국어",
+    "en": "English",
+    "ja": "日本語",
+    "zh-Hans": "中文(简体)",
+    "es": "Español",
+}
+
+
+def subtitle_track_label(track) -> str:
+    """자막 메뉴에 적는 이름.
+
+    **`auto` 플래그만 본다.** 예전에는 YouTube가 준 트랙 이름에 "자동"이 들어 있는지
+    검사했는데, 그 이름은 사용자의 YouTube 계정 언어를 따라가므로(영어 계정이면
+    "Korean (auto-generated)") 믿을 수 없는 판정이었다.
+    """
+    base = track.name or track.lang
+    if track.auto:
+        base = f"{base} (자동 생성)"
+    if track.translate_to:
+        target = LANGUAGE_NAMES.get(track.translate_to, track.translate_to)
+        base = f"{base} → {target} 번역"
+    return base
+
+
+# ── 빌트인 다운로드 프리셋 ────────────────────────────────────────
+# 사용자가 만든 프리셋의 이름은 **사용자 데이터**라 저장된 값을 그대로 쓴다.
+# 빌트인만 키가 고정이라 여기서 이름을 얹는다.
+BUILTIN_PRESET_LABELS: dict[str, str] = {
+    "builtin:archive": "보관용 (1080p·자막·챕터)",
+    "builtin:music": "음악 (m4a·표지·태그)",
+    "builtin:light": "가볍게 (720p·광고 잘라내기)",
+}
+
+# 이름을 비워 저장할 때 대신 쓰는 이름 — 도메인이 아니라 화면이 정한다.
+DEFAULT_PRESET_NAME = "내 프리셋"
+DEFAULT_SAVED_SEARCH_NAME = "저장된 검색"
+
+
+def download_preset_name(preset) -> str:
+    """빌트인은 표에서, 사용자 프리셋은 저장된 이름 그대로."""
+    return preset.name or BUILTIN_PRESET_LABELS.get(preset.key, preset.key)
+
+
+# ── 챕터 ──────────────────────────────────────────────────────────
+def chapter_title(title: str, index: int) -> str:
+    """제목 없는 챕터에 붙이는 이름. 도메인은 빈 제목을 그대로 둔다."""
+    return title or f"챕터 {index}"

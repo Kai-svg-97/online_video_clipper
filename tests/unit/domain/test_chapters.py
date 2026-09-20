@@ -34,9 +34,10 @@ class TestBasic:
         chapters = parse_chapters(desc, duration_sec=300)
         assert [(c.title, c.start_sec) for c in chapters] == [("인트로", 0.0), ("본론", 120.0)]
 
-    def test_제목이_없으면_번호를_붙인다(self):
+    def test_제목이_없으면_비워_둔다(self):
         chapters = parse_chapters("0:00\n1:00", duration_sec=120)
-        assert [c.title for c in chapters] == ["챕터 1", "챕터 2"]
+        # 번호를 붙이는 일("챕터 3")은 화면 몫이다 — `gui/text/labels.py`.
+        assert [c.title for c in chapters] == ["", ""]
 
 
 class TestRejection:

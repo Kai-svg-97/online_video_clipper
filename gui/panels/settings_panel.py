@@ -37,6 +37,7 @@ from version import __version__
 from gui.themes.colors import sem
 from gui.text.labels import transcribe_model_name, transcribe_model_note
 from gui.text.messages import render
+from gui.text.labels import DEFAULT_PRESET_NAME, download_preset_name
 
 
 # ── 분할된 부품 (gui/panels/settings/*) ─────────────────────────────
@@ -589,7 +590,7 @@ class SettingsPanel(QWidget):
         self._preset_combo = QComboBox()
         self._preset_combo.addItem("프리셋 없음 (아래 설정 그대로)", "")
         for preset in available_presets():
-            self._preset_combo.addItem(preset.name, preset.key)
+            self._preset_combo.addItem(download_preset_name(preset), preset.key)
         idx = self._preset_combo.findData(cfg.ACTIVE_PRESET_KEY or "")
         self._preset_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._preset_combo.setFixedWidth(240)
@@ -657,7 +658,7 @@ class SettingsPanel(QWidget):
         existing = [p.name for p in available_presets()]
         preset = DownloadPreset(
             key=f"user:{_uuid.uuid4().hex[:8]}",
-            name=unique_name(name, existing),
+            name=unique_name(name, existing, fallback=DEFAULT_PRESET_NAME),
             quality=quality_from_selector(self._quality_combo.currentData()),
             fmt=self._format_combo.currentText() or "mp4",
             subtitle_langs=self._sub_langs_edit.text().strip(),
@@ -668,7 +669,7 @@ class SettingsPanel(QWidget):
         )
         saved = list(cfg.DOWNLOAD_PRESETS or []) + [preset.to_payload()]
         self._save_setting("download_presets", saved)
-        self._preset_combo.addItem(preset.name, preset.key)
+        self._preset_combo.addItem(download_preset_name(preset), preset.key)
         self._preset_combo.setCurrentIndex(self._preset_combo.count() - 1)
 
     def _on_preset_delete(self) -> None:

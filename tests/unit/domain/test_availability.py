@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import pytest
+from domain.shared.messages import Message
 
 from domain.library.availability import (
     MISSING_STATUSES,
@@ -36,7 +37,8 @@ class TestClassify:
         assert classify_http_status(code).status == STATUS_UNKNOWN
 
     def test_확인_불가에는_응답_코드를_남긴다(self):
-        assert "503" in classify_http_status(503).detail
+        detail = classify_http_status(503).detail
+        assert detail == Message.of("availability.http_code", code=503)
 
 
 class TestMissing:

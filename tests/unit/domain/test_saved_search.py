@@ -118,4 +118,4 @@ class TestNames:
         assert unique_name("내 검색", existing) == "내 검색 4"
 
     def test_이름이_비면_기본값을_준다(self):
-        assert unique_name("   ", []) == "저장된 검색"
+        assert unique_name("   ", [], fallback="저장된 검색") == "저장된 검색"

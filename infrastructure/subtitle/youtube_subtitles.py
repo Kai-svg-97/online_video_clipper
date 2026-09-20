@@ -57,16 +57,11 @@ class SubtitleTrackInfo:
         """선택 상태 비교용 식별자 — 같은 언어의 원본/번역을 구분한다."""
         return f"{'auto' if self.auto else 'sub'}:{self.lang}:{self.translate_to}"
 
-    @property
-    def label(self) -> str:
-        """메뉴에 적는 이름."""
-        base = self.name or self.lang
-        if self.auto and "자동" not in base:
-            base = f"{base} (자동 생성)"
-        if self.translate_to:
-            target = dict(TRANSLATE_TARGETS).get(self.translate_to, self.translate_to)
-            base = f"{base} → {target} 번역"
-        return base
+    # 메뉴에 적는 이름은 여기서 만들지 않는다 — `gui/text/labels.py` 의
+    # `subtitle_track_label()`. 예전에는 `if self.auto and "자동" not in base` 로
+    # **YouTube가 준 트랙 이름에 한글이 들어 있는지** 검사했는데, 그 이름은 사용자의
+    # YouTube 계정 언어에 따라 "Korean (auto-generated)" 일 수도 있어 애초에 믿을 수
+    # 없는 판정이었다. 지금은 `auto` 플래그만 본다.
 
 
 def _is_translation(entry: dict) -> bool:
