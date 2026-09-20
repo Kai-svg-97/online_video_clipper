@@ -18,6 +18,7 @@
 """
 
 from __future__ import annotations
+from domain.shared.messages import Message
 
 from domain.monitoring.watch import (
     DEFAULT_INTERVAL_MIN,
@@ -100,13 +101,19 @@ class TestInterval:
 
 
 class TestSummary:
+    """**키와 값을 단언한다** — 문구는 화면 몫이다."""
+
     def test_제목_몇_개만_적고_나머지는_수로_줄인다(self):
-        text = summarize([f"영상 {i}" for i in range(10)], total=10)
-        assert text.count("\n") == NOTIFY_SAMPLE          # 제목 3줄 + 요약 1줄
-        assert "외 7개" in text
+        got = summarize([f"영상 {i}" for i in range(10)], total=10)
+        assert got.key == "watch.titles_and_rest"
+        assert got.as_dict()["rest"] == 7
+        assert got.as_dict()["titles"].count("\n") == NOTIFY_SAMPLE - 1   # 제목 3줄
 
     def test_적으면_전부_적는다(self):
-        assert summarize(["가", "나"], total=2) == "가\n나"
+        assert summarize(["가", "나"], total=2) == Message.of(
+            "watch.titles", titles="가\n나"
+        )
 
     def test_제목을_모르면_수만_알린다(self):
-        assert summarize(["", ""], total=2) == "새 영상 2개"
+        assert summarize(["", ""], total=2) == Message.of("watch.count_only", total=2)
+

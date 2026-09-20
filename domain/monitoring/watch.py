@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+from domain.shared.messages import Message
+
 # 감시 주기(분). 너무 촘촘하면 YouTube가 요청을 막고, 너무 뜸하면 감시의 뜻이 없다.
 DEFAULT_INTERVAL_MIN = 30
 MIN_INTERVAL_MIN = 10
@@ -76,11 +78,18 @@ def next_seen(current: list[str], seen: list[str], limit: int = SEEN_LIMIT) -> l
     return out
 
 
-def summarize(titles: list[str], total: int) -> str:
-    """알림 본문 — 제목 몇 개만 적고 나머지는 수로 줄인다."""
+def summarize(titles: list[str], total: int) -> Message:
+    """알림 본문 — 제목 몇 개만 적고 나머지는 수로 줄인다.
+
+    문장이 아니라 키+값을 돌려준다. "외 3개"는 언어마다 붙는 자리가 달라 조각을
+    이어 붙여서는 옮길 수 없다.
+    """
     shown = [t for t in titles[:NOTIFY_SAMPLE] if t]
     if not shown:
-        return f"새 영상 {total}개"
+        return Message.of("watch.count_only", total=total)
     body = "\n".join(shown)
     rest = total - len(shown)
-    return f"{body}\n… 외 {rest}개" if rest > 0 else body
+    if rest > 0:
+        return Message.of("watch.titles_and_rest", titles=body, rest=rest)
+    return Message.of("watch.titles", titles=body)
+

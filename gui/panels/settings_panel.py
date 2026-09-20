@@ -36,6 +36,7 @@ from gui.themes.tokens import PRESETS, ThemeTokens
 from version import __version__
 from gui.themes.colors import sem
 from gui.text.labels import transcribe_model_name, transcribe_model_note
+from gui.text.messages import render
 
 
 # ── 분할된 부품 (gui/panels/settings/*) ─────────────────────────────
@@ -886,7 +887,7 @@ class SettingsPanel(QWidget):
             start_hour=self._win_start_spin.value(),
             end_hour=self._win_end_spin.value(),
         )
-        self._window_hint.setText(window.describe())
+        self._window_hint.setText(render(window.describe()))
         for spin in (self._win_start_spin, self._win_end_spin):
             spin.setEnabled(self._window_check.isChecked())
 

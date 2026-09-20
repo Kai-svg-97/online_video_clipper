@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import time
 
+from domain.shared.messages import Message
+
 # 동시 실행 수의 허용 범위 — 설정 화면의 스핀박스와 같은 값을 쓴다.
 MIN_CONCURRENT = 1
 MAX_CONCURRENT = 8
@@ -41,15 +43,19 @@ class DownloadWindow:
             return start <= now.hour < end   # 같은 날 안에서 끝난다
         return now.hour >= start or now.hour < end   # 자정을 넘긴다
 
-    def describe(self) -> str:
-        """설정 화면에 보여줄 한 줄 설명."""
+    def describe(self) -> Message:
+        """설정 화면에 보여줄 한 줄.
+
+        **자정을 넘는 경우를 조각(`" (다음 날)"`)으로 끼워 넣지 않고 키를 나눈다.**
+        언어가 바뀌면 어순이 달라져 조각을 꽂을 자리가 없기 때문이다.
+        """
         if not self.enabled:
-            return "언제든 받습니다"
+            return Message.of("schedule.always")
         start, end = self.start_hour % 24, self.end_hour % 24
         if start == end:
-            return "하루 종일 받습니다"
-        crossing = " (다음 날)" if start > end else ""
-        return f"{start:02d}:00 ~ {end:02d}:00{crossing} 에만 받습니다"
+            return Message.of("schedule.all_day")
+        key = "schedule.window_crossing" if start > end else "schedule.window"
+        return Message.of(key, start=start, end=end)
 
 
 def clamp_concurrent(value: int) -> int:

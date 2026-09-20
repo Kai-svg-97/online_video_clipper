@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import time
 
 import pytest
+from domain.shared.messages import Message
 
 from domain.download.schedule import (
     MAX_CONCURRENT,
@@ -72,16 +73,20 @@ class TestFullDay:
 
 class TestDescribe:
     def test_꺼짐(self):
-        assert "언제든" in DownloadWindow().describe()
+        assert DownloadWindow().describe() == Message.of("schedule.always")
 
     def test_같은_날(self):
-        assert DownloadWindow(True, 9, 18).describe().startswith("09:00 ~ 18:00")
+        assert DownloadWindow(True, 9, 18).describe() == Message.of(
+            "schedule.window", start=9, end=18
+        )
 
     def test_자정을_넘기면_그렇게_알린다(self):
-        assert "다음 날" in DownloadWindow(True, 23, 7).describe()
+        assert DownloadWindow(True, 23, 7).describe() == Message.of(
+            "schedule.window_crossing", start=23, end=7
+        )
 
     def test_하루_종일(self):
-        assert "하루 종일" in DownloadWindow(True, 5, 5).describe()
+        assert DownloadWindow(True, 5, 5).describe() == Message.of("schedule.all_day")
 
 
 class TestConcurrency:

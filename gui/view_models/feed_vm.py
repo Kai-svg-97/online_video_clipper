@@ -19,6 +19,7 @@ from application.library.playlist_queries import (
 )
 
 from typing import TYPE_CHECKING
+from gui.text.messages import render
 if TYPE_CHECKING:
     from infrastructure.auth.youtube_auth import YouTubeAuthService
 
@@ -229,7 +230,7 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
             return
         by_url = {i.url: i for i in items or []}
         titles = [getattr(by_url.get(u), "title", "") for u in fresh]
-        self.new_videos_found.emit(len(fresh), summarize(titles, len(fresh)))
+        self.new_videos_found.emit(len(fresh), render(summarize(titles, len(fresh))))
 
     def refresh(self, limit: int = 100, silent: bool = False) -> None:
         """전체 구독 피드를 가져온다. silent=True면 스피너 없이 조용히 갱신한다."""

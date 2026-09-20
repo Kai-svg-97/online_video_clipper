@@ -48,6 +48,17 @@ _TEMPLATES: dict[str, str] = {
     "transcribe.under_a_minute": "1분 미만",
     "transcribe.about_minutes": "약 {minutes}분",
     "transcribe.about_hours": "약 {hours}시간 {minutes}분",
+
+    # ── 받는 시간대 ───────────────────────────────────────────────
+    "schedule.always": "언제든 받습니다",
+    "schedule.all_day": "하루 종일 받습니다",
+    "schedule.window": "{start:02d}:00 ~ {end:02d}:00 에만 받습니다",
+    "schedule.window_crossing": "{start:02d}:00 ~ {end:02d}:00 (다음 날) 에만 받습니다",
+
+    # ── 구독 채널 새 영상 알림 ────────────────────────────────────
+    "watch.count_only": "새 영상 {total}개",
+    "watch.titles": "{titles}",
+    "watch.titles_and_rest": "{titles}\n… 외 {rest}개",
 }
 
 # 여러 조각을 한 줄로 이을 때 쓰는 구분자. 구분자도 언어 설정이라 여기 둔다.
