@@ -186,6 +186,8 @@ class SettingsPanel(QWidget):
         layout.addLayout(header_row)
         layout.addSpacing(20)
 
+        self._build_help_section(layout)
+        self._add_divider(layout)
         self._build_theme_section(layout)
         self._add_divider(layout)
         self._build_paths_section(layout)
@@ -214,6 +216,35 @@ class SettingsPanel(QWidget):
         sep.setStyleSheet(f"color: {_t().border};")
         layout.addWidget(sep)
         layout.addSpacing(24)
+
+    def _build_help_section(self, layout) -> None:
+        """도움말 — 상세 설명서로 가는 길. F1과 같은 곳을 연다.
+
+        설정은 "어디서 찾지?"를 가장 먼저 열어 보는 화면이라 맨 위에 둔다.
+        """
+        label = QLabel("도움말")
+        label.setStyleSheet(
+            "font-size: 9px; font-weight: 600; letter-spacing: 0.8px; "
+            f"text-transform: uppercase; color: {_t().text_muted}; margin-bottom: 8px;"
+        )
+        layout.addWidget(label)
+        hint = QLabel(
+            "화면별 사용법과 화면 갈무리를 담은 상세 설명서를 기본 브라우저로 엽니다. "
+            "어느 화면에서든 F1 을 눌러도 같은 문서가 열립니다."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
+        layout.addWidget(hint)
+        button = QPushButton("상세 설명서 열기  (F1)")
+        button.setToolTip("상세 설명서를 기본 브라우저로 엽니다 (F1)")
+        button.clicked.connect(self._open_manual)
+        layout.addWidget(button)
+        layout.addSpacing(4)
+
+    def _open_manual(self) -> None:
+        from gui.help import open_manual  # noqa: PLC0415
+
+        open_manual()
 
     def _build_theme_section(self, layout) -> None:
         """테마 프리셋 격자."""

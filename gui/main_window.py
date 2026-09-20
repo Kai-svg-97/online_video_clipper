@@ -513,6 +513,7 @@ class MainWindow(QMainWindow):
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, False)
             self._title_bar.hide()
         self._setup_signals()
+        self._setup_help_shortcut()
         self._setup_clipboard_monitoring()
         # 첫 목록 조회가 끝난 뒤에 시작한다 — 시작 직후는 디스크가 가장 바쁘다.
         QTimer.singleShot(3000, self._start_db_backup)
@@ -630,6 +631,23 @@ class MainWindow(QMainWindow):
         self._add_progress.setFixedHeight(14)
         self._add_progress.hide()
         self.statusBar().addPermanentWidget(self._add_progress)
+
+    def _setup_help_shortcut(self) -> None:
+        """F1 — 상세 설명서를 기본 브라우저로 연다.
+
+        창 전체에 거는 몇 안 되는 단일 키다. 플레이어가 쓰는 단일 키(Space·J·K·L…)와
+        겹치지 않고, 어느 화면에서 눌러도 같은 뜻이어야 하는 키라 창 범위로 둔다.
+        """
+        from PyQt6.QtGui import QKeySequence, QShortcut  # noqa: PLC0415
+
+        self._help_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
+        # 람다가 아니라 바운드 메서드로 연결한다 — 창이 사라지면 Qt가 끊어 준다.
+        self._help_shortcut.activated.connect(self._open_manual)
+
+    def _open_manual(self) -> None:
+        from gui.help import open_manual  # noqa: PLC0415
+
+        open_manual()
 
     def _setup_signals(self) -> None:
         lp = self._library_page.library_panel()

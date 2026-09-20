@@ -23,6 +23,10 @@ a = Analysis(
     datas=[
         ("../assets",  "assets"),
         ("../db",      "db"),
+        # 상세 설명서(F1·설정 메뉴). 번들에 없으면 `gui/help.py`가 GitHub 문서로
+        # 보내는데, 그쪽은 이미 다음 버전을 설명하고 있을 수 있고 오프라인에서는
+        # 아예 열리지 않는다. `scripts/build_manual.py`가 만들어 두어야 한다.
+        ("../docs/manual", "docs/manual"),
         (_oauth_src,   "config"),
         *collect_data_files("yt_dlp"),
         *collect_data_files("PyQt6"),

@@ -16,8 +16,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# YouTube 고화질(>360p)은 영상+오디오가 분리돼 ffmpeg 병합이 필요하다.
+# YouTube 고화질(>360p)은 영상+오디오가 분리돼 ffmpeg로 합쳐야 한다.
 # Windows Media Foundation 호환을 위해 avc1(H.264)+m4a(AAC)를 우선 선택한다.
+#
+# 합치는 방법은 두 가지이고, 기본은 **실시간 remux**다(`infrastructure/streaming/`):
+# 로컬 중계로 흘리며 합치므로 첫 프레임까지 1초 안쪽이고 전체를 받지 않는다.
+# 그게 실패할 때만 예전 방식(전체를 받아 임시 파일로 만든 뒤 재생)으로 떨어진다.
 def _merge_fmt(h: int) -> str:
     return (
         f"bestvideo[height<={h}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
@@ -53,9 +57,16 @@ _PROBE_TIMEOUT = (5, 8)
 # 1회로 묶는 이유: 코덱 미지원처럼 다시 받아도 똑같이 실패하는 원인에서 무한 반복을 막는다.
 _MAX_STREAM_RETRIES = 1
 
-# (메뉴 라벨, yt-dlp 포맷, 버튼 단축 라벨, merge: 병합 필요 여부)
+# (메뉴 라벨, yt-dlp 포맷, 버튼 단축 라벨, merge: 영상+오디오를 합쳐야 하는지)
+#
+# **기본값이 왜 1080p인가**: 예전 기본은 `best[ext=mp4]/best`였는데, yt-dlp에서
+# `best`는 "가장 좋은 **muxed** 포맷"이고 YouTube가 내주는 muxed는 itag 18(360p)
+# 하나뿐이다(실측: 33개 포맷 중 muxed 1개). 즉 그 기본값은 원본이 4K든 **항상
+# 360p**였다 — "자동"이라는 라벨이 지키지 못할 약속을 하고 있었다. 실시간 remux로
+# 고화질도 즉시 시작되므로 기본을 1080p로 올린다. 저사양에서 버거우면 메뉴에서
+# 낮추면 되고, 그 선택은 세션 동안 유지된다(`_last_quality_fmt`).
 _QUALITY_OPTIONS = [
-    ("자동 (빠른 재생)", "best[ext=mp4]/best", "자동",  False),
+    ("자동 (최고 화질)",  _merge_fmt(1080),     "자동",  True),
     ("1080p",           _merge_fmt(1080),     "1080p", True),
     ("720p",            _merge_fmt(720),      "720p",  True),
     ("480p",            _merge_fmt(480),      "480p",  True),
@@ -66,6 +77,11 @@ _QUALITY_OPTIONS = [
 _DEFAULT_QUALITY_FMT = _QUALITY_OPTIONS[0][1]
 
 _DEFAULT_QUALITY_MERGE = _QUALITY_OPTIONS[0][3]
+
+# 합치는 경로가 전부 실패했을 때 마지막으로 떨어지는 곳 — 합치지 않고 그대로 트는
+# 단일 muxed 포맷이다. 기본 화질과 **같은 상수를 쓰면 안 된다**: 기본이 합침 포맷이
+# 된 뒤로는 "합치기 실패 → 다시 합치기 포맷" 이 되어 폴백이 뜻을 잃는다.
+_FALLBACK_STREAM_FMT = "best[ext=mp4]/best"
 
 # 재생 품질 단축 라벨 → 세로 해상도 ("자동"은 제한 없음)
 _QUALITY_HEIGHTS: dict[str, int] = {

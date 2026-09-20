@@ -13,6 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 파일별 책임, 레이어 구조, `gui/` 파일 맵 | [`docs/architecture/file-map.md`](docs/architecture/file-map.md) |
 | 왜 이렇게 만들었나, 실제로 밟은 함정 | [`docs/architecture/design-decisions.md`](docs/architecture/design-decisions.md) |
 | 메모리 프로파일링 실측값 | [`docs/architecture/memory-profiling.md`](docs/architecture/memory-profiling.md) |
+| 사용자용 상세 설명서(F1이 여는 문서) | [`docs/manual.md`](docs/manual.md) |
 | 기능 요구사항 | `planning/youtube_content_manager_prd.md` |
 | DDD 설계(컨텍스트·아그리게이트) | `planning/ddd_design.md` |
 | 빌드·패키징 계획·체크리스트 | `planning/packaging_plan.md` |
@@ -200,6 +201,42 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
 - 백그라운드 워커를 만드는 뷰모델은 `shutdown()`을 제공하고 `MainWindow.closeEvent`에서 호출해 종료 시 워커를 정리한다. yt-dlp 다운로드처럼 협조적 취소 훅이 없으면 `terminate()` 후 `wait()`로 종료를 보장한다.
 - **`track_thread` 없이 리스트 하나로만 QThread를 붙드는 것은 이 규칙을 지킨 게 아니다.** `MainWindow.closeEvent`의 `wait_all(3000)`은 `gui/workers.py`의 `_RUNNING` 레지스트리만 안다 — 자체 리스트(GC 방지용)에만 담아 둔 워커는 종료 시 기다려지지 않는다. `gui/panels/library/mixins/video_list.py:_start_thumb_preload`의 `_ThumbBgLoader`가 `_active_thumb_loaders`(취소용 리스트)에만 담겨 있어 이 구멍이 있었다(2026-08 메모리 최적화 점검에서 발견) — `track_thread(loader)`를 추가로 호출해 고쳤다. 자체 리스트로 다른 목적(취소·중복 방지)을 관리하더라도, **실행 중 QThread라면 반드시 `track_thread`도 함께 호출**한다. 회귀 테스트: `tests/gui/test_memory_cleanup.py::TestWorkerReferenceRelease`.
 
+## 재생 스트림 규칙 (mandatory)
+
+- **재생 위치를 `self._player.position()`으로 직접 읽지 않는다 — `position_ms`를 쓴다.**
+  실시간 remux 스트림은 seek 할 때마다 ffmpeg를 그 지점에서 새로 띄우므로 재생기가
+  **매번 0부터 다시 센다**. 영상 기준 위치는 `재생기 위치 + _stream_offset_ms`이고,
+  아직 반영되지 않은 seek이 있으면 그 목표가 답이다. 직접 읽으면 자막 싱크·이어보기·
+  SponsorBlock이 전부 엉뚱한 지점을 가리킨다.
+- **`setPosition`을 직접 부르지 않는다 — `_seek_to`를 거친다.** remux 스트림은 재생기가
+  seek을 못 한다(`isSeekable()`이 False다). `_seek_to`가 소스 종류를 판정해 일반 소스는
+  재생기에게 맡기고, remux는 `?ss=` 로 새 연결을 연다. 새 seek 경로를 만들면서 이 함수를
+  건너뛰면 그 경로만 조용히 죽는다.
+- **길이는 `_effective_duration()`으로 묻는다.** 파이프로 흘리는 fragmented mp4에는 길이
+  정보가 없어 `QMediaPlayer.duration()`이 0/-1이다. 진행 막대를 재생기 신호에 직접
+  연결하면 막대가 멎는다 — 전체화면·PiP 바를 `durationChanged`에 직접 잇던 것이 이
+  경우였고, 지금은 `_publish_duration`이 한 곳에서 팬아웃한다.
+- **끊긴 스트림을 '끝까지 봤다'로 취급하지 않는다.** 상위가 조각을 거부하면 **중간에서도**
+  `EndOfMedia`가 온다. 그대로 믿으면 재생목록이 멋대로 다음 곡으로 넘어간다 — 끝 근처가
+  아니면 이어 받거나 방식을 바꾼다(`_fall_back_to_merge`).
+- **중계(`infrastructure/streaming/`)에서 403을 만나면 두 갈래로 나눈다.** 아직 성공한 적
+  없는 크기면 조각을 줄이고, **통하던 크기가 거부되면 쉬었다 같은 크기로 재시도**한다.
+  둘을 섞으면 일시적 거부에서 조각이 계속 작아지고 요청이 잦아져 더 나빠진다(실측:
+  seek 첫 바이트 1초대 → 22초).
+- **`Content-Length`를 약속한 뒤 조용히 돌아가지 않는다.** 재생기가 남은 바이트를 영원히
+  기다린다(실측: 요청이 타임아웃까지 멈춤). 못 채우면 연결을 끊어 즉시 알린다.
+
+## 도움말 문서 규칙 (mandatory)
+
+- **설명서 원본은 `docs/manual.md` 하나다.** 고쳤으면 `python scripts/build_manual.py`로
+  `docs/manual/index.html`을 다시 만든다 — F1과 설정 → 도움말이 여는 것이 그 HTML이고,
+  빌드가 그 파일을 번들한다(`packaging/online_video_clipper.spec`).
+- **화면이 바뀌면 `python scripts/capture_screenshots.py`로 갈무리를 다시 만든다.** 손으로
+  찍지 않는다 — 사용자의 실제 라이브러리가 찍힐 수 있고 조용히 낡는다.
+- **설명서에 새 마크다운 문법을 쓰기 전에 렌더러가 그것을 아는지 확인한다.** 모르는 문법은
+  오류 없이 **글자 그대로** 나온다(`| 키 | 동작 |`이 표가 아니라 문장으로 보이는 식).
+  `tests/unit/test_build_manual.py`가 실제 설명서를 렌더해 남은 마크다운이 없는지 지킨다.
+
 ## 입력·움직임 규칙 (mandatory)
 
 - **새 스크롤 영역을 만들면 `apply_smooth_scroll(area)`를 태운다**(패널 단위면
@@ -345,6 +382,7 @@ These are **mandatory coding constraints**, not suggestions.
 | New/changed feature requirement | `planning/youtube_content_manager_prd.md` |
 | New bounded context, aggregate, entity, value object | `planning/ddd_design.md` |
 | Build / packaging change | `planning/packaging_plan.md` |
+| 화면·사용법 변경 | `docs/manual.md` 수정 후 `python scripts/build_manual.py` |
 | 레이어 구조 변경 · 파일 추가/삭제/이름 변경 | `docs/architecture/file-map.md` **즉시** 수정 |
 | 설계 근거, 실제로 밟은 함정, 버그 수정 배경 | `docs/architecture/design-decisions.md` |
 | 조립(`bootstrap/`) 규약 변경 | This file (`CLAUDE.md`)의 "조립 루트" 항목 |

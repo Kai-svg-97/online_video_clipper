@@ -21,7 +21,7 @@ from collections import OrderedDict
 _HEIGHT_CACHE: "OrderedDict[str, list[int]]" = OrderedDict()
 _HEIGHT_CACHE_MAX = 64
 
-from gui.widgets.player.constants import _DEFAULT_QUALITY_FMT, _PROBE_RANGE, _PROBE_TIMEOUT, _PROBE_UA, _STREAM_CLIENTS
+from gui.widgets.player.constants import _FALLBACK_STREAM_FMT, _PROBE_RANGE, _PROBE_TIMEOUT, _PROBE_UA, _STREAM_CLIENTS
 
 logger = logging.getLogger(__name__)
 
@@ -75,33 +75,158 @@ def _stream_playable(url: str) -> bool:
         logger.warning("스트림 URL 확인 실패 — 다음 후보로", exc_info=True)
         return False
 
+def _source_size(url: str, headers: dict) -> int:
+    """원본의 전체 바이트 수 — yt-dlp가 알려주지 않을 때 직접 묻는다.
+
+    **경계 있는 범위**로 물어야 한다(열린 범위는 403이다 — `relay.py` 주석 참조).
+    `Content-Range: bytes 0-1/12345` 의 마지막 값이 전체 크기다.
+    """
+    try:
+        import requests  # noqa: PLC0415
+
+        resp = requests.get(
+            url, headers={**headers, "Range": "bytes=0-1"}, stream=True, timeout=_PROBE_TIMEOUT
+        )
+        resp.close()
+        total = (resp.headers.get("Content-Range") or "").rsplit("/", 1)
+        return int(total[1]) if len(total) == 2 and total[1].isdigit() else 0
+    except Exception:
+        logger.warning("원본 크기 조회 실패: %s", url[:80], exc_info=True)
+        return 0
+
+
+def _to_sources(info: dict):
+    """yt-dlp info → (video StreamSource, audio StreamSource|None).
+
+    `requested_formats`가 있으면 영상/오디오가 분리된 선택이고, 없으면 muxed 단일
+    포맷이다(그때는 audio가 None이고 ffmpeg가 입력의 모든 스트림을 그대로 복사한다).
+    크기를 모르면 중계가 Range를 계산할 수 없으므로 직접 물어서라도 채운다.
+    """
+    from infrastructure.streaming import StreamSource  # noqa: PLC0415
+
+    def build(fmt: dict) -> "StreamSource | None":
+        url = fmt.get("url")
+        if not url:
+            return None
+        headers = dict(fmt.get("http_headers") or {})
+        size = int(fmt.get("filesize") or fmt.get("filesize_approx") or 0)
+        if not size:
+            size = _source_size(url, headers)
+        return StreamSource(url=url, headers=headers, size=size) if size else None
+
+    requested = info.get("requested_formats")
+    if requested:
+        video = build(requested[0])
+        audio = build(requested[1]) if len(requested) > 1 else None
+        return video, audio
+    return build(info), None
+
+
 class _StreamWorker(QThread):
-    # (path_or_url, quality_label e.g. "720p", is_local) — is_local=True면 임시 병합 파일
-    stream_ready = pyqtSignal(str, str, bool)
+    # (path_or_url, quality_label e.g. "720p", is_local, duration_ms)
+    #   is_local=True  → 임시 병합 파일(예전 방식)
+    #   duration_ms>0  → 재생기가 길이를 모르는 실시간 remux 스트림이라 우리가 알려준다
+    stream_ready = pyqtSignal(str, str, bool, int)
     progress     = pyqtSignal(int)   # 병합 다운로드 진행률(0-100)
     failed       = pyqtSignal(str)
 
     def __init__(
         self,
         url: str,
-        quality_fmt: str = "best[ext=mp4]/best",
+        quality_fmt: str = _FALLBACK_STREAM_FMT,
         merge: bool = False,
         parent=None,
+        prefer_remux: bool = True,
     ) -> None:
         super().__init__(parent)
         self._url = url
         self._quality_fmt = quality_fmt
-        self._merge = merge           # True면 영상+오디오를 ffmpeg로 병합해 임시 파일 재생
+        self._merge = merge           # True면 영상+오디오를 합쳐야 하는 화질
+        # 실시간 remux를 먼저 시도할지. 그 스트림이 버티지 못한 영상에서는 호출측이
+        # False를 줘서 곧장 예전 방식(전체를 받아 두고 재생)으로 간다.
+        self._prefer_remux = prefer_remux
 
     def run(self) -> None:
         try:
             import yt_dlp  # noqa: PLC0415
-            if self._merge:
+            if self._merge and self._prefer_remux:
+                self._run_remux(yt_dlp)
+            elif self._merge:
                 self._run_merge(yt_dlp)
             else:
                 self._run_stream(yt_dlp)
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    # ── 고화질 실시간 remux: 내려받지 않고 로컬 중계로 흘리며 합친다 ──
+    def _run_remux(self, yt_dlp) -> None:
+        """영상+오디오 URL을 확보해 중계 세션을 열고 재생 URL을 넘긴다.
+
+        전체를 받아 두는 `_run_merge`와 달리 **첫 조각만 받으면 바로 재생**된다
+        (실측: 1080p 첫 바이트까지 0.92초). 왜 중계를 거치는지는
+        `infrastructure/streaming/relay.py` 머리말 참조 — 요약하면 googlevideo가
+        ffmpeg의 열린 Range 요청을 403으로 막기 때문이다.
+
+        실패하면 예전 방식(`_run_merge`)으로 떨어진다. 고화질을 못 보더라도 재생
+        자체는 되는 편이 낫다는 기존 원칙을 그대로 따른다.
+        """
+        try:
+            from utils.resources import get_ffmpeg_path  # noqa: PLC0415
+            ffmpeg = get_ffmpeg_path()
+        except Exception:  # noqa: BLE001
+            ffmpeg = None
+        if not ffmpeg:
+            logger.warning("ffmpeg 없음 — 실시간 remux 불가, 병합 경로로")
+            self._run_merge(yt_dlp)
+            return
+
+        clients = _STREAM_CLIENTS if _is_youtube(self._url) else (None,)
+        for client in clients:
+            try:
+                info = self._extract(yt_dlp, client)
+                video, audio = _to_sources(info)
+            except Exception as exc:
+                logger.warning(
+                    "remux 정보 추출 실패(client=%s): %s", client or "기본", str(exc)[:200]
+                )
+                continue
+            if video is None:
+                logger.warning("remux 가능한 포맷 없음(client=%s)", client or "기본")
+                continue
+            from infrastructure.streaming import get_relay  # noqa: PLC0415
+
+            # 재생이 길어지면 googlevideo URL이 만료된다. 중계가 바닥 조각 크기에서도
+            # 403을 맞으면 이 콜백으로 새 URL을 받아 이어 간다 — 그렇지 않으면 한
+            # 시간쯤 뒤부터 스트림이 조용히 끊긴다.
+            def refresh(_client=client):
+                fresh = self._extract(yt_dlp, _client)
+                return _to_sources(fresh)
+
+            play_url = get_relay().open_session(
+                video, audio,
+                duration_ms=int((info.get("duration") or 0) * 1000),
+                ffmpeg=ffmpeg,
+                refresh=refresh,
+            )
+            height = (info.get("requested_formats") or [{}])[0].get("height") or info.get("height")
+            if client:
+                logger.info("대체 클라이언트로 remux 스트림 확보: client=%s", client)
+            self.stream_ready.emit(
+                play_url, f"{height}p" if height else "", False,
+                int((info.get("duration") or 0) * 1000),
+            )
+            return
+        logger.warning("실시간 remux 전부 실패 — 병합 경로로 폴백: %s", self._url)
+        self._run_merge(yt_dlp)
+
+    def _extract(self, yt_dlp, client: str | None) -> dict:
+        """지정 클라이언트로 현재 화질 포맷을 해석한다(내려받지 않는다)."""
+        opts = {"quiet": True, "no_warnings": True,
+                "format": self._quality_fmt, "noplaylist": True}
+        if client:
+            opts["extractor_args"] = {"youtube": {"player_client": [client]}}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(self._url, download=False) or {}
 
     # ── 즉시 스트리밍: 단일 muxed URL을 그대로 QMediaPlayer에 전달 ──
     def _run_stream(self, yt_dlp) -> None:
@@ -136,26 +261,21 @@ class _StreamWorker(QThread):
                 continue
             if client:
                 logger.info("대체 클라이언트로 스트림 확보: client=%s", client)
-            self.stream_ready.emit(stream, label, False)
+            self.stream_ready.emit(stream, label, False, 0)
             return
         if unverified is not None:
             # 확인 요청이 전부 막히는 환경(프록시·방화벽)일 수 있다. 검증에 실패했다는
             # 이유만으로 재생을 포기하면 그런 환경에서는 영영 못 보므로, URL을 확보한
             # 이상 플레이어에게 한 번은 맡긴다(예전 동작과 최소한 동일하다).
             logger.warning("검증은 실패했으나 URL이 있어 그대로 재생 시도: %s", self._url)
-            self.stream_ready.emit(unverified[0], unverified[1], False)
+            self.stream_ready.emit(unverified[0], unverified[1], False, 0)
             return
         logger.warning("모든 클라이언트에서 스트림 확보 실패: %s", self._url)
         self.failed.emit(last_err or "스트림 URL을 가져올 수 없습니다.")
 
     def _extract_stream(self, yt_dlp, client: str | None) -> tuple[str, str]:
         """지정 클라이언트로 정보를 뽑아 (재생 URL, 화질 라벨)을 돌려준다."""
-        opts = {"quiet": True, "no_warnings": True,
-                "format": self._quality_fmt, "noplaylist": True}
-        if client:
-            opts["extractor_args"] = {"youtube": {"player_client": [client]}}
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(self._url, download=False) or {}
+        info = self._extract(yt_dlp, client)
         stream, fmt_info = _pick_stream_url(info)
         h = fmt_info.get("height") or info.get("height")
         return stream, (f"{h}p" if h else "")
@@ -205,12 +325,12 @@ class _StreamWorker(QThread):
                 if client:
                     logger.info("대체 클라이언트로 고화질 병합 성공: client=%s", client)
                 h = rd.get("height") or info.get("height")
-                self.stream_ready.emit(path, f"{h}p" if h else "", True)
+                self.stream_ready.emit(path, f"{h}p" if h else "", True, 0)
                 return
         # 고화질을 못 만들었다고 재생 자체를 포기하지 않는다 — 낮은 화질이라도 트는 편이
         # 브라우저로 튕기는 것보다 낫다(사용자는 '앱에서 재생'을 원해서 누른 것이다).
         logger.warning("고화질 병합 전부 실패 — 일반 스트리밍으로 폴백: %s", self._url)
-        self._quality_fmt = _DEFAULT_QUALITY_FMT
+        self._quality_fmt = _FALLBACK_STREAM_FMT
         self._run_stream(yt_dlp)
 
     def _merge_hook(self, d: dict) -> None:

@@ -202,6 +202,15 @@ class InlinePlayer(QWidget):
         self._skipped_once: set = set()
         self._stream_quality_label: str = ""  # yt-dlp 보고 품질 레이블
         self._temp_stream_path: str = ""      # 고화질 병합 임시 파일(재생 후 정리)
+        # 실시간 remux 스트림 — 재생기가 길이도 seek도 모르는 소스라 우리가 들고 있는다.
+        self._remux_url: str = ""             # ?ss= 를 붙이기 전의 재생 URL
+        self._stream_offset_ms: int = 0       # 지금 흐르는 스트림이 시작한 지점
+        self._stream_duration_ms: int = 0     # yt-dlp가 알려준 영상 길이
+        self._pending_seek_ms: int | None = None   # 아직 스트림에 반영되지 않은 seek
+        self._last_truncation_ms: int = -1     # 스트림이 끊긴 마지막 지점(무한 재시도 차단)
+        # 실시간 remux를 쓸지. 원본이 **먼 오프셋 요청을 거부**하는 일이 있어(실측:
+        # 파일 중간 이후 바이트에 403) 그런 영상에서는 예전 방식으로 내려간다.
+        self._prefer_remux: bool = True
         self._playing_local: bool = False     # 로컬 파일 재생 중인지(재시도 판단용)
         self._stream_retries: int = 0         # 재생 오류 후 스트림 재획득 횟수
         self._track: LyricsTrack | None = None
@@ -237,6 +246,13 @@ class InlinePlayer(QWidget):
         self._show_timer.setSingleShot(True)
         self._show_timer.setInterval(self._SHOW_MS)
         self._show_timer.timeout.connect(self._do_show_bar_delayed)
+
+        # remux 스트림의 seek은 ffmpeg 재기동이라 비싸다. J/L 연타나 화살표 연속
+        # 입력을 한 번으로 합친다 — 누를 때마다 새 프로세스를 띄우면 화면이 멎는다.
+        self._seek_commit = QTimer(self)
+        self._seek_commit.setSingleShot(True)
+        self._seek_commit.setInterval(300)
+        self._seek_commit.timeout.connect(self._commit_pending_seek)
 
         # 100ms마다 커서 위치를 확인해 컨트롤바 표시/raise
         self._cursor_poll = QTimer(self)
@@ -306,7 +322,7 @@ class InlinePlayer(QWidget):
         # Wire control bar signals → player
         self._bar.play_toggled.connect(self._toggle_play)
         self._bar.seek_relative.connect(self._seek_relative)
-        self._bar.seek_to_ms.connect(self._player.setPosition)
+        self._bar.seek_to_ms.connect(self._seek_to)
         self._bar.volume_changed.connect(self._on_volume_changed)
         self._bar.mute_toggled.connect(self._toggle_mute)
         self._bar.fullscreen_toggled.connect(self._toggle_fullscreen)
@@ -317,7 +333,7 @@ class InlinePlayer(QWidget):
         self._bar.subtitle_toggled.connect(self.set_subtitle_enabled)
         self._bar.subtitle_offset_nudged.connect(self._nudge_subtitle_offset)
         self._bar.subtitle_sync_here.connect(
-            lambda: self._sync_subtitle_here(self._player.position())
+            lambda: self._sync_subtitle_here(self.position_ms)
         )
         self._bar.subtitle_offset_reset.connect(self._reset_subtitle_offset)
         self._bar.subtitle_prefs_reset.connect(self._reset_subtitle_prefs)
@@ -326,7 +342,7 @@ class InlinePlayer(QWidget):
 
         # Wire player signals → control bar
         self._player.positionChanged.connect(self._on_position)
-        self._player.durationChanged.connect(self._bar.update_duration)
+        self._player.durationChanged.connect(self._publish_duration)
         self._player.playbackStateChanged.connect(self._on_playback_state)
         self._player.errorOccurred.connect(self._on_error)
         self._player.metaDataChanged.connect(self._on_metadata_changed)
@@ -472,17 +488,25 @@ class InlinePlayer(QWidget):
 
     @property
     def position_ms(self) -> int:
-        """현재 재생 위치(ms). 재생 전이면 0."""
-        return self._player.position()
+        """현재 재생 위치(ms). 재생 전이면 0.
+
+        실시간 remux 스트림에서는 재생기가 **0부터 다시 세므로**(seek 할 때마다
+        ffmpeg를 그 지점에서 새로 띄운다) 그 시작 오프셋을 더해야 영상 기준 위치가
+        된다. 아직 반영되지 않은 seek 요청이 있으면 그 목표를 먼저 답한다 — 안 그러면
+        J/L 연타에서 매번 옛 위치를 기준으로 계산해 제자리를 맴돈다.
+        """
+        if self._pending_seek_ms is not None:
+            return self._pending_seek_ms
+        return max(0, self._player.position()) + self._stream_offset_ms
 
     @property
     def duration_ms(self) -> int:
         """현재 영상 길이(ms). 아직 모르면 0."""
-        return self._player.duration()
+        return self._effective_duration()
 
     def seek_to_ms(self, ms: int) -> None:
         """절대 위치(ms)로 재생 위치를 이동한다. 설명 타임스탬프 클릭 등에서 사용."""
-        self._player.setPosition(max(0, int(ms)))
+        self._seek_to(ms)
 
     def toggle_play(self) -> None:
         """재생/일시정지 — 컨트롤바 밖(미니바 등)에서 부르는 공개 진입점."""
@@ -504,7 +528,7 @@ class InlinePlayer(QWidget):
             overlay.set_cue(None)
             overlay.set_text_visible(self._subtitle_on)
         if has:
-            self._apply_subtitle_position(self._player.position())
+            self._apply_subtitle_position(self.position_ms)
 
     def set_subtitle_enabled(self, on: bool) -> None:
         self._subtitle_on = bool(on)
@@ -818,7 +842,7 @@ class InlinePlayer(QWidget):
         # -2는 "다음 계산을 반드시 반영하라"는 센티넬 — -1(자막 없음)과 구분해야
         # 오프셋을 늘려 자막이 사라지는 전이(-1로의 변화)도 반영된다.
         self._current_line_index = -2
-        self._apply_subtitle_position(self._player.position())
+        self._apply_subtitle_position(self.position_ms)
         self.subtitle_offset_changed.emit(self._track.offset_ms)
 
     def _nudge_subtitle_offset(self, delta_ms: int) -> None:
@@ -857,6 +881,7 @@ class InlinePlayer(QWidget):
         self._downloads   = downloads
         self._resume_ms   = resume_ms
         self._stream_retries = 0   # 영상이 바뀌면 재시도 예산도 새로 준다
+        self._reset_stream_mode()  # remux가 버티는지는 영상마다 다르다 — 다시 시도
         self._playing_local  = False
         self._current_quality_fmt   = InlinePlayer._last_quality_fmt
         self._current_merge         = InlinePlayer._last_quality_merge
@@ -879,6 +904,10 @@ class InlinePlayer(QWidget):
         self._bar.show()
         self._bar.raise_()
         self._hide_timer.stop()
+
+    def _reset_stream_mode(self) -> None:
+        """새 영상 — 실시간 remux를 다시 처음부터 시도한다(영상마다 다르다)."""
+        self._prefer_remux = True
 
     def _find_local_for_quality(self, short: str) -> str | None:
         """선택 품질과 일치하는 다운로드 파일 경로 반환.
@@ -907,6 +936,7 @@ class InlinePlayer(QWidget):
         self._player.stop()
         self._player.setSource(QUrl())   # 파일 핸들 해제 후 임시 파일 삭제 가능
         self._cleanup_temp()
+        self._close_remux()
         self._hide_timer.stop()
         if self._worker:
             # 시그널을 먼저 끊고(늦게 오는 결과 무시) 스레드가 끝날 때까지 붙든다.
@@ -932,6 +962,27 @@ class InlinePlayer(QWidget):
         self._current_line_index = -1
         for overlay in self._all_subtitles():
             overlay.set_cue(None)
+
+    def _close_remux(self) -> None:
+        """실시간 remux 세션을 닫는다 — 남은 ffmpeg가 상위 대역폭을 계속 먹지 않게.
+
+        세션을 지우면 그 URL로 오는 요청이 404가 되고, 흐르던 중계도 곧 끝난다.
+        seek을 반복하면 세션당 ffmpeg가 여러 번 뜨므로 정리는 필수다.
+        """
+        url, self._remux_url = self._remux_url, ""
+        self._last_truncation_ms = -1
+        self._stream_offset_ms = 0
+        self._stream_duration_ms = 0
+        self._pending_seek_ms = None
+        self._seek_commit.stop()
+        if not url:
+            return
+        try:
+            from infrastructure.streaming import get_relay  # noqa: PLC0415
+
+            get_relay().close_session(url)
+        except Exception:
+            logger.debug("중계 세션 정리 실패", exc_info=True)
 
     def _cleanup_temp(self) -> None:
         """고화질 병합 임시 파일/디렉터리를 삭제한다."""
@@ -1007,9 +1058,9 @@ class InlinePlayer(QWidget):
                 self._toggle_fullscreen()
         elif Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
             pct = (key - Qt.Key.Key_0) * 10
-            dur = self._player.duration()
+            dur = self._effective_duration()
             if dur > 0:
-                self._player.setPosition(dur * pct // 100)
+                self._seek_to(dur * pct // 100)
         else:
             super().keyPressEvent(event)
 
@@ -1039,10 +1090,9 @@ class InlinePlayer(QWidget):
             self.play()
 
     def _seek_relative(self, delta_sec: int) -> None:
-        pos = self._player.position()
-        dur = self._player.duration()
+        dur = self._effective_duration()
         if dur > 0:
-            self._player.setPosition(max(0, min(pos + delta_sec * 1000, dur)))
+            self._seek_to(max(0, min(self.position_ms + delta_sec * 1000, dur)))
 
     def _change_volume(self, delta: int) -> None:
         vol = max(0, min(self._volume + delta, 100))
@@ -1089,7 +1139,7 @@ class InlinePlayer(QWidget):
         bar.video_subtitle_selected.connect(self._select_video_subtitle)
         bar.video_subtitle_translate.connect(self._translate_video_subtitle)
         bar.seek_relative.connect(self._seek_relative)
-        bar.seek_to_ms.connect(self._player.setPosition)
+        bar.seek_to_ms.connect(self._seek_to)
         bar.volume_changed.connect(self._on_volume_changed)
         bar.mute_toggled.connect(self._toggle_mute)
         bar.download_requested.connect(self._on_download_requested)
@@ -1098,11 +1148,10 @@ class InlinePlayer(QWidget):
         bar.fullscreen_toggled.connect(self._toggle_fullscreen)
         bar.pip_toggled.connect(self._toggle_pip)
         # 플레이어 → 전체화면 바 (재생시간). 위치/재생상태는 _on_position/_on_playback_state가 fan-out.
-        self._player.durationChanged.connect(bar.update_duration)
-        # 현재 상태를 전체화면 바에 1회 반영
-        dur = self._player.duration()
-        bar.update_duration(dur)
-        bar.update_position(self._player.position(), dur)
+        # 현재 상태를 전체화면 바에 1회 반영. 재생기의 값이 아니라 실효 값을 쓴다 —
+        # remux 스트림에서 재생기는 길이를 모르고 위치도 0부터 다시 센다.
+        bar.update_duration(self._effective_duration())
+        bar.update_position(self.position_ms, self._effective_duration())
         bar.set_playing(self.is_playing())
         bar.set_volume(self._volume)
         bar.set_muted(self._is_muted)
@@ -1132,7 +1181,7 @@ class InlinePlayer(QWidget):
         self._fs_win.subtitle.set_subtitle_texts(*self._vsub_texts)
         # 현재 줄을 새 창에도 1회 반영
         self._current_line_index = -2
-        self._apply_subtitle_position(self._player.position())
+        self._apply_subtitle_position(self.position_ms)
 
         self._fs_win.exit_requested.connect(self._exit_fullscreen)
 
@@ -1145,10 +1194,6 @@ class InlinePlayer(QWidget):
         self._player.setVideoOutput(self._video_view.video_item)
         if self._fs_win:
             try:
-                self._player.durationChanged.disconnect(self._fs_win.bar.update_duration)
-            except (TypeError, RuntimeError):
-                pass
-            try:
                 self._fs_win.exit_requested.disconnect()
             except (TypeError, RuntimeError):
                 pass
@@ -1157,7 +1202,7 @@ class InlinePlayer(QWidget):
             self._fs_win = None
         # 창이 사라졌으니 인라인 오버레이가 현재 줄을 다시 갖도록 강제 갱신한다.
         self._current_line_index = -2
-        self._apply_subtitle_position(self._player.position())
+        self._apply_subtitle_position(self.position_ms)
         self.setFocus()
 
     # ── Picture-in-Picture (화면 속 화면) ───────────────────────────
@@ -1185,7 +1230,7 @@ class InlinePlayer(QWidget):
         bar.video_subtitle_selected.connect(self._select_video_subtitle)
         bar.video_subtitle_translate.connect(self._translate_video_subtitle)
         bar.seek_relative.connect(self._seek_relative)
-        bar.seek_to_ms.connect(self._player.setPosition)
+        bar.seek_to_ms.connect(self._seek_to)
         bar.volume_changed.connect(self._on_volume_changed)
         bar.mute_toggled.connect(self._toggle_mute)
         bar.download_requested.connect(self._on_download_requested)
@@ -1193,11 +1238,10 @@ class InlinePlayer(QWidget):
         bar.quality_changed.connect(self._on_quality_changed)
         bar.pip_toggled.connect(self._exit_pip)
         # 플레이어 → PiP 바 (재생시간). 위치/재생상태는 _on_position/_on_playback_state가 fan-out.
-        self._player.durationChanged.connect(bar.update_duration)
-        # 현재 상태를 PiP 바에 1회 반영
-        dur = self._player.duration()
-        bar.update_duration(dur)
-        bar.update_position(self._player.position(), dur)
+        # 현재 상태를 PiP 바에 1회 반영. 재생기의 값이 아니라 실효 값을 쓴다 —
+        # remux 스트림에서 재생기는 길이를 모르고 위치도 0부터 다시 센다.
+        bar.update_duration(self._effective_duration())
+        bar.update_position(self.position_ms, self._effective_duration())
         bar.set_playing(self.is_playing())
         bar.set_volume(self._volume)
         bar.set_muted(self._is_muted)
@@ -1227,7 +1271,7 @@ class InlinePlayer(QWidget):
         self._pip_win.subtitle.set_subtitle_texts(*self._vsub_texts)
         # 현재 줄을 새 창에도 1회 반영
         self._current_line_index = -2
-        self._apply_subtitle_position(self._player.position())
+        self._apply_subtitle_position(self.position_ms)
 
         self._pip_win.exit_requested.connect(self._exit_pip)
         self._show_pip_placeholder(True)
@@ -1247,10 +1291,6 @@ class InlinePlayer(QWidget):
         self._player.setVideoOutput(self._video_view.video_item)
         if self._pip_win:
             try:
-                self._player.durationChanged.disconnect(self._pip_win.bar.update_duration)
-            except (TypeError, RuntimeError):
-                pass
-            try:
                 self._pip_win.exit_requested.disconnect()
             except (TypeError, RuntimeError):
                 pass
@@ -1260,7 +1300,7 @@ class InlinePlayer(QWidget):
         self._show_pip_placeholder(False)
         # 창이 사라졌으니 인라인 오버레이가 현재 줄을 다시 갖도록 강제 갱신한다.
         self._current_line_index = -2
-        self._apply_subtitle_position(self._player.position())
+        self._apply_subtitle_position(self.position_ms)
         self.setFocus()
 
     def _show_pip_placeholder(self, on: bool) -> None:
@@ -1308,17 +1348,69 @@ class InlinePlayer(QWidget):
         if seg is None or seg in self._skipped_once:
             return
         self._skipped_once.add(seg)
-        self._player.setPosition(int(seg.end_sec * 1000))
+        self._seek_to(int(seg.end_sec * 1000))
         self.segment_skipped.emit(seg.display_name)
 
-    def _on_position(self, pos: int) -> None:
-        self._maybe_skip(pos)
-        dur = self._player.duration()
-        self._bar.update_position(pos, dur)
+    def _effective_duration(self) -> int:
+        """영상 길이(ms). 실시간 remux 스트림은 재생기가 모르므로 yt-dlp 값을 쓴다.
+
+        fragmented mp4를 파이프로 흘리는 소스라 길이 정보가 담기지 않는다 — 여기서
+        대신 답하지 않으면 진행 막대가 끝까지 채워진 채로 멈춰 있다.
+        """
+        if self._stream_duration_ms > 0:
+            return self._stream_duration_ms
+        return max(0, self._player.duration())
+
+    def _publish_duration(self, _dur: int = 0) -> None:
+        """길이를 모든 바에 알린다. 재생기 값이 아니라 `_effective_duration`을 쓴다."""
+        dur = self._effective_duration()
+        self._bar.update_duration(dur)
         if self._fs_win:
-            self._fs_win.bar.update_position(pos, dur)
+            self._fs_win.bar.update_duration(dur)
         if self._pip_win:
-            self._pip_win.bar.update_position(pos, dur)
+            self._pip_win.bar.update_duration(dur)
+
+    def _seek_to(self, ms: int) -> None:
+        """모든 seek의 단일 진입점. 일반 소스는 재생기에게, remux는 우리가 처리한다."""
+        ms = max(0, int(ms))
+        dur = self._effective_duration()
+        if dur > 0:
+            ms = min(ms, dur)
+        if not self._remux_url:
+            self._player.setPosition(ms)
+            return
+        # 실제 반영은 타이머가 한다. 화면은 먼저 옮겨 둔다 — 300ms 동안 막대가
+        # 옛 위치에 머물면 "눌러도 안 움직인다"로 보인다.
+        self._pending_seek_ms = ms
+        self._update_bars(ms, dur)
+        self._seek_commit.start()
+
+    def _commit_pending_seek(self) -> None:
+        """미뤄 둔 seek을 실제 스트림 재시작으로 옮긴다."""
+        ms, self._pending_seek_ms = self._pending_seek_ms, None
+        if ms is None or not self._remux_url:
+            return
+        self._stream_offset_ms = ms
+        self._player.stop()
+        self._player.setSource(QUrl(f"{self._remux_url}?ss={ms / 1000:.3f}"))
+        # 일시정지 중에 seek 해도 재생이 시작된다. 멈춘 채로 새 스트림을 열어 두면
+        # ffmpeg가 첫 조각만 만들고 파이프가 막힌 채 대기해, 다시 누를 때까지
+        # 화면이 이전 프레임 그대로여서 seek이 실패한 것처럼 보인다.
+        QTimer.singleShot(0, self._do_play_start)
+
+    def _update_bars(self, pos_ms: int, dur_ms: int) -> None:
+        self._bar.update_position(pos_ms, dur_ms)
+        if self._fs_win:
+            self._fs_win.bar.update_position(pos_ms, dur_ms)
+        if self._pip_win:
+            self._pip_win.bar.update_position(pos_ms, dur_ms)
+
+    def _on_position(self, pos: int) -> None:
+        if self._pending_seek_ms is not None:
+            return   # 곧 갈아탈 스트림이다 — 옛 위치를 화면에 되돌려 쓰지 않는다
+        pos = max(0, pos) + self._stream_offset_ms
+        self._maybe_skip(pos)
+        self._update_bars(pos, self._effective_duration())
         self._apply_subtitle_position(pos)
 
     def _on_playback_state(self, state: QMediaPlayer.PlaybackState) -> None:
@@ -1356,6 +1448,27 @@ class InlinePlayer(QWidget):
         고정 지연(seek-after-80ms)은 네트워크 스트림에서 불안정하므로 사용하지 않는다."""
         # 끝까지 재생되면(수동 stop과 구분되는 유일한 지표) 재생목록 다음곡 신호를 낸다.
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            # remux 스트림은 상위가 조각을 거부하면 **중간에서도** EndOfMedia가 된다.
+            # 그대로 믿으면 재생목록이 멋대로 다음 곡으로 넘어간다 — 실제 끝 근처일
+            # 때만 '다 봤다'로 친다.
+            dur = self._effective_duration()
+            pos = self.position_ms
+            if self._remux_url and dur > 0 and pos < dur - 3000:
+                # 같은 자리에서 또 끊겼다면 다시 받아도 같다 — 되풀이하지 않는다.
+                stuck = abs(pos - self._last_truncation_ms) < 1000
+                self._last_truncation_ms = pos
+                if stuck:
+                    logger.warning(
+                        "remux 스트림이 같은 지점에서 반복 중단(%d ms) — 병합 방식으로", pos
+                    )
+                    self._fall_back_to_merge(pos)
+                    return
+                logger.warning(
+                    "remux 스트림이 중간에서 끊김(%d/%d ms) — 다시 받아 이어 간다", pos, dur
+                )
+                self._seek_to(pos)
+                return
+            self._last_truncation_ms = -1
             self.playback_finished.emit()
             return
         if self._resume_ms <= 0:
@@ -1379,9 +1492,10 @@ class InlinePlayer(QWidget):
         if not self._video_url:
             self.playback_failed.emit("재생할 URL이 없습니다.")
             return
-        # 이전 소스/임시 파일 해제 (특히 품질 전환 시)
+        # 이전 소스/임시 파일/중계 세션 해제 (특히 품질 전환 시)
         self._player.setSource(QUrl())
         self._cleanup_temp()
+        self._close_remux()
         self._status_lbl.setText(
             "고화질 준비 중…" if self._current_merge else "스트림 URL 가져오는 중…"
         )
@@ -1392,7 +1506,8 @@ class InlinePlayer(QWidget):
         retire_thread(self._worker, "stream_ready", "progress", "failed")
         # 부모를 주지 않는다 — 플레이어가 사라져도 스레드가 함께 파괴되지 않게.
         self._worker = track_thread(_StreamWorker(
-            self._video_url, self._current_quality_fmt, self._current_merge
+            self._video_url, self._current_quality_fmt, self._current_merge,
+            prefer_remux=self._prefer_remux,
         ))
         # 끝나면 참조를 놓는다 — 끝난 워커를 계속 들고 있으면 뒤늦은 정리에서 헷갈린다.
         self._worker.finished.connect(lambda w=self._worker: self._forget_stream_worker(w))
@@ -1410,11 +1525,27 @@ class InlinePlayer(QWidget):
         self._status_lbl.setText(f"고화질 준비 중…  {pct}%")
         self._status_lbl.show()
 
-    def _on_stream_ready(self, src: str, quality: str, is_local: bool) -> None:
+    def _on_stream_ready(
+        self, src: str, quality: str, is_local: bool, duration_ms: int = 0
+    ) -> None:
         self._status_lbl.hide()
         self._playing_local = is_local
         self._temp_stream_path = src if is_local else ""
+        # duration_ms > 0 이면 실시간 remux 스트림이다 — 재생기가 길이도 seek도 모르는
+        # 소스라 길이는 우리가 들고, seek은 ?ss= 로 새 연결을 여는 방식으로 처리한다.
+        self._remux_url = src if (duration_ms > 0 and not is_local) else ""
+        self._stream_duration_ms = duration_ms if self._remux_url else 0
+        self._pending_seek_ms = None
+        if self._remux_url:
+            # 이어보기는 스트림 시작점에 태워 보낸다 — seek 불가 소스라 재생 후에는
+            # 옮길 수 없다(`_on_media_status`의 isSeekable 경로를 타지 못한다).
+            self._stream_offset_ms = max(0, self._resume_ms)
+            self._resume_ms = 0
+            src = f"{self._remux_url}?ss={self._stream_offset_ms / 1000:.3f}"
+        else:
+            self._stream_offset_ms = 0
         self._player.setSource(QUrl.fromLocalFile(src) if is_local else QUrl(src))
+        self._publish_duration()
         self._visual_stack.setCurrentIndex(1)
         self._bar.show()
         self._bar.raise_()
@@ -1426,8 +1557,28 @@ class InlinePlayer(QWidget):
         self._status_lbl.hide()
         self.playback_failed.emit(err)
 
+    def _fall_back_to_merge(self, resume_ms: int) -> None:
+        """실시간 remux를 포기하고 예전 방식(전체를 받아 두고 재생)으로 내려간다.
+
+        원본이 먼 오프셋을 거부하는 영상이 있다(실측: 파일 절반 이후 바이트에 403).
+        그런 영상은 **처음부터 순차로 받는 것만** 허용되므로, 받아 둔 뒤 재생하면
+        seek까지 정상으로 돌아온다. 기다림이 생기지만 재생을 포기하는 것보다 낫다.
+        """
+        self._prefer_remux = False
+        self._resume_ms = max(0, resume_ms)
+        self._stream_retries = 0
+        self._close_remux()
+        self._status_lbl.setText("스트림이 불안정해 고화질을 준비합니다…")
+        self._status_lbl.show()
+        self._fetch_stream()
+
     def _on_error(self, error, error_string: str) -> None:
         if error == QMediaPlayer.Error.NoError:
+            return
+        # remux 스트림이 오류를 내면 다시 받아도 같은 원본이다 — 방식을 바꾼다.
+        if self._remux_url and self._stream_retries >= _MAX_STREAM_RETRIES:
+            logger.warning("remux 스트림 재생 오류 — 병합 방식으로: %s", error_string)
+            self._fall_back_to_merge(self.position_ms)
             return
         # 스트리밍 재생 오류는 URL 만료·일시적 거부가 대부분이라, 새 URL을 받아 한 번은
         # 조용히 다시 시도한다(사용자에게는 잠깐 버퍼링한 것처럼 보인다). 로컬 파일
@@ -1473,8 +1624,9 @@ class InlinePlayer(QWidget):
         InlinePlayer._last_quality_short = short
         state = self._player.playbackState()
         if state != QMediaPlayer.PlaybackState.StoppedState:
-            # 현재 재생 위치를 저장해 새 화질에서 이어서 재생
-            self._resume_ms = self._player.position()
+            # 현재 재생 위치를 저장해 새 화질에서 이어서 재생.
+            # remux 스트림은 재생기 위치가 0부터 다시 세므로 절대 위치를 써야 한다.
+            self._resume_ms = self.position_ms
             self._player.stop()
             self._visual_stack.setCurrentIndex(0)
             local = self._find_local_for_quality(short)
