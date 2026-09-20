@@ -57,7 +57,12 @@ _PROBE_TIMEOUT = (5, 8)
 # 1회로 묶는 이유: 코덱 미지원처럼 다시 받아도 똑같이 실패하는 원인에서 무한 반복을 막는다.
 _MAX_STREAM_RETRIES = 1
 
-# (메뉴 라벨, yt-dlp 포맷, 버튼 단축 라벨, merge: 영상+오디오를 합쳐야 하는지)
+# **화질은 키로 고른다 — 표시 문자열로 고르지 않는다.**
+#
+# 예전에는 버튼에 적히는 짧은 라벨(`"자동"`·`"1080p"`)이 곧 식별자였다. 그래서
+# `video_player.py` 가 `if short == "자동"` 으로 배지를 숨길지 판정했는데, 라벨을
+# 번역하는 순간 그 판정이 **조용히** 죽는다(배지에 "Auto"가 그대로 뜬다).
+# 지금은 키(`"auto"`·`"1080p"` …)와 표시 문구를 나눠 둔다.
 #
 # **기본값이 왜 1080p인가**: 예전 기본은 `best[ext=mp4]/best`였는데, yt-dlp에서
 # `best`는 "가장 좋은 **muxed** 포맷"이고 YouTube가 내주는 muxed는 itag 18(360p)
@@ -65,25 +70,29 @@ _MAX_STREAM_RETRIES = 1
 # 360p**였다 — "자동"이라는 라벨이 지키지 못할 약속을 하고 있었다. 실시간 remux로
 # 고화질도 즉시 시작되므로 기본을 1080p로 올린다. 저사양에서 버거우면 메뉴에서
 # 낮추면 되고, 그 선택은 세션 동안 유지된다(`_last_quality_fmt`).
+
+QUALITY_AUTO = "auto"      # 화면에 그대로 쓰지 않는 식별자
+
+# (키, yt-dlp 포맷, merge: 영상+오디오를 합쳐야 하는지)
 _QUALITY_OPTIONS = [
-    ("자동 (최고 화질)",  _merge_fmt(1080),     "자동",  True),
-    ("1080p",           _merge_fmt(1080),     "1080p", True),
-    ("720p",            _merge_fmt(720),      "720p",  True),
-    ("480p",            _merge_fmt(480),      "480p",  True),
-    ("360p",            "best[height<=360][ext=mp4]/best[height<=360]/best", "360p", False),
-    ("240p",            "best[height<=240][ext=mp4]/best[height<=240]/best", "240p", False),
+    (QUALITY_AUTO, _merge_fmt(1080), True),
+    ("1080p",      _merge_fmt(1080), True),
+    ("720p",       _merge_fmt(720),  True),
+    ("480p",       _merge_fmt(480),  True),
+    ("360p",       "best[height<=360][ext=mp4]/best[height<=360]/best", False),
+    ("240p",       "best[height<=240][ext=mp4]/best[height<=240]/best", False),
 ]
 
 _DEFAULT_QUALITY_FMT = _QUALITY_OPTIONS[0][1]
 
-_DEFAULT_QUALITY_MERGE = _QUALITY_OPTIONS[0][3]
+_DEFAULT_QUALITY_MERGE = _QUALITY_OPTIONS[0][2]
 
 # 합치는 경로가 전부 실패했을 때 마지막으로 떨어지는 곳 — 합치지 않고 그대로 트는
 # 단일 muxed 포맷이다. 기본 화질과 **같은 상수를 쓰면 안 된다**: 기본이 합침 포맷이
 # 된 뒤로는 "합치기 실패 → 다시 합치기 포맷" 이 되어 폴백이 뜻을 잃는다.
 _FALLBACK_STREAM_FMT = "best[ext=mp4]/best"
 
-# 재생 품질 단축 라벨 → 세로 해상도 ("자동"은 제한 없음)
+# 화질 키 → 세로 해상도. `auto` 는 제한이 없으므로 여기 없다.
 _QUALITY_HEIGHTS: dict[str, int] = {
     "1080p": 1080, "720p": 720, "480p": 480, "360p": 360, "240p": 240,
 }

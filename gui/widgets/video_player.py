@@ -43,6 +43,7 @@ from gui.widgets.lyrics_overlay import LyricsCue, LyricsOverlay, LyricsTrack
 # 이 파일에는 화면 조립·흐름 제어만 남기고 부품은 패키지로 옮겼다.
 # 아래 재수출은 기존 임포트 경로를 유지하기 위한 것이다.
 from gui.widgets.subtitle_track import SubtitleTrack
+from gui.text.labels import quality_badge_text
 from gui.widgets.player.stream import (  # noqa: F401
     _SubtitleFetchWorker,
     _SubtitleListWorker,
@@ -170,7 +171,7 @@ class InlinePlayer(QWidget):
     _BOTTOM_RATIO_STEP = 0.02   # Ctrl+Shift + 휠/방향키 한 번에 움직이는 위치 비율
     _last_quality_fmt: str = _DEFAULT_QUALITY_FMT  # 세션 내 품질 선택 공유
     _last_quality_merge: bool = _DEFAULT_QUALITY_MERGE
-    _last_quality_short: str = _QUALITY_OPTIONS[0][2]  # "자동"
+    _last_quality_short: str = _QUALITY_OPTIONS[0][0]  # 화질 **키**("auto")
     # 재생 품질 단축 라벨 → 다운로드 품질 문자열 매핑
     # DownloadInfoDTO.quality는 Quality Enum 값("1080p" 등) 또는 파일명 레이블("FHD" 등)
     _SHORT_TO_QUALITIES: dict[str, set[str]] = {
@@ -912,7 +913,7 @@ class InlinePlayer(QWidget):
 
     def _find_local_for_quality(self, short: str) -> str | None:
         """선택 품질과 일치하는 다운로드 파일 경로 반환.
-        "자동"이면 품질 무관 첫 번째 파일, 없으면 None."""
+        `auto` 면 품질 무관 첫 번째 파일, 없으면 None."""
         target = InlinePlayer._SHORT_TO_QUALITIES.get(short)  # None → 자동
         for dl in reversed(self._downloads):
             if not (dl.file_path and Path(dl.file_path).exists()):
@@ -1156,9 +1157,7 @@ class InlinePlayer(QWidget):
         bar.set_playing(self.is_playing())
         bar.set_volume(self._volume)
         bar.set_muted(self._is_muted)
-        bar.set_quality(
-            "" if self._current_quality_short == "자동" else self._current_quality_short
-        )
+        bar.set_quality(quality_badge_text(self._current_quality_short))
         bar.set_available_heights(_HEIGHT_CACHE.get(self._video_url))
         has = self._track is not None
         bar.set_has_subtitle(has)
@@ -1246,9 +1245,7 @@ class InlinePlayer(QWidget):
         bar.set_playing(self.is_playing())
         bar.set_volume(self._volume)
         bar.set_muted(self._is_muted)
-        bar.set_quality(
-            "" if self._current_quality_short == "자동" else self._current_quality_short
-        )
+        bar.set_quality(quality_badge_text(self._current_quality_short))
         bar.set_available_heights(_HEIGHT_CACHE.get(self._video_url))
         has = self._track is not None
         bar.set_has_subtitle(has)
@@ -1632,7 +1629,7 @@ class InlinePlayer(QWidget):
             self._visual_stack.setCurrentIndex(0)
             local = self._find_local_for_quality(short)
             if local:
-                self._bar.set_quality(short)
+                self._bar.set_quality(quality_badge_text(short))
                 self._start_local(local)
             else:
                 self._bar.set_quality("전환 중…")

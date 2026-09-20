@@ -30,7 +30,12 @@ from PyQt6.QtWidgets import (
 from domain.download.value_objects import DownloadSettings, MediaFormat, Quality
 from gui.themes.manager import ThemeManager
 
-from gui.widgets.player.constants import _QUALITY_HEIGHTS, _QUALITY_OPTIONS
+from gui.widgets.player.constants import (
+    QUALITY_AUTO,
+    _QUALITY_HEIGHTS,
+    _QUALITY_OPTIONS,
+)
+from gui.text.labels import quality_menu_label
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +282,7 @@ class _ControlBar(QWidget):
         self._quality_lbl.hide()
 
         self._btn_quality = QToolButton()
-        self._btn_quality.setText("자동")
+        self._btn_quality.setText(quality_menu_label(QUALITY_AUTO))
         self._btn_quality.setToolTip("재생 품질")
         self._btn_quality.setStyleSheet(_quality_btn_style())
         self._btn_quality.clicked.connect(self._show_quality_menu)
@@ -536,20 +541,21 @@ class _ControlBar(QWidget):
             f"QMenu{{background:{tok.bg_elevated};color:{tok.text_primary};border:1px solid {tok.border_muted};}}"
             f"QMenu::item:selected{{background:{tok.bg_overlay};}}"
         )
-        for menu_label, fmt, short, merge in _QUALITY_OPTIONS:
-            if not self._height_offered(_QUALITY_HEIGHTS.get(short)):
+        for key, fmt, merge in _QUALITY_OPTIONS:
+            if not self._height_offered(_QUALITY_HEIGHTS.get(key)):
                 continue
-            act = menu.addAction(menu_label)
+            act = menu.addAction(quality_menu_label(key))
             act.triggered.connect(
-                lambda _c, f=fmt, s=short, m=merge: self._on_quality_item(f, s, m)
+                lambda _c, f=fmt, k=key, m=merge: self._on_quality_item(f, k, m)
             )
         btn_pos = self._btn_quality.mapToGlobal(QPoint(0, 0))
         hint = menu.sizeHint()
         menu.exec(QPoint(btn_pos.x(), btn_pos.y() - hint.height()))
 
-    def _on_quality_item(self, fmt: str, short: str, merge: bool) -> None:
-        self._btn_quality.setText(short)
-        self.quality_changed.emit(fmt, short, merge)
+    def _on_quality_item(self, fmt: str, key: str, merge: bool) -> None:
+        """시그널에는 **키**를 싣는다 — 받는 쪽이 문자열로 상태를 판정하지 않게."""
+        self._btn_quality.setText(quality_menu_label(key))
+        self.quality_changed.emit(fmt, key, merge)
 
     def open_download_menu(self) -> None:
         """다운로드 메뉴를 연다 — 이 영상이 실제로 제공하는 화질만 나열한다."""

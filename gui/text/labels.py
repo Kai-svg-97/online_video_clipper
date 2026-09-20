@@ -110,3 +110,31 @@ def transcribe_model_name(key: str) -> str:
 
 def transcribe_model_note(key: str) -> str:
     return TRANSCRIBE_MODEL_LABELS.get(key, (key, ""))[1]
+
+
+# ── 재생 화질 ─────────────────────────────────────────────────────
+# 키는 `gui/widgets/player/constants.py` 의 `_QUALITY_OPTIONS` 첫 원소다.
+# "1080p" 같은 키는 겉보기엔 표시 문자열이지만 어느 언어에서도 같은 ASCII 식별자다 —
+# 진짜 문제는 `"자동"` 하나였고 그것만 `"auto"` 로 바뀌었다.
+QUALITY_MENU_LABELS: dict[str, str] = {
+    "auto": "자동 (최고 화질)",
+    "1080p": "1080p",
+    "720p": "720p",
+    "480p": "480p",
+    "360p": "360p",
+    "240p": "240p",
+}
+
+
+def quality_menu_label(key: str) -> str:
+    return QUALITY_MENU_LABELS.get(key, key)
+
+
+def quality_badge_text(key: str) -> str:
+    """재생 중 화질 배지 — **자동일 때는 비운다.**
+
+    "자동"은 실제 화질이 아니라 고르는 방식이라, 배지에 적으면 약속하지 못할 값을
+    적는 셈이 된다. 예전에는 이 판단이 `if short == "자동"` 이라는 문자열 비교로
+    흩어져 있었다.
+    """
+    return "" if key == "auto" else key

@@ -94,3 +94,40 @@ class TestDomainKeysStayAscii:
 
     def test_filter_키(self):
         assert all(g.isascii() and k.isascii() for g, k in _FILTER_KEYS)
+
+
+class TestQualityKeys:
+    """화질은 **키로 고른다** — 표시 문자열이 곧 식별자이던 것을 끊었다.
+
+    예전에는 `if short == "자동"` 으로 배지를 숨길지 판정했다. 라벨을 번역하면 그
+    판정이 조용히 죽고 배지에 "Auto"가 그대로 뜬다.
+    """
+
+    def test_모든_키가_ASCII다(self):
+        from gui.widgets.player.constants import _QUALITY_OPTIONS
+
+        assert all(key.isascii() for key, *_ in _QUALITY_OPTIONS)
+
+    def test_키마다_메뉴_라벨이_있다(self):
+        from gui.text.labels import QUALITY_MENU_LABELS
+        from gui.widgets.player.constants import _QUALITY_OPTIONS
+
+        assert {key for key, *_ in _QUALITY_OPTIONS} == set(QUALITY_MENU_LABELS)
+
+    def test_자동은_배지를_비운다(self):
+        from gui.text.labels import quality_badge_text
+        from gui.widgets.player.constants import QUALITY_AUTO
+
+        assert quality_badge_text(QUALITY_AUTO) == ""
+
+    def test_나머지는_키를_그대로_적는다(self):
+        """"1080p" 는 어느 언어에서도 같다 — 번역 대상이 아니다."""
+        from gui.text.labels import quality_badge_text
+
+        assert quality_badge_text("1080p") == "1080p"
+
+    def test_해상도_표에_자동이_없다(self):
+        """`auto` 는 제한이 없으므로 높이가 없어야 한다(있으면 메뉴에서 걸러진다)."""
+        from gui.widgets.player.constants import QUALITY_AUTO, _QUALITY_HEIGHTS
+
+        assert QUALITY_AUTO not in _QUALITY_HEIGHTS
