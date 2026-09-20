@@ -36,6 +36,7 @@ from gui.themes.manager import ThemeManager
 from gui.panels.detail.widgets import _clear_layout, _t
 
 from gui.anim import fade_in
+from gui.text.formats import format_duration
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +59,8 @@ class RelatedItem:
     yt_video_id: str = ""  # 스트리밍 항목 — 피드 그리드와 썸네일 캐시(feed_*) 공유용
 
 def _fmt_dur(sec: int | None) -> str:
-    if sec is None:
-        return "—"
-    h, rem = divmod(int(sec), 3600)
-    m, s = divmod(rem, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+    """관련 영상 길이 — 구현은 `gui/text/formats.py` 하나뿐이다."""
+    return format_duration(sec, none_text="—")
 
 def _fmt_pub(value: str | None) -> str:
     """업로드일 표기. yt-dlp의 YYYYMMDD 또는 ISO 문자열 모두 처리."""

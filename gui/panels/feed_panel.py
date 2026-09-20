@@ -36,6 +36,12 @@ from gui.themes.manager import ThemeManager
 from gui.workers import track_thread
 
 from gui.themes.colors import sem, tok
+from gui.text.formats import (
+    format_compact_count,
+    format_duration,
+    format_relative_time,
+    views_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,52 +79,18 @@ _feed_thumb_cache = _ThumbnailCache(maxsize=150)
 # ---------------------------------------------------------------------------
 
 def _fmt_views(view_count: int | None) -> str:
-    """라이브러리 아이콘 카드와 동일한 '조회수 1.2만 회' 형식."""
-    if view_count is None:
-        return ""
-    if view_count < 1_000:
-        return f"조회수 {view_count}회"
-    if view_count < 10_000:
-        return f"조회수 {view_count / 1000:.1f}천 회"
-    if view_count < 100_000_000:
-        return f"조회수 {view_count / 10000:.1f}만 회"
-    return f"조회수 {view_count / 100_000_000:.1f}억 회"
+    """구현은 `gui/text/formats.py` 하나뿐이다."""
+    return views_label(view_count)
 
 
 def _fmt_duration(sec: int | None) -> str:
-    if sec is None:
-        return ""
-    m, s = divmod(int(sec), 60)
-    h, m = divmod(m, 60)
-    if h:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
+    """구현은 `gui/text/formats.py` 하나뿐이다."""
+    return format_duration(sec)
 
 
 def _relative_time(date_str: str | None) -> str:
-    """라이브러리 카드와 동일한 '3일 전' 형식. yt-dlp의 YYYYMMDD·ISO 모두 처리."""
-    if not date_str:
-        return ""
-    from datetime import date, datetime
-    try:
-        if len(date_str) == 8 and date_str.isdigit():        # YYYYMMDD
-            pub = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:]))
-        elif "T" in date_str or " " in date_str:
-            pub = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
-        else:
-            pub = date.fromisoformat(date_str)
-        days = (date.today() - pub).days
-        if days < 0:
-            return ""
-        if days < 7:
-            return f"{days}일 전" if days > 0 else "오늘"
-        if days < 30:
-            return f"{days // 7}주 전"
-        if days < 365:
-            return f"{days // 30}개월 전"
-        return f"{days // 365}년 전"
-    except (ValueError, TypeError):
-        return ""
+    """구현은 `gui/text/formats.py` 하나뿐이다(라이브러리 카드와 같은 잣대)."""
+    return format_relative_time(date_str)
 
 
 # ---------------------------------------------------------------------------
@@ -877,14 +849,8 @@ class RecommendStrip(QWidget):
 # ---------------------------------------------------------------------------
 
 def _fmt_count(count: int | None, unit: str) -> str:
-    """구독자/영상 수 포맷. 예: 12.3만, 1,234."""
-    if count is None:
-        return ""
-    if count >= 100_000_000:
-        return f"{count / 100_000_000:.1f}억{unit}"
-    if count >= 10_000:
-        return f"{count / 10_000:.1f}만{unit}"
-    return f"{count:,}{unit}"
+    """구현은 `gui/text/formats.py` 하나뿐이다."""
+    return format_compact_count(count, unit)
 
 
 class _ChannelCard(QFrame):

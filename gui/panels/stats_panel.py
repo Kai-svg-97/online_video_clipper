@@ -21,6 +21,7 @@ from application.library.dtos import CategoryStatDTO, ChannelStatDTO, LibrarySta
 from application.library.queries import LibraryStatsHandler
 from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
+from gui.text.formats import format_bytes, format_long_duration
 
 
 def _card_qss(tokens) -> str:
@@ -108,20 +109,17 @@ class _FlowLayout(QLayout):
 
 
 def _fmt_dur(sec: int) -> str:
-    h, rem = divmod(sec, 3600)
-    m, _ = divmod(rem, 60)
-    if h >= 24:
-        d = h // 24
-        return f"{d}일 {h % 24}시간"
-    return f"{h}시간 {m}분"
+    """구현은 `gui/text/formats.py` 하나뿐이다."""
+    return format_long_duration(sec)
 
 
 def _fmt_bytes(b: int) -> str:
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if b < 1024:
-            return f"{b:.1f} {unit}"
-        b //= 1024
-    return f"{b:.1f} TB"
+    """구현은 `gui/text/formats.py` 하나뿐이다.
+
+    예전 이 함수는 `b //= 1024`(정수 나눗셈)로 소수를 잘라 `393.4 MB`를 `393.0 MB`로
+    보여 줬다 — 통합하면서 고쳤다.
+    """
+    return format_bytes(b)
 
 
 class _SummaryCard(QWidget):

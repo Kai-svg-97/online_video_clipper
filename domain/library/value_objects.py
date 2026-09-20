@@ -85,13 +85,6 @@ class Duration:
     def seconds(self) -> int:
         return self._seconds
 
-    def formatted(self) -> str:
-        h, rem = divmod(self._seconds, 3600)
-        m, s = divmod(rem, 60)
-        if h:
-            return f"{h}:{m:02d}:{s:02d}"
-        return f"{m}:{s:02d}"
-
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Duration) and self._seconds == other._seconds
 

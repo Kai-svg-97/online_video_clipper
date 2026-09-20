@@ -40,6 +40,7 @@ from config.settings import THUMBNAIL_DIR
 from gui.anim import fade_in
 from gui.themes.manager import ThemeManager
 from gui.widgets.skeleton import ShimmerEffect, SkeletonRow
+from gui.text.formats import format_duration_minutes
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +62,8 @@ def _album_thumb_id(album_key: str) -> str:
 
 
 def _fmt_dur(sec: int | None) -> str:
-    if not sec:
-        return ""
-    m, s = divmod(int(sec), 60)
-    return f"{m}:{s:02d}"
+    """수록곡 길이 — 구현은 `gui/text/formats.py` 하나뿐이다."""
+    return format_duration_minutes(sec)
 
 
 class _JacketLabel(QLabel):

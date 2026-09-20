@@ -59,28 +59,6 @@ def is_recordable(status: str) -> bool:
     return status == LIVE_NOW
 
 
-def format_elapsed(seconds: float) -> str:
-    """경과 시간 — 라이브에는 진행률 대신 이것을 보여준다."""
-    total = max(0, int(seconds))
-    hours, rem = divmod(total, 3600)
-    minutes, secs = divmod(rem, 60)
-    if hours:
-        return f"{hours}시간 {minutes}분"
-    if minutes:
-        return f"{minutes}분 {secs}초"
-    return f"{secs}초"
-
-
-def format_size(num_bytes: float) -> str:
-    """받은 용량 — 끝을 모르므로 '얼마나 쌓였는지'가 유일한 진척 신호다."""
-    size = float(max(0, num_bytes))
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024 or unit == "GB":
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} GB"
-
-
-def format_recording_progress(elapsed_sec: float, downloaded_bytes: float) -> str:
-    """녹화 진행 한 줄. 퍼센트를 쓰지 않는 이유는 모듈 설명 참조."""
-    return f"{format_elapsed(elapsed_sec)} · {format_size(downloaded_bytes)}"
+# 경과 시간·용량·진행 한 줄을 만드는 일은 **표시 계층이 한다**(`gui/text/formats.py`).
+# 여기 있던 `format_elapsed`·`format_size`·`format_recording_progress`는 그리로 옮겼다 —
+# 도메인이 "1시간 5분" 같은 완성된 한국어를 만들면 화면 언어를 바꿀 수 없다.

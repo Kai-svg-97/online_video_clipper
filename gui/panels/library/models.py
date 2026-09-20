@@ -29,6 +29,7 @@ from application.library.dtos import VideoDTO
 from gui.panels.library.constants import _ICON_PAD, _ICON_TEXT_H, _MATCH_ROW_H, _MIME_VIDEO_ID, _TH_ICON, _TW_ICON
 from gui.panels.library.formatting import _mime_may_contain_url, _url_from_mime
 from gui.panels.library.thumbnails import _load_thumb
+from gui.text.formats import format_duration
 
 logger = logging.getLogger(__name__)
 
@@ -185,11 +186,8 @@ class VideoListModel(QAbstractListModel):
 
     @staticmethod
     def _fmt_dur(sec: int | None) -> str:
-        if sec is None:
-            return ""
-        m, s = divmod(sec, 60)
-        h, m = divmod(m, 60)
-        return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+        """구현은 `gui/text/formats.py` 하나뿐이다."""
+        return format_duration(sec)
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or index.row() >= len(self._items):

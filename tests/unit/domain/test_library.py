@@ -24,12 +24,6 @@ class TestVideoUrl:
 
 
 class TestDuration:
-    def test_formatted_seconds_only(self):
-        assert Duration(90).formatted() == "1:30"
-
-    def test_formatted_with_hours(self):
-        assert Duration(3661).formatted() == "1:01:01"
-
     def test_negative_raises(self):
         with pytest.raises(ValueError):
             Duration(-1)

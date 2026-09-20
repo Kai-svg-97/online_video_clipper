@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 
 
 from gui.themes.manager import ThemeManager
+from gui.text.formats import format_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +55,8 @@ def _t():
     return ThemeManager.instance().current()
 
 def _fmt_size(b: int | None) -> str:
-    if b is None:
-        return "—"
-    for unit in ("B", "KB", "MB", "GB"):
-        if b < 1024:
-            return f"{b:.1f} {unit}"
-        b //= 1024
-    return f"{b:.1f} TB"
+    """구현은 `gui/text/formats.py` 하나뿐이다(소수 자르던 버그도 함께 고쳐졌다)."""
+    return format_bytes(b, none_text="—")
 
 class _TagChip(QPushButton):
     """Small pill-shaped button for a single tag.

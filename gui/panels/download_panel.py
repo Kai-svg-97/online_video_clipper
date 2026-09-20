@@ -411,7 +411,7 @@ class _HistoryCardDelegate(QStyledItemDelegate):
                 pct_text = "대기 중"
                 pct_font_size = 11
             elif progress is not None and progress.is_indeterminate:
-                from domain.download.live import format_recording_progress  # noqa: PLC0415
+                from gui.text.formats import format_recording_progress  # noqa: PLC0415
 
                 pct_text = format_recording_progress(
                     progress.elapsed_sec, progress.downloaded_bytes

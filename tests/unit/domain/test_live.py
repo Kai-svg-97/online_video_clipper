@@ -16,9 +16,6 @@ from domain.download.live import (
     MAX_CONCURRENT_RECORDINGS,
     NOT_LIVE,
     classify_live_status,
-    format_elapsed,
-    format_recording_progress,
-    format_size,
     is_recordable,
 )
 
@@ -71,41 +68,8 @@ class TestRecordable:
         assert not is_recordable(status)
 
 
-class TestElapsed:
-    @pytest.mark.parametrize(
-        "seconds,expected",
-        [(0, "0초"), (45, "45초"), (90, "1분 30초"), (3600, "1시간 0분"), (5025, "1시간 23분")],
-    )
-    def test_사람이_읽는_경과_시간(self, seconds, expected):
-        assert format_elapsed(seconds) == expected
-
-    def test_음수는_0으로_본다(self):
-        assert format_elapsed(-10) == "0초"
-
-
-class TestSize:
-    @pytest.mark.parametrize(
-        "num,expected",
-        [(0, "0 B"), (512, "512 B"), (2048, "2.0 KB"), (5 * 1024 ** 2, "5.0 MB")],
-    )
-    def test_사람이_읽는_용량(self, num, expected):
-        assert format_size(num) == expected
-
-    def test_기가까지_올라간다(self):
-        assert format_size(3 * 1024 ** 3).endswith("GB")
-
-    def test_아주_크면_GB로_멈춘다(self):
-        """TB 단위를 만들지 않는다 — 녹화 하나가 그 크기면 다른 문제가 있다."""
-        assert format_size(9999 * 1024 ** 3).endswith("GB")
-
-
-class TestProgressLine:
-    def test_퍼센트를_쓰지_않는다(self):
-        """총 크기를 모르므로 0%나 NaN이 뜨면 멈춘 것처럼 보인다."""
-        line = format_recording_progress(5025, 2.4 * 1024 ** 3)
-        assert "%" not in line
-        assert "1시간 23분" in line
-        assert "GB" in line
+# 경과 시간·용량·진행 한 줄의 포맷 시험은 표시 계층으로 옮겼다
+# (`tests/unit/gui/test_text_formats.py`) — 도메인은 이제 그 문자열을 만들지 않는다.
 
 
 class TestLimits:

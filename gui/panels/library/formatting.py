@@ -18,6 +18,7 @@ from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
 
 from gui.panels.library.constants import _TAG_PALETTE
+from gui.text.formats import RelativeStyle, format_relative_time, views_label
 
 logger = logging.getLogger(__name__)
 
@@ -28,30 +29,11 @@ def _t() -> ThemeTokens:
 
 
 def _fmt_elapsed(iso: str | None) -> str:
-    """ISO 시간 문자열을 '3일 전' 형식으로 변환한다."""
-    if not iso:
-        return ""
-    try:
-        from datetime import datetime, timezone  # noqa: PLC0415
-        dt = datetime.fromisoformat(iso)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        diff = datetime.now(timezone.utc) - dt
-        s = diff.total_seconds()
-        if s < 60:
-            return "방금"
-        if s < 3600:
-            return f"{int(s // 60)}분 전"
-        if s < 86400:
-            return f"{int(s // 3600)}시간 전"
-        if s < 86400 * 30:
-            return f"{int(s // 86400)}일 전"
-        if s < 86400 * 365:
-            return f"{int(s // (86400 * 30))}개월 전"
-        return f"{int(s // (86400 * 365))}년 전"
-    except Exception:
-        logger.exception("경과 시간 포맷 변환 실패")
-        return ""
+    """구현은 `gui/text/formats.py` 하나뿐이다.
+
+    이 화면의 잣대는 PRECISE — 방금 올라온 것을 '오늘'로 뭉뚱그리지 않는다.
+    """
+    return format_relative_time(iso, style=RelativeStyle.PRECISE)
 
 
 def tag_color(name: str) -> str:
@@ -170,30 +152,11 @@ def _mime_may_contain_url(mime: QMimeData) -> bool:
 
 
 def _relative_time(date_str: str | None) -> str:
-    """Return a Korean relative time string like '3년 전' from an ISO date string."""
-    if not date_str:
-        return ""
-    from datetime import date, datetime
-    try:
-        if len(date_str) == 8 and date_str.isdigit():        # YYYYMMDD (yt-dlp)
-            pub = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:]))
-        elif "T" in date_str or " " in date_str:
-            pub = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
-        else:
-            pub = date.fromisoformat(date_str)
-        today = date.today()
-        days = (today - pub).days
-        if days < 0:
-            return ""
-        if days < 7:
-            return f"{days}일 전" if days > 0 else "오늘"
-        if days < 30:
-            return f"{days // 7}주 전"
-        if days < 365:
-            return f"{days // 30}개월 전"
-        return f"{days // 365}년 전"
-    except (ValueError, TypeError):
-        return ""
+    """구현은 `gui/text/formats.py` 하나뿐이다.
+
+    이 화면의 잣대는 COARSE — 게시일처럼 시각이 의미 없는 값에 쓴다.
+    """
+    return format_relative_time(date_str)
 
 
 def _pub_sort_key(date_str: str | None) -> int:
@@ -212,13 +175,5 @@ def _pub_sort_key(date_str: str | None) -> int:
 
 
 def _fmt_views(view_count: int | None) -> str:
-    """Return a short Korean view count string like '1.2만 회'."""
-    if view_count is None:
-        return ""
-    if view_count < 1_000:
-        return f"조회수 {view_count}회"
-    if view_count < 10_000:
-        return f"조회수 {view_count / 1000:.1f}천 회"
-    if view_count < 100_000_000:
-        return f"조회수 {view_count / 10000:.1f}만 회"
-    return f"조회수 {view_count / 100_000_000:.1f}억 회"
+    """구현은 `gui/text/formats.py` 하나뿐이다."""
+    return views_label(view_count)
