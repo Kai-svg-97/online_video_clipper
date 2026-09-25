@@ -89,6 +89,8 @@ a = Analysis(
     binaries=[ffmpeg_bin],
     datas=[
         ("../assets", "assets"),
+        ("../docs/manual", "docs/manual"),            # F1 설명서 (build_manual.py 산출물)
+        ("../gui/text/locales", "gui/text/locales"),  # 번역 카탈로그 — 빠지면 영어를 골라도 한국어(원문 폴백)
         *collect_data_files("yt_dlp"),
         *collect_data_files("PyQt6"),
     ],

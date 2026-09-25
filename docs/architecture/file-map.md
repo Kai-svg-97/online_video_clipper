@@ -46,7 +46,11 @@ online_video_clipper/
 │
 ├── scripts/
 │   ├── build_windows.ps1            # PowerShell: runs PyInstaller → Inno Setup
-│   └── build_linux.sh               # Bash: runs PyInstaller → appimagetool
+│   ├── build_linux.sh               # Bash: runs PyInstaller → appimagetool
+│   ├── build_manual.py              # docs/manual.md → docs/manual/index.html (F1이 여는 설명서)
+│   ├── capture_screenshots.py       # 설명서 갈무리(OVC_DATA_DIR 샌드박스). `--lang en`이면 영어 화면을 docs/manual/images-en/에 저장
+│   ├── extract_catalog.py           # `tr("…")` 리터럴 + `messages._TEMPLATES`를 모아 locales/en.json 뼈대 갱신(기존 번역 보존, 사라진 원문 제거). `--report`는 채움률만
+│   └── wrap_translatable.py         # 1회성 코드모드: **표시 API 인자만** `tr()`로 감싼다(dict 키·비교 대상·로그·f-string 제외). ast col_offset이 UTF-8 **바이트** 오프셋이라는 함정을 주석에 남김
 │
 ├── domain/                          # Pure domain layer — NO external dependencies
 │   ├── shared/                      # 교차 컨텍스트 공유 추상화
@@ -216,7 +220,7 @@ online_video_clipper/
 │       └── install_script.py        # 설치 배치 내용을 만드는 **순수 함수**(실행하지 않으므로 검증할 수 있다 — 예전에는 이 경로에 테스트가 아예 없었다). 고정 대기 대신 **PID 소멸을 기다린다**(상한 약 2분). 함정 셋을 여기서 막는다: ① 시스템 도구를 절대 경로로 부른다(그냥 `find`면 Git for Windows 의 GNU find 가 잡히고, 그것이 실패하면 `|| goto ready`가 발동해 대기가 통째로 사라진다), ② `if errorlevel 1 >"파일" echo %ERRORLEVEL%` — 리다이렉션이 뒤에 오면 `2>`가 stderr 리다이렉션으로 해석돼 기록이 빈다, ③ 우리가 적는 명령은 **ASCII 만**(한글 주석을 넣으면 한국어가 아닌 코드페이지에서 기록 자체가 실패한다. 사용자 경로의 한글은 mbcs 로 기록하므로 괜찮다). `/VERYSILENT` 대신 `/SILENT` — 앱이 닫힌 뒤 화면에 아무것도 없으면 앱이 죽은 줄 안다
 │
 ├── gui/                             # Presentation layer (PyQt6, MVVM)
-│   ├── text/                        # **화면에 나가는 말이 사는 곳**(다국어화 1단계). PyQt6를 임포트하지 않는다 — 순수 파이썬이라 헤드리스 시험이 되고 나중에 `presentation/`으로 승격할 여지가 남는다(`tests/unit/gui/test_gui_text.py`가 강제). `__init__.py`의 `_()`가 2단계에서 번역이 끼어들 **단일 지점**(지금은 항등 함수). `labels.py`는 닫힌 키 집합 → 표시 이름(sponsor·availability·필터 프리셋·변환 프리셋·전사 모델·화질·자막 트랙·빌트인 다운로드 프리셋). `formats.py`는 재생시간·용량·상대시간·조회수를 **한 곳**에서 만든다 — 화면마다 잣대가 달랐던 것은 `RelativeStyle`·`ByteUnit` 파라미터로 남겨 출력이 바뀌지 않게 했다(뭉개면 라이브러리 카드 표시가 조용히 바뀐다). 만/억 vs K/M/B는 구간 경계가 달라 `_VIEW_BUCKETS_*` 표 자체가 번역 단위다. `messages.py`는 `Message`(키+파라미터) → 문장, **예외를 내지 않는다**(업데이트 배지가 paint 경로에서 쓴다 — 0xC0000409)
+│   ├── text/                        # **화면에 나가는 말이 사는 곳**(다국어화 1단계). PyQt6를 임포트하지 않는다 — 순수 파이썬이라 헤드리스 시험이 되고 나중에 `presentation/`으로 승격할 여지가 남는다(`tests/unit/gui/test_gui_text.py`가 강제). `__init__.py`의 `tr()`이 번역의 **단일 지점**(다국어화 2단계) — 원문(한국어)이 곧 키이고 카탈로그에 없으면 원문 그대로, `set_language()`는 `main.py`가 화면을 만들기 전에 한 번 부른다(`_`가 아닌 이유: `for _ in` 과 충돌해 라벨이 빈다). `catalog.py`는 JSON 카탈로그 로더와 `AVAILABLE_LANGUAGES`(`.qm`을 안 쓰는 이유: `lrelease`가 PyQt6 wheel에 없다) — 파일이 없거나 깨지면 빈 표(= 한국어 화면), 공백뿐인 번역은 미번역으로 친다. `locales/en.json`은 `{원문: 번역}`(무결성은 `tests/unit/gui/test_catalog_integrity.py`). `labels.py`는 닫힌 키 집합 → 표시 이름(sponsor·availability·필터 프리셋·변환 프리셋·전사 모델·화질·자막 트랙·빌트인 다운로드 프리셋). `formats.py`는 재생시간·용량·상대시간·조회수를 **한 곳**에서 만든다 — 화면마다 잣대가 달랐던 것은 `RelativeStyle`·`ByteUnit` 파라미터로 남겨 출력이 바뀌지 않게 했다(뭉개면 라이브러리 카드 표시가 조용히 바뀐다). 만/억 vs K/M/B는 구간 경계가 달라 `_VIEW_BUCKETS_*` 표 자체가 번역 단위다. `messages.py`는 `Message`(키+파라미터) → 문장, **예외를 내지 않는다**(업데이트 배지가 paint 경로에서 쓴다 — 0xC0000409)
 │   ├── help.py                      # 상세 설명서 열기 — F1(`MainWindow._setup_help_shortcut`)과 설정 → 도움말 단추가 같은 곳을 부른다. **번들된 `docs/manual/index.html`을 우선**하고(오프라인 + 지금 깔린 버전의 설명서) 없을 때만 GitHub 문서로. 로컬 경로는 `as_uri()`로 넘긴다 — 그냥 넘기면 Windows에서 드라이브 문자가 스킴으로 해석된다
 │   ├── anim.py                      # 짧은 등장 연출 + **애니메이션 수명 레지스트리**. `fade_in`(비동기 도착 썸네일)·`fade_switch`(화면 전환) — **영상이 있는 화면에는 걸지 않는다**(QGraphicsOpacityEffect는 픽스맵 합성이라 비디오 서피스가 검게 비거나 깜빡인다). 효과는 끝나면 반드시 떼어 낸다. **`track_animation(anim)`은 `gui/workers.py:track_thread`의 애니메이션 판**이다 — 부모를 떼고 멈출 때까지(`stateChanged`→Stopped) 모듈 레지스트리가 붙든다. **실행 중 애니메이션을 위젯의 자식으로 두면 그 위젯 소멸자가 함께 지우며 프로세스가 죽는다**(access violation; `destroyed`에서 stop/disconnect는 이미 늦다 — 실측). 대가로 애니메이션이 대상보다 오래 살 수 있어 **콜백은 `RuntimeError`를 가드**한다
 │   ├── toast.py                     # 오른쪽 아래 토스트 알림 — 완료 소식만(진행 중은 상태바 담당). 위로 쌓기·클릭 닫기·자동 소멸·상한 4개

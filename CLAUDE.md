@@ -230,6 +230,21 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
   **파라미터로 남긴다** — 뭉개면 표시가 조용히 바뀐다.
 - **`gui/text/`는 PyQt6를 임포트하지 않는다**(`tests/unit/gui/test_gui_text.py`가 강제).
   순수 파이썬이라 헤드리스 시험이 되고, 나중에 `presentation/` 계층으로 승격할 여지가 남는다.
+- **새 표시 문자열은 `tr("한국어 원문")`으로 감싼다**(`from gui.text import tr`). 원문이
+  곧 카탈로그 키다. 감싼 뒤 `python scripts/extract_catalog.py`로 `gui/text/locales/en.json`에
+  자리를 만들고 번역을 채운다(`--report`로 빈 칸 확인). 빠뜨려도 화면이 비지는 않고
+  한국어로 남는다 — 대신 영어 화면에 한국어가 섞인다.
+- **번역 함수 이름은 `_`가 아니라 `tr`이다.** 이 코드베이스는 `for _ in ...`처럼 `_`를
+  버리는 변수로 쓴다 — `_`로 두면 그 스코프에서 번역 함수가 가려져 **라벨이 빈 채로** 나온다.
+- **`tr()` 안에 f-string을 넣지 않는다.** 원문이 매번 달라져 카탈로그 키가 되지 못한다.
+  이름 있는 자리표시자(`tr("{n}개").format(n=...)`)나 `Message`를 쓴다. 번역문은 원문과
+  **자리표시자·줄바꿈 수가 같아야 한다**(`tests/unit/gui/test_catalog_integrity.py`가 강제).
+- **번역된 글이 들어가는 위젯에 `setFixedWidth`를 주지 않는다.** 영어가 더 길어 잘린다
+  (저장 경로 "열기"가 48px 고정이라 "Open"이 잘렸다). 최소 폭만 정한다.
+- **앱 언어는 시작할 때 한 번 정해진다**(`main.py`가 화면을 만들기 **전에**
+  `set_language()`). 위젯이 생성 시점에 `setText()`로 박으므로 바꾸면 **다시 시작**해야
+  반영된다. 모듈 수준 상수에서 `tr()`을 부르면 임포트 순서에 따라 언어가 정해지기 전에
+  평가될 수 있다(`bootstrap.runtime`은 그보다 먼저 임포트된다) — 함수 안에서 부른다.
 
 ## 재생 스트림 규칙 (mandatory)
 
