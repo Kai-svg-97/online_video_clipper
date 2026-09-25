@@ -36,6 +36,15 @@
 - `ChannelInfo` — name, url, channelId
 - `Duration` — 초 단위, 포맷 변환 메서드 포함
 
+**Gemini 요약 (Video 소유, 언어별):**
+- 한 영상에 **언어마다 하나**(ko·en 공존). 저장은 `video_summaries(video_id, lang)`.
+- **`Video` 엔티티에 싣지 않는다.** 목록에서 읽은 Video에는 요약이 없는데 `save()`가
+  요약까지 쓰면 목록 경로의 저장이 요약을 지운다. 그래서 리포지토리 전용 메서드
+  (`get_summaries`·`save_summary`, 실패 사유 `get/set/clear_summary_status(…, lang)`)로
+  다룬다 — 자막 색인(`ISubtitleRepository`)과 같은 "영상에 딸린 부속 자료" 취급이다.
+- 언어 코드는 plain str. 도메인은 표시 언어를 모르고, 생성 언어(= 앱 언어)는 조립
+  루트가 핸들러에 주입한다.
+
 **Domain Events:**
 - `VideoAdded(video_id, url, title)`
 - `VideoUpdated(video_id, changed_fields)`
@@ -49,6 +58,9 @@ class IVideoRepository(ABC):
     def get_by_id(self, video_id: UUID) -> VideoAggregate | None: ...
     def search(self, query: SearchQuery) -> list[VideoAggregate]: ...
     def delete(self, video_id: UUID) -> None: ...
+    # Gemini 요약 — 언어별(빈 문자열 저장 = 그 언어 삭제)
+    def get_summaries(self, video_id: UUID) -> dict[str, str]: ...
+    def save_summary(self, video_id: UUID, lang: str, summary: str) -> None: ...
 ```
 
 **Domain Services:**
@@ -200,6 +212,7 @@ ffmpeg 기반 구간 추출. **'영상 위의 시간 구간'을 다루는 모든
 **Domain Services (domain/sync/services.py):**
 - `OpLogMerger` — op 배치를 현재 레지스터 상태에 병합하는 결정적 reducer(존재 레지스터 + 필드/참조 레지스터, 필드 단위 LWW, tombstone).
 - `NaturalKey` 함수군 — `video_key`(정규화 URL)·`category_key`(이름 경로)·`tag_key`·`channel_key`·`link_key`·`origin_key`(자연키 없는 엔티티용 install+uuid).
+  Gemini 요약은 엔티티 `video_summary`, 자연키 `link_key(video_key, 언어)`.
 - `topo_order` — FK 안전 적용 순서(부모→자식).
 
 **Ports (application/sync/ports.py):**

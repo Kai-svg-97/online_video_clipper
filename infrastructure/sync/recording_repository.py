@@ -70,7 +70,6 @@ _VIDEO_COLS = (
     "favorite",
     "watched",
     "thumbnail_path",
-    "gemini_summary",
     "channel_name",
     "channel_url",
     "channel_id",
@@ -108,6 +107,32 @@ class RecordingVideoRepository(SqliteVideoRepository):
         if nkey is not None:
             self._recorder.record_delete("video", nkey)
 
+    def save_summary(self, video_id: UUID, lang: str, summary: str) -> None:
+        """요약(언어별)도 캡처한다 — 엔티티 `video_summary`, nkey=link_key(영상, 언어).
+
+        빈 요약은 삭제다. 지울 것이 없었으면 아무것도 기록하지 않는다.
+        """
+        old = self.get_summaries(video_id).get(lang)
+        super().save_summary(video_id, lang, summary)
+        vnk = self._read_url_key(video_id)
+        if vnk is None:
+            return
+        nkey = link_key(vnk, lang)
+        if summary:
+            self._recorder.record_change(
+                "video_summary", nkey, str(video_id),
+                {"summary": old} if old else {}, {"summary": summary},
+            )
+        elif old:
+            # 마이그레이션이 옮겨 온 요약, 동기화를 켜기 전에 쓴 요약은 식별자가 없다.
+            # 그대로 `record_delete` 하면 **아무것도 기록되지 않아** 다른 기기에서는 요약이
+            # 영영 남는다. 먼저 존재를 기록해 식별자를 세운 뒤 지운다.
+            if not self._recorder.has_identity("video_summary", nkey):
+                self._recorder.record_change(
+                    "video_summary", nkey, str(video_id), {}, {"summary": old}
+                )
+            self._recorder.record_delete("video_summary", nkey)
+
     # -- 값 추출 ---------------------------------------------------------
     def _read_old(self, video_id: UUID) -> dict | None:
         with self._db.connection() as conn:
@@ -130,7 +155,6 @@ class RecordingVideoRepository(SqliteVideoRepository):
             "favorite": int(v.favorite),
             "watched": int(v.watched),
             "thumbnail_path": v.thumbnail_path,
-            "gemini_summary": v.gemini_summary,
             "channel_name": ch.name if ch else None,
             "channel_url": ch.url if ch else None,
             "channel_id": ch.channel_id if ch else None,

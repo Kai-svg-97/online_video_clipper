@@ -83,6 +83,8 @@ ENTITY_ORDER: tuple[str, ...] = (
     "playlist_folder",  # playlist.folder_id FK 대상 — playlist보다 먼저
     "video",
     "video_description",
+    # Gemini 요약(언어별). nkey = link_key(영상 nkey, 언어). 영상이 먼저 있어야 한다.
+    "video_summary",
     "song_info",
     "playlist",
     "video_tag",

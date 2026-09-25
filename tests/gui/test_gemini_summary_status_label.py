@@ -24,7 +24,7 @@ class TestGeminiFailureStatusLabel:
         video_id = uuid4()
         widget._detail = SimpleNamespace(id=video_id)
 
-        widget._on_gemini_done(video_id, "", "no_button")
+        widget._on_gemini_done(video_id, "ko", "", "no_button")
 
         text = widget._summary_status_lbl.text()
         assert "브라우저/프로필" not in text
@@ -36,7 +36,7 @@ class TestGeminiFailureStatusLabel:
         video_id = uuid4()
         widget._detail = SimpleNamespace(id=video_id)
 
-        widget._on_gemini_done(video_id, "", "not_signed_in")
+        widget._on_gemini_done(video_id, "ko", "", "not_signed_in")
 
         text = widget._summary_status_lbl.text()
         assert "로그인" in text
@@ -47,7 +47,7 @@ class TestGeminiFailureStatusLabel:
         video_id = uuid4()
         widget._detail = SimpleNamespace(id=video_id)
 
-        widget._on_gemini_done(video_id, "", "error")
+        widget._on_gemini_done(video_id, "ko", "", "error")
 
         text = widget._summary_status_lbl.text()
         assert text  # 비어있지 않음
@@ -59,7 +59,7 @@ class TestGeminiFailureStatusLabel:
         video_id = uuid4()
         widget._detail = SimpleNamespace(id=video_id)
 
-        widget._on_gemini_done(video_id, "실제 요약 본문", "")
+        widget._on_gemini_done(video_id, "ko", "실제 요약 본문", "")
 
         assert widget._summary_status_lbl.text() == ""
         widget.deleteLater()

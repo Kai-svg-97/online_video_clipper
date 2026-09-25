@@ -32,6 +32,7 @@ MIGRATION_IDS: tuple[str, ...] = (
     "migrate_playback_position",
     "migrate_album_links_reverify",
     "migrate_subtitle_index",
+    "migrate_video_summaries",
 )
 
 
@@ -259,6 +260,60 @@ class Database:
                 )
                 """
             )
+
+    def _migrate_video_summaries(self) -> None:
+        """요약을 언어별로 — `video_summaries` 를 만들고 옛 요약을 'ko' 로 옮긴다 (idempotent).
+
+        지금까지의 요약은 전부 한국어 YouTube 화면(`locale="ko-KR"`)에서 받았으므로
+        'ko' 로 옮기는 것이 사실과 맞다. `videos.gemini_summary` 컬럼은 지우지 않는다
+        (SQLite 컬럼 삭제는 테이블 재작성이다 — 값어치에 비해 위험하다). 더는 읽지도
+        쓰지도 않는다.
+
+        실패 사유 표(`video_summary_status`)도 `(video_id, lang)` 키로 바꾼다. 로컬
+        전용·비동기화 표라 재작성이 안전하다. 새로 설치한 DB는 schema.sql 이 이미 새
+        모양으로 만들었으므로 건너뛴다.
+        """
+        with self.connection() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS video_summaries (
+                    video_id   TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                    lang       TEXT NOT NULL,
+                    summary    TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (video_id, lang)
+                )
+                """
+            )
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(videos)")}
+            if "gemini_summary" in cols:
+                moved = conn.execute(
+                    "INSERT OR IGNORE INTO video_summaries (video_id, lang, summary, updated_at) "
+                    "SELECT id, 'ko', gemini_summary, COALESCE(updated_at, datetime('now')) "
+                    "FROM videos WHERE gemini_summary IS NOT NULL AND gemini_summary != ''"
+                ).rowcount
+                logger.info("요약 %d건을 언어별 표(ko)로 옮김", moved)
+
+            status_cols = {r[1] for r in conn.execute("PRAGMA table_info(video_summary_status)")}
+            if status_cols and "lang" not in status_cols:
+                conn.execute(
+                    """
+                    CREATE TABLE video_summary_status_new (
+                        video_id   TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                        lang       TEXT NOT NULL DEFAULT 'ko',
+                        status     TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (video_id, lang)
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO video_summary_status_new (video_id, lang, status, updated_at) "
+                    "SELECT video_id, 'ko', status, updated_at FROM video_summary_status"
+                )
+                conn.execute("DROP TABLE video_summary_status")
+                conn.execute("ALTER TABLE video_summary_status_new RENAME TO video_summary_status")
+                logger.info("video_summary_status 를 언어별 키로 재작성")
 
     def _migrate_playback_position(self) -> None:
         """videos에 이어보기 컬럼(last_position_ms·last_played_at)을 추가한다 (idempotent).

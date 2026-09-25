@@ -11,7 +11,7 @@ from pathlib import Path
 
 from config.settings import BACKUP_DIR, DATA_DIR
 from infrastructure.auth.youtube_auth import YouTubeAuthService
-from infrastructure.browser.gemini_extractor import GeminiExtractor
+from infrastructure.browser.gemini_extractor import GeminiExtractor, page_lang
 from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
 from infrastructure.event_bus import EventBus
 from infrastructure.persistence.db_backup import DbBackup
@@ -113,3 +113,14 @@ def build_services(db) -> Services:
         db_backup=DbBackup(db.path, Path(BACKUP_DIR)),
         download_queue=DownloadQueueAggregate(),
     )
+
+
+def summary_language() -> str:
+    """Gemini 요약을 받을 언어 = 앱 언어(`UI_LANGUAGE`).
+
+    요약 추출기가 모르는 언어면 한국어로 떨어진다(`page_lang`). 앱 언어는 다시
+    시작해야 바뀌므로, 핸들러는 조립 때 이 값을 한 번 받아 둔다.
+    """
+    from config.settings import UI_LANGUAGE  # noqa: PLC0415
+
+    return page_lang(UI_LANGUAGE).code

@@ -5,6 +5,7 @@
 - is_song=False면 요약만 추출한다.
 - 가사를 찾지 못하면 **폴백 없이 종료**한다(요약으로 넘어가지 않는다).
 - 이미 값이 있으면 건너뛴다(kind="skipped" 또는 ok=True + 안내 detail).
+- 요약은 **언어별**이다 — "이미 있다"도, 저장·실패 사유도 핸들러의 `summary_lang` 기준.
 """
 from __future__ import annotations
 
@@ -24,17 +25,19 @@ class _FakeSummarySource:
     def __init__(self, summary: str = "요약 본문") -> None:
         self._summary = summary
         self.calls: list[str] = []
+        self.langs: list[str] = []
 
-    def extract(self, url: str) -> str:
+    def extract(self, url: str, lang: str = "ko") -> str:
         self.calls.append(url)
+        self.langs.append(lang)
         return self._summary
 
 
-def _video_agg(gemini_summary: str = "", url: str = "https://youtu.be/abc"):
+def _video_agg(url: str = "https://youtu.be/abc"):
     """VideoAggregate 대역 — 핸들러가 쓰는 속성만 갖춘다."""
     return SimpleNamespace(
         id=uuid4(),
-        video=SimpleNamespace(url=url, gemini_summary=gemini_summary),
+        video=SimpleNamespace(url=url),
         update_metadata=MagicMock(),
         pull_events=MagicMock(return_value=[]),
     )
@@ -46,9 +49,13 @@ def _song_agg(is_song: bool, lyrics_lines=None):
     )
 
 
-def _make(video_agg, song_agg, song_fetch=None, summary_source=None):
+def _make(
+    video_agg, song_agg, song_fetch=None, summary_source=None,
+    summaries: dict | None = None, lang: str = "ko",
+):
     repo = MagicMock()
     repo.get_by_id.return_value = video_agg
+    repo.get_summaries.return_value = dict(summaries or {})
     song_repo = MagicMock()
     song_repo.get.return_value = song_agg
     handler = EnrichVideoHandler(
@@ -57,6 +64,7 @@ def _make(video_agg, song_agg, song_fetch=None, summary_source=None):
         song_fetch=song_fetch,
         summary_source=summary_source,
         event_bus=MagicMock(),
+        summary_lang=lang,
     )
     return handler, repo, song_repo
 
@@ -131,8 +139,9 @@ class TestSummaryBranch:
         assert result.kind == "summary"
         assert result.ok is True
         assert summary.calls == ["https://youtu.be/xyz"]
-        video.update_metadata.assert_called_once_with(gemini_summary="이 영상은 …")
-        repo.save.assert_called_once_with(video)
+        repo.save_summary.assert_called_once_with(video.id, "ko", "이 영상은 …")
+        # 요약은 videos 행이 아니다 — 영상을 다시 저장하지 않는다.
+        repo.save.assert_not_called()
 
     def test_no_song_row_treated_as_non_song(self):
         """노래 정보 행이 없으면(yt-dlp 조회 실패 등) 비노래로 취급한다."""
@@ -148,14 +157,29 @@ class TestSummaryBranch:
         """요약이 이미 있으면 추출하지 않는다."""
         summary = _FakeSummarySource()
         handler, repo, _ = _make(
-            _video_agg(gemini_summary="기존 요약"), _song_agg(False), MagicMock(), summary
+            _video_agg(), _song_agg(False), MagicMock(), summary, summaries={"ko": "기존 요약"}
         )
 
         result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
 
         assert result.kind == "skipped"
         assert summary.calls == []
-        repo.save.assert_not_called()
+        repo.save_summary.assert_not_called()
+
+    def test_other_language_summary_does_not_block(self):
+        """한국어 요약이 있어도 영어 핸들러는 영어 요약을 새로 받는다."""
+        summary = _FakeSummarySource("This video …")
+        video = _video_agg()
+        handler, repo, _ = _make(
+            video, _song_agg(False), MagicMock(), summary,
+            summaries={"ko": "기존 요약"}, lang="en",
+        )
+
+        result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
+
+        assert result.ok is True
+        assert summary.langs == ["en"]          # 추출기에 언어가 전달된다
+        repo.save_summary.assert_called_once_with(video.id, "en", "This video …")
 
     def test_empty_summary_reports_failure_with_guidance(self):
         """빈 문자열 반환은 실패로 보고하고 안내 문구를 남긴다.
@@ -170,7 +194,7 @@ class TestSummaryBranch:
 
         assert result.ok is False
         assert result.detail, "안내 문구가 비었다"
-        repo.save.assert_not_called()
+        repo.save_summary.assert_not_called()
 
     def test_none_summary_reports_failure(self):
         """GeminiExtractor.extract는 실패 시 None도 반환한다 — 빈 문자열과 동일 처리."""
@@ -182,7 +206,7 @@ class TestSummaryBranch:
 
         assert result.ok is False
         assert result.detail
-        repo.save.assert_not_called()
+        repo.save_summary.assert_not_called()
 
     def test_missing_summary_source_skipped(self):
         """요약 추출기가 주입되지 않아도 예외 없이 skipped."""
@@ -201,10 +225,10 @@ class _ReasoningSummarySource:
         self._summary = summary
         self._reason = reason
 
-    def extract(self, url: str):
+    def extract(self, url: str, lang: str = "ko"):
         return self._summary
 
-    def extract_with_reason(self, url: str):
+    def extract_with_reason(self, url: str, lang: str = "ko"):
         return self._summary, ("" if self._summary else self._reason)
 
 
@@ -234,6 +258,18 @@ class TestFailureReasonHandling:
 
         repo.set_summary_status.assert_called_once()
         assert repo.set_summary_status.call_args.args[1] == "no_button"
+
+    def test_status_is_recorded_per_language(self):
+        """영어 요약만 실패할 수 있다 — 실패 사유는 그 언어로 기록한다."""
+        video = _video_agg()
+        handler, repo, _ = _make(
+            video, _song_agg(False), MagicMock(),
+            _ReasoningSummarySource(None, "no_button"), lang="en",
+        )
+
+        handler.handle(EnrichVideoCommand(video_id=uuid4()))
+
+        repo.set_summary_status.assert_called_once_with(video.id, "no_button", "en")
 
     def test_not_signed_in_message_mentions_login(self):
         handler, _repo, _ = _make(

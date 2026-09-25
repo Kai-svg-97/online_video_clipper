@@ -122,8 +122,6 @@ from gui.panels.detail.text_format import (  # noqa: F401
     _HEADING_RE,
     _ITALIC_RE,
     _NUMBERED_RE,
-    _SUMMARY_PLACEHOLDERS,
-    _SUMMARY_STATUS_LABELS,
     _TS_RE,
     _URL_RE,
     summary_failure_status_label,
@@ -170,9 +168,10 @@ class VideoDetailWidget(
     item_selected           = pyqtSignal(object)  # 연관 영상 클릭 — payload(UUID | FeedVideoDTO)
     notes_saved             = pyqtSignal(object, str)   # (video_id, notes)
     category_path_clicked   = pyqtSignal(object)  # (category_id: UUID)
-    gemini_summary_saved    = pyqtSignal(object, str)   # (video_id, summary)
-    # 요약 실패 사유 저장 요청 — (video_id, SUMMARY_REASON_* 또는 "" = 지우기)
-    summary_status_saved    = pyqtSignal(object, str)
+    # 요약은 언어별로 저장된다 — (video_id, 언어, 요약)
+    gemini_summary_saved    = pyqtSignal(object, str, str)
+    # 요약 실패 사유 저장 요청 — (video_id, 언어, SUMMARY_REASON_* 또는 "" = 지우기)
+    summary_status_saved    = pyqtSignal(object, str, str)
     downloads_refresh_requested = pyqtSignal(object)    # video_id
     detail_refresh_requested    = pyqtSignal(object)    # video_id — 제목행 ⟳ 버튼
     song_field_saved            = pyqtSignal(object, str, str)  # (video_id, field, value)
@@ -244,6 +243,10 @@ class VideoDetailWidget(
         self._playlist: list = []        # 우측 목록 payload 순서 — 자동재생 다음곡 계산용
         self._current_key = ""           # 현재 재생 항목 키(RelatedItem.key) — 목록 강조용
         self._summary_raw = ""           # 요약 원문(편집 대상) — 렌더 전 텍스트
+        # 요약은 언어별이다 — {언어: 요약}, {언어: 실패 사유}, 지금 보고 있는 언어.
+        self._summaries: dict[str, str] = {}
+        self._summary_statuses: dict[str, str] = {}
+        self._summary_lang = ""
         # 읽는 글(요약·가사)의 글자 배율 — Ctrl +/- 로 조절, 전역 설정에 저장한다.
         self._text_scale: float = load_scale()
         self._current_url = ""           # 브라우저 열기/재생 실패 폴백용
@@ -477,6 +480,13 @@ class VideoDetailWidget(
         edit_hint = QLabel(tr("(더블클릭하여 편집)"))
         edit_hint.setStyleSheet(f"font-size: 8pt; color: {_t().text_secondary};")
         refresh_row.addWidget(edit_hint)
+        # 언어 칩 — 다른 언어의 요약이 있을 때만 보인다(_refresh_summary_lang_chips).
+        self._summary_lang_bar = QWidget()
+        self._summary_lang_layout = QHBoxLayout(self._summary_lang_bar)
+        self._summary_lang_layout.setContentsMargins(8, 0, 0, 0)
+        self._summary_lang_layout.setSpacing(2)
+        self._summary_lang_bar.setVisible(False)
+        refresh_row.addWidget(self._summary_lang_bar)
         refresh_row.addStretch()
         self._summary_status_lbl = QLabel("")
         self._summary_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
@@ -501,7 +511,7 @@ class VideoDetailWidget(
         self._summary_edit = QTextBrowser()
         self._summary_edit.setOpenLinks(False)
         self._summary_edit.setOpenExternalLinks(False)
-        self._summary_edit.setPlaceholderText(_SUMMARY_PLACEHOLDERS[""])
+        self._summary_edit.setPlaceholderText(summary_placeholder(""))
         self._summary_edit.anchorClicked.connect(self._on_summary_anchor_clicked)
         self._summary_stack.addWidget(self._summary_edit)      # index 0: 표시
         self._summary_editor = QPlainTextEdit()
@@ -684,16 +694,8 @@ class VideoDetailWidget(
         self._notes_edit.blockSignals(True)
         self._notes_edit.setPlainText(detail.notes or "")
         self._notes_edit.blockSignals(False)
-        self._summary_raw = detail.gemini_summary or ""
-        # 요약이 비어 있을 때 왜 없는지 알려준다(저장된 실패 사유 기준).
-        self._summary_edit.setPlaceholderText(
-            summary_placeholder(getattr(detail, "summary_status", ""))
-        )
-        self._summary_edit.setHtml(
-            self._render_timestamped_html(self._summary_raw, line_gap=self._SUMMARY_LINE_GAP)
-        )
+        self._load_summaries(detail)
         self._summary_stack.setCurrentWidget(self._summary_edit)
-        self._summary_status_lbl.setText("")
         self._summary_refresh_btn.setEnabled(True)
 
         # 클립 탭 — 로컬 파일 탐색 및 탭 초기화

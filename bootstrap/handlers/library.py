@@ -68,6 +68,7 @@ from application.library.queries import (
 )
 
 from bootstrap.context import LibraryHandlers, Repositories, Services, SongHandlers
+from bootstrap.services import summary_language
 
 
 def _build_cleanup_fns(video_repo, download_repo, delete_video, availability) -> tuple:
@@ -131,6 +132,7 @@ def build(
             song_fetch=song.fetch,
             summary_source=services.summary_source,
             event_bus=bus,
+            summary_lang=summary_language(),
         ),
         assign_category=AssignCategoryHandler(video, bus),
         create_category=CreateCategoryHandler(video),

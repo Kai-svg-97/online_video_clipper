@@ -62,7 +62,7 @@ def _detail(video_id, file_path):
             [SimpleNamespace(file_path=file_path, quality="1080p", fmt="mp4",
                              file_size_bytes=1)] if file_path else []
         ),
-        failed_downloads=[], gemini_summary="", summary_status="",
+        failed_downloads=[], summaries={}, summary_statuses={},
         category_id=None, thumbnail_path="",
     )
 

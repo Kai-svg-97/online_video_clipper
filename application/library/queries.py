@@ -279,8 +279,8 @@ class GetVideoDetailHandler:
             tags=tag_names,
             downloads=downloads,
             failed_downloads=failed_downloads,
-            gemini_summary=v.gemini_summary,
-            summary_status=self._video_repo.get_summary_status(agg.id),
+            summaries=self._video_repo.get_summaries(agg.id),
+            summary_statuses=self._video_repo.get_summary_statuses(agg.id),
             last_position_ms=getattr(v, "last_position_ms", 0) or 0,
         )
 

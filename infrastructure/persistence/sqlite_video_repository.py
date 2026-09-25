@@ -110,7 +110,6 @@ def _row_to_video(row) -> Video:
         favorite=bool(row["favorite"]),
         watched=bool(row["watched"]),
         notes=row["notes"] or "",
-        gemini_summary=row["gemini_summary"] if "gemini_summary" in row.keys() else "",
         thumbnail_path=row["thumbnail_path"] or "",
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
@@ -161,9 +160,9 @@ class SqliteVideoRepository(IVideoRepository):
                 INSERT INTO videos
                     (id, url, title, channel_name, channel_url, channel_id,
                      duration_sec, published_at, view_count, favorite, watched,
-                     notes, gemini_summary, thumbnail_path, category_id, created_at, updated_at,
+                     notes, thumbnail_path, category_id, created_at, updated_at,
                      last_position_ms, last_played_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     title=excluded.title,
                     channel_name=excluded.channel_name,
@@ -175,7 +174,6 @@ class SqliteVideoRepository(IVideoRepository):
                     favorite=excluded.favorite,
                     watched=excluded.watched,
                     notes=excluded.notes,
-                    gemini_summary=excluded.gemini_summary,
                     thumbnail_path=excluded.thumbnail_path,
                     category_id=excluded.category_id,
                     updated_at=excluded.updated_at,
@@ -191,7 +189,7 @@ class SqliteVideoRepository(IVideoRepository):
                     _fmt_dt(v.published_at) if v.published_at else None,
                     v.view_count,
                     int(v.favorite), int(v.watched),
-                    v.notes, v.gemini_summary, v.thumbnail_path,
+                    v.notes, v.thumbnail_path,
                     str(aggregate.category_id) if aggregate.category_id else None,
                     _fmt_dt(v.created_at), _fmt_dt(v.updated_at),
                     int(v.last_position_ms or 0),
@@ -512,27 +510,59 @@ class SqliteVideoRepository(IVideoRepository):
     # Gemini 요약 실패 사유 (상세 화면 안내 문구용)
     # ------------------------------------------------------------------
 
-    def get_summary_status(self, video_id: UUID) -> str:
+    def get_summaries(self, video_id: UUID) -> dict[str, str]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT lang, summary FROM video_summaries WHERE video_id=?",
+                (str(video_id),),
+            )
+            return {r["lang"]: r["summary"] for r in rows}
+
+    def save_summary(self, video_id: UUID, lang: str, summary: str) -> None:
+        with self._db.connection() as conn:
+            if not summary:
+                conn.execute(
+                    "DELETE FROM video_summaries WHERE video_id=? AND lang=?",
+                    (str(video_id), lang),
+                )
+                return
+            conn.execute(
+                "INSERT INTO video_summaries (video_id, lang, summary, updated_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(video_id, lang) DO UPDATE SET "
+                "summary=excluded.summary, updated_at=excluded.updated_at",
+                (str(video_id), lang, summary, _fmt_dt(datetime.now())),
+            )
+
+    def get_summary_status(self, video_id: UUID, lang: str = "ko") -> str:
         with self._db.connection() as conn:
             row = conn.execute(
-                "SELECT status FROM video_summary_status WHERE video_id=?",
-                (str(video_id),),
+                "SELECT status FROM video_summary_status WHERE video_id=? AND lang=?",
+                (str(video_id), lang),
             ).fetchone()
         return row["status"] if row else ""
 
-    def set_summary_status(self, video_id: UUID, status: str) -> None:
+    def get_summary_statuses(self, video_id: UUID) -> dict[str, str]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT lang, status FROM video_summary_status WHERE video_id=?",
+                (str(video_id),),
+            )
+            return {r["lang"]: r["status"] for r in rows}
+
+    def set_summary_status(self, video_id: UUID, status: str, lang: str = "ko") -> None:
         with self._db.connection() as conn:
             conn.execute(
-                "INSERT INTO video_summary_status (video_id, status, updated_at) "
-                "VALUES (?, ?, ?) ON CONFLICT(video_id) DO UPDATE SET "
+                "INSERT INTO video_summary_status (video_id, lang, status, updated_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(video_id, lang) DO UPDATE SET "
                 "status=excluded.status, updated_at=excluded.updated_at",
-                (str(video_id), status, _fmt_dt(datetime.now())),
+                (str(video_id), lang, status, _fmt_dt(datetime.now())),
             )
 
-    def clear_summary_status(self, video_id: UUID) -> None:
+    def clear_summary_status(self, video_id: UUID, lang: str = "ko") -> None:
         with self._db.connection() as conn:
             conn.execute(
-                "DELETE FROM video_summary_status WHERE video_id=?", (str(video_id),)
+                "DELETE FROM video_summary_status WHERE video_id=? AND lang=?",
+                (str(video_id), lang),
             )
 
     # ------------------------------------------------------------------
@@ -611,8 +641,8 @@ class SqliteVideoRepository(IVideoRepository):
             ("notes", f"SELECT id FROM videos WHERE id IN ({ph}) AND notes LIKE ? ESCAPE '\\'", 1),
             (
                 "summary",
-                f"SELECT id FROM videos WHERE id IN ({ph}) "
-                "AND gemini_summary LIKE ? ESCAPE '\\'",
+                f"SELECT video_id FROM video_summaries WHERE video_id IN ({ph}) "
+                "AND summary LIKE ? ESCAPE '\\'",
                 1,
             ),
             (
@@ -693,7 +723,8 @@ class SqliteVideoRepository(IVideoRepository):
             clauses = [
                 "SELECT id FROM videos WHERE title LIKE ? ESCAPE '\\'",
                 "SELECT id FROM videos WHERE notes LIKE ? ESCAPE '\\'",
-                "SELECT id FROM videos WHERE gemini_summary LIKE ? ESCAPE '\\'",
+                # 요약은 언어별 표 — 어느 언어로 적혔든 걸린다.
+                "SELECT video_id FROM video_summaries WHERE summary LIKE ? ESCAPE '\\'",
                 "SELECT video_id FROM video_descriptions WHERE description LIKE ? ESCAPE '\\'",
                 "SELECT vt.video_id FROM video_tags vt JOIN tags t ON t.id = vt.tag_id "
                 "WHERE t.name LIKE ? ESCAPE '\\'",

@@ -174,8 +174,9 @@ class VideoDetailDTO:
     tags: list[str] = field(default_factory=list)
     downloads: list[DownloadInfoDTO] = field(default_factory=list)
     failed_downloads: list[FailedDownloadInfoDTO] = field(default_factory=list)
-    gemini_summary: str = ""
+    # Gemini 요약 `{언어: 요약}` — 한 영상에 ko·en 요약이 공존한다.
+    summaries: dict[str, str] = field(default_factory=dict)
     # 이어보기 — 마지막 재생 위치(ms). 상세를 열 때 그 지점으로 seek 한다.
     last_position_ms: int = 0
-    # 요약 실패 사유(SUMMARY_REASON_*) — 상세 화면 안내 문구 분기용. 없으면 빈 문자열.
-    summary_status: str = ""
+    # 요약 실패 사유 `{언어: SUMMARY_REASON_*}` — 상세 화면 안내 문구 분기용.
+    summary_statuses: dict[str, str] = field(default_factory=dict)

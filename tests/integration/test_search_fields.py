@@ -36,13 +36,16 @@ def songs(db):
     return SqliteSongRepository(db)
 
 
-def _add(repo, url, title, category_id=None, **meta):
+def _add(repo, url, title, category_id=None, gemini_summary="", summary_lang="ko", **meta):
     agg = VideoAggregate.create(VideoUrl(url), title)
     if meta:
         agg.update_metadata(**meta)
     if category_id is not None:
         agg.assign_category(category_id)
     repo.save(agg)
+    # 요약은 videos 행이 아니라 언어별 표(video_summaries)에 산다.
+    if gemini_summary:
+        repo.save_summary(agg.id, summary_lang, gemini_summary)
     return agg
 
 
@@ -74,6 +77,14 @@ class TestFieldCoverage:
         _add(repo, "https://youtu.be/s2", "무제2")
         assert _ids(repo.search(SearchQuery(text="옵시디언"))) == {a.id}
 
+
+    def test_summary_in_any_language(self, repo):
+        """요약은 언어별로 저장되지만 검색은 언어를 가리지 않는다."""
+        a = _add(repo, "https://youtu.be/s2", "무제", gemini_summary="Obsidian workflow tips",
+                 summary_lang="en")
+        _add(repo, "https://youtu.be/s3", "무관")
+        got = [v.id for v in repo.search(SearchQuery(text="Obsidian"))]
+        assert got == [a.id]
     def test_description(self, repo):
         a = _add(repo, "https://youtu.be/d1", "무제", description="이 영상은 도커를 다룬다")
         _add(repo, "https://youtu.be/d2", "무제2")

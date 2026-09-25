@@ -56,6 +56,7 @@ from gui.panels.detail.song_tab import (  # noqa: F401
 from gui.panels.detail.workers import (  # noqa: F401
     _GeminiSummaryWorker,
 )
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -83,44 +84,55 @@ _NUMBERED_RE = re.compile(r"^(\d+)[.)]\s+(.*)$")  # 번호 목록
 # "질문하기 버튼이 없어서"는 사용자가 손쓸 수 없는 YouTube 측 제약이므로
 # 쿠키·네트워크 문제와 반드시 구분해야 한다(그냥 "요약이 없습니다"로 두면
 # 사용자가 설정을 계속 확인하게 된다).
-_SUMMARY_PLACEHOLDERS: dict[str, str] = {
-    "": (
-        "Gemini AI 요약이 없습니다.\n"
-        "⟳ 버튼으로 갱신하거나 더블클릭하여 직접 입력하세요."
-    ),
-    "no_button": (
-        "질문하기 버튼이 없어 가져오는데 실패했습니다.\n"
-        "조회수가 적거나 최근 업로드된 영상은 YouTube가 요약 기능을 제공하지 않습니다. "
-        "나중에 ⟳ 버튼으로 다시 시도하거나 더블클릭하여 직접 입력하세요."
-    ),
-    "not_signed_in": (
-        "YouTube 로그인이 필요해 요약을 가져오지 못했습니다.\n"
-        "이 PC에서 로그인된 브라우저를 찾지 못했습니다 — 등록해 둔 쿠키 파일이 "
-        "다른 PC의 경로이거나 지워졌을 수 있습니다.\n"
-        "설정 → YouTube API 연동 → '구독 피드 — 브라우저 쿠키'에서 지금 상태를 "
-        "확인한 뒤, 평소 쓰는 브라우저로 YouTube에 로그인하고 '쿠키 파일 등록 방법 "
-        "보기'를 따라 등록하세요."
-    ),
-    "error": (
-        "요약을 가져오는 중 오류가 발생했습니다.\n"
-        "⟳ 버튼으로 다시 시도하거나 더블클릭하여 직접 입력하세요."
-    ),
-}
+#
+# **모듈 상수가 아니라 함수다.** `tr()`은 앱 언어가 정해진 뒤에 불려야 번역되는데,
+# 모듈 상수는 임포트 순간 평가된다. `extract_catalog.py`가 문구를 모을 수 있게
+# `tr("…")`에 리터럴을 그대로 둔다.
+def _summary_placeholders() -> dict[str, str]:
+    return {
+        "": tr(
+            "Gemini AI 요약이 없습니다.\n"
+            "⟳ 버튼으로 갱신하거나 더블클릭하여 직접 입력하세요."
+        ),
+        "no_button": tr(
+            "질문하기 버튼이 없어 가져오는데 실패했습니다.\n"
+            "조회수가 적거나 최근 업로드된 영상은 YouTube가 요약 기능을 제공하지 않습니다. "
+            "나중에 ⟳ 버튼으로 다시 시도하거나 더블클릭하여 직접 입력하세요."
+        ),
+        "not_signed_in": tr(
+            "YouTube 로그인이 필요해 요약을 가져오지 못했습니다.\n"
+            "이 PC에서 로그인된 브라우저를 찾지 못했습니다 — 등록해 둔 쿠키 파일이 "
+            "다른 PC의 경로이거나 지워졌을 수 있습니다.\n"
+            "설정 → YouTube API 연동 → '구독 피드 — 브라우저 쿠키'에서 지금 상태를 "
+            "확인한 뒤, 평소 쓰는 브라우저로 YouTube에 로그인하고 '쿠키 파일 등록 방법 "
+            "보기'를 따라 등록하세요."
+        ),
+        "error": tr(
+            "요약을 가져오는 중 오류가 발생했습니다.\n"
+            "⟳ 버튼으로 다시 시도하거나 더블클릭하여 직접 입력하세요."
+        ),
+    }
+
 
 # 상태바(_summary_status_lbl)용 한 줄 요약 — 실패 사유와 무관하게 항상 같은 문구
 # ("설정에서 브라우저/프로필을 선택하거나 쿠키 파일을 등록하세요")를 보여주면
 # "no_button"(YouTube가 이 영상에 요약 기능을 제공하지 않음)처럼 설정을 만져도
 # 소용없는 경우까지 설정을 고치라고 안내해 불필요한 시행착오를 유발한다.
-_SUMMARY_STATUS_LABELS: dict[str, str] = {
-    "no_button": "요약 추출 실패 — 이 영상은 YouTube가 요약 기능을 제공하지 않습니다",
-    "not_signed_in": "요약 추출 실패 — 로그인된 브라우저를 찾지 못했습니다",
-    "error": "요약 추출 실패 — 잠시 후 다시 시도하세요",
-}
+def _summary_status_labels() -> dict[str, str]:
+    return {
+        "no_button": tr("요약 추출 실패 — 이 영상은 YouTube가 요약 기능을 제공하지 않습니다"),
+        "not_signed_in": tr("요약 추출 실패 — 로그인된 브라우저를 찾지 못했습니다"),
+        "error": tr("요약 추출 실패 — 잠시 후 다시 시도하세요"),
+    }
+
 
 def summary_failure_status_label(reason: str) -> str:
     """요약 실패 사유에 맞는 한 줄 상태 문구를 반환한다(모르는 값은 error와 동일)."""
-    return _SUMMARY_STATUS_LABELS.get(reason, _SUMMARY_STATUS_LABELS["error"])
+    labels = _summary_status_labels()
+    return labels.get(reason, labels["error"])
+
 
 def summary_placeholder(status: str) -> str:
     """요약 실패 사유에 맞는 안내 문구를 반환한다(모르는 값은 기본 문구)."""
-    return _SUMMARY_PLACEHOLDERS.get(status or "", _SUMMARY_PLACEHOLDERS[""])
+    texts = _summary_placeholders()
+    return texts.get(status or "", texts[""])

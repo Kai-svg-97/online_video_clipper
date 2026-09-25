@@ -8,6 +8,7 @@ from application.download.queries import GetDownloadHistoryHandler, GetDownloadQ
 from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
 
 from bootstrap.context import DownloadHandlers, LibraryHandlers, Repositories, Services
+from bootstrap.services import summary_language
 
 
 def build(
@@ -26,6 +27,7 @@ def build(
             make_downloader=lambda cb: YtDlpAdapter(on_progress=cb),
             add_video_handler=library.add_video,
             gemini_extractor=services.summary_source,
+            summary_lang=summary_language(),
         ),
         cancel=CancelDownloadHandler(services.download_queue, services.event_bus),
         get_queue=GetDownloadQueueHandler(services.download_queue),

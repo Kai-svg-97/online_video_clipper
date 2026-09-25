@@ -51,6 +51,7 @@ class StartDownloadHandler:
         make_downloader: MediaSourceFactory | None = None,
         add_video_handler=None,
         gemini_extractor=None,
+        summary_lang: str = "ko",
     ) -> None:
         self._queue = queue
         self._repo = repo
@@ -61,6 +62,8 @@ class StartDownloadHandler:
         self._make_downloader = make_downloader
         self._add_video = add_video_handler
         self._gemini = gemini_extractor
+        # 다운로드 완료 캡처가 받을 요약 언어 = 앱 언어(조립 때 정해진다).
+        self._summary_lang = summary_lang
 
     def handle(self, cmd: StartDownloadCommand) -> DownloadJob:
         # 부가 옵션(굽기·자막 언어·노래 태그)은 이력에 남지 않으므로, 호출부가 무엇을
@@ -130,12 +133,18 @@ class StartDownloadHandler:
         if self._add_video is None:
             return
         try:
-            summary = self._gemini.extract(url)
+            summary = self._gemini.extract(url, self._summary_lang)
             if not summary:
                 logger.debug("Gemini 요약 없음 (버튼 미발견 또는 미로그인): %s", url)
                 return
             from application.library.commands import AddVideoCommand  # noqa: PLC0415
-            self._add_video.handle(AddVideoCommand(url=url, initial_gemini_summary=summary))
+            self._add_video.handle(
+                AddVideoCommand(
+                    url=url,
+                    initial_gemini_summary=summary,
+                    initial_summary_lang=self._summary_lang,
+                )
+            )
             logger.info("Gemini 요약 메모 저장 완료 (%d자): %s", len(summary), url)
         except Exception:
             logger.exception("Gemini 요약 라이브러리 저장 실패 (무시)")

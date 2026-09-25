@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,86 @@ _TRAILING_ANCHORS = (
 _ERROR_PHRASE = "문제가 발생했습니다"
 _MAX_ERROR_RETRIES = 2
 
+
+# 질문 입력칸(실측 2026-09: `textarea.chatInputViewModelChatInput`, placeholder
+# "Ask a question..."). 클래스 이름이 바뀔 때를 대비해 placeholder 로도 찾는다.
+_CHAT_INPUT_SELECTOR = (
+    "textarea.chatInputViewModelChatInput, textarea[aria-label*='Ask a question'], "
+    "textarea[aria-label*='질문']"
+)
+_EN_SUMMARY_PROMPT = "Summarize the video in English."
+
+
+@dataclass(frozen=True)
+class _PageLang:
+    """요약을 받을 YouTube 화면 언어 하나에 딸린 문구 묶음.
+
+    **요약의 언어는 YouTube 화면의 언어다.** 앱은 프롬프트를 쓰지 않고 YouTube가
+    내놓는 추천 칩("동영상을 요약해 줘" / "Summarize the video")을 누르므로, 화면을
+    그 언어로 열어야 그 언어의 칩이 뜨고 Gemini도 그 언어로 답한다.
+
+    화면 언어는 **`PREF` 쿠키의 `hl`** 로 정한다(`_force_page_language`). 실측
+    (2026-09): 로그인 상태에서는 URL `hl=en` 과 브라우저 `locale="en-US"` 가 둘 다
+    무시되고 **계정 언어**로 뜬다. `PREF` 를 덮어써야만 바뀐다.
+    """
+
+    code: str
+    locale: str
+    chip_echo: str                       # 칩을 누르면 대화에 되풀이되는 질문 문구
+    chip_re: re.Pattern[str]
+    menu_phrases: tuple[str, ...]
+    error_phrases: tuple[str, ...]
+    # 칩 대신 입력칸에 쓸 질문. 있으면 칩을 찾지 않는다(`_prepare_prompt`).
+    prompt: str | None = None
+    # 답에 허용하는 한글 비율 상한. 넘으면 "다른 언어로 답함"으로 보고 재시도한다.
+    max_hangul_ratio: float | None = None
+
+
+_PAGE_LANGS: dict[str, _PageLang] = {
+    "ko": _PageLang(
+        code="ko",
+        locale="ko-KR",
+        chip_echo=_SUMMARIZE_CHIP_TEXT,
+        chip_re=_SUMMARIZE_CHIP_RE,
+        menu_phrases=_MENU_PHRASES,
+        error_phrases=(_ERROR_PHRASE,),
+    ),
+    # 문구는 2026-09 실측(영어 화면에서 패널을 열고 칩을 눌러 본 결과)이다. 오류 문구만은
+    # 실측하지 못했다 — 일어나지 않으면 볼 수 없어서다. YouTube 영어 화면의 일반 오류
+    # 문구로 두었고, 틀려도 재시도를 한 번 덜 할 뿐이다.
+    "en": _PageLang(
+        code="en",
+        locale="en-US",
+        # 칩 목록의 "Summarize the video" 와 겹치지 않는 문장이어야 에코를 가를 수 있다.
+        chip_echo=_EN_SUMMARY_PROMPT,
+        chip_re=re.compile(re.escape(_EN_SUMMARY_PROMPT), re.IGNORECASE),
+        menu_phrases=(
+            "Summarize the video",
+            "Recommend related content",
+            "Not sure what to ask? Choose something:",
+            "Hello! Curious about what you’re watching? I’m here to help.",
+            # 짧은 낱말("Ask")은 넣지 않는다 — 부분 문자열로 지우므로 본문의 "Asked"까지
+            # 깎아 길이 판정을 흐린다.
+            "Ask about this video",
+        ),
+        error_phrases=("Something went wrong",),
+        prompt=_EN_SUMMARY_PROMPT,
+        # 한국어 영상의 영어 요약에는 한글 고유명사가 섞일 수 있어 넉넉히 잡는다.
+        # 실제로 한국어로 답한 경우는 글자의 대부분이 한글이라 이 문턱으로 충분히 갈린다.
+        max_hangul_ratio=0.3,
+    ),
+}
+DEFAULT_SUMMARY_LANG = "ko"
+
+
+def page_lang(code: str | None) -> _PageLang:
+    """모르는 언어 코드는 한국어로 — 이 앱의 원문 언어이고 가장 오래 검증된 경로다."""
+    return _PAGE_LANGS.get(code or "", _PAGE_LANGS[DEFAULT_SUMMARY_LANG])
+
+
+def supported_summary_languages() -> tuple[str, ...]:
+    return tuple(_PAGE_LANGS)
+
 _PAGE_LOAD_TIMEOUT_MS = 20_000
 # "질문하기" 버튼이 나타나기를 기다리는 **총** 예산.
 # 유의: 예전에는 셀렉터마다 `is_visible(timeout=...)`로 확인했는데, Playwright 문서는
@@ -103,17 +184,21 @@ class GeminiExtractor:
     사용자는 방법 1(쿠키 파일 직접 등록)만 유효하다.
     """
 
-    def extract(self, url: str) -> str | None:
+    def extract(self, url: str, lang: str = DEFAULT_SUMMARY_LANG) -> str | None:
         """Gemini 요약 텍스트를 반환한다. 실패·미지원 시 None.
 
         `ISummarySource` 포트 계약이며 다운로드 완료 캡처 경로가 이 형태를 쓴다.
         실패 사유까지 필요하면 `extract_with_reason()`을 쓸 것.
 
+        `lang` 은 요약을 받을 언어다(YouTube 화면을 그 언어로 연다).
+
         반드시 QThread(백그라운드 스레드)에서 호출해야 한다.
         """
-        return self.extract_with_reason(url)[0]
+        return self.extract_with_reason(url, lang)[0]
 
-    def extract_with_reason(self, url: str) -> tuple[str | None, str]:
+    def extract_with_reason(
+        self, url: str, lang: str = DEFAULT_SUMMARY_LANG
+    ) -> tuple[str | None, str]:
         """(요약, 실패사유)를 반환한다. 성공 시 사유는 빈 문자열.
 
         사유는 SUMMARY_REASON_* 중 하나다. 상세 화면이 "질문하기 버튼이 없어서"와
@@ -121,7 +206,7 @@ class GeminiExtractor:
         """
         out: dict[str, str] = {}
         try:
-            summary = self._do_extract(url, out)
+            summary = self._do_extract(url, out, lang=lang)
         except Exception:
             logger.exception("Gemini 요약 추출 실패 (무시하고 계속): %s", url)
             return None, SUMMARY_REASON_ERROR
@@ -129,7 +214,10 @@ class GeminiExtractor:
             return summary, ""
         return None, out.get("reason", SUMMARY_REASON_ERROR)
 
-    def _do_extract(self, url: str, out: dict | None = None) -> str | None:
+    def _do_extract(
+        self, url: str, out: dict | None = None, *, lang: str = DEFAULT_SUMMARY_LANG
+    ) -> str | None:
+        pl = page_lang(lang)
         try:
             from playwright.sync_api import sync_playwright  # noqa: PLC0415
         except ImportError:
@@ -172,7 +260,7 @@ class GeminiExtractor:
                             "AppleWebKit/537.36 (KHTML, like Gecko) "
                             "Chrome/120.0.0.0 Safari/537.36"
                         ),
-                        locale="ko-KR",
+                        locale=pl.locale,
                         viewport={"width": 1366, "height": 900},
                     )
                     context.add_init_script(
@@ -180,6 +268,7 @@ class GeminiExtractor:
                         "{get: () => undefined});"
                     )
                     self._load_netscape_cookies(context, cookie_path)
+                    self._force_page_language(context, pl.code)
 
                     page = context.new_page()
                     page.route(
@@ -201,7 +290,7 @@ class GeminiExtractor:
 
                     self._log_login_state(page)
 
-                    return self._click_and_extract(page, out)
+                    return self._click_and_extract(page, out, pl)
                 finally:
                     try:
                         browser.close()
@@ -289,12 +378,15 @@ class GeminiExtractor:
             return None
         return btn
 
-    def _click_and_extract(self, page, out: dict | None = None) -> str | None:
+    def _click_and_extract(
+        self, page, out: dict | None = None, pl: _PageLang | None = None
+    ) -> str | None:
         """Ask 버튼 클릭 → 요약 칩 클릭 → 응답 안정화 대기 후 텍스트를 추출한다.
 
         "질문하기" 클릭은 채팅 패널을 열 뿐이며, 실제 요약은 추천 칩
         (예: "동영상을 요약해 줘")을 다시 클릭해야 생성된다.
         """
+        pl = pl or page_lang(DEFAULT_SUMMARY_LANG)
         ask_btn = self._find_ask_button(page)
         if ask_btn is None:
             # 원인을 구분해 기록한다. 예전에는 "로그인 필요 또는 미지원 영상"으로 뭉쳐
@@ -327,13 +419,79 @@ class GeminiExtractor:
 
         ask_btn.click()
 
-        try:
-            chip_text = page.get_by_text(_SUMMARIZE_CHIP_RE).first
-            chip_text.wait_for(state="visible", timeout=_RESPONSE_TIMEOUT_MS)
-        except Exception:
-            logger.info("'%s' 추천 칩 미발견", _SUMMARIZE_CHIP_TEXT)
+        trigger = (
+            self._prepare_prompt(page, pl) if pl.prompt else self._prepare_chip(page, pl)
+        )
+        if trigger is None:
             self._save_debug_screenshot(page)
             self._save_debug_html(page)
+            return None
+        send, panel_handle, fallback = trigger
+
+        def _is_error(text: str | None) -> bool:
+            return bool(text) and any(e in text for e in pl.error_phrases)
+
+        def _acceptable(text: str | None) -> bool:
+            return (
+                bool(text)
+                and not _is_error(text)
+                and self._looks_like_summary(text, pl)
+                and self._matches_language(text, pl)
+            )
+
+        send()
+        summary = self._wait_for_summary(page, panel_handle, fallback, pl)
+
+        retries = 0
+        while not _acceptable(summary) and retries < _MAX_ERROR_RETRIES:
+            retries += 1
+            if _is_error(summary):
+                reason = "오류 문구 감지"
+            elif summary and not self._looks_like_summary(summary, pl):
+                reason = "요약 대신 메뉴/추천칩 감지"
+            elif summary:
+                reason = "다른 언어로 답함"
+            else:
+                reason = "응답 없음"
+            logger.info("Gemini 응답 재시도 %d/%d (%s)", retries, _MAX_ERROR_RETRIES, reason)
+            try:
+                send()
+            except Exception:
+                logger.debug("재시도 요청 실패 — 칩/입력칸이 더 이상 존재하지 않음")
+                break
+            summary = self._wait_for_summary(page, panel_handle, fallback, pl)
+
+        if _acceptable(summary):
+            logger.info("Gemini 요약 추출 성공 (%s, %d자)", pl.code, len(summary))
+            return summary
+
+        logger.info("Gemini 요약 추출 실패 — 응답이 없거나 오류/메뉴/다른 언어 상태")
+        self._save_debug_screenshot(page)
+        self._save_debug_html(page)
+        return None
+
+    @staticmethod
+    def _panel_of(locator, depth: int):
+        """폴링용 패널 컨테이너 — 칩/입력칸의 `depth` 단계 위 조상.
+
+        미리 확보해 두는 이유: 칩은 클릭 후 대화 내용으로 바뀌며 사라질 수 있다.
+        """
+        try:
+            return locator.evaluate_handle(
+                f"el => {{ let p = el; for (let i = 0; i < {depth} && p.parentElement; i++) "
+                "p = p.parentElement; return p; }"
+            )
+        except Exception:
+            logger.debug("패널 컨테이너 확보 실패 — 칩/입력칸 자체로 폴백")
+            return None
+
+    def _prepare_chip(self, page, pl: _PageLang):
+        """추천 칩 방식 — (보내기, 패널, 폴백 로케이터) 또는 None."""
+        try:
+            chip_text = page.get_by_text(pl.chip_re).first
+            chip_text.wait_for(state="visible", timeout=_RESPONSE_TIMEOUT_MS)
+        except Exception:
+            logger.info("'%s' 추천 칩 미발견", pl.chip_echo)
             return None
 
         # get_by_text는 텍스트를 담은 가장 안쪽 노드(span/div)를 잡을 수 있어
@@ -346,48 +504,44 @@ class GeminiExtractor:
         except Exception:
             chip = chip_text
 
+        panel_handle = self._panel_of(chip, 8)
+        return (lambda: self._robust_click(chip)), panel_handle, chip
+
+    def _prepare_prompt(self, page, pl: _PageLang):
+        """질문 입력 방식 — (보내기, 패널, 폴백 로케이터) 또는 None.
+
+        **영어는 칩을 누르지 않고 질문을 직접 쓴다.** 실측(2026-09): 화면을 영어로
+        열고 "Summarize the video" 칩을 눌러도 **한국어 영상에는 한국어로** 답했다
+        (영어 영상에는 영어로). 답의 언어가 화면이 아니라 영상을 따라가는 경우가
+        있어서다. "…in English." 라고 적으면 한국어 영상에도 영어로 답한다.
+        """
         try:
-            # 칩을 감싸는 패널 컨테이너를 폴링용으로 미리 확보해 둔다
-            # (칩 자체는 클릭 후 대화 내용으로 대체되어 사라질 수 있다).
-            panel_handle = chip.evaluate_handle(
-                "el => { let p = el; for (let i = 0; i < 8 && p.parentElement; i++) "
-                "p = p.parentElement; return p; }"
-            )
+            box = page.locator(f"{_CHAT_INPUT_SELECTOR} >> visible=true").first
+            box.wait_for(state="visible", timeout=_RESPONSE_TIMEOUT_MS)
         except Exception:
-            logger.debug("패널 컨테이너 확보 실패 — 칩 자체로 폴백")
-            panel_handle = None
+            logger.info("Gemini 질문 입력칸 미발견")
+            return None
 
-        self._robust_click(chip)
-        summary = self._wait_for_summary(page, panel_handle, chip)
+        def send() -> None:
+            box.fill(pl.prompt)
+            box.press("Enter")
 
-        retries = 0
-        while (
-            (not summary or _ERROR_PHRASE in summary or not self._looks_like_summary(summary))
-            and retries < _MAX_ERROR_RETRIES
-        ):
-            retries += 1
-            if summary and _ERROR_PHRASE in summary:
-                reason = "오류 문구 감지"
-            elif summary and not self._looks_like_summary(summary):
-                reason = "요약 대신 메뉴/추천칩 감지"
-            else:
-                reason = "응답 없음"
-            logger.info("Gemini 응답 재시도 %d/%d (%s)", retries, _MAX_ERROR_RETRIES, reason)
-            try:
-                self._robust_click(chip)
-            except Exception:
-                logger.debug("재시도 클릭 실패 — 칩이 더 이상 존재하지 않음")
-                break
-            summary = self._wait_for_summary(page, panel_handle, chip)
+        return send, self._panel_of(box, 10), box
 
-        if summary and _ERROR_PHRASE not in summary and self._looks_like_summary(summary):
-            logger.info("Gemini 요약 추출 성공 (%d자)", len(summary))
-            return summary
+    @staticmethod
+    def _matches_language(text: str, pl: _PageLang) -> bool:
+        """답이 요청한 언어인가 — 한글 비율로 가른다.
 
-        logger.info("Gemini 요약 추출 실패 — 응답이 없거나 오류/메뉴 상태")
-        self._save_debug_screenshot(page)
-        self._save_debug_html(page)
-        return None
+        기준이 없는 언어(`max_hangul_ratio is None`)는 늘 참이다. 한국어 요약에는
+        영어 용어가 섞이는 게 정상이라 한국어 쪽은 검사하지 않는다.
+        """
+        if pl.max_hangul_ratio is None:
+            return True
+        letters = [c for c in text if c.isalpha()]
+        if not letters:
+            return True
+        hangul = sum(1 for c in letters if "가" <= c <= "힣")
+        return hangul / len(letters) <= pl.max_hangul_ratio
 
     @staticmethod
     def _launch_browser(p):
@@ -443,7 +597,7 @@ class GeminiExtractor:
         return current.strip()
 
     @staticmethod
-    def _clean_summary(full_text: str) -> str:
+    def _clean_summary(full_text: str, pl: _PageLang | None = None) -> str:
         """전체 패널 텍스트에서 순수 요약 본문만 잘라낸다.
 
         패널에는 인사말·추천 질문·요약 본문·면책 문구·추천 질문이 모두 담긴다.
@@ -452,12 +606,10 @@ class GeminiExtractor:
         """
         if not full_text:
             return ""
-        idx = full_text.rfind(_SUMMARIZE_CHIP_TEXT)
-        body = (
-            full_text[idx + len(_SUMMARIZE_CHIP_TEXT):]
-            if idx >= 0
-            else full_text
-        )
+        pl = pl or page_lang(DEFAULT_SUMMARY_LANG)
+        # 에코의 **마지막** 출현 뒤가 본문이다(앞쪽 것은 추천 칩 목록의 같은 문구).
+        matches = list(pl.chip_re.finditer(full_text))
+        body = full_text[matches[-1].end():] if matches else full_text
         for anchor in _TRAILING_ANCHORS:
             pos = body.find(anchor)
             if pos >= 0:
@@ -466,7 +618,7 @@ class GeminiExtractor:
         return body.strip()
 
     @staticmethod
-    def _looks_like_summary(text: str) -> bool:
+    def _looks_like_summary(text: str, pl: _PageLang | None = None) -> bool:
         """추출된 텍스트가 실제 요약 본문인지(추천칩/메뉴가 아닌지) 판정한다.
 
         칩 클릭 후 요약이 생성되지 않고 추천 질문/메뉴만 다시 뜨는 경우, 그
@@ -477,14 +629,16 @@ class GeminiExtractor:
         if not text:
             return False
         residual = text
-        for phrase in _MENU_PHRASES:
+        for phrase in (pl or page_lang(DEFAULT_SUMMARY_LANG)).menu_phrases:
             residual = residual.replace(phrase, " ")
         # 메뉴 라벨을 제거하고 공백을 정리한 뒤에도 충분한 본문이 남아야 요약.
         residual = re.sub(r"\s+", " ", residual).strip()
         return len(residual) >= _MIN_SUMMARY_LEN
 
     @classmethod
-    def _wait_for_summary(cls, page, panel_handle, fallback_locator) -> str | None:
+    def _wait_for_summary(
+        cls, page, panel_handle, fallback_locator, pl: _PageLang | None = None
+    ) -> str | None:
         """정제된 요약 본문이 비어있지 않고 안정될 때까지 폴링 후 반환한다.
 
         전체 패널이 아닌 '정제된 요약 영역'만 기준으로 판단하므로, 인사말/추천
@@ -494,6 +648,7 @@ class GeminiExtractor:
         """
         import time  # noqa: PLC0415
 
+        pl = pl or page_lang(DEFAULT_SUMMARY_LANG)
         last_summary = ""
         stable_count = 0
         deadline = time.time() + _RESPONSE_TIMEOUT_MS / 1000
@@ -501,9 +656,10 @@ class GeminiExtractor:
         while time.time() < deadline:
             page.wait_for_timeout(_STABLE_POLL_INTERVAL_MS)
             full = cls._read_panel_text(panel_handle, fallback_locator)
-            if _ERROR_PHRASE in full:
-                return cls._clean_summary(full) or _ERROR_PHRASE
-            summary = cls._clean_summary(full)
+            for err in pl.error_phrases:
+                if err in full:
+                    return cls._clean_summary(full, pl) or err
+            summary = cls._clean_summary(full, pl)
             if summary and summary == last_summary:
                 stable_count += 1
                 if stable_count >= _STABLE_REQUIRED_COUNT:
@@ -678,6 +834,38 @@ class GeminiExtractor:
             )
         Path(tmp_path).unlink(missing_ok=True)
         return None
+
+    @staticmethod
+    def _force_page_language(context, code: str) -> None:
+        """`PREF` 쿠키의 `hl` 을 덮어써 YouTube 화면 언어를 고정한다.
+
+        로그인 상태에서는 URL `hl=` 도 브라우저 locale 도 무시되고 **계정 언어**로
+        뜬다(실측). 한국어 요약을 받을 때도 강제한다 — 계정 언어가 영어인 사용자의
+        요약이 영어로 받아져 한국어 칸에 들어가는 일을 막는다.
+
+        `PREF` 의 다른 항목(자동재생·시간대 등)은 그대로 둔다. `gl`(지역)은 건드리지
+        않는다 — 지역을 바꾸면 영상 제공 여부가 달라질 수 있다.
+        """
+        try:
+            prefs = [c for c in context.cookies() if c.get("name") == "PREF"]
+            value = prefs[0].get("value", "") if prefs else ""
+            parts = [kv for kv in value.split("&") if kv and not kv.startswith("hl=")]
+            parts.append(f"hl={code}")
+            # **원래 쿠키의 도메인·경로에** 덮어쓴다. 다른 도메인으로 쓰면 브라우저가 두
+            # 쿠키를 모두 들고 있고, YouTube가 옛 것을 읽으면 언어 고정이 조용히 풀린다.
+            domain = prefs[0].get("domain", ".youtube.com") if prefs else ".youtube.com"
+            path = prefs[0].get("path", "/") if prefs else "/"
+            context.add_cookies([{
+                "name": "PREF",
+                "value": "&".join(parts),
+                "domain": domain,
+                "path": path,
+                "secure": True,
+            }])
+            logger.debug("YouTube 화면 언어 고정: hl=%s (PREF @ %s%s)", code, domain, path)
+        except Exception:
+            # 실패하면 계정 언어로 뜬다 — 요약은 받되 언어가 어긋날 수 있다.
+            logger.exception("YouTube 화면 언어 고정 실패(계정 언어로 진행): %s", code)
 
     @staticmethod
     def _load_netscape_cookies(context, cookie_path: str) -> None:

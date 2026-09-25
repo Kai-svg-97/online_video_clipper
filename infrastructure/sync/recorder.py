@@ -179,6 +179,10 @@ class OplogRecorder:
             ).fetchone()
         return row["present"] if row else None
 
+    def has_identity(self, entity: str, nkey: str) -> bool:
+        """이 (엔티티, 자연키)를 동기화가 이미 알고 있는가 — 삭제를 기록할 수 있는가."""
+        return self._identity_exists(entity, nkey)
+
     def _identity_exists(self, entity: str, nkey: str) -> bool:
         with self._db.connection() as conn:
             return (

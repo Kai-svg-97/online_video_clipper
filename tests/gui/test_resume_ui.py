@@ -18,7 +18,7 @@ def _detail(video_id=None, position=0):
         title="영상", channel_name="채널", duration_sec=600,
         published_at="", view_count=None, favorite=False, watched=False,
         description="", notes="", tags=(), downloads=[], failed_downloads=[],
-        gemini_summary="", summary_status="", category_id=None, thumbnail_path="",
+        summaries={}, summary_statuses={}, category_id=None, thumbnail_path="",
         last_position_ms=position,
     )
 

@@ -98,4 +98,35 @@ class TestDetailDtoCarriesStatus:
         dto = handler.handle(agg.id)
 
         assert dto is not None
-        assert dto.summary_status == SUMMARY_REASON_NO_BUTTON
+        assert dto.summary_statuses == {"ko": SUMMARY_REASON_NO_BUTTON}
+
+    def test_detail_exposes_summaries_per_language(self, repo):
+        from unittest.mock import MagicMock
+
+        from application.library.queries import GetVideoDetailHandler
+
+        agg = _add(repo)
+        repo.save_summary(agg.id, "ko", "한국어 요약")
+        repo.save_summary(agg.id, "en", "English summary")
+        dl_repo = MagicMock()
+        dl_repo.get_by_video_id.return_value = []
+        dl_repo.get_failed_by_video_id.return_value = []
+
+        dto = GetVideoDetailHandler(repo, dl_repo).handle(agg.id)
+
+        assert dto.summaries == {"ko": "한국어 요약", "en": "English summary"}
+
+
+class TestStatusPerLanguage:
+    def test_languages_are_independent(self, repo):
+        """영어 요약만 실패할 수 있다 — 한 언어의 사유가 다른 언어를 덮지 않는다."""
+        agg = _add(repo)
+        repo.set_summary_status(agg.id, SUMMARY_REASON_NO_BUTTON, "en")
+        assert repo.get_summary_status(agg.id, "en") == SUMMARY_REASON_NO_BUTTON
+        assert repo.get_summary_status(agg.id, "ko") == ""
+        repo.set_summary_status(agg.id, SUMMARY_REASON_NOT_SIGNED_IN, "ko")
+        assert repo.get_summary_statuses(agg.id) == {
+            "en": SUMMARY_REASON_NO_BUTTON, "ko": SUMMARY_REASON_NOT_SIGNED_IN,
+        }
+        repo.clear_summary_status(agg.id, "en")
+        assert repo.get_summary_statuses(agg.id) == {"ko": SUMMARY_REASON_NOT_SIGNED_IN}

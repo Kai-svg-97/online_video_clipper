@@ -1168,14 +1168,16 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         except Exception:
             logger.exception("메모 저장 실패: %s", video_id)
 
-    def save_gemini_summary(self, video_id: UUID, summary: str) -> None:
-        """Gemini AI 요약 저장."""
+    def save_gemini_summary(self, video_id: UUID, lang: str, summary: str) -> None:
+        """Gemini AI 요약 저장 — 그 언어의 칸에(빈 문자열이면 그 언어의 요약을 지운다)."""
         try:
-            self._update_video.handle(UpdateVideoCommand(video_id=video_id, gemini_summary=summary))
+            self._update_video.handle(
+                UpdateVideoCommand(video_id=video_id, gemini_summary=summary, summary_lang=lang)
+            )
         except Exception:
-            logger.exception("Gemini 요약 저장 실패: %s", video_id)
+            logger.exception("Gemini 요약 저장 실패: %s (%s)", video_id, lang)
 
-    def save_summary_status(self, video_id: UUID, status: str) -> None:
+    def save_summary_status(self, video_id: UUID, lang: str, status: str) -> None:
         """요약 실패 사유 저장(빈 문자열이면 삭제).
 
         상세 화면이 다음에 열릴 때도 "질문하기 버튼이 없어 실패" 같은 정확한 안내를
@@ -1183,10 +1185,10 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         """
         try:
             self._update_video.handle(
-                UpdateVideoCommand(video_id=video_id, summary_status=status)
+                UpdateVideoCommand(video_id=video_id, summary_status=status, summary_lang=lang)
             )
         except Exception:
-            logger.exception("요약 상태 저장 실패: %s", video_id)
+            logger.exception("요약 상태 저장 실패: %s (%s)", video_id, lang)
 
     def update_video_tags(self, video_id: UUID, tag_names: list[str]) -> None:
         """Replace the tag list for a single video (used from detail panel)."""

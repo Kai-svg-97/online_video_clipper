@@ -82,9 +82,9 @@ def _seed(db) -> None:
             stamp = (now - timedelta(days=i * 3)).isoformat(timespec="seconds")
             conn.execute(
                 "INSERT INTO videos (id, url, title, channel_name, duration_sec, "
-                "favorite, watched, last_position_ms, notes, gemini_summary, "
+                "favorite, watched, last_position_ms, notes, "
                 "thumbnail_path, category_id, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', '', '', ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', '', ?, ?, ?)",
                 (
                     uuid.uuid4().hex,
                     f"https://www.youtube.com/watch?v=sample{i:04d}",

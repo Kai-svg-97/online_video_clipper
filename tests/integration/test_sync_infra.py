@@ -159,7 +159,7 @@ class TestRecordingVideoRepository:
         assert create_op.nkey == nkey
         assert create_op.fields["title"] == "제목"
         assert create_op.fields["channel_id"] == "UC1"
-        # None 필드(예: gemini_summary="")는 값이 있으니 포함되지만 view_count는 캡처 안 함
+        # 빈 문자열 필드(예: notes="")는 값이 있으니 포함되지만 view_count는 캡처 안 함
         assert "view_count" not in create_op.fields
 
         # edit only notes → op with ONLY notes changed

@@ -774,12 +774,10 @@ class LibraryPanel(
         self._detail_widget.notes_saved.connect(
             lambda vid_id, text: self._vm.save_notes(vid_id, text)
         )
-        self._detail_widget.gemini_summary_saved.connect(
-            lambda vid_id, text: self._vm.save_gemini_summary(vid_id, text)
-        )
-        self._detail_widget.summary_status_saved.connect(
-            lambda vid_id, status: self._vm.save_summary_status(vid_id, status)
-        )
+        # (video_id, 언어, 값) — 요약은 언어별로 저장된다. 인자를 그대로 넘기므로
+        # 뷰모델의 바운드 메서드에 바로 잇는다.
+        self._detail_widget.gemini_summary_saved.connect(self._vm.save_gemini_summary)
+        self._detail_widget.summary_status_saved.connect(self._vm.save_summary_status)
         self._detail_widget.downloads_refresh_requested.connect(
             self._on_detail_downloads_refresh
         )

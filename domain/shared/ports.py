@@ -280,4 +280,6 @@ class ISummarySource(Protocol):
     반환한다(호출 측은 falsy 검사로 실패를 판별한다).
     """
 
-    def extract(self, url: str) -> str | None: ...
+    def extract(self, url: str, lang: str = "ko") -> str | None:
+        """`lang` 언어로 요약한다. 요약은 언어별로 따로 저장된다(한 영상에 ko·en 공존)."""
+        ...

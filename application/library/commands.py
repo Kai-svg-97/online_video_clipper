@@ -29,7 +29,9 @@ class AddVideoCommand:
     prefetched_thumbnail_url: str | None = None
     prefetched_upload_date: str | None = None
     prefetched_view_count: int | None = None
+    # 다운로드 완료 캡처가 받아 온 요약. 그 언어의 요약이 비어 있을 때만 채운다.
     initial_gemini_summary: str | None = None
+    initial_summary_lang: str = "ko"
 
 
 @dataclass
@@ -40,9 +42,12 @@ class UpdateVideoCommand:
     favorite: bool | None = None
     category_id: UUID | None = None
     tags: list[str] | None = None
+    # 요약(""이면 그 언어의 요약을 지운다)과 실패 사유(""는 "지우기", None은 "건드리지 않음").
+    # 둘 다 `summary_lang` 언어의 것이다 — 영어 화면에서 한국어 요약을 고칠 수도 있으므로
+    # 앱 언어로 짐작하지 않고 명시한다.
     gemini_summary: str | None = None
-    # 요약 실패 사유. ""는 "지우기", None은 "건드리지 않음".
     summary_status: str | None = None
+    summary_lang: str = "ko"
 
 
 @dataclass
@@ -185,10 +190,9 @@ class AddVideoHandler:
                 thumb_path = self._ytdlp.download_thumbnail(existing.id, thumbnail_url)
                 if thumb_path:
                     existing.update_metadata(thumbnail_path=thumb_path)
-            # 기존 Gemini 요약이 비어있을 때만 initial_gemini_summary로 채운다
-            if cmd.initial_gemini_summary and not existing.video.gemini_summary:
-                existing.update_metadata(gemini_summary=cmd.initial_gemini_summary)
             self._repo.save(existing)
+            # 그 언어의 요약이 비어 있을 때만 채운다(사용자가 고친 요약을 덮지 않는다).
+            self._fill_initial_summary(existing.id, cmd)
             self._bus.publish_all(existing.pull_events())
             self._register_song(existing.id, music_meta)
             return existing
@@ -207,8 +211,6 @@ class AddVideoHandler:
         )
         if description:
             agg.update_metadata(description=description)
-        if cmd.initial_gemini_summary:
-            agg.update_metadata(gemini_summary=cmd.initial_gemini_summary)
         agg.set_tags(tag_ids)
 
         if thumbnail_url and self._ytdlp:
@@ -217,9 +219,14 @@ class AddVideoHandler:
                 agg.update_metadata(thumbnail_path=thumb_path)
 
         self._repo.save(agg)
+        self._fill_initial_summary(agg.id, cmd)
         self._bus.publish_all(agg.pull_events())
         self._register_song(agg.id, music_meta)
         return agg
+
+    def _fill_initial_summary(self, video_id: UUID, cmd: AddVideoCommand) -> None:
+        """요약 행은 videos 행을 참조하므로 **영상을 저장한 뒤에** 쓴다."""
+        _fill_initial_summary_impl(self._repo, video_id, cmd)
 
     def _register_song(self, video_id: UUID, music_meta: dict) -> None:
         """등록 시 노래 감지·기본 메타데이터를 기록한다(가사 네트워크 조회 생략).
@@ -239,6 +246,16 @@ class AddVideoHandler:
             logger.exception("노래 정보 등록 실패(무시): %s", video_id)
 
 
+def _fill_initial_summary_impl(repo: IVideoRepository, video_id: UUID, cmd: AddVideoCommand) -> None:
+    if not cmd.initial_gemini_summary:
+        return
+    try:
+        if not repo.get_summaries(video_id).get(cmd.initial_summary_lang):
+            repo.save_summary(video_id, cmd.initial_summary_lang, cmd.initial_gemini_summary)
+    except Exception:
+        logger.exception("초기 요약 저장 실패(무시): %s", video_id)
+
+
 class EnrichVideoHandler:
     """등록된 영상의 성격에 따라 가사 또는 요약 한쪽만 자동으로 채운다.
 
@@ -247,7 +264,7 @@ class EnrichVideoHandler:
 
     - 노래 영상: 가사만 조회한다(메타데이터는 등록 시점에 채워져 있고, 체인은 빈 값만
       채우므로 실질적으로 가사만 추가된다). 가사를 못 찾아도 **요약으로 폴백하지 않는다.**
-    - 그 외: Gemini 요약을 추출해 `gemini_summary`에 저장한다.
+    - 그 외: Gemini 요약을 `summary_lang` 언어로 추출해 저장한다(언어별 저장).
 
     모든 실패는 EnrichVideoResult(ok=False)로 변환해 등록 결과에 영향을 주지 않는다.
     """
@@ -259,12 +276,15 @@ class EnrichVideoHandler:
         song_fetch: "object | None" = None,    # FetchSongInfoHandler
         summary_source: ISummarySource | None = None,
         event_bus: IEventBus | None = None,
+        summary_lang: str = "ko",
     ) -> None:
         self._repo = repo
         self._songs = song_repo
         self._song_fetch = song_fetch
         self._summary = summary_source
         self._bus = event_bus
+        # 요약을 받을 언어 = 앱 언어. 앱 언어는 다시 시작해야 바뀌므로 조립 때 한 번 정한다.
+        self._lang = summary_lang
 
     def is_song_video(self, video_id: UUID) -> bool:
         """상태바 라벨용 사전 판정.
@@ -317,7 +337,8 @@ class EnrichVideoHandler:
         return EnrichVideoResult("song", True, f"{len(lines)}줄")
 
     def _enrich_summary(self, video_agg) -> EnrichVideoResult:
-        if video_agg.video.gemini_summary:
+        # "이미 있다"는 **그 언어** 기준이다 — 한국어 요약이 있어도 영어 요약은 새로 받는다.
+        if self._repo.get_summaries(video_agg.id).get(self._lang):
             return EnrichVideoResult("skipped", True, "요약이 이미 있습니다")
         if self._summary is None:
             return EnrichVideoResult("skipped", False, "요약 추출기가 설정되지 않았습니다")
@@ -329,9 +350,9 @@ class EnrichVideoHandler:
         try:
             get_reason = getattr(self._summary, "extract_with_reason", None)
             if callable(get_reason):
-                summary, reason = get_reason(url)
+                summary, reason = get_reason(url, self._lang)
             else:
-                summary = self._summary.extract(url)
+                summary = self._summary.extract(url, self._lang)
         except Exception as exc:
             logger.exception("요약 자동 추출 실패: %s", url)
             self._record_summary_status(video_agg.id, "error")
@@ -350,21 +371,18 @@ class EnrichVideoHandler:
             logger.warning("%s: %s", detail, url)
             return EnrichVideoResult("summary", False, detail)
 
-        video_agg.update_metadata(gemini_summary=summary)
-        self._repo.save(video_agg)
+        self._repo.save_summary(video_agg.id, self._lang, summary)
         # 성공했으니 이전 실패 사유는 지운다(상세 안내 문구가 남지 않게).
         self._record_summary_status(video_agg.id, "")
-        if self._bus is not None:
-            self._bus.publish_all(video_agg.pull_events())
         return EnrichVideoResult("summary", True, f"{len(summary)}자")
 
     def _record_summary_status(self, video_id: UUID, status: str) -> None:
         """요약 실패 사유를 저장한다(빈 문자열이면 삭제). 실패는 격리한다."""
         try:
             if status:
-                self._repo.set_summary_status(video_id, status)
+                self._repo.set_summary_status(video_id, status, self._lang)
             else:
-                self._repo.clear_summary_status(video_id)
+                self._repo.clear_summary_status(video_id, self._lang)
         except Exception:
             logger.exception("요약 상태 기록 실패(무시): %s", video_id)
 
@@ -419,7 +437,6 @@ class UpdateVideoHandler:
             title=cmd.title,
             notes=cmd.notes,
             favorite=cmd.favorite,
-            gemini_summary=cmd.gemini_summary,
         )
         if cmd.category_id is not None:
             agg.assign_category(cmd.category_id)
@@ -430,12 +447,14 @@ class UpdateVideoHandler:
 
         self._repo.save(agg)
 
-        # 요약 실패 사유는 videos 행이 아니라 별도 테이블에 있어 따로 처리한다.
+        # 요약과 실패 사유는 videos 행이 아니라 언어별 표에 있어 따로 처리한다.
+        if cmd.gemini_summary is not None:
+            self._repo.save_summary(cmd.video_id, cmd.summary_lang, cmd.gemini_summary)
         if cmd.summary_status is not None:
             if cmd.summary_status:
-                self._repo.set_summary_status(cmd.video_id, cmd.summary_status)
+                self._repo.set_summary_status(cmd.video_id, cmd.summary_status, cmd.summary_lang)
             else:
-                self._repo.clear_summary_status(cmd.video_id)
+                self._repo.clear_summary_status(cmd.video_id, cmd.summary_lang)
 
         self._bus.publish_all(agg.pull_events())
 

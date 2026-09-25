@@ -28,7 +28,8 @@ class Video:
     updated_at: datetime
     # description is loaded on demand (GetVideoDetailHandler), not stored here
     description: str = field(default="", repr=False)
-    gemini_summary: str = field(default="", repr=False)
+    # Gemini 요약은 여기 없다 — 언어별이라 IVideoRepository.get_summaries/save_summary 로
+    # 다룬다(목록에서 읽은 Video를 저장해도 요약이 지워지지 않게).
     # 이어보기 — 마지막으로 보던 위치(ms)와 시각. 0이면 처음부터 본다.
     # 기기마다 보던 지점이 다를 수 있어 **동기화 대상이 아니다**(view_count와 같은 취급).
     last_position_ms: int = 0

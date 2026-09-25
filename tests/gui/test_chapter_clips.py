@@ -77,8 +77,8 @@ def _detail_dto(video_id, description="", file_path="C:/x/영상.mp4"):
         downloads=[SimpleNamespace(file_path=file_path, quality="1080p",
                                    fmt="mp4", file_size_bytes=1)],
         failed_downloads=[],
-        gemini_summary="",
-        summary_status="",
+        summaries={},
+        summary_statuses={},
         category_id=None,
         thumbnail_path="",
     )

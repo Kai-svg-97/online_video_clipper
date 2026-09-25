@@ -23,7 +23,7 @@ def extractor():
 class TestExtractWithReason:
     def test_success_returns_empty_reason(self, extractor, monkeypatch):
         monkeypatch.setattr(
-            extractor, "_do_extract", lambda url, out=None: "요약 본문"
+            extractor, "_do_extract", lambda url, out=None, **_: "요약 본문"
         )
 
         summary, reason = extractor.extract_with_reason("https://youtu.be/a")
@@ -34,7 +34,7 @@ class TestExtractWithReason:
     def test_no_button_reason_is_propagated(self, extractor, monkeypatch):
         """핵심 — 버튼 미발견 사유가 그대로 올라와야 한다."""
 
-        def fake(url, out=None):
+        def fake(url, out=None, **_):
             if out is not None:
                 out["reason"] = SUMMARY_REASON_NO_BUTTON
             return None
@@ -47,7 +47,7 @@ class TestExtractWithReason:
         assert reason == SUMMARY_REASON_NO_BUTTON
 
     def test_not_signed_in_reason_is_propagated(self, extractor, monkeypatch):
-        def fake(url, out=None):
+        def fake(url, out=None, **_):
             if out is not None:
                 out["reason"] = SUMMARY_REASON_NOT_SIGNED_IN
             return None
@@ -59,14 +59,14 @@ class TestExtractWithReason:
         )
 
     def test_unknown_failure_defaults_to_error(self, extractor, monkeypatch):
-        monkeypatch.setattr(extractor, "_do_extract", lambda url, out=None: None)
+        monkeypatch.setattr(extractor, "_do_extract", lambda url, out=None, **_: None)
 
         assert extractor.extract_with_reason("https://youtu.be/a")[1] == (
             SUMMARY_REASON_ERROR
         )
 
     def test_exception_becomes_error_reason(self, extractor, monkeypatch):
-        def boom(url, out=None):
+        def boom(url, out=None, **_):
             raise RuntimeError("브라우저 폭발")
 
         monkeypatch.setattr(extractor, "_do_extract", boom)
@@ -78,11 +78,11 @@ class TestExtractWithReason:
 
     def test_extract_still_returns_plain_summary(self, extractor, monkeypatch):
         """기존 extract() 계약(ISummarySource 포트)은 그대로 유지돼야 한다."""
-        monkeypatch.setattr(extractor, "_do_extract", lambda url, out=None: "본문")
+        monkeypatch.setattr(extractor, "_do_extract", lambda url, out=None, **_: "본문")
 
         assert extractor.extract("https://youtu.be/a") == "본문"
 
     def test_extract_returns_none_on_failure(self, extractor, monkeypatch):
-        monkeypatch.setattr(extractor, "_do_extract", lambda url, out=None: None)
+        monkeypatch.setattr(extractor, "_do_extract", lambda url, out=None, **_: None)
 
         assert extractor.extract("https://youtu.be/a") is None

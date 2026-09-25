@@ -60,6 +60,7 @@ class MergeApplier:
             "category": CategoryApplyHandler(),
             "playlist_folder": PlaylistFolderApplyHandler(),
             "video": VideoApplyHandler(),
+            "video_summary": VideoSummaryApplyHandler(),
             "song_info": SongApplyHandler(),
             "playlist": PlaylistApplyHandler(),
             "video_tag": VideoTagApplyHandler(),
@@ -302,15 +303,23 @@ class VideoApplyHandler:
         "favorite",
         "watched",
         "thumbnail_path",
-        "gemini_summary",
         "channel_name",
         "channel_url",
         "channel_id",
         "duration_sec",
         "published_at",
     )
+    # 요약이 언어별 표(video_summaries)로 옮겨 가기 전의 op 필드. 업그레이드 전 기기가
+    # 남긴 op 에는 아직 이 필드가 있다 — 그때 요약은 전부 한국어로 받았으므로 'ko' 행으로
+    # 적용한다(`_apply_legacy_summary`). 버리면 다른 기기에서 고친 요약이 조용히 사라진다.
+    _LEGACY_SUMMARY_FIELD = "gemini_summary"
 
     def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        self._upsert_row(conn, local_uuid, nkey, fields, refs, applier)
+        if self._LEGACY_SUMMARY_FIELD in fields:
+            _apply_legacy_summary(conn, local_uuid, fields[self._LEGACY_SUMMARY_FIELD])
+
+    def _upsert_row(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
         exists = conn.execute(
             "SELECT 1 FROM videos WHERE id=?", (local_uuid,)
         ).fetchone()
@@ -340,8 +349,8 @@ class VideoApplyHandler:
                 INSERT INTO videos
                     (id, url, title, channel_name, channel_url, channel_id,
                      duration_sec, published_at, view_count, favorite, watched,
-                     notes, gemini_summary, thumbnail_path, category_id, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     notes, thumbnail_path, category_id, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     local_uuid, nkey, fields.get("title", ""),
@@ -349,7 +358,7 @@ class VideoApplyHandler:
                     fields.get("channel_id"), fields.get("duration_sec"),
                     fields.get("published_at"), None,
                     int(fields.get("favorite", 0)), int(fields.get("watched", 0)),
-                    fields.get("notes", ""), fields.get("gemini_summary", ""),
+                    fields.get("notes", ""),
                     fields.get("thumbnail_path", ""), cat_id, now, now,
                 ),
             )
@@ -403,6 +412,54 @@ class CategoryApplyHandler:
 
     def delete(self, conn, local_uuid, nkey) -> None:
         conn.execute("DELETE FROM categories WHERE id=?", (local_uuid,))
+
+
+def _apply_legacy_summary(conn, video_id: str, summary) -> None:
+    """구버전 op 의 `gemini_summary` 필드 → video_summaries(lang='ko')."""
+    if summary:
+        conn.execute(
+            "INSERT INTO video_summaries (video_id, lang, summary, updated_at) "
+            "VALUES (?, 'ko', ?, ?) ON CONFLICT(video_id, lang) DO UPDATE SET "
+            "summary=excluded.summary, updated_at=excluded.updated_at",
+            (video_id, summary, _now_iso()),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM video_summaries WHERE video_id=? AND lang='ko'", (video_id,)
+        )
+
+
+class VideoSummaryApplyHandler:
+    """video_summary 반영. nkey=link_key(영상 nkey, 언어) — 영상은 로컬 UUID로 해석한다."""
+
+    def upsert(self, conn, local_uuid, nkey, fields, refs, applier) -> None:
+        video_nkey, lang = split_link_key(nkey)
+        vid = applier.resolve_video(conn, video_nkey)
+        if vid is None or not lang:
+            logger.warning("video_summary 적용 skip — 영상/언어 미해결: %s", nkey)
+            return
+        if "summary" not in fields:
+            return
+        summary = fields["summary"] or ""
+        if not summary:
+            conn.execute(
+                "DELETE FROM video_summaries WHERE video_id=? AND lang=?", (vid, lang)
+            )
+            return
+        conn.execute(
+            "INSERT INTO video_summaries (video_id, lang, summary, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(video_id, lang) DO UPDATE SET "
+            "summary=excluded.summary, updated_at=excluded.updated_at",
+            (vid, lang, summary, _now_iso()),
+        )
+
+    def delete(self, conn, local_uuid, nkey) -> None:
+        video_nkey, lang = split_link_key(nkey)
+        vid = MergeApplier.resolve_video(conn, video_nkey)
+        if vid is not None and lang:
+            conn.execute(
+                "DELETE FROM video_summaries WHERE video_id=? AND lang=?", (vid, lang)
+            )
 
 
 class SongApplyHandler:

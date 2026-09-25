@@ -48,14 +48,28 @@ CREATE TABLE IF NOT EXISTS video_descriptions (
     description TEXT NOT NULL DEFAULT ''
 );
 
+-- Gemini 요약 — **언어별로 한 행**(한 영상에 ko·en 요약이 공존한다).
+-- videos.gemini_summary 컬럼은 이 테이블 이전의 흔적이다(더는 쓰지 않는다 —
+-- migrate_video_summaries 가 'ko' 행으로 옮겼다). 요약은 상세 화면에서만 읽으므로
+-- 목록 쿼리(videos.*)가 요약 전문을 끌어오지 않는다.
+CREATE TABLE IF NOT EXISTS video_summaries (
+    video_id   TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    lang       TEXT NOT NULL,
+    summary    TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (video_id, lang)
+);
+
 -- Gemini 요약 실패 사유 (상세 화면 안내 문구용, 진단 정보라 로컬 전용).
 -- videos 행을 늘리지 않도록 video_descriptions 와 같은 방식으로 분리한다.
 -- status: "no_button"(YouTube가 그 영상에 요약 기능 미제공) | "not_signed_in" | "error"
--- 요약을 성공적으로 가져오면 해당 행을 삭제한다.
+-- 요약을 성공적으로 가져오면 해당 행을 삭제한다. 언어별이다 — 영어 요약만 실패할 수 있다.
 CREATE TABLE IF NOT EXISTS video_summary_status (
-    video_id   TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    video_id   TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    lang       TEXT NOT NULL DEFAULT 'ko',
     status     TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (video_id, lang)
 );
 
 CREATE TABLE IF NOT EXISTS video_tags (

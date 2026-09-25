@@ -3,7 +3,7 @@
 도메인은 영어 키를 갖고(`STATUS_OK = "ok"`, SponsorBlock 카테고리 값) 표시 이름은
 여기가 갖는다. 프로젝트가 이미 세 번 내린 판단을 한곳으로 모은 것이다 —
 `gui/panels/library/constants.py`의 `MATCH_FIELD_LABELS`, `gui/panels/album_panel.py`의
-`ORIGIN_LABELS`, `gui/panels/detail/text_format.py`의 `_SUMMARY_STATUS_LABELS`.
+`ORIGIN_LABELS`, `gui/panels/detail/text_format.py`의 `_summary_status_labels()`.
 
 **한 패널만 쓰는 라벨은 옮기지 않는다** — 위 셋은 지금 자리 그대로 둔다. 여기로
 오는 것은 도메인에서 걷어낸, 여러 곳에서 쓰이는 라벨이다.

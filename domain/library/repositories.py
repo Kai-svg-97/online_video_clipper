@@ -69,19 +69,38 @@ class IVideoRepository(ABC):
     @abstractmethod
     def search(self, query: SearchQuery) -> list[VideoAggregate]: ...
 
+    # -- Gemini 요약 (언어별) ------------------------------------------------
+    #
+    # 요약은 Video 엔티티에 싣지 않고 이 메서드들로만 다룬다. 목록에서 읽은 Video에는
+    # 요약이 없는데, `save()`가 요약까지 쓰면 목록 경로의 저장이 요약을 **조용히
+    # 지운다**. 언어 코드는 plain str("ko", "en") — 도메인은 표시 언어를 모른다.
+
     @abstractmethod
-    def get_summary_status(self, video_id: UUID) -> str:
+    def get_summaries(self, video_id: UUID) -> dict[str, str]:
+        """`{언어: 요약}`. 없으면 빈 dict."""
+
+    @abstractmethod
+    def save_summary(self, video_id: UUID, lang: str, summary: str) -> None:
+        """그 언어의 요약을 쓴다(덮어씀). **빈 문자열이면 그 언어의 요약을 지운다.**"""
+
+    @abstractmethod
+    def get_summary_status(self, video_id: UUID, lang: str = "ko") -> str:
         """Gemini 요약 실패 사유를 반환한다(없으면 빈 문자열).
 
         상세 화면이 "질문하기 버튼이 없어 실패"와 일반 오류를 구분해 안내하는 데 쓴다.
+        언어별이다 — 한국어는 되는데 영어만 실패할 수 있다.
         """
 
     @abstractmethod
-    def set_summary_status(self, video_id: UUID, status: str) -> None:
+    def get_summary_statuses(self, video_id: UUID) -> dict[str, str]:
+        """`{언어: 실패 사유}`."""
+
+    @abstractmethod
+    def set_summary_status(self, video_id: UUID, status: str, lang: str = "ko") -> None:
         """Gemini 요약 실패 사유를 기록한다(기존 값 덮어씀)."""
 
     @abstractmethod
-    def clear_summary_status(self, video_id: UUID) -> None:
+    def clear_summary_status(self, video_id: UUID, lang: str = "ko") -> None:
         """요약을 성공적으로 가져왔을 때 실패 사유를 지운다(없어도 예외 없음)."""
 
     @abstractmethod

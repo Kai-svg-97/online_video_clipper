@@ -52,8 +52,8 @@ def _detail_dto(video_id):
         tags=(),
         downloads=[],
         failed_downloads=[],
-        gemini_summary="",
-        summary_status="",
+        summaries={},
+        summary_statuses={},
         category_id=None,
         thumbnail_path="",
     )

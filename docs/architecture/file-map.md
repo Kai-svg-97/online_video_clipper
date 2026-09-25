@@ -165,7 +165,7 @@ online_video_clipper/
 │   │   └── relay.py                 # **재생용 로컬 중계 + 실시간 remux**(Qt 없음 → 단위 테스트 가능). 존재 이유는 실측 제약 둘 — ① googlevideo는 **열린 Range**(`bytes=0-`)에 403, 경계 있는 범위에 206을 주는데 ffmpeg는 파일을 열 때 정확히 열린 범위를 보낸다 → 고화질 URL을 Qt에 그냥 넘기면 **항상** 403. ② **요청당 허용 바이트 상한이 포맷마다 다르다**(1080p 2MB 허용 / 오디오 2MB 거부·128KB 허용). 그래서 재생기의 열린 범위 요청을 받아 상위로는 작은 조각으로 되묻어 이어 붙인다. `/s/<sid>/v`·`/a`가 원본 중계, `/s/<sid>/play.mp4?ss=N`이 ffmpeg를 띄워 fragmented mp4를 흘린다(연결이 끊기면 그 ffmpeg도 죽는다 — 수명이 HTTP 연결에 묶여 있다). 403 대응은 **두 갈래**다: 아직 성공한 적 없는 크기면 절반으로 줄이고(`shrink_chunk`, 바닥 16KB), 통하던 크기가 거부되면 **일시적 거부로 보고 쉬었다 같은 크기로 재시도**한다(`_RETRY_DELAYS`) — 줄이면 요청이 잦아져 악화된다(실측: seek 첫 바이트 1초대 → 22초). 그래도 안 되면 `refresh` 콜백으로 URL을 갱신한다(만료 대응). 조각을 못 채우면 **연결을 끊는다** — Content-Length를 약속해 놓고 조용히 돌아가면 재생기가 영원히 기다린다(실측). ffmpeg 입력에는 `-reconnect*`를 걸어 끊긴 자리에서 스스로 다시 붙게 한다. `atexit`로 남은 ffmpeg를 정리한다
 │   ├── persistence/
 │   │   ├── database.py              # SQLite 연결 + WAL 설정 + 스키마 마이그레이션
-│   │   ├── sqlite_video_repository.py
+│   │   ├── sqlite_video_repository.py   # 요약은 `video_summaries(video_id, lang)` — `get_summaries`/`save_summary`(빈 값=삭제), 실패 사유도 언어별. 요약 검색은 언어 무관
 │   │   ├── sqlite_download_repository.py
 │   │   ├── sqlite_clip_repository.py
 │   │   ├── sqlite_channel_repository.py
@@ -178,7 +178,7 @@ online_video_clipper/
 │   ├── ffmpeg/
 │   │   └── ffmpeg_adapter.py        # ffmpeg wrapper — 클립 추출·썸네일·**포맷 변환**. 변환은 ffmpeg-python이 아니라 subprocess로 직접 돌린다(`-progress pipe:1`을 줄 단위로 따라가야 진행률이 나온다 — `run()`은 끝날 때까지 돌려주지 않아 몇 분짜리 변환이 멈춘 것처럼 보인다). 길이 조회에 **ffprobe를 쓰지 않는다** — 배포 패키지에는 `bin/ffmpeg`만 있고 ffprobe는 없어서, 기대면 진행률이 조용히 0에 머문다(실측으로 잡힌 함정). 대신 `ffmpeg -i`가 stderr에 찍는 `Duration:` 줄을 읽는다
 │   ├── browser/
-│   │   └── gemini_extractor.py      # Playwright 기반 YouTube Gemini AI 요약 추출기 (QThread에서만 호출)
+│   │   └── gemini_extractor.py      # Playwright 기반 YouTube Gemini AI 요약 추출기 (QThread에서만 호출). **언어별**(`extract(url, lang)`) — `_PageLang` 프로필이 언어마다 locale·칩·메뉴·오류 문구를 갖는다. 화면 언어는 **`PREF` 쿠키의 `hl`** 로 고정한다(로그인 상태에선 URL `hl=`·locale 이 무시된다 — 실측). 한국어는 추천 칩을 누르고, 영어는 칩 대신 입력칸에 "Summarize the video in English."를 쓴다(칩은 한국어 영상에 한국어로 답했다 — 실측). 영어 답에 한글이 30% 넘으면 재시도
 │   ├── auth/
 │   │   └── youtube_auth.py          # 브라우저 프로필 탐지 + Netscape 쿠키 추출 (playwright 로그인)
 │   ├── youtube/
