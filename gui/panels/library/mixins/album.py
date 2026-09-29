@@ -18,7 +18,7 @@ from gui.panels.video_detail_panel import (
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
 from gui.panels.library.constants import (  # noqa: F401
-    MATCH_FIELD_LABELS,
+    match_field_labels,
     _BADGE_EMPTY_BG,
     _CAT_ID_ROLE,
     _CAT_PARENT_ROLE,
@@ -213,7 +213,7 @@ class AlbumViewMixin:
             return
         self._album_grid.set_albums(albums)
         self._album_grid.set_status(
-            "" if albums else "이 카테고리에는 앨범으로 묶을 노래가 없습니다."
+            "" if albums else tr("이 카테고리에는 앨범으로 묶을 노래가 없습니다.")
         )
 
     def _on_album_clicked(self, album_key: str) -> None:
@@ -222,7 +222,7 @@ class AlbumViewMixin:
             return
         self._push_nav_state()   # 앨범 상세에서 뒤로 = 앨범 그리드
         self._current_album_key = album_key
-        self._album_detail.set_detail(None, crumb="앨범 정보를 가져오는 중…")
+        self._album_detail.set_detail(None, crumb=tr("앨범 정보를 가져오는 중…"))
         self._album_detail.set_busy(True)
         fade_switch(self._nav_stack, _NAV_ALBUM_DETAIL)
         self._album_vm.load_detail(
@@ -239,7 +239,7 @@ class AlbumViewMixin:
         # 라이브러리에 없는 수록곡은 열자마자 백그라운드로 찾아 채운다(사용자 조작 없이).
         if detail is not None and detail.missing_count and self._album_vm is not None:
             self._album_detail.set_status(
-                f"{self._album_detail.status_text()}  ·  빠진 곡 찾는 중…"
+                tr("{status}  ·  빠진 곡 찾는 중…").format(status=self._album_detail.status_text())
             )
             self._album_vm.fill_missing_tracks(
                 detail.key, category_id=self._current_cat_id,
@@ -260,7 +260,8 @@ class AlbumViewMixin:
     def _on_album_fill_finished(self, count: int) -> None:
         if count:
             self._album_detail.set_status(
-                f"{self._album_detail.status_text()}  ·  {count}곡 자동 매핑"
+                tr("{status}  ·  {count}곡 자동 매핑").format(
+                    status=self._album_detail.status_text(), count=count)
             )
 
     def _on_album_error(self, msg: str) -> None:
@@ -286,7 +287,7 @@ class AlbumViewMixin:
         self._album_vm.add_tracks_to_category(detail, category_id=self._current_cat_id)
 
     def _on_album_add_progress(self, done: int, total: int) -> None:
-        self._album_detail.set_status(f"카테고리에 담는 중… {done}/{total}곡")
+        self._album_detail.set_status(tr("카테고리에 담는 중… {done}/{total}곡").format(done=done, total=total))
 
     def _on_album_tracks_added(self, count: int) -> None:
         """담기 완료 — 목록과 앨범 상세를 다시 읽어 '내 등록'으로 바뀌게 한다."""
@@ -294,7 +295,7 @@ class AlbumViewMixin:
         if not count:
             self._album_detail.set_status(tr("담을 곡이 없습니다."))
             return
-        self._album_detail.set_status(f"{count}곡을 카테고리에 담았습니다.")
+        self._album_detail.set_status(tr("{count}곡을 카테고리에 담았습니다.").format(count=count))
         self._vm.load()          # 라이브러리 목록·카테고리 개수 갱신
         if self._current_album_key:
             self._album_vm.load_detail(
@@ -356,7 +357,7 @@ class AlbumViewMixin:
                     title=track.title,
                     channel=track.artist,
                     duration_sec=track.duration_sec,
-                    meta_text="내 등록",
+                    meta_text=tr("내 등록"),
                     payload=track.video_id,
                     thumb_path=track.thumbnail_path,
                 ))
@@ -416,7 +417,7 @@ class AlbumViewMixin:
         self._push_nav_state()
         self._playlist_ctx = {
             "items": items,
-            "header": f"앨범: {detail.album_title}",
+            "header": tr("앨범: {title}").format(title=detail.album_title),
             "prev_related": items,
             "history": [payload],
         }

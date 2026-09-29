@@ -282,7 +282,7 @@ class _RelatedList(QScrollArea):
         self.setWidget(self._inner)
 
     def set_header(self, text: str) -> None:
-        self._header.setText(text or "연관 영상")
+        self._header.setText(text or tr("연관 영상"))
 
     def set_items(self, items: list[RelatedItem], current_key: str | None = None) -> None:
         _clear_layout(self._rel_layout)

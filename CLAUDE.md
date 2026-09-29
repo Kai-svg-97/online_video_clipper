@@ -234,6 +234,9 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
   곧 카탈로그 키다. 감싼 뒤 `python scripts/extract_catalog.py`로 `gui/text/locales/en.json`에
   자리를 만들고 번역을 채운다(`--report`로 빈 칸 확인). 빠뜨려도 화면이 비지는 않고
   한국어로 남는다 — 대신 영어 화면에 한국어가 섞인다.
+  빠뜨리면 `tests/unit/gui/test_no_untranslated_gui_text.py`가 실패한다(`gui/` 전역을
+  AST로 훑는다). 번역하면 안 되는 값(저장 이름·처리용 한국어·글꼴 이름)만 그 파일의
+  `_ALLOWED`에 **이유와 함께** 적는다.
 - **번역 함수 이름은 `_`가 아니라 `tr`이다.** 이 코드베이스는 `for _ in ...`처럼 `_`를
   버리는 변수로 쓴다 — `_`로 두면 그 스코프에서 번역 함수가 가려져 **라벨이 빈 채로** 나온다.
 - **`tr()` 안에 f-string을 넣지 않는다.** 원문이 매번 달라져 카탈로그 키가 되지 못한다.

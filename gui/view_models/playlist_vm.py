@@ -47,6 +47,7 @@ from application.library.playlist_queries import (
 )
 
 from gui.view_models.base import WorkerOwnerMixin
+from gui.text import tr
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -325,7 +326,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
     def add_url_to_playlist(self, url: str, playlist_id: UUID) -> None:
         """피드에서 URL + 재생목록 ID로 영상을 추가 (라이브러리 upsert 후 연결)."""
         if self._add_url_handler is None:
-            self.error_occurred.emit("AddUrlToPlaylistHandler가 주입되지 않았습니다.")
+            self.error_occurred.emit(tr("AddUrlToPlaylistHandler가 주입되지 않았습니다."))
             return
         worker = _AddUrlWorker(self._add_url_handler, url, playlist_id)
         worker.finished_ok.connect(self._refresh_playlists)
@@ -340,7 +341,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
     def fetch_youtube_playlists(self) -> None:
         """YouTube 계정 재생목록 목록을 비동기로 가져온다."""
         if self._get_yt_playlists is None:
-            self.error_occurred.emit("YouTube 재생목록 핸들러가 초기화되지 않았습니다.")
+            self.error_occurred.emit(tr("YouTube 재생목록 핸들러가 초기화되지 않았습니다."))
             return
         cookie_opts = self._auth.get_ytdlp_opts() if self._auth else {}
         worker = _FetchYTPlaylistsWorker(self._get_yt_playlists, cookie_opts)
@@ -407,7 +408,9 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
     ) -> None:
         """로컬 재생목록을 YouTube에 생성한다. YouTube API 인증 필요."""
         if self._push_yt_h is None:
-            self.error_occurred.emit("YouTube API가 연결되지 않았습니다.\n설정 > YouTube API 연동에서 인증하세요.")
+            self.error_occurred.emit(
+                tr("YouTube API가 연결되지 않았습니다.\n설정 > YouTube API 연동에서 인증하세요.")
+            )
             return
         worker = _PushToYTWorker(self._push_yt_h, playlist_id, move, privacy)
         worker.finished_ok.connect(self._on_push_yt_ok)
@@ -423,7 +426,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
     ) -> None:
         """영상을 소스 재생목록에서 대상 재생목록으로 이전한다."""
         if self._move_video_h is None:
-            self.error_occurred.emit("MoveVideoToPlaylistHandler가 초기화되지 않았습니다.")
+            self.error_occurred.emit(tr("MoveVideoToPlaylistHandler가 초기화되지 않았습니다."))
             return
         try:
             self._move_video_h.handle(
@@ -443,7 +446,9 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
         folder_id: UUID | None = None,
     ) -> None:
         if self._copy_yt_h is None:
-            self.error_occurred.emit("CopyYouTubePlaylistToLocalHandler가 초기화되지 않았습니다.")
+            self.error_occurred.emit(
+                tr("CopyYouTubePlaylistToLocalHandler가 초기화되지 않았습니다.")
+            )
             return
         cookie_opts = self._auth.get_ytdlp_opts() if self._auth else {}
         worker = _CopyYTWorker(self._copy_yt_h, yt_playlist_id, folder_id, cookie_opts)

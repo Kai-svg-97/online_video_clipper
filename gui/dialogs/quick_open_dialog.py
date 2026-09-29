@@ -176,18 +176,18 @@ def build_hits(
 
     hits: list[QuickHit] = []
     places = [
-        QuickHit(KIND_CATEGORY, c.id, c.name, "카테고리")
+        QuickHit(KIND_CATEGORY, c.id, c.name, tr("카테고리"))
         for c in categories if matches(getattr(c, "name", ""))
     ]
     places += [
-        QuickHit(KIND_PLAYLIST, p.id, getattr(p, "title", ""), "재생목록")
+        QuickHit(KIND_PLAYLIST, p.id, getattr(p, "title", ""), tr("재생목록"))
         for p in playlists if matches(getattr(p, "title", ""))
     ]
     places.sort(key=lambda h: rank(h.title))
     hits.extend(places[:max_places])
 
     hits.extend(
-        QuickHit(KIND_VIDEO, v.id, v.title, getattr(v, "channel_name", "") or "영상")
+        QuickHit(KIND_VIDEO, v.id, v.title, getattr(v, "channel_name", "") or tr("영상"))
         for v in videos[:max_videos]
     )
     return hits

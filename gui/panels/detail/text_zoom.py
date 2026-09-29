@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 
 import config.settings as _settings
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,9 @@ def scale_label(scale: float) -> str:
     return f"{round(clamp_scale(scale) * 100)}%"
 
 
-ZOOM_TOOLTIP = (
-    "글자 크기 — 클릭하면 기본값(100%)으로 되돌립니다.\n"
-    "Ctrl + '+' 확대 · Ctrl + '-' 축소 · Ctrl + 0 기본값"
-)
+def zoom_tooltip() -> str:
+    """배율 버튼 툴팁 — 언어가 정해진 뒤에 만들도록 함수로 둔다."""
+    return tr(
+        "글자 크기 — 클릭하면 기본값(100%)으로 되돌립니다.\n"
+        "Ctrl + '+' 확대 · Ctrl + '-' 축소 · Ctrl + 0 기본값"
+    )

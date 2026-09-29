@@ -112,7 +112,9 @@ class PlayerControlMixin:
         self._build_downloads_tab([], [])
         self._notes_edit.setReadOnly(True)
         self._notes_edit.blockSignals(True)
-        self._notes_edit.setPlainText("스트리밍 영상입니다. 다운로드 후 메모/클립을 사용할 수 있습니다.")
+        self._notes_edit.setPlainText(
+            tr("스트리밍 영상입니다. 다운로드 후 메모/클립을 사용할 수 있습니다.")
+        )
         self._notes_edit.blockSignals(False)
         self._clip_source_file = None
         _clear_layout(self._clip_tab_layout)
@@ -154,7 +156,7 @@ class PlayerControlMixin:
             logger.debug("플레이어가 이미 파괴됨 — 구간 적용 생략")
 
     def _on_segment_skipped(self, name: str) -> None:
-        show_toast(self, f"{name} 구간을 건너뛰었습니다")
+        show_toast(self, tr("{name} 구간을 건너뛰었습니다").format(name=name))
 
     def player_position_ms(self) -> int:
         """현재 재생 위치(ms) — 이어보기 저장·미니바 표시용.
@@ -310,7 +312,7 @@ class PlayerControlMixin:
         self._subtitle_tab.set_busy(False)
         if count:
             self._subtitle_vm.load_lines(self._detail.id, self._subtitle_tab.search_text)
-            show_toast(self, f"자막 {count}줄을 색인했습니다")
+            show_toast(self, tr("자막 {count}줄을 색인했습니다").format(count=count))
         else:
             self._subtitle_tab.show_no_subtitle()
 
@@ -340,15 +342,15 @@ class PlayerControlMixin:
         if self._subtitle_vm is None or self._detail is None:
             return
         if not self._subtitle_vm.translate_subtitles(self._detail.id):
-            self._subtitle_tab.show_transcribing("이미 번역 중입니다…")
+            self._subtitle_tab.show_transcribing(tr("이미 번역 중입니다…"))
             return
-        self._subtitle_tab.show_transcribing("자막을 한글로 옮기는 중…")
+        self._subtitle_tab.show_transcribing(tr("자막을 한글로 옮기는 중…"))
 
     def _on_translate_progress(self, video_id, ratio: float) -> None:
         if self._detail is None or video_id != self._detail.id:
             return
         self._subtitle_tab.show_transcribing(
-            f"자막을 한글로 옮기는 중… {int(ratio * 100)}%"
+            tr("자막을 한글로 옮기는 중… {pct}%").format(pct=int(ratio * 100))
         )
 
     def _on_translate_finished(self, video_id, count: int) -> None:
@@ -356,11 +358,11 @@ class PlayerControlMixin:
             return
         if count:
             self._subtitle_vm.load_lines(self._detail.id)
-            show_toast(self, f"자막 {count}줄을 한글로 옮겼습니다")
+            show_toast(self, tr("자막 {count}줄을 한글로 옮겼습니다").format(count=count))
             return
         # 0줄인 이유가 여럿이라 뭉뚱그리지 않는다.
         self._subtitle_tab.show_transcribing(
-            "번역할 것이 없습니다.\n이미 한국어 자막이거나, 번역이 되지 않았습니다."
+            tr("번역할 것이 없습니다.\n이미 한국어 자막이거나, 번역이 되지 않았습니다.")
         )
 
     # ── 음성 인식으로 자막 만들기 ──────────────────────────────────
@@ -377,14 +379,14 @@ class PlayerControlMixin:
         media = self._clip_source_file or ""
         if not media:
             self._subtitle_tab.show_transcribing(
-                "받아 둔 파일이 없어 음성 인식을 할 수 없습니다.\n먼저 다운로드해 주세요."
+                tr("받아 둔 파일이 없어 음성 인식을 할 수 없습니다.\n먼저 다운로드해 주세요.")
             )
             return
         if not self._subtitle_vm.transcribe(self._detail.id, media):
             return
         self._asr_downloading = False
         self._asr_stopping = False
-        self._subtitle_tab.show_transcribing("음성 인식을 준비하는 중…", stoppable=True)
+        self._subtitle_tab.show_transcribing(tr("음성 인식을 준비하는 중…"), stoppable=True)
 
     def _on_transcribe_stop_requested(self) -> None:
         """중단 — **그때까지 인식한 부분은 남는다**(어댑터가 모은 것을 돌려준다).
@@ -397,9 +399,9 @@ class PlayerControlMixin:
         self._asr_stopping = True
         self._subtitle_vm.stop_transcribe(self._detail.id)
         self._subtitle_tab.show_stopping(
-            "모델 내려받기가 끝나면 멈춥니다…"
+            tr("모델 내려받기가 끝나면 멈춥니다…")
             if self._asr_downloading
-            else "중단하는 중… 지금까지 인식한 부분은 자막으로 남깁니다."
+            else tr("중단하는 중… 지금까지 인식한 부분은 자막으로 남깁니다.")
         )
 
     def _on_asr_model_downloading(self, model_key: str) -> None:
@@ -411,8 +413,9 @@ class PlayerControlMixin:
         # 내려받는 동안에는 중단 버튼을 띄우지 않는다 — 협조적 중단이 세그먼트
         # 경계에서만 걸려, 눌러도 몇 분간 아무 반응이 없으면 고장처럼 보인다.
         self._subtitle_tab.show_transcribing(
-            f"음성 인식 모델을 처음 한 번 내려받는 중… ({model.disk_mb}MB)\n"
-            "다음부터는 바로 시작합니다."
+            tr("음성 인식 모델을 처음 한 번 내려받는 중… ({mb}MB)\n다음부터는 바로 시작합니다.").format(
+                mb=model.disk_mb
+            )
         )
 
     def _on_asr_progress(self, video_id, ratio: float) -> None:
@@ -423,7 +426,7 @@ class PlayerControlMixin:
         if self._asr_stopping:
             return   # 중단 안내를 진행률로 덮지 않는다
         self._subtitle_tab.show_transcribing(
-            f"소리를 듣는 중… {int(ratio * 100)}%", stoppable=True
+            tr("소리를 듣는 중… {pct}%").format(pct=int(ratio * 100)), stoppable=True
         )
 
     def _on_asr_finished(self, video_id, count: int) -> None:
@@ -436,18 +439,18 @@ class PlayerControlMixin:
             self._subtitle_vm.load_lines(self._detail.id)
             show_toast(
                 self,
-                f"중단 전까지 자막 {count}줄을 만들었습니다"
+                tr("중단 전까지 자막 {count}줄을 만들었습니다").format(count=count)
                 if stopped
-                else f"음성 인식으로 자막 {count}줄을 만들었습니다",
+                else tr("음성 인식으로 자막 {count}줄을 만들었습니다").format(count=count),
             )
             return
         # 결과가 없다 — **왜** 없는지는 중단했는지에 달렸다. 중단한 사람에게
         # "말을 찾지 못했다"고 하면 기능이 고장 난 것처럼 들린다.
         if stopped:
             self._subtitle_tab.show_transcribing(
-                "중단했습니다. 인식된 부분이 없어 자막을 만들지 못했습니다."
+                tr("중단했습니다. 인식된 부분이 없어 자막을 만들지 못했습니다.")
             )
             return
         self._subtitle_tab.show_transcribing(
-            "소리에서 말을 찾지 못했습니다.\n음악만 있거나 소리가 없는 영상일 수 있습니다."
+            tr("소리에서 말을 찾지 못했습니다.\n음악만 있거나 소리가 없는 영상일 수 있습니다.")
         )

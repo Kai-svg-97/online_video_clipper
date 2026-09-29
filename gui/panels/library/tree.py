@@ -420,7 +420,7 @@ class _BreadcrumbBar(QWidget):
                     "border:none;"
                 )
                 chip.setCursor(Qt.CursorShape.PointingHandCursor)
-                chip.setToolTip(f"#{tname} 태그 필터 제거")
+                chip.setToolTip(tr("#{tname} 태그 필터 제거").format(tname=tname))
                 _tid = tag_id
                 chip.clicked.connect(lambda _, tid=_tid: self.tag_removed.emit(tid))
                 self._row.addWidget(chip)

@@ -626,7 +626,9 @@ class InlinePlayer(QWidget):
         ov.set_font_scale(round(self._subtitle_font_scale + delta, 2))
         self._subtitle_font_scale = round(ov.font_scale, 2)   # clamp 된 실제 값을 되받는다
         self._apply_subtitle_prefs()
-        self._show_transient(f"자막 크기 {round(self._subtitle_font_scale * 100)}%")
+        self._show_transient(
+            tr("자막 크기 {pct}%").format(pct=round(self._subtitle_font_scale * 100))
+        )
         self._queue_subtitle_prefs_save()
 
     def _nudge_subtitle_bottom(self, delta: float) -> None:
@@ -634,7 +636,9 @@ class InlinePlayer(QWidget):
         ov.set_bottom_ratio(round(self._subtitle_bottom_ratio + delta, 2))
         self._subtitle_bottom_ratio = round(ov.bottom_ratio, 2)
         self._apply_subtitle_prefs()
-        self._show_transient(f"자막 위치 {round(self._subtitle_bottom_ratio * 100)}%")
+        self._show_transient(
+            tr("자막 위치 {pct}%").format(pct=round(self._subtitle_bottom_ratio * 100))
+        )
         self._queue_subtitle_prefs_save()
 
     def _queue_subtitle_prefs_save(self) -> None:
@@ -653,7 +657,7 @@ class InlinePlayer(QWidget):
         self._subtitle_font_scale = LyricsOverlay.FONT_SCALE_DEFAULT
         self._subtitle_bottom_ratio = LyricsOverlay.BOTTOM_RATIO_DEFAULT
         self._apply_subtitle_prefs()
-        self._show_transient("자막 크기·위치 초기화")
+        self._show_transient(tr("자막 크기·위치 초기화"))
         self._queue_subtitle_prefs_save()
 
     def _apply_subtitle_position(self, pos_ms: int) -> None:
@@ -801,7 +805,7 @@ class InlinePlayer(QWidget):
             return   # 그 사이 다른 트랙을 골랐다
         self._status_lbl.hide()
         if not cues:
-            self._show_transient("자막을 가져오지 못했습니다", 2500)
+            self._show_transient(tr("자막을 가져오지 못했습니다"), 2500)
             return
         self._vsub_tracks[slot] = SubtitleTrack.from_tuples(cues)
         self._vsub_texts = ("", "")   # 강제 갱신
@@ -898,7 +902,7 @@ class InlinePlayer(QWidget):
             self._thumb_label.setPixmap(thumbnail_pixmap)
         else:
             self._thumb_label.clear()
-            self._thumb_label.setText("미리보기 없음" if not video_url else "")
+            self._thumb_label.setText(tr("미리보기 없음") if not video_url else "")
         self._status_lbl.hide()
         self._bar.set_quality("")
         # 화질 목록은 영상마다 다르다 — 캐시가 있으면 즉시, 없으면 ⬇ 클릭 시 조회한다.
@@ -1489,14 +1493,14 @@ class InlinePlayer(QWidget):
 
     def _fetch_stream(self) -> None:
         if not self._video_url:
-            self.playback_failed.emit("재생할 URL이 없습니다.")
+            self.playback_failed.emit(tr("재생할 URL이 없습니다."))
             return
         # 이전 소스/임시 파일/중계 세션 해제 (특히 품질 전환 시)
         self._player.setSource(QUrl())
         self._cleanup_temp()
         self._close_remux()
         self._status_lbl.setText(
-            "고화질 준비 중…" if self._current_merge else "스트림 URL 가져오는 중…"
+            tr("고화질 준비 중…") if self._current_merge else tr("스트림 URL 가져오는 중…")
         )
         self._status_lbl.show()
         # 이전 워커가 살아 있으면 늦게 도착하는 신호를 무시한다.
@@ -1521,7 +1525,7 @@ class InlinePlayer(QWidget):
             self._worker = None
 
     def _on_merge_progress(self, pct: int) -> None:
-        self._status_lbl.setText(f"고화질 준비 중…  {pct}%")
+        self._status_lbl.setText(tr("고화질 준비 중…  {pct}%").format(pct=pct))
         self._status_lbl.show()
 
     def _on_stream_ready(
@@ -1611,7 +1615,9 @@ class InlinePlayer(QWidget):
         text = message.strip().replace("\n", " ")
         if len(text) > 110:
             text = text[:110] + "…"
-        self._status_lbl.setText(f"재생 실패: {text} — 🌐 버튼으로 브라우저에서 열 수 있습니다.")
+        self._status_lbl.setText(
+            tr("재생 실패: {text} — 🌐 버튼으로 브라우저에서 열 수 있습니다.").format(text=text)
+        )
         self._status_lbl.show()
 
     def _on_quality_changed(self, fmt: str, short: str, merge: bool) -> None:
@@ -1633,7 +1639,7 @@ class InlinePlayer(QWidget):
                 self._bar.set_quality(quality_badge_text(short))
                 self._start_local(local)
             else:
-                self._bar.set_quality("전환 중…")
+                self._bar.set_quality(tr("전환 중…"))
                 self._fetch_stream()
 
     def _on_metadata_changed(self) -> None:

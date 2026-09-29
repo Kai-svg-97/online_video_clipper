@@ -358,7 +358,10 @@ class FilesTabMixin:
             self._chapter_grp.setVisible(False)
             return
 
-        hint = QLabel(self._chapter_hint_text)
+        hint = QLabel(
+            self._chapter_hint_text
+            or tr("설명의 타임스탬프에서 찾은 구간입니다. 고른 구간을 각각 클립으로 저장합니다.")
+        )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         self._chapter_layout.addWidget(hint)
@@ -406,22 +409,29 @@ class FilesTabMixin:
             self._chapter_status_lbl.setText(tr("추출할 챕터를 하나 이상 고르세요."))
             return
         self._chapter_extract_btn.setEnabled(False)
-        self._chapter_status_lbl.setText(f"{len(chosen)}개 추출 준비 중…")
+        self._chapter_status_lbl.setText(tr("{n}개 추출 준비 중…").format(n=len(chosen)))
         self._clip_vm.extract_chapters(self._detail.id, self._clip_source_file, chosen)
 
     def _on_chapter_progress(self, current: int, total: int, title: str) -> None:
         if hasattr(self, "_chapter_status_lbl"):
-            self._chapter_status_lbl.setText(f"추출 중 ({current}/{total}) — {title}")
+            self._chapter_status_lbl.setText(
+                tr("추출 중 ({current}/{total}) — {title}").format(
+                    current=current, total=total, title=title
+                )
+            )
 
     def _on_chapter_finished(self, ok_count: int, fail_count: int) -> None:
         if hasattr(self, "_chapter_extract_btn"):
             self._chapter_extract_btn.setEnabled(True)
         if hasattr(self, "_chapter_status_lbl"):
-            msg = f"{ok_count}개 추출 완료"
             if fail_count:
-                msg += f" · {fail_count}개 실패"
+                msg = tr("{ok}개 추출 완료 · {fail}개 실패").format(
+                    ok=ok_count, fail=fail_count
+                )
+            else:
+                msg = tr("{ok}개 추출 완료").format(ok=ok_count)
             self._chapter_status_lbl.setText(msg)
-        show_toast(self, f"챕터 클립 {ok_count}개 추출 완료")
+        show_toast(self, tr("챕터 클립 {ok}개 추출 완료").format(ok=ok_count))
 
     def _on_extract_clip(self) -> None:
         if self._clip_vm is None or self._detail is None or not self._clip_source_file:
@@ -582,14 +592,15 @@ class FilesTabMixin:
         self._convert_btn.setEnabled(True)
         self._convert_bar.setVisible(False)
         if error:
-            self._convert_status.setText(f"변환 실패: {error}")
+            self._convert_status.setText(tr("변환 실패: {error}").format(error=error))
             return
-        self._convert_status.setText(f"변환 완료 — {Path(path).name}")
-        show_toast(self, "변환이 끝났습니다")
+        self._convert_status.setText(tr("변환 완료 — {name}").format(name=Path(path).name))
+        show_toast(self, tr("변환이 끝났습니다"))
 
     # ── 볼 만한 구간 제안 ──────────────────────────────────────────
 
-    _chapter_hint_text = "설명의 타임스탬프에서 찾은 구간입니다. 고른 구간을 각각 클립으로 저장합니다."
+    # 제안 결과가 들어오면 그 문구로 덮어쓴다. 기본 문구는 언어가 정해진 뒤 tr()로 만든다.
+    _chapter_hint_text: str | None = None
 
     def _build_highlight_row(self, layout) -> None:
         """자막에서 볼 만한 구간을 제안하는 버튼.
@@ -603,8 +614,7 @@ class FilesTabMixin:
         row.setSpacing(8)
         self._highlight_btn = QPushButton(tr("자막에서 볼 만한 구간 찾기"))
         self._highlight_btn.setToolTip(
-            "자막에서 말이 몰린 곳을 찾아 구간으로 제안합니다. "
-            "자막을 먼저 가져오거나 음성 인식으로 만들어야 합니다."
+            tr("자막에서 말이 몰린 곳을 찾아 구간으로 제안합니다. 자막을 먼저 가져오거나 음성 인식으로 만들어야 합니다.")
         )
         self._highlight_btn.clicked.connect(self._on_find_highlights)
         row.addWidget(self._highlight_btn)
@@ -629,14 +639,14 @@ class FilesTabMixin:
                 )
             else:
                 self._chapter_grp.setVisible(True)
-                self._chapter_hint_text = (
+                self._chapter_hint_text = tr(
                     "제안할 구간이 없습니다. 자막을 먼저 가져오거나 만들어 주세요."
                 )
                 self._on_chapters_loaded([])
             return
-        self._chapter_hint_text = (
+        self._chapter_hint_text = tr(
             "자막에서 말이 몰린 곳을 찾은 구간입니다. 고른 구간을 각각 클립으로 저장합니다."
         )
         self._on_chapters_loaded(picks)
         if hasattr(self, "_chapter_status_lbl"):
-            self._chapter_status_lbl.setText(f"{len(picks)}개 구간을 제안했습니다.")
+            self._chapter_status_lbl.setText(tr("{n}개 구간을 제안했습니다.").format(n=len(picks)))

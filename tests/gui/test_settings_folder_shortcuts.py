@@ -79,7 +79,7 @@ class TestOpenLogDir:
 
 class TestCookieHelpDialog:
     def test_다이얼로그가_안내_문구를_보여준다(self, qtbot, monkeypatch):
-        from gui.panels.settings_panel import COOKIE_HELP_TEXT, SettingsPanel
+        from gui.panels.settings_panel import SettingsPanel, cookie_help_text
 
         captured: list[QDialog] = []
         monkeypatch.setattr(QDialog, "exec", lambda self: captured.append(self))
@@ -92,7 +92,7 @@ class TestCookieHelpDialog:
         assert captured
         dialog = captured[0]
         labels = dialog.findChildren(QLabel)
-        assert any(lbl.text() == COOKIE_HELP_TEXT for lbl in labels)
+        assert any(lbl.text() == cookie_help_text() for lbl in labels)
 
     def test_다운로드_폴더_열기_버튼이_홈_다운로드로_연다(self, qtbot, monkeypatch):
         import gui.panels.settings_panel as sp

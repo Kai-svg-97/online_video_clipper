@@ -796,16 +796,19 @@ class RecommendStrip(QWidget):
         self._status_lbl.setText(text)
 
     # 검색어로 채워졌는지 목록 기반 추천인지 헤더에서 바로 알 수 있게 한다.
-    DEFAULT_TITLE = "추천 영상"
+    @staticmethod
+    def default_title() -> str:
+        # 클래스 속성이면 언어가 정해지기 전에 평가된다 — 호출 시점에 만든다.
+        return tr("추천 영상")
 
     def set_title(self, text: str = "") -> None:
         """헤더 제목을 바꾼다(빈 문자열이면 기본 제목으로 되돌린다)."""
-        self._title_lbl.setText(text or self.DEFAULT_TITLE)
+        self._title_lbl.setText(text or self.default_title())
 
     def set_loading(self, loading: bool) -> None:
         self._refresh_btn.setEnabled(not loading)
         if loading:
-            self._set_status(_FeedStatus.LOADING, "추천 받는 중…")
+            self._set_status(_FeedStatus.LOADING, tr("추천 받는 중…"))
         elif self._status_kind is _FeedStatus.LOADING:
             self._set_status(_FeedStatus.IDLE)
 
@@ -817,7 +820,7 @@ class RecommendStrip(QWidget):
         """추가분 조회 중 표시. 조회 중에는 다시 요청하지 않는다."""
         self._more_busy = loading
         if loading:
-            self._set_status(_FeedStatus.MORE, "더 불러오는 중…")
+            self._set_status(_FeedStatus.MORE, tr("더 불러오는 중…"))
         elif self._status_kind is _FeedStatus.MORE:
             self._set_status(_FeedStatus.IDLE)
 
@@ -922,10 +925,10 @@ class _ChannelCard(QFrame):
         meta_parts = []
         subs = _fmt_count(self._dto.subscriber_count, "")
         if subs:
-            meta_parts.append(f"구독자 {subs}")
+            meta_parts.append(tr("구독자 {n}").format(n=subs))
         vids = _fmt_count(self._dto.video_count, "")
         if vids:
-            meta_parts.append(f"영상 {vids}")
+            meta_parts.append(tr("영상 {n}").format(n=vids))
         self._meta_lbl = QLabel("  •  ".join(meta_parts))
         self._meta_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         fm = QFont()
@@ -935,7 +938,7 @@ class _ChannelCard(QFrame):
 
         # 최근 업로드 영상이 얼마나 지났는지 (있을 때만)
         rel = _relative_time(getattr(self._dto, "latest_video_published_at", None))
-        self._latest_lbl = QLabel(f"최근 영상 {rel}" if rel else "")
+        self._latest_lbl = QLabel(tr("최근 영상 {rel}").format(rel=rel) if rel else "")
         self._latest_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         fl = QFont()
         fl.setPointSize(8)
@@ -986,13 +989,13 @@ class _ChannelCard(QFrame):
         meta_parts = []
         subs = _fmt_count(dto.subscriber_count, "")
         if subs:
-            meta_parts.append(f"구독자 {subs}")
+            meta_parts.append(tr("구독자 {n}").format(n=subs))
         vids = _fmt_count(dto.video_count, "")
         if vids:
-            meta_parts.append(f"영상 {vids}")
+            meta_parts.append(tr("영상 {n}").format(n=vids))
         self._meta_lbl.setText("  •  ".join(meta_parts))
         rel = _relative_time(dto.latest_video_published_at)
-        self._latest_lbl.setText(f"최근 영상 {rel}" if rel else "")
+        self._latest_lbl.setText(tr("최근 영상 {rel}").format(rel=rel) if rel else "")
         self._latest_lbl.setVisible(bool(rel))
         if dto.thumbnail_url and self._loader is None and not self._avatar._pixmap:
             self._start_avatar_load()

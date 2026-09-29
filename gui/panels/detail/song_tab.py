@@ -44,7 +44,7 @@ from gui.themes.colors import sem
 
 from gui.panels.detail.widgets import _EditableField, _LockedNotice, _SpinRefreshButton, _clear_layout, _t
 from gui.panels.detail.text_zoom import (
-    ZOOM_TOOLTIP,
+    zoom_tooltip,
     clamp_scale,
     load_scale,
     scale_label,
@@ -104,12 +104,18 @@ def _candidate_tooltip(dto) -> str:
     """후보 행 툴팁 — 목록 정렬의 근거(조회수·곡 길이)를 사람이 읽을 수 있게 보여준다."""
     parts = [f"{dto.source_name} · {dto.artist} - {dto.title}".strip(" ·-")]
     if dto.popularity:
-        parts.append(f"조회수 {dto.popularity:,}")
+        parts.append(tr("조회수 {n:,}").format(n=dto.popularity))
     if dto.duration_sec:
-        parts.append(f"길이 {dto.duration_sec // 60}:{dto.duration_sec % 60:02d}")
+        parts.append(
+            tr("길이 {length}").format(
+                length=f"{dto.duration_sec // 60}:{dto.duration_sec % 60:02d}"
+            )
+        )
     if dto.line_count:
-        parts.append(f"{dto.line_count}줄")
-    parts.append("시간 정보 있음(자막 가능)" if dto.is_synced else "시간 정보 없음")
+        parts.append(tr("{n}줄").format(n=dto.line_count))
+    parts.append(
+        tr("시간 정보 있음(자막 가능)") if dto.is_synced else tr("시간 정보 없음")
+    )
     return "\n".join(parts)
 
 class _LyricsCandidateList(QWidget):
@@ -124,7 +130,6 @@ class _LyricsCandidateList(QWidget):
     chosen = pyqtSignal(object)   # LyricsCandidateDTO — 사용자가 고른 후보
     closed = pyqtSignal()
 
-    _HEADERS = ("출처", "가수", "제목", "가사 첫째 줄", "싱크")
     _COL_SOURCE, _COL_ARTIST, _COL_TITLE, _COL_FIRST, _COL_SYNC = range(5)
     _DTO_ROLE = Qt.ItemDataRole.UserRole
 
@@ -163,8 +168,9 @@ class _LyricsCandidateList(QWidget):
         header.addWidget(close_btn)
         root.addLayout(header)
 
-        self._table = QTableWidget(0, len(self._HEADERS))
-        self._table.setHorizontalHeaderLabels(list(self._HEADERS))
+        headers = [tr("출처"), tr("가수"), tr("제목"), tr("가사 첫째 줄"), tr("싱크")]
+        self._table = QTableWidget(0, len(headers))
+        self._table.setHorizontalHeaderLabels(headers)
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -219,9 +225,9 @@ class _LyricsCandidateList(QWidget):
         self._pending.clear()
         self._rebuild()
         self._status_lbl.setText(
-            f"후보 {found}건 — 원하는 가사를 고르고 '이 가사 사용'을 누르세요"
+            tr("후보 {n}건 — 원하는 가사를 고르고 '이 가사 사용'을 누르세요").format(n=found)
             if found
-            else "가사를 찾지 못했습니다 (가수·제목을 고쳐서 다시 검색해 보세요)"
+            else tr("가사를 찾지 못했습니다 (가수·제목을 고쳐서 다시 검색해 보세요)")
         )
 
     def _rebuild(self) -> None:
@@ -241,18 +247,18 @@ class _LyricsCandidateList(QWidget):
         select_row = -1
         for row, (name, dto) in enumerate(rows):
             if dto is None:
-                placeholder = "조회중…" if name in self._pending else "결과 없음"
+                placeholder = tr("조회중…") if name in self._pending else tr("결과 없음")
                 self._set_row_text(row, name, "", "", placeholder, "")
                 self._set_row_selectable(row, False)
                 self._table.item(row, self._COL_FIRST).setForeground(
                     QColor(_t().text_secondary)
                 )
                 continue
-            first = dto.first_line or "(빈 가사)"
+            first = dto.first_line or tr("(빈 가사)")
             if dto.line_count:
-                first = f"{first}   ({dto.line_count}줄)"
+                first = tr("{first}   ({n}줄)").format(first=first, n=dto.line_count)
             self._set_row_text(
-                row, name, dto.artist, dto.title, first, "싱크" if dto.is_synced else "—",
+                row, name, dto.artist, dto.title, first, tr("싱크") if dto.is_synced else "—",
                 tooltip=_candidate_tooltip(dto),
             )
             self._set_row_selectable(row, True)
@@ -279,7 +285,9 @@ class _LyricsCandidateList(QWidget):
         count = sum(len(v) for v in self._results.values())
         if self._pending:
             self._status_lbl.setText(
-                f"조회중… {done}/{len(self._order)} 출처 · 후보 {count}건"
+                tr("조회중… {done}/{total} 출처 · 후보 {count}건").format(
+                    done=done, total=len(self._order), count=count
+                )
             )
 
     def _set_row_text(self, row: int, *values: str, tooltip: str = "") -> None:
@@ -350,14 +358,23 @@ class _SongTab(QWidget):
     _STACK_CANDIDATES = 2   # 가사 검색 후보 목록
     _STACK_LOCKED = 3       # 카테고리 미지정 — 안내판
 
-    _FIELDS = (
-        ("artist", "가수"),
-        ("album", "앨범"),
-        ("song_title", "노래 제목"),
-        ("release_year", "발매년도"),
-    )
-    # 값 오른쪽 » 필터 아이콘을 붙일 필드
-    _FILTER_FIELDS = {"artist": "같은 가수의 영상 보기", "album": "같은 앨범의 영상 보기"}
+    @staticmethod
+    def _fields_spec() -> tuple[tuple[str, str], ...]:
+        """(키, 표시 이름) — 언어가 정해진 뒤 불려야 하므로 상수가 아니라 함수다."""
+        return (
+            ("artist", tr("가수")),
+            ("album", tr("앨범")),
+            ("song_title", tr("노래 제목")),
+            ("release_year", tr("발매년도")),
+        )
+
+    @staticmethod
+    def _filter_tips() -> dict[str, str]:
+        """값 오른쪽 » 필터 아이콘을 붙일 필드와 그 툴팁."""
+        return {
+            "artist": tr("같은 가수의 영상 보기"),
+            "album": tr("같은 앨범의 영상 보기"),
+        }
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -402,13 +419,14 @@ class _SongTab(QWidget):
         grid.setVerticalSpacing(6)
         grid.setColumnStretch(1, 1)
         self._fields: dict[str, _EditableField] = {}
-        for row, (key, label) in enumerate(self._FIELDS):
+        filter_tips = self._filter_tips()
+        for row, (key, label) in enumerate(self._fields_spec()):
             name_lbl = QLabel(label)
-            name_lbl.setFixedWidth(64)
+            name_lbl.setMinimumWidth(64)
             name_lbl.setStyleSheet(f"color:{_t().text_secondary}; font-weight:bold;")
             # 값(_EditableField)이 세로 중앙 정렬이므로 레이블도 중앙으로 맞춰 이질감 제거
             name_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-            action_tip = self._FILTER_FIELDS.get(key, "")
+            action_tip = filter_tips.get(key, "")
             field = _EditableField(with_action=bool(action_tip), action_tip=action_tip)
             field.edited.connect(lambda v, k=key: self.field_edited.emit(k, v))
             if action_tip:
@@ -453,8 +471,7 @@ class _SongTab(QWidget):
         self._offset_spin.setSuffix(" s")
         self._offset_spin.setFixedWidth(76)
         self._offset_spin.setToolTip(
-            "가사 시작 시각 보정 — 양수면 자막이 늦게, 음수면 빠르게 뜹니다.\n"
-            "영상 위 자막(💬) 단축키 [ / ] 또는 , / . 로도 조절할 수 있습니다."
+            tr("가사 시작 시각 보정 — 양수면 자막이 늦게, 음수면 빠르게 뜹니다.\n영상 위 자막(💬) 단축키 [ / ] 또는 , / . 로도 조절할 수 있습니다.")
         )
         self._offset_spin.valueChanged.connect(self._on_offset_spin_changed)
         self._offset_spin.setVisible(False)
@@ -472,7 +489,7 @@ class _SongTab(QWidget):
         self._zoom_btn.setFixedSize(46, 22)
         self._zoom_btn.setFlat(True)
         self._zoom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._zoom_btn.setToolTip(ZOOM_TOOLTIP)
+        self._zoom_btn.setToolTip(zoom_tooltip())
         self._zoom_btn.clicked.connect(self.font_scale_reset_requested.emit)
         lyr_header.addWidget(self._zoom_btn)
         # 번역 배치 전환 아이콘 (비한국어 병행 가사일 때만 노출)
@@ -515,8 +532,7 @@ class _SongTab(QWidget):
         self._lyrics_stack.addWidget(self._candidates)
         # index 3: 카테고리 미지정 안내 — 가사는 영상별로 저장되므로 로컬 영상이어야 한다.
         self._locked = _LockedNotice(
-            "이 영상은 아직 라이브러리에 없습니다.\n"
-            "카테고리에 담으면 가사 조회·편집과 자막 싱크를 사용할 수 있습니다."
+            tr("이 영상은 아직 라이브러리에 없습니다.\n카테고리에 담으면 가사 조회·편집과 자막 싱크를 사용할 수 있습니다.")
         )
         self._locked.action_clicked.connect(self.category_requested.emit)
         self._lyrics_stack.addWidget(self._locked)
@@ -594,7 +610,7 @@ class _SongTab(QWidget):
         self.candidate_chosen.emit(dto)
 
     def set_busy(self, busy: bool) -> None:
-        self._status_lbl.setText("불러오는 중…" if busy else "")
+        self._status_lbl.setText(tr("불러오는 중…") if busy else "")
         # 갱신 중에는 버튼을 비활성화하지 않고 아이콘을 회전시켜 진행을 표시한다
         # (중복 클릭은 SongViewModel의 _in_flight 가드가 흡수).
         self._lyrics_refresh_btn.setEnabled(self._editable)
@@ -609,7 +625,7 @@ class _SongTab(QWidget):
         has_lyrics = bool(dto and dto.has_lyrics)
         self._translate_btn.setVisible(has_lyrics and self._editable)
         self._lyrics_refresh_btn.setToolTip(
-            "다음 출처에서 가사 검색" if has_lyrics else "가사 검색"
+            tr("다음 출처에서 가사 검색") if has_lyrics else tr("가사 검색")
         )
         is_synced = bool(dto and dto.is_synced)
         # 싱크 가사가 이미 있으면 찾을 이유가 없다.
@@ -632,12 +648,15 @@ class _SongTab(QWidget):
         # 출처 표시
         if dto and dto.source_name:
             if dto.source_url:
-                self._src_lbl.setText(
-                    f'· 출처: <a href="{html.escape(dto.source_url, quote=True)}">'
+                link = (
+                    f'<a href="{html.escape(dto.source_url, quote=True)}">'
                     f'{html.escape(dto.source_name)}</a>'
                 )
+                self._src_lbl.setText(tr("· 출처: {source}").format(source=link))
             else:
-                self._src_lbl.setText(f"· 출처: {html.escape(dto.source_name)}")
+                self._src_lbl.setText(
+                    tr("· 출처: {source}").format(source=html.escape(dto.source_name))
+                )
         else:
             self._src_lbl.setText("")
 
@@ -680,9 +699,9 @@ class _SongTab(QWidget):
         self._current_row = None
         if not dto or not dto.lyrics_lines:
             msg = (
-                "가사 정보가 없습니다.\n'가사' 옆 ⟳ 버튼으로 조회하거나 더블클릭하여 직접 입력하세요."
+                tr("가사 정보가 없습니다.\n'가사' 옆 ⟳ 버튼으로 조회하거나 더블클릭하여 직접 입력하세요.")
                 if (dto and dto.is_song)
-                else "'노래로 표시'하면 영상 제목으로 정보를 채웁니다."
+                else tr("'노래로 표시'하면 영상 제목으로 정보를 채웁니다.")
             )
             empty = QLabel(msg)
             empty.setStyleSheet(f"color:{_t().text_secondary}; padding:12px;")
@@ -798,7 +817,7 @@ class _SongTab(QWidget):
         self._side_by_side = not self._side_by_side
         self._layout_btn.setText("⬍" if self._side_by_side else "⬌")
         self._layout_btn.setToolTip(
-            "번역을 아래에 표시" if self._side_by_side else "번역을 오른쪽에 표시"
+            tr("번역을 아래에 표시") if self._side_by_side else tr("번역을 오른쪽에 표시")
         )
         # 배치(원문 아래↔오른쪽)가 바뀌면 가사 내용이 같아도 다시 그려야 한다.
         self._render_lyrics(self._current_dto, force=True)

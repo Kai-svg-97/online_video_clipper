@@ -27,7 +27,7 @@ from gui.view_models.feed_vm import CHANNELS_ROOT_KEY, FEED_ALL_KEY
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
 from gui.panels.library.constants import (  # noqa: F401
-    MATCH_FIELD_LABELS,
+    match_field_labels,
     _BADGE_EMPTY_BG,
     _CAT_ID_ROLE,
     _CAT_PARENT_ROLE,
@@ -171,7 +171,7 @@ class FeedViewMixin:
         """FeedVideoDTO(구독 피드·추천) → 우측 목록 1행."""
         meta = []
         if f.view_count:
-            meta.append(f"조회수 {f.view_count:,}회")
+            meta.append(tr("조회수 {n}회").format(n=f"{f.view_count:,}"))
         rel = _relative_time(f.published_at)
         if rel:
             meta.append(rel)
@@ -201,13 +201,22 @@ class FeedViewMixin:
     def _on_push_to_youtube(self, playlist_id, move: bool) -> None:
         if self._playlist_vm is None:
             return
-        action = "이동" if move else "복사"
+        if move:
+            title = tr("YouTube로 이동")
+            text = tr(
+                "이 재생목록을 YouTube에 이동하시겠습니까?\n"
+                "(로컬 항목이 YouTube 재생목록으로 전환됩니다)"
+            )
+        else:
+            title = tr("YouTube로 복사")
+            text = tr(
+                "이 재생목록을 YouTube에 복사하시겠습니까?\n"
+                "(로컬 재생목록은 유지되고 YouTube에 새 재생목록이 생성됩니다)"
+            )
         reply = QMessageBox.question(
             self,
-            f"YouTube로 {action}",
-            f"이 재생목록을 YouTube에 {action}하시겠습니까?\n"
-            + ("(로컬 항목이 YouTube 재생목록으로 전환됩니다)" if move
-               else "(로컬 재생목록은 유지되고 YouTube에 새 재생목록이 생성됩니다)"),
+            title,
+            text,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -346,7 +355,7 @@ class FeedViewMixin:
     def _on_subs_sync_error(self, message: str) -> None:
         """구독 재동기화 실패 — 채널 그리드가 열려 있으면 사유를 표시한다."""
         if self._view_stack.currentIndex() == _VIEW_CHANNELS:
-            self._channels_status.setText(f"구독 동기화 실패: {message}")
+            self._channels_status.setText(tr("구독 동기화 실패: {message}").format(message=message))
             self._channels_status.setVisible(True)
 
     def _on_channel_infos_changed(self) -> None:
@@ -390,7 +399,7 @@ class FeedViewMixin:
             self._show_feed_view()
             self._feed_vm.load_channel(channel_url, silent=True)
         else:
-            self._show_feed_view("로딩 중…")
+            self._show_feed_view(tr("로딩 중…"))
             self._feed_vm.load_channel(channel_url)
         self._refresh_breadcrumb()
 
@@ -413,7 +422,7 @@ class FeedViewMixin:
             self._show_feed_view()
             self._feed_vm.refresh(silent=True)
         else:
-            self._show_feed_view("로딩 중…")
+            self._show_feed_view(tr("로딩 중…"))
             self._feed_vm.refresh()
         self._refresh_breadcrumb()
 
@@ -442,7 +451,7 @@ class FeedViewMixin:
         show_channel = (key == FEED_ALL_KEY)
         self._feed_grid.set_feed(items, show_channel=show_channel)
         if self._view_stack.currentIndex() == _VIEW_FEED:
-            self._feed_status.hide() if items else self._show_feed_view("영상이 없습니다.")
+            self._feed_status.hide() if items else self._show_feed_view(tr("영상이 없습니다."))
 
     def _on_feed_batch_ready(self, key: str, batch: list) -> None:
         """부분 결과 배치 — 현재 key 첫 로딩 시만 점진적으로 카드를 추가한다."""
@@ -462,7 +471,7 @@ class FeedViewMixin:
             return
         ml = msg.lower()
         if "could not copy" in ml or ("database" in ml and "lock" in ml):
-            display = (
+            display = tr(
                 "Chrome이 실행 중입니다 — Chrome을 완전히 종료 후 재시도하거나,\n"
                 "설정 > YouTube 계정에서 브라우저를 Firefox로 변경하세요."
             )
@@ -470,14 +479,14 @@ class FeedViewMixin:
             # ytdlp_adapter가 이미 한국어 안내문으로 변환한 DPAPI 메시지를 그대로 표시
             display = msg
         elif "cookie" in ml or "쿠키" in msg:
-            display = (
+            display = tr(
                 "쿠키 인증 실패 — 설정 > YouTube 계정에서 Firefox로 변경하거나\n"
                 "Chrome을 완전히 종료 후 재시도하세요."
             )
         elif "sign in" in ml or "로그인" in msg:
-            display = "YouTube 로그인 필요 — 설정 > YouTube 계정에서 로그인하세요."
+            display = tr("YouTube 로그인 필요 — 설정 > YouTube 계정에서 로그인하세요.")
         else:
-            display = f"오류: {msg[:200]}"
+            display = tr("오류: {msg}").format(msg=msg[:200])
         status = self._feed_status if idx == _VIEW_FEED else self._channels_status
         status.setText(display)
         status.show()

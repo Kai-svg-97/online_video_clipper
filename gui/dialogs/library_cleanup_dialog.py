@@ -93,13 +93,13 @@ class LibraryCleanupDialog(QDialog):
 
         layout = QVBoxLayout(self)
         self._tabs = QTabWidget()
-        self._dup_tree = self._make_tree(["영상", "채널", "주소"])
-        self._broken_tree = self._make_tree(["영상", "사라진 파일"])
-        self._tabs.addTab(self._wrap(self._dup_tree, "중복으로 보이는 영상"), tr("중복 영상"))
+        self._dup_tree = self._make_tree([tr("영상"), tr("채널"), tr("주소")])
+        self._broken_tree = self._make_tree([tr("영상"), tr("사라진 파일")])
+        self._tabs.addTab(self._wrap(self._dup_tree, tr("중복으로 보이는 영상")), tr("중복 영상"))
         self._tabs.addTab(
-            self._wrap(self._broken_tree, "파일이 사라진 다운로드 기록"), tr("사라진 파일")
+            self._wrap(self._broken_tree, tr("파일이 사라진 다운로드 기록")), tr("사라진 파일")
         )
-        self._missing_tree = self._make_tree(["영상", "상태", "설명"])
+        self._missing_tree = self._make_tree([tr("영상"), tr("상태"), tr("설명")])
         self._tabs.addTab(self._build_missing_tab(), tr("사라진 원본"))
         layout.addWidget(self._tabs, 1)
 
@@ -108,11 +108,11 @@ class LibraryCleanupDialog(QDialog):
 
         buttons = QDialogButtonBox()
         self._btn_delete = buttons.addButton(
-            "선택한 영상 삭제", QDialogButtonBox.ButtonRole.DestructiveRole
+            tr("선택한 영상 삭제"), QDialogButtonBox.ButtonRole.DestructiveRole
         )
         self._btn_delete.clicked.connect(self._on_delete)
         self._btn_refresh = buttons.addButton(
-            "다시 검사", QDialogButtonBox.ButtonRole.ActionRole
+            tr("다시 검사"), QDialogButtonBox.ButtonRole.ActionRole
         )
         self._btn_refresh.clicked.connect(self.refresh)
         buttons.addButton(QDialogButtonBox.StandardButton.Close).clicked.connect(self.reject)
@@ -159,7 +159,9 @@ class LibraryCleanupDialog(QDialog):
         for group in groups:
             exact = group.kind == DUPLICATE_EXACT
             head = QTreeWidgetItem([
-                ("같은 영상" if exact else "비슷한 영상") + f" · {len(group.videos)}건",
+                (tr("같은 영상 · {n}건") if exact else tr("비슷한 영상 · {n}건")).format(
+                    n=len(group.videos)
+                ),
                 "", "",
             ])
             head.setFirstColumnSpanned(True)
@@ -180,8 +182,10 @@ class LibraryCleanupDialog(QDialog):
                 if not keep:
                     removable += 1
         self._status.setText(
-            f"중복 {len(groups)}묶음 · 기본 선택 {removable}건"
-            if groups else "중복으로 보이는 영상이 없습니다."
+            tr("중복 {groups}묶음 · 기본 선택 {removable}건").format(
+                groups=len(groups), removable=removable
+            )
+            if groups else tr("중복으로 보이는 영상이 없습니다.")
         )
 
     def _fill_broken(self) -> None:
@@ -196,7 +200,7 @@ class LibraryCleanupDialog(QDialog):
             row.setData(0, _ROLE_PATH, item.file_path)
             self._broken_tree.addTopLevelItem(row)
         if broken:
-            self._tabs.setTabText(1, f"사라진 파일 ({len(broken)})")
+            self._tabs.setTabText(1, tr("사라진 파일 ({n})").format(n=len(broken)))
 
     # ── 삭제 ───────────────────────────────────────────────────────
     def checked_video_ids(self) -> list:
@@ -221,8 +225,8 @@ class LibraryCleanupDialog(QDialog):
             return
         answer = QMessageBox.question(
             self, tr("영상 삭제"),
-            f"선택한 {len(ids)}개 영상을 라이브러리에서 삭제할까요?\n"
-            "(다운로드한 파일은 그대로 남습니다.)",
+            tr("선택한 {n}개 영상을 라이브러리에서 삭제할까요?\n(다운로드한 파일은 그대로 남습니다.)")
+            .format(n=len(ids)),
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
@@ -232,7 +236,7 @@ class LibraryCleanupDialog(QDialog):
             logger.exception("중복 영상 삭제 실패")
             self._status.setText(tr("삭제 중 오류가 발생했습니다. 로그를 확인하세요."))
             return
-        self._status.setText(f"{len(ids)}개 영상을 삭제했습니다.")
+        self._status.setText(tr("{n}개 영상을 삭제했습니다.").format(n=len(ids)))
         self.refresh()
 
     # ── 사라진 원본 탭 ─────────────────────────────────────────────
@@ -253,11 +257,11 @@ class LibraryCleanupDialog(QDialog):
         self._missing_bar.setTextVisible(True)
         col.addWidget(self._missing_bar)
 
-        self._missing_note = QLabel(
+        self._missing_note = QLabel(tr(
             "영상마다 인터넷에 한 번씩 물어보므로 시간이 걸립니다. "
             "확인하지 못한 영상은 목록에 넣지 않습니다 — 네트워크 문제로 "
             "멀쩡한 영상을 지우게 되면 안 되기 때문입니다."
-        )
+        ))
         self._missing_note.setWordWrap(True)
         col.addWidget(self._missing_note)
 
@@ -287,7 +291,9 @@ class LibraryCleanupDialog(QDialog):
     def _on_missing_progress(self, current: int, total: int) -> None:
         self._missing_bar.setMaximum(max(1, total))
         self._missing_bar.setValue(current)
-        self._missing_bar.setFormat(f"{current}/{total} 확인 중…")
+        self._missing_bar.setFormat(
+            tr("{current}/{total} 확인 중…").format(current=current, total=total)
+        )
 
     def _on_missing_done(self, found) -> None:
         self._missing_worker = None
@@ -305,10 +311,12 @@ class LibraryCleanupDialog(QDialog):
             row.setCheckState(0, Qt.CheckState.Unchecked)
             self._missing_tree.addTopLevelItem(row)
         count = len(found or [])
-        self._tabs.setTabText(2, f"사라진 원본 ({count})" if count else "사라진 원본")
+        self._tabs.setTabText(
+            2, tr("사라진 원본 ({n})").format(n=count) if count else tr("사라진 원본")
+        )
         self._status.setText(
-            f"원본이 사라진 영상 {count}건을 찾았습니다."
-            if count else "사라진 원본이 없습니다."
+            tr("원본이 사라진 영상 {n}건을 찾았습니다.").format(n=count)
+            if count else tr("사라진 원본이 없습니다.")
         )
 
     def reject(self) -> None:

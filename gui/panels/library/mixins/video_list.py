@@ -40,7 +40,7 @@ from gui.workers import track_thread
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
 from gui.panels.library.constants import (  # noqa: F401
-    MATCH_FIELD_LABELS,
+    match_field_labels,
     _BADGE_EMPTY_BG,
     _CAT_ID_ROLE,
     _CAT_PARENT_ROLE,
@@ -245,24 +245,24 @@ class VideoListMixin:
         if self._search_box.text().strip():
             # 로컬에 없을 때가 오히려 'YouTube에는 뭐가 있나'를 가장 보고 싶은
             # 순간이다 — 아래 스트립이 그 낱말의 검색 결과로 채워지므로 알려 준다.
-            overlay.show_message(
+            overlay.show_message(tr(
                 "검색 결과가 없습니다.\n"
                 "아래 '추천 영상' 띠에 이 낱말의 YouTube 검색 결과를 채웁니다."
-            )
+            ))
         elif self._filter_bar.active_count():
             # 필터 때문에 비었는데 그 말을 안 하면 "영상이 사라졌다"가 된다.
-            overlay.show_message(
+            overlay.show_message(tr(
                 "필터에 맞는 영상이 없습니다.\n"
-                f"({self._filter_bar.summary()})\n"
+                "({summary})\n"
                 "툴바의 '필터'에서 조건을 바꾸거나 초기화해 보세요."
-            )
+            ).format(summary=self._filter_bar.summary()))
         elif self._active_tag_ids:
-            overlay.show_message("이 태그에 해당하는 영상이 없습니다.")
+            overlay.show_message(tr("이 태그에 해당하는 영상이 없습니다."))
         else:
-            overlay.show_message(
+            overlay.show_message(tr(
                 "이 목록에는 아직 영상이 없습니다.\n"
                 "브라우저에서 주소를 끌어다 놓거나, 좌측 트리에 URL을 떨어뜨려 담아 보세요."
-            )
+            ))
 
     # ── 복합 필터 ──────────────────────────────────────────────────
 
@@ -281,9 +281,9 @@ class VideoListMixin:
         이게 없으면 "왜 영상이 몇 개 없지"의 원인을 찾을 길이 없다.
         """
         count = self._filter_bar.active_count()
-        self._btn_filter.setText(f"필터 {count}" if count else "필터")
+        self._btn_filter.setText(tr("필터 {n}").format(n=count) if count else tr("필터"))
         self._btn_filter.setToolTip(
-            self._filter_bar.summary() or "업로드 날짜·길이·채널·다운로드 여부로 좁히기"
+            self._filter_bar.summary() or tr("업로드 날짜·길이·채널·다운로드 여부로 좁히기")
         )
 
     # ── 저장된 검색 ────────────────────────────────────────────────
@@ -296,8 +296,8 @@ class VideoListMixin:
         """
         keys = self._filter_bar.condition_keys()
         text = self._search_box.text().strip()
-        suggested = self._filter_bar.summary() or text or "내 검색"
-        name, ok = QInputDialog.getText(self, "검색 저장", "이름", text=suggested[:40])
+        suggested = self._filter_bar.summary() or text or tr("내 검색")
+        name, ok = QInputDialog.getText(self, tr("검색 저장"), tr("이름"), text=suggested[:40])
         if not ok:
             return
         saved = self._vm.save_search(name, text=text, **keys)
@@ -308,7 +308,7 @@ class VideoListMixin:
             )
             return
         self._refresh_saved_menu()
-        show_toast(self, f"'{saved.name}' 검색을 저장했습니다")
+        show_toast(self, tr("'{name}' 검색을 저장했습니다").format(name=saved.name))
 
     def _refresh_saved_menu(self) -> None:
         """저장된 검색 메뉴를 다시 만든다(열 때마다 — 목록이 바뀔 수 있다)."""
@@ -343,14 +343,14 @@ class VideoListMixin:
         self._apply_search_text()
 
     def _rename_saved_search(self, search) -> None:
-        name, ok = QInputDialog.getText(self, "이름 바꾸기", "이름", text=search.name)
+        name, ok = QInputDialog.getText(self, tr("이름 바꾸기"), tr("이름"), text=search.name)
         if ok and name.strip():
             self._vm.rename_saved_search(search.id, name)
             self._refresh_saved_menu()
 
     def _delete_saved_search(self, search) -> None:
         if QMessageBox.question(
-            self, tr("저장된 검색 삭제"), f"'{search.name}'을(를) 지울까요?"
+            self, tr("저장된 검색 삭제"), tr("'{name}'을(를) 지울까요?").format(name=search.name)
         ) != QMessageBox.StandardButton.Yes:
             return
         self._vm.delete_saved_search(search.id)
@@ -551,7 +551,7 @@ class VideoListMixin:
         from application.library.favorites import is_favorite  # noqa: PLC0415
         tag_id_str = str(tag_id)
         menu = QMenu(self)
-        fav_label = "★ 즐겨찾기 제거" if is_favorite(tag_id_str, "tag") else "☆ 즐겨찾기 추가"
+        fav_label = tr("★ 즐겨찾기 제거") if is_favorite(tag_id_str, "tag") else tr("☆ 즐겨찾기 추가")
         fav_act = QAction(fav_label, self)
         fav_act.triggered.connect(lambda: self._toggle_favorite("tag", tag_id_str, tag_name))
         menu.addAction(fav_act)
@@ -570,7 +570,7 @@ class VideoListMixin:
             return
         reply = QMessageBox.question(
             self, tr("태그 삭제"),
-            f"태그 '#{tag.name}'을(를) 삭제하시겠습니까?\n모든 영상에서 이 태그가 제거됩니다.",
+            tr("태그 '#{name}'을(를) 삭제하시겠습니까?\n모든 영상에서 이 태그가 제거됩니다.").format(name=tag.name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -842,7 +842,7 @@ class VideoListMixin:
         if self._refresh_dlg is not None:
             return  # already running
         self._refresh_dlg = QProgressDialog(
-            "메타데이터 갱신 중...", None, 0, 100, self
+            tr("메타데이터 갱신 중..."), None, 0, 100, self
         )
         self._refresh_dlg.setWindowTitle(tr("메타데이터 일괄 갱신"))
         self._refresh_dlg.setWindowModality(Qt.WindowModality.WindowModal)
@@ -911,8 +911,8 @@ class VideoListMixin:
 
     def _on_bulk_add_tags(self, video_ids: list[UUID]) -> None:
         tag_str, ok = QInputDialog.getText(
-            self, "태그 추가",
-            f"{len(video_ids)}개 영상에 추가할 태그를 입력하세요 (쉼표로 구분):",
+            self, tr("태그 추가"),
+            tr("{n}개 영상에 추가할 태그를 입력하세요 (쉼표로 구분):").format(n=len(video_ids)),
         )
         if ok and tag_str.strip():
             tag_names = [

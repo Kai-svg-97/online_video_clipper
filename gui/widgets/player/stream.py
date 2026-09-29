@@ -18,6 +18,9 @@ from PyQt6.QtCore import (
 # 영상별 사용 가능한 화질 목록 캐시 — 같은 URL을 다시 조회하지 않는다.
 
 from collections import OrderedDict
+
+from gui.text import tr
+
 _HEIGHT_CACHE: "OrderedDict[str, list[int]]" = OrderedDict()
 _HEIGHT_CACHE_MAX = 64
 
@@ -248,11 +251,11 @@ class _StreamWorker(QThread):
                 )
                 continue
             if not stream:
-                last_err = "스트림 URL을 가져올 수 없습니다."
+                last_err = tr("스트림 URL을 가져올 수 없습니다.")
                 logger.warning("재생 가능한 포맷 없음(client=%s)", client or "기본")
                 continue
             if not _stream_playable(stream):
-                last_err = "스트림 URL이 거부되었습니다(재생 서버 403)."
+                last_err = tr("스트림 URL이 거부되었습니다(재생 서버 403).")
                 logger.warning(
                     "스트림 URL 거부됨(client=%s) — 다음 클라이언트로 재시도", client or "기본"
                 )
@@ -271,7 +274,7 @@ class _StreamWorker(QThread):
             self.stream_ready.emit(unverified[0], unverified[1], False, 0)
             return
         logger.warning("모든 클라이언트에서 스트림 확보 실패: %s", self._url)
-        self.failed.emit(last_err or "스트림 URL을 가져올 수 없습니다.")
+        self.failed.emit(last_err or tr("스트림 URL을 가져올 수 없습니다."))
 
     def _extract_stream(self, yt_dlp, client: str | None) -> tuple[str, str]:
         """지정 클라이언트로 정보를 뽑아 (재생 URL, 화질 라벨)을 돌려준다."""

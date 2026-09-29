@@ -231,10 +231,10 @@ class _SideBar(QWidget):
 
         # 주 내비게이션 버튼
         nav_defs = [
-            (_SVG_LIBRARY,  "라이브러리",        _PAGE_LIBRARY),
-            (_SVG_DOWNLOAD, "다운로드",          _PAGE_DOWNLOAD),
-            (_SVG_MONITOR,  "채널 모니터링",      _PAGE_MONITOR),
-            (_SVG_STATS,    "통계",              _PAGE_STATS),
+            (_SVG_LIBRARY,  tr("라이브러리"),        _PAGE_LIBRARY),
+            (_SVG_DOWNLOAD, tr("다운로드"),          _PAGE_DOWNLOAD),
+            (_SVG_MONITOR,  tr("채널 모니터링"),      _PAGE_MONITOR),
+            (_SVG_STATS,    tr("통계"),              _PAGE_STATS),
         ]
         for svg, tip, page in nav_defs:
             btn = _NavButton(svg, tip)
@@ -245,7 +245,7 @@ class _SideBar(QWidget):
         layout.addStretch()
 
         # 설정 버튼 (하단)
-        self._settings_btn = _NavButton(_SVG_SETTINGS, "설정")
+        self._settings_btn = _NavButton(_SVG_SETTINGS, tr("설정"))
         self._settings_btn.clicked.connect(lambda: self._navigate(_PAGE_SETTINGS))
         layout.addWidget(self._settings_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
         self._buttons.append(self._settings_btn)
@@ -718,61 +718,88 @@ class MainWindow(QMainWindow):
     def _on_add_started(self, url: str) -> None:
         self._pending_url = url
         short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
-        self.statusBar().showMessage(f"등록 중: {short}", 0)
+        self.statusBar().showMessage(tr("등록 중: {short}").format(short=short), 0)
         self._add_progress.show()
 
     def _on_add_finished(self, url: str) -> None:
         self._pending_url = ""
         self._add_progress.hide()
         short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
-        self.statusBar().showMessage(f"등록 완료: {short}", 5000)
+        self.statusBar().showMessage(tr("등록 완료: {short}").format(short=short), 5000)
         # 상태바는 시선이 가지 않는 곳이라 '끝났다'는 소식은 토스트로도 알린다.
-        show_toast(self, f"등록 완료 — {short}", KIND_SUCCESS)
+        show_toast(self, tr("등록 완료 — {short}").format(short=short), KIND_SUCCESS)
 
     # ── 등록 후 자동 보강 (요약/가사) ──────────────────────────────────
-    _ENRICH_LABEL = {"song": "가사 조회", "summary": "요약 생성"}
+    @staticmethod
+    def _enrich_text(kind: str, stage: str, **params: str) -> str:
+        """보강 종류·단계별 완성된 문장. 조각을 이어 붙이지 않고 문장 하나가 키 하나다."""
+        if kind == "song":
+            texts = {
+                "started": tr("가사 조회 중: {short}"),
+                "done": tr("가사 조회 완료"),
+                "done_detail": tr("가사 조회 완료 ({detail})"),
+                "failed": tr("가사 조회 실패: {reason}"),
+                "failed_toast": tr("가사 조회 실패 — {reason}"),
+            }
+        elif kind == "summary":
+            texts = {
+                "started": tr("요약 생성 중: {short}"),
+                "done": tr("요약 생성 완료"),
+                "done_detail": tr("요약 생성 완료 ({detail})"),
+                "failed": tr("요약 생성 실패: {reason}"),
+                "failed_toast": tr("요약 생성 실패 — {reason}"),
+            }
+        else:
+            texts = {
+                "started": tr("정보 보강 중: {short}"),
+                "done": tr("정보 보강 완료"),
+                "done_detail": tr("정보 보강 완료 ({detail})"),
+                "failed": tr("정보 보강 실패: {reason}"),
+                "failed_toast": tr("정보 보강 실패 — {reason}"),
+            }
+        return texts[stage].format(**params)
 
     def _on_enrich_started(self, url: str, kind: str) -> None:
-        label = self._ENRICH_LABEL.get(kind, "정보 보강")
         short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
-        self.statusBar().showMessage(f"{label} 중: {short}", 0)
+        self.statusBar().showMessage(self._enrich_text(kind, "started", short=short), 0)
         self._add_progress.show()
 
     def _on_enrich_finished(self, url: str, kind: str, ok: bool, detail: str) -> None:
         self._add_progress.hide()
-        label = self._ENRICH_LABEL.get(kind, "정보 보강")
         if kind == "skipped" and ok:
             # 이미 값이 있어 건너뛴 경우 — 사용자에게 알릴 것이 없다.
             self.statusBar().clearMessage()
             return
         if ok:
-            suffix = f" ({detail})" if detail else ""
-            self.statusBar().showMessage(f"{label} 완료{suffix}", 5000)
-            show_toast(self, f"{label} 완료{suffix}", KIND_SUCCESS)
+            done = self._enrich_text(kind, "done_detail" if detail else "done", detail=detail)
+            self.statusBar().showMessage(done, 5000)
+            show_toast(self, done, KIND_SUCCESS)
         else:
-            reason = detail or "알 수 없는 오류"
-            self.statusBar().showMessage(f"{label} 실패: {reason}", 8000)
-            show_toast(self, f"{label} 실패 — {reason}", KIND_ERROR, msec=6000)
+            reason = detail or tr("알 수 없는 오류")
+            self.statusBar().showMessage(self._enrich_text(kind, "failed", reason=reason), 8000)
+            show_toast(
+                self, self._enrich_text(kind, "failed_toast", reason=reason), KIND_ERROR, msec=6000
+            )
 
     # ------------------------------------------------------------------
     def _on_clipboard_changed(self) -> None:
         pass  # URL 바 제거 후 클립보드 자동 감지 비활성화
 
     def _show_error(self, msg: str) -> None:
-        self.statusBar().showMessage(f"오류: {msg}", 6000)
+        self.statusBar().showMessage(tr("오류: {msg}").format(msg=msg), 6000)
 
     def _show_library_error(self, msg: str) -> None:
         self._add_progress.hide()
         url = self._pending_url
         self._pending_url = ""
         short = url.split("/")[2] if url.count("/") >= 2 else url[:40]
-        detail = f"{short} 등록 실패: {msg}" if url else msg
-        self.statusBar().showMessage(f"오류: {detail}", 6000)
+        detail = tr("{short} 등록 실패: {msg}").format(short=short, msg=msg) if url else msg
+        self.statusBar().showMessage(tr("오류: {msg}").format(msg=detail), 6000)
 
-        dlg = QMessageBox(QMessageBox.Icon.Warning, "영상 등록 오류", detail, parent=self)
+        dlg = QMessageBox(QMessageBox.Icon.Warning, tr("영상 등록 오류"), detail, parent=self)
         dlg.addButton(QMessageBox.StandardButton.Ok)
         if url:
-            copy_btn = dlg.addButton("URL 복사", QMessageBox.ButtonRole.ActionRole)
+            copy_btn = dlg.addButton(tr("URL 복사"), QMessageBox.ButtonRole.ActionRole)
             copy_btn.clicked.connect(
                 lambda: QApplication.clipboard().setText(url)
             )
@@ -824,7 +851,7 @@ class MainWindow(QMainWindow):
         self._update_badge.show_ready(dto.version)
         self._sidebar.show_update_badge(True)
         self._sidebar.set_settings_tooltip(
-            f"업데이트 준비 완료: v{dto.version} — 눌러서 설치"
+            tr("업데이트 준비 완료: v{version} — 눌러서 설치").format(version=dto.version)
         )
         self._settings_panel.set_update_ready(dto)
 
@@ -835,13 +862,15 @@ class MainWindow(QMainWindow):
         """
         self._update_badge.show_found(dto.version, getattr(dto, "size_bytes", 0))
         self._sidebar.show_update_badge(True)
-        self._sidebar.set_settings_tooltip(f"업데이트 발견: v{dto.version} — 눌러서 설치")
+        self._sidebar.set_settings_tooltip(
+            tr("업데이트 발견: v{version} — 눌러서 설치").format(version=dto.version)
+        )
         self._settings_panel.set_update_available(dto)
 
     def _on_install_started(self) -> None:
         """설치 착수 — 창이 곧 닫힌다. 말없이 닫히면 앱이 죽은 줄 안다."""
         self.statusBar().showMessage(tr("설치 중입니다. 잠시 후 자동으로 다시 시작됩니다…"))
-        show_toast(self, "설치 중입니다. 잠시 후 자동으로 다시 시작됩니다", KIND_SUCCESS)
+        show_toast(self, tr("설치 중입니다. 잠시 후 자동으로 다시 시작됩니다"), KIND_SUCCESS)
 
     def _report_failed_install(self) -> None:
         """지난 설치가 실패했으면 알린다(흔적은 읽으면서 지운다 — 한 번만 알린다)."""
@@ -853,7 +882,7 @@ class MainWindow(QMainWindow):
         logger.warning("지난 업데이트 설치가 실패했다(종료 코드 %s)", code)
         show_toast(
             self,
-            f"지난 업데이트 설치가 완료되지 않았습니다(코드 {code}). 다시 시도해 주세요",
+            tr("지난 업데이트 설치가 완료되지 않았습니다(코드 {code}). 다시 시도해 주세요").format(code=code),
             KIND_ERROR,
         )
 
@@ -971,7 +1000,7 @@ class MainWindow(QMainWindow):
             return
         for url in result.urls:
             self._library_vm.add_video(url)
-        show_toast(self, f"워치 폴더에서 {len(result.urls)}건을 담는 중입니다")
+        show_toast(self, tr("워치 폴더에서 {n}건을 담는 중입니다").format(n=len(result.urls)))
 
     # ── 북마크 가져오기 ──────────────────────────────────────────
 
@@ -988,8 +1017,9 @@ class MainWindow(QMainWindow):
             self._library_vm.add_video(url, category_id=category_id)
         if len(urls) > len(capped):
             self._show_error(
-                f"한 번에 {_BOOKMARK_IMPORT_LIMIT}개까지 담습니다. "
-                f"나머지 {len(urls) - len(capped)}개는 다시 골라 주세요."
+                tr("한 번에 {limit}개까지 담습니다. 나머지 {rest}개는 다시 골라 주세요.").format(
+                    limit=_BOOKMARK_IMPORT_LIMIT, rest=len(urls) - len(capped)
+                )
             )
 
     # ── 트레이 알림 ──────────────────────────────────────────────
@@ -1033,9 +1063,9 @@ class MainWindow(QMainWindow):
         if not self._notifications_on():
             return
         if ok:
-            self._tray.notify("다운로드 완료", detail or "1건을 받았습니다", ok=True)
+            self._tray.notify(tr("다운로드 완료"), detail or tr("1건을 받았습니다"), ok=True)
         else:
-            self._tray.notify("다운로드 실패", detail[:200], ok=False)
+            self._tray.notify(tr("다운로드 실패"), detail[:200], ok=False)
 
     def _on_new_videos_notify(self, count: int, body: str) -> None:
         """새 영상은 창이 앞에 있어도 알린다 — 다른 화면을 보고 있을 수 있다."""
@@ -1043,7 +1073,7 @@ class MainWindow(QMainWindow):
 
         if self._tray is None or not cfg.TRAY_NOTIFICATIONS:
             return
-        self._tray.notify(f"구독 채널에 새 영상 {count}개", body, ok=True)
+        self._tray.notify(tr("구독 채널에 새 영상 {count}개").format(count=count), body, ok=True)
 
     def _on_tray_show(self) -> None:
         restore_from_tray(self)

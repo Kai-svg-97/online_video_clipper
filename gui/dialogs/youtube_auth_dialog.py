@@ -208,10 +208,12 @@ class YouTubeAuthDialog(QDialog):
 
         self._login_btn = QPushButton(tr("새 계정으로 로그인…"))
         self._login_btn.setToolTip(
-            "아직 브라우저에 YouTube 로그인이 안 된 경우에만 사용하세요.\n"
-            "시스템 브라우저(Chrome/Edge)를 열어 Google 로그인 후 쿠키를 저장합니다.\n"
-            "이미 Firefox / Chrome에 로그인되어 있다면 위의 '브라우저 계정' 탭에서\n"
-            "프로필을 클릭하기만 하면 됩니다."
+            tr(
+                "아직 브라우저에 YouTube 로그인이 안 된 경우에만 사용하세요.\n"
+                "시스템 브라우저(Chrome/Edge)를 열어 Google 로그인 후 쿠키를 저장합니다.\n"
+                "이미 Firefox / Chrome에 로그인되어 있다면 위의 '브라우저 계정' 탭에서\n"
+                "프로필을 클릭하기만 하면 됩니다."
+            )
         )
         self._login_btn.clicked.connect(self._on_browser_login)
         btn_row.addWidget(self._login_btn)
@@ -253,8 +255,10 @@ class YouTubeAuthDialog(QDialog):
 
         # 안내 메시지
         guide = QLabel(
-            "브라우저에서 YouTube에 로그인된 Google 계정을 선택하세요.\n"
-            "Chrome은 이메일, Firefox는 프로필명이 표시됩니다."
+            tr(
+                "브라우저에서 YouTube에 로그인된 Google 계정을 선택하세요.\n"
+                "Chrome은 이메일, Firefox는 프로필명이 표시됩니다."
+            )
         )
         guide.setWordWrap(True)
         guide.setStyleSheet(
@@ -277,8 +281,10 @@ class YouTubeAuthDialog(QDialog):
         layout.addWidget(self._profile_list, 1)
 
         self._chrome_warn = QLabel(
-            "⚠ Chrome은 실행 중일 때 쿠키 DB가 잠겨 오류가 납니다.\n"
-            "Chrome을 닫거나 Firefox를 선택하세요."
+            tr(
+                "⚠ Chrome은 실행 중일 때 쿠키 DB가 잠겨 오류가 납니다.\n"
+                "Chrome을 닫거나 Firefox를 선택하세요."
+            )
         )
         self._chrome_warn.setWordWrap(True)
         self._chrome_warn.setStyleSheet(
@@ -302,8 +308,10 @@ class YouTubeAuthDialog(QDialog):
         layout.setSpacing(10)
 
         desc = QLabel(
-            "Netscape 포맷 쿠키 파일 경로를 직접 지정합니다.\n"
-            "브라우저 확장 프로그램(예: Get cookies.txt LOCALLY)으로 내보낸 파일을 사용하세요."
+            tr(
+                "Netscape 포맷 쿠키 파일 경로를 직접 지정합니다.\n"
+                "브라우저 확장 프로그램(예: Get cookies.txt LOCALLY)으로 내보낸 파일을 사용하세요."
+            )
         )
         desc.setWordWrap(True)
         desc.setStyleSheet(f"font-size: 9pt; color: {tok().text_secondary};")
@@ -314,7 +322,7 @@ class YouTubeAuthDialog(QDialog):
         self._cookie_file_edit.setPlaceholderText(tr("쿠키 파일 경로 (예: C:\\cookies.txt)"))
         file_row.addWidget(self._cookie_file_edit, 1)
         browse_btn = QPushButton(tr("찾기…"))
-        browse_btn.setFixedWidth(56)
+        browse_btn.setMinimumWidth(56)
         browse_btn.clicked.connect(self._on_browse_cookie)
         file_row.addWidget(browse_btn)
         layout.addLayout(file_row)
@@ -383,8 +391,10 @@ class YouTubeAuthDialog(QDialog):
         name = account_name  # str | None
         if name:
             self._status_banner.setText(
-                f"● 연결된 YouTube 채널:  {name}\n"
-                "구독 채널 / 재생목록 / 피드가 이 계정 기준으로 동작합니다."
+                tr(
+                    "● 연결된 YouTube 채널:  {name}\n"
+                    "구독 채널 / 재생목록 / 피드가 이 계정 기준으로 동작합니다."
+                ).format(name=name)
             )
             self._status_banner.setStyleSheet(
                 f"background: {tok().bg_elevated}; border: 1px solid {sem('success')};"
@@ -393,8 +403,10 @@ class YouTubeAuthDialog(QDialog):
             )
         else:
             self._status_banner.setText(
-                "○ YouTube 연결 없음  —  아래에서 계정을 선택하세요\n"
-                "구독 채널·재생목록 기능을 사용하려면 연결이 필요합니다."
+                tr(
+                    "○ YouTube 연결 없음  —  아래에서 계정을 선택하세요\n"
+                    "구독 채널·재생목록 기능을 사용하려면 연결이 필요합니다."
+                )
             )
             self._status_banner.setStyleSheet(
                 f"background: {tok().bg_elevated}; border: 1px solid {sem('danger')};"
@@ -415,13 +427,15 @@ class YouTubeAuthDialog(QDialog):
             return
         browser = self._browser_combo.currentText()
         self._auth.save_auth(browser=browser, profile_key=profile_key, cookiefile=None)
-        self._progress_lbl.setText(f"'{item.text()}' 계정으로 설정되었습니다.")
+        self._progress_lbl.setText(
+            tr("'{name}' 계정으로 설정되었습니다.").format(name=item.text())
+        )
         self.auth_changed.emit()
         self._check_status()
 
     def _on_browse_cookie(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "쿠키 파일 선택", "", "텍스트 파일 (*.txt);;모든 파일 (*)"
+            self, tr("쿠키 파일 선택"), "", tr("텍스트 파일 (*.txt);;모든 파일 (*)")
         )
         if path:
             self._cookie_file_edit.setText(path)
@@ -465,14 +479,16 @@ class YouTubeAuthDialog(QDialog):
         self._login_btn.setEnabled(True)
         self._login_btn.setText(tr("브라우저로 로그인"))
         self._progress_lbl.setText(
-            "시스템 브라우저를 열었습니다. YouTube에 로그인한 후 "
-            "위의 '브라우저 계정' 탭에서 프로필을 선택하세요."
+            tr(
+                "시스템 브라우저를 열었습니다. YouTube에 로그인한 후 "
+                "위의 '브라우저 계정' 탭에서 프로필을 선택하세요."
+            )
         )
 
     def _on_login_failed(self, error: str) -> None:
         self._login_btn.setEnabled(True)
         self._login_btn.setText(tr("브라우저로 로그인"))
-        self._progress_lbl.setText(f"로그인 실패: {error[:100]}")
+        self._progress_lbl.setText(tr("로그인 실패: {error}").format(error=error[:100]))
 
     def _on_logout(self) -> None:
         self._auth.clear_auth()

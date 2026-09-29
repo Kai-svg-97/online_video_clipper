@@ -50,7 +50,7 @@ from gui.panels.detail.text_zoom import (
     DEFAULT_SCALE as DEFAULT_TEXT_SCALE,
     STEP as ZOOM_STEP,
     SUMMARY_BASE_PT,
-    ZOOM_TOOLTIP,
+    zoom_tooltip,
     clamp_scale,
     load_scale,
     save_scale,
@@ -495,7 +495,7 @@ class VideoDetailWidget(
         self._summary_zoom_btn.setFixedSize(46, 24)
         self._summary_zoom_btn.setFlat(True)
         self._summary_zoom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._summary_zoom_btn.setToolTip(ZOOM_TOOLTIP)
+        self._summary_zoom_btn.setToolTip(zoom_tooltip())
         self._summary_zoom_btn.clicked.connect(self.reset_text_scale)
         refresh_row.addWidget(self._summary_zoom_btn)
         self._summary_refresh_btn = QPushButton("⟳")
@@ -519,8 +519,7 @@ class VideoDetailWidget(
         self._summary_stack.addWidget(self._summary_editor)    # index 1: 편집
         # index 2: 카테고리 미지정 안내 — 요약도 영상별로 저장되므로 로컬 영상이어야 한다.
         self._summary_locked = _LockedNotice(
-            "이 영상은 아직 라이브러리에 없습니다.\n"
-            "카테고리에 담으면 AI 요약을 가져오고 저장할 수 있습니다."
+            tr("이 영상은 아직 라이브러리에 없습니다.\n카테고리에 담으면 AI 요약을 가져오고 저장할 수 있습니다.")
         )
         self._summary_locked.action_clicked.connect(self._on_category_clicked)
         self._summary_stack.addWidget(self._summary_locked)
@@ -768,8 +767,8 @@ class VideoDetailWidget(
         self._song_tab.set_locked(not local)
         self._summary_refresh_btn.setEnabled(local)
         self._btn_category.setToolTip(
-            "카테고리 지정 (다른 카테고리로 옮기기)" if local
-            else "카테고리 지정 (라이브러리에 담아 요약·가사 잠금 해제)"
+            tr("카테고리 지정 (다른 카테고리로 옮기기)") if local
+            else tr("카테고리 지정 (라이브러리에 담아 요약·가사 잠금 해제)")
         )
 
     def _on_category_clicked(self) -> None:
@@ -788,7 +787,7 @@ class VideoDetailWidget(
         목록은 재생목록으로 쓰이므로 payload 순서를 보관하고, 현재 재생 항목을 강조한다.
         """
         self._playlist = [it.payload for it in items]
-        self._related.set_header(header or "연관 영상")
+        self._related.set_header(header or tr("연관 영상"))
         self._related.set_items(items, current_key=self._current_key or None)
 
     def set_recommendations(self, items: list[RelatedItem]) -> None:
@@ -823,7 +822,7 @@ class VideoDetailWidget(
     def set_refresh_busy(self, busy: bool) -> None:
         """상세 정보 갱신(⟳) 진행 표시 — 버튼 비활성 + 툴팁 변경."""
         self._btn_refresh.setEnabled(not busy)
-        self._btn_refresh.setToolTip("갱신 중… (YouTube에서 정보 가져오는 중)" if busy else "상세 정보 갱신")
+        self._btn_refresh.setToolTip(tr("갱신 중… (YouTube에서 정보 가져오는 중)") if busy else tr("상세 정보 갱신"))
 
 
     # ── 다운로드 히스토리 갱신 (오류2) ────────────────────────────────

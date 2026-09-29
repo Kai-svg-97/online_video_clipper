@@ -7,6 +7,7 @@ from uuid import UUID
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from gui.view_models.base import WorkerOwnerMixin
+from gui.text import tr
 
 from application.library.commands import (
     AddVideoCommand,
@@ -427,7 +428,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
             self.categories_changed.emit()
         except Exception as exc:
             logger.exception("카테고리 로드 실패: %s", exc)
-            self.error_occurred.emit(f"카테고리 로드 실패: {exc}")
+            self.error_occurred.emit(tr("카테고리 로드 실패: {exc}").format(exc=exc))
 
     def refresh_scoped_tags(self) -> None:
         """현재 활성 필터(카테고리 서브트리 또는 재생목록 영상)에 맞춘 인기 태그를
@@ -939,7 +940,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         if new_parent_id is not None:
             # Prevent circular reference (can't make a parent a child of its descendant)
             if new_parent_id in set(self._resolve_category_ids(category_id)):
-                self.error_occurred.emit("상위 카테고리를 하위 카테고리의 자식으로 설정할 수 없습니다.")
+                self.error_occurred.emit(tr("상위 카테고리를 하위 카테고리의 자식으로 설정할 수 없습니다."))
                 return
         try:
             self._move_category.handle(MoveCategoryCommand(category_id, new_parent_id))
@@ -1247,7 +1248,9 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
     ) -> None:
         """YouTube 재생목록의 영상들을 지정 카테고리로 가져온다 (비동기)."""
         if self._import_yt_to_category is None:
-            self.error_occurred.emit("ImportYouTubePlaylistToCategoryHandler가 초기화되지 않았습니다.")
+            self.error_occurred.emit(
+                tr("ImportYouTubePlaylistToCategoryHandler가 초기화되지 않았습니다.")
+            )
             return
         cmd = ImportYouTubePlaylistToCategoryCommand(
             yt_playlist_id=yt_playlist_id,

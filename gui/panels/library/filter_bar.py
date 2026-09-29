@@ -54,10 +54,10 @@ class FilterBar(QWidget):
         row.setContentsMargins(4, 2, 4, 6)
         row.setSpacing(6)
 
-        self._date = self._combo("date", DATE_PRESETS, "업로드")
-        self._duration = self._combo("duration", DURATION_PRESETS, "길이")
-        self._download = self._combo("download", DOWNLOAD_PRESETS, "다운로드")
-        self._watched = self._combo("watched", WATCHED_PRESETS, "시청")
+        self._date = self._combo("date", DATE_PRESETS, tr("업로드"))
+        self._duration = self._combo("duration", DURATION_PRESETS, tr("길이"))
+        self._download = self._combo("download", DOWNLOAD_PRESETS, tr("다운로드"))
+        self._watched = self._combo("watched", WATCHED_PRESETS, tr("시청"))
 
         self._channel = QLineEdit()
         self._channel.setPlaceholderText(tr("채널 이름…"))
@@ -79,10 +79,10 @@ class FilterBar(QWidget):
         self._reset.clicked.connect(self.reset)
 
         for widget in (
-            self._label("업로드"), self._date,
-            self._label("길이"), self._duration,
-            self._label("다운로드"), self._download,
-            self._label("시청"), self._watched,
+            self._label(tr("업로드")), self._date,
+            self._label(tr("길이")), self._duration,
+            self._label(tr("다운로드")), self._download,
+            self._label(tr("시청")), self._watched,
             self._channel, self._favorite,
         ):
             row.addWidget(widget)

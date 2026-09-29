@@ -7,6 +7,7 @@ from uuid import UUID
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 from gui.view_models.base import WorkerOwnerMixin
+from gui.text import tr
 
 from application.download.commands import CancelDownloadCommand, CancelDownloadHandler, StartDownloadCommand, StartDownloadHandler
 from application.download.dtos import DownloadJobDTO
@@ -172,7 +173,7 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
             return
         if len(self._recordings) >= MAX_CONCURRENT_RECORDINGS:
             self.error_occurred.emit(
-                "방송 중이지만 동시 녹화 수가 꽉 차 대기합니다."
+                tr("방송 중이지만 동시 녹화 수가 꽉 차 대기합니다.")
             )
             return
         self._pending.remove(job_id)
@@ -228,12 +229,14 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
         window = self.current_window()
         if not window.allows(datetime.now().time()):
             return (
-                f"예약 시간대({window.start_hour}시~{window.end_hour}시)를 기다립니다 — "
-                f"{len(self._pending)}건 대기"
+                tr("예약 시간대({start}시~{end}시)를 기다립니다 — {n}건 대기").format(
+                    start=window.start_hour, end=window.end_hour, n=len(self._pending)
+                )
             )
         return (
-            f"동시 다운로드 {self._concurrent_limit()}개 제한 — "
-            f"{len(self._pending)}건이 차례를 기다립니다"
+            tr("동시 다운로드 {limit}개 제한 — {n}건이 차례를 기다립니다").format(
+                limit=self._concurrent_limit(), n=len(self._pending)
+            )
         )
 
     def _pump(self) -> None:

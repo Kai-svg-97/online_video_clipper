@@ -132,10 +132,10 @@ class _FieldChoiceRow(QWidget):
         layout.addWidget(QLabel(f"<b>{diff.label}</b>"))
 
         self._existing_radio = QRadioButton(
-            self._describe("기존값", diff.existing_value, diff.existing_filled)
+            self._describe(False, diff.existing_value, diff.existing_filled)
         )
         self._incoming_radio = QRadioButton(
-            self._describe("가져올 값", diff.incoming_value, diff.incoming_filled)
+            self._describe(True, diff.incoming_value, diff.incoming_filled)
         )
         group = QButtonGroup(self)
         group.addButton(self._existing_radio)
@@ -150,9 +150,11 @@ class _FieldChoiceRow(QWidget):
         layout.addWidget(self._incoming_radio)
 
     @staticmethod
-    def _describe(label: str, value: str, filled: bool) -> str:
-        shown = value if filled else "(비어있음)"
-        return f"{label}: {shown}"
+    def _describe(incoming: bool, value: str, filled: bool) -> str:
+        shown = value if filled else tr("(비어있음)")
+        if incoming:
+            return tr("가져올 값: {value}").format(value=shown)
+        return tr("기존값: {value}").format(value=shown)
 
     def _on_toggled(self, checked: bool) -> None:
         if not checked:
@@ -183,10 +185,10 @@ class ImportConflictResolutionDialog(QDialog):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
 
-        info = QLabel(
-            f"이미 있는 영상 {len(self._conflicts)}개에서 값이 다른 항목을 찾았습니다. "
+        info = QLabel(tr(
+            "이미 있는 영상 {n}개에서 값이 다른 항목을 찾았습니다. "
             "영상을 선택해 항목별로 유지할 값을 고르세요."
-        )
+        ).format(n=len(self._conflicts)))
         info.setWordWrap(True)
         root.addWidget(info)
 

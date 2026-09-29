@@ -13,6 +13,7 @@ from PyQt6.QtCore import (
 )
 
 from config.settings import THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -134,16 +135,18 @@ _TAG_PALETTE: tuple[str, ...] = (
 
 
 # 검색 일치 속성 배지 라벨 — 도메인은 영어 키를 쓰고 표시 문자열은 GUI가 갖는다.
-MATCH_FIELD_LABELS: dict[str, str] = {
-    "title": "제목",
-    "tags": "태그",
-    "description": "설명",
-    "notes": "메모",
-    "summary": "요약",
-    "song": "노래",
-    "lyrics": "가사",
-    "subtitle": "자막",
-}
+# 모듈 수준에서 tr()을 부르면 언어가 정해지기 전에 평가되므로 함수로 둔다.
+def match_field_labels() -> dict[str, str]:
+    return {
+        "title": tr("제목"),
+        "tags": tr("태그"),
+        "description": tr("설명"),
+        "notes": tr("메모"),
+        "summary": tr("요약"),
+        "song": tr("노래"),
+        "lyrics": tr("가사"),
+        "subtitle": tr("자막"),
+    }
 
 
 # 검색 일치 속성 배지 한 줄 높이(항상 확보해 타이핑 중 리플로우 방지)

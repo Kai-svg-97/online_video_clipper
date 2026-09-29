@@ -13,6 +13,7 @@ from uuid import UUID
 
 
 from application.library.dtos import VideoDTO
+from gui.text import tr
 from gui.panels.video_detail_panel import (
     RelatedItem,
 )
@@ -21,7 +22,7 @@ from gui.panels.video_detail_panel import (
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
 from gui.panels.library.constants import (  # noqa: F401
-    MATCH_FIELD_LABELS,
+    match_field_labels,
     _BADGE_EMPTY_BG,
     _CAT_ID_ROLE,
     _CAT_PARENT_ROLE,
@@ -260,7 +261,7 @@ class DetailNavigationMixin:
         items = [self._related_from_video(v) for v in videos][:100]
         if not items:
             return
-        header = (f"가수: {value}" if field == "artist" else f"앨범: {value}")
+        header = (tr("가수: {value}") if field == "artist" else tr("앨범: {value}")).format(value=value)
         if self._playlist_ctx is None:
             # 진입 — 현재 '연관 영상' 목록과 진입 영상을 보존
             prev_related = [self._related_from_video(v) for v in self._vm.videos][:30]
@@ -280,7 +281,7 @@ class DetailNavigationMixin:
     def _related_from_video(self, v: VideoDTO) -> RelatedItem:
         meta = []
         if v.view_count:
-            meta.append(f"조회수 {v.view_count:,}회")
+            meta.append(tr("조회수 {n}회").format(n=f"{v.view_count:,}"))
         rel = _relative_time(v.published_at)
         if rel:
             meta.append(rel)

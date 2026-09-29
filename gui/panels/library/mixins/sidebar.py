@@ -36,7 +36,7 @@ from domain.library.repositories import MUSIC_ROOT_CATEGORY_NAMES
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
 from gui.panels.library.constants import (  # noqa: F401
-    MATCH_FIELD_LABELS,
+    match_field_labels,
     _BADGE_EMPTY_BG,
     _CAT_ID_ROLE,
     _CAT_PARENT_ROLE,
@@ -332,7 +332,7 @@ class SidebarTreeMixin:
         """즐겨찾기 바의 카운트 배지 클릭 → 해제 확인 후 제거."""
         reply = QMessageBox.question(
             self, tr("즐겨찾기 해제"),
-            f"'{name}'을(를) 즐겨찾기에서 제거하시겠습니까?",
+            tr("'{name}'을(를) 즐겨찾기에서 제거하시겠습니까?").format(name=name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -365,7 +365,7 @@ class SidebarTreeMixin:
             parts.append(c.name)
             current = c.parent_id
         parts.reverse()
-        return "로컬 > " + " > ".join(parts) if parts else "라이브러리"
+        return tr("로컬 > {path}").format(path=" > ".join(parts)) if parts else tr("라이브러리")
 
     def _is_music_category(self, cat_id) -> bool:
         """이 카테고리의 최상위 조상 이름이 음악 계열인지(Music/Song/음악/노래/뮤직).
@@ -419,11 +419,11 @@ class SidebarTreeMixin:
             self._open_playlist_payload(prev, autoplay=self._detail_widget.is_playing())
         else:
             # 이력 소진 → 연관 영상 목록 복귀(상세는 진입 영상 그대로 유지)
-            self._detail_widget.set_related(ctx["prev_related"], header="연관 영상")
+            self._detail_widget.set_related(ctx["prev_related"], header=tr("연관 영상"))
             self._playlist_ctx = None
 
     def _on_add_category(self, parent_id) -> None:
-        name, ok = QInputDialog.getText(self, "카테고리 추가", "카테고리 이름:")
+        name, ok = QInputDialog.getText(self, tr("카테고리 추가"), tr("카테고리 이름:"))
         if ok and name.strip():
             self._vm.create_category(name.strip(), parent_id=parent_id)
 
@@ -431,7 +431,7 @@ class SidebarTreeMixin:
         cats = self._vm.categories
         current_name = next((c.name for c in cats if c.id == category_id), "")
         new_name, ok = QInputDialog.getText(
-            self, "카테고리 이름 변경", "새 이름:", text=current_name
+            self, tr("카테고리 이름 변경"), tr("새 이름:"), text=current_name
         )
         if ok and new_name.strip():
             self._vm.rename_category(category_id, new_name.strip())
@@ -444,7 +444,7 @@ class SidebarTreeMixin:
         name = next((c.name for c in cats if c.id == category_id), "")
         reply = QMessageBox.question(
             self, tr("카테고리 삭제"),
-            f"'{name}' 카테고리를 삭제하시겠습니까?\n영상은 '미분류'로 이동됩니다.",
+            tr("'{name}' 카테고리를 삭제하시겠습니까?\n영상은 '미분류'로 이동됩니다.").format(name=name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -498,7 +498,7 @@ class SidebarTreeMixin:
         pls = self._playlist_vm.playlists
         current = next((p.title for p in pls if p.id == playlist_id), "")
         title, ok = QInputDialog.getText(
-            self, "재생목록 이름 변경", "새 이름:", text=current
+            self, tr("재생목록 이름 변경"), tr("새 이름:"), text=current
         )
         if ok and title.strip():
             self._playlist_vm.rename_playlist(playlist_id, title.strip())
@@ -506,7 +506,7 @@ class SidebarTreeMixin:
     def _on_folder_create(self, source: str) -> None:
         if self._playlist_vm is None:
             return
-        name, ok = QInputDialog.getText(self, "새 폴더", "폴더 이름:")
+        name, ok = QInputDialog.getText(self, tr("새 폴더"), tr("폴더 이름:"))
         if ok and name.strip():
             self._playlist_vm.create_folder(name.strip(), source)
 
@@ -514,7 +514,7 @@ class SidebarTreeMixin:
         if self._playlist_vm is None:
             return
         name, ok = QInputDialog.getText(
-            self, "폴더 이름 변경", "새 이름:", text=old_name
+            self, tr("폴더 이름 변경"), tr("새 이름:"), text=old_name
         )
         if ok and name.strip():
             self._playlist_vm.rename_folder(folder_id, name.strip())
@@ -555,7 +555,7 @@ class SidebarTreeMixin:
         if not video_ids:
             QMessageBox.information(
                 self, tr("재생목록 복사"),
-                f"재생목록 '{playlist.title}'에 영상이 없습니다.",
+                tr("재생목록 '{title}'에 영상이 없습니다.").format(title=playlist.title),
             )
             return
 
@@ -680,12 +680,12 @@ class SidebarTreeMixin:
                     self._vm.assign_category_bulk(video_ids, category_id)
                     QMessageBox.information(
                         self, tr("복사 완료"),
-                        f"영상 {len(video_ids)}개를 카테고리로 복사했습니다.",
+                        tr("영상 {n}개를 카테고리로 복사했습니다.").format(n=len(video_ids)),
                     )
                     return
                 QMessageBox.information(
                     self, tr("알림"),
-                    f"재생목록 '{local_pl.title}'에 영상이 없습니다.",
+                    tr("재생목록 '{title}'에 영상이 없습니다.").format(title=local_pl.title),
                 )
                 return
 
@@ -697,7 +697,7 @@ class SidebarTreeMixin:
         if count > 0:
             QMessageBox.information(
                 self, tr("가져오기 완료"),
-                f"YouTube 재생목록에서 영상 {count}개를 카테고리로 가져왔습니다.",
+                tr("YouTube 재생목록에서 영상 {n}개를 카테고리로 가져왔습니다.").format(n=count),
             )
 
     def _on_sync_yt_playlist(self, yt_playlist_id: str) -> None:
@@ -791,7 +791,7 @@ class SidebarTreeMixin:
         self._current_playlist_id = None
         self._set_popular_tags_visible(False)
         # 경로 바: "YouTube" 또는 "로컬" 단독 (클릭 안 되는 마지막 세그먼트)
-        label = "YouTube" if source == "youtube" else "로컬"
+        label = "YouTube" if source == "youtube" else tr("로컬")
         self._breadcrumb_bar.update_path([(label, None)], [])
         self._breadcrumb_bar.show()
 
@@ -812,8 +812,10 @@ class SidebarTreeMixin:
             return
         reply = QMessageBox.question(
             self, tr("일괄 제거"),
-            f"{len(video_ids)}개 영상을 재생목록에서 제거하시겠습니까?\n"
-            "(YouTube 재생목록이면 YouTube에도 반영됩니다)",
+            tr(
+                "{n}개 영상을 재생목록에서 제거하시겠습니까?\n"
+                "(YouTube 재생목록이면 YouTube에도 반영됩니다)"
+            ).format(n=len(video_ids)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -838,7 +840,7 @@ class SidebarTreeMixin:
             except Exception:
                 logger.exception("재생목록으로 영상 일괄 복사 실패")
         if count > 0:
-            QMessageBox.information(self, tr("복사 완료"), f"{count}개 영상을 재생목록에 복사했습니다.")
+            QMessageBox.information(self, tr("복사 완료"), tr("{n}개 영상을 재생목록에 복사했습니다.").format(n=count))
 
     def _on_import_yt_playlist(self) -> None:
         if self._playlist_vm is None:
@@ -852,8 +854,8 @@ class SidebarTreeMixin:
             # 목록이 없으면 수동 입력 fallback
             import urllib.parse  # noqa: PLC0415
             pl_id, ok = QInputDialog.getText(
-                self, "YouTube 재생목록 가져오기",
-                "계정 재생목록을 찾지 못했습니다.\nYouTube 재생목록 ID 또는 URL을 직접 입력하세요:",
+                self, tr("YouTube 재생목록 가져오기"),
+                tr("계정 재생목록을 찾지 못했습니다.\nYouTube 재생목록 ID 또는 URL을 직접 입력하세요:"),
             )
             if not ok or not pl_id.strip():
                 return
@@ -874,7 +876,7 @@ class SidebarTreeMixin:
         dlg.setMinimumHeight(360)
         layout = QVBoxLayout(dlg)
 
-        lbl = QLabel(f"YouTube 계정에서 재생목록 {len(playlists)}개를 찾았습니다.\n가져올 재생목록을 선택하세요:")
+        lbl = QLabel(tr("YouTube 계정에서 재생목록 {n}개를 찾았습니다.\n가져올 재생목록을 선택하세요:").format(n=len(playlists)))
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
 
@@ -891,7 +893,7 @@ class SidebarTreeMixin:
             pl_id = pl.get("id") or ""
             pl_title = pl.get("title") or pl_id
             pl_count = pl.get("count") or 0
-            label = f"{pl_title}  ({pl_count}개)"
+            label = tr("{title}  ({n}개)").format(title=pl_title, n=pl_count)
             cb = QCheckBox(label)
             cb.setChecked(True)
             check_layout.addWidget(cb)
@@ -930,8 +932,8 @@ class SidebarTreeMixin:
             return
         import urllib.parse  # noqa: PLC0415
         pl_id, ok = QInputDialog.getText(
-            self, "YouTube 재생목록 가져오기",
-            "YouTube 재생목록 ID 또는 URL을 입력하세요:",
+            self, tr("YouTube 재생목록 가져오기"),
+            tr("YouTube 재생목록 ID 또는 URL을 입력하세요:"),
         )
         if not ok or not pl_id.strip():
             return

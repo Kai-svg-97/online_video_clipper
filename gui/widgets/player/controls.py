@@ -265,10 +265,10 @@ class _ControlBar(QWidget):
             b.clicked.connect(slot)
             return b
 
-        self._btn_play = btn("▶", "재생/일시정지  (Space / K)", self.play_toggled.emit)
-        self._btn_back = btn("⏪", "10초 뒤로  (J)", lambda: self.seek_relative.emit(-10))
-        self._btn_fwd  = btn("⏩", "10초 앞으로  (L)", lambda: self.seek_relative.emit(10))
-        self._btn_mute = btn("🔊", "음소거  (M)", self.mute_toggled.emit)
+        self._btn_play = btn("▶", tr("재생/일시정지  (Space / K)"), self.play_toggled.emit)
+        self._btn_back = btn("⏪", tr("10초 뒤로  (J)"), lambda: self.seek_relative.emit(-10))
+        self._btn_fwd  = btn("⏩", tr("10초 앞으로  (L)"), lambda: self.seek_relative.emit(10))
+        self._btn_mute = btn("🔊", tr("음소거  (M)"), self.mute_toggled.emit)
 
         self._vol = _TrackSlider(Qt.Orientation.Horizontal)
         self._vol.setRange(0, 100)
@@ -289,7 +289,7 @@ class _ControlBar(QWidget):
         self._btn_quality.setStyleSheet(_quality_btn_style())
         self._btn_quality.clicked.connect(self._show_quality_menu)
 
-        self._btn_cc = btn("💬", "가사 자막  (C)", self._on_cc_clicked)
+        self._btn_cc = btn("💬", tr("가사 자막  (C)"), self._on_cc_clicked)
         self._btn_cc.setEnabled(False)
         self._btn_cc.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._btn_cc.customContextMenuRequested.connect(
@@ -297,13 +297,13 @@ class _ControlBar(QWidget):
         )
 
         # 영상 자막(CC) — 가사 자막(💬)과 다른 기능이라 버튼을 따로 둔다.
-        self._btn_vsub = btn("CC", "영상 자막 — 언어 선택·자동 번역",
+        self._btn_vsub = btn("CC", tr("영상 자막 — 언어 선택·자동 번역"),
                              self._show_video_subtitle_menu)
         self._btn_vsub.setEnabled(False)
 
-        self._btn_dl = btn("⬇", "다운로드", self.download_menu_requested.emit)
-        self._btn_pip = btn("⧉", "화면 속 화면  (P)", self.pip_toggled.emit)
-        self._btn_fs = btn("⛶", "전체화면  (F)", self.fullscreen_toggled.emit)
+        self._btn_dl = btn("⬇", tr("다운로드"), self.download_menu_requested.emit)
+        self._btn_pip = btn("⧉", tr("화면 속 화면  (P)"), self.pip_toggled.emit)
+        self._btn_fs = btn("⛶", tr("전체화면  (F)"), self.fullscreen_toggled.emit)
 
         for w in (self._btn_play, self._btn_back, self._btn_fwd,
                   self._btn_mute, self._vol, self._time_lbl):
@@ -373,11 +373,11 @@ class _ControlBar(QWidget):
         enabled = self._has_subtitle or self._subtitle_prefs_dirty
         self._btn_cc.setEnabled(enabled)
         if self._has_subtitle:
-            tip = "가사 자막  (C)"
+            tip = tr("가사 자막  (C)")
         elif enabled:
-            tip = "시간 정보가 있는 가사가 없습니다 — 우클릭: 자막 크기·위치 초기화"
+            tip = tr("시간 정보가 있는 가사가 없습니다 — 우클릭: 자막 크기·위치 초기화")
         else:
-            tip = "시간 정보가 있는 가사가 없습니다"
+            tip = tr("시간 정보가 있는 가사가 없습니다")
         self._btn_cc.setToolTip(tip)
 
     def set_subtitle_on(self, on: bool) -> None:
@@ -410,8 +410,8 @@ class _ControlBar(QWidget):
         self._video_tracks = list(tracks or [])
         self._btn_vsub.setEnabled(bool(self._video_tracks))
         self._btn_vsub.setToolTip(
-            "영상 자막 — 언어 선택·자동 번역" if self._video_tracks
-            else "이 영상에는 자막이 없습니다"
+            tr("영상 자막 — 언어 선택·자동 번역") if self._video_tracks
+            else tr("이 영상에는 자막이 없습니다")
         )
         self._update_vsub_look()
 
@@ -432,7 +432,10 @@ class _ControlBar(QWidget):
             return
         menu = QMenu(self)
         for slot in (0, 1):
-            sub = menu.addMenu(f"자막 {slot + 1}" + ("" if slot == 0 else " (동시 표시)"))
+            sub = menu.addMenu(
+                tr("자막 {n}").format(n=slot + 1) if slot == 0
+                else tr("자막 {n} (동시 표시)").format(n=slot + 1)
+            )
             group = QActionGroup(sub)
             group.setExclusive(True)
             off = sub.addAction(tr("끄기"))
@@ -493,7 +496,7 @@ class _ControlBar(QWidget):
         menu = QMenu(self)
         if self._has_subtitle:
             sec = self._subtitle_offset_ms / 1000.0
-            menu.addAction(f"싱크: {sec:+.2f}초").setEnabled(False)
+            menu.addAction(tr("싱크: {sec}초").format(sec=f"{sec:+.2f}")).setEnabled(False)
             menu.addSeparator()
             menu.addAction(tr("−0.25초  ( [ / , )"), lambda: self.subtitle_offset_nudged.emit(-250))
             menu.addAction(tr("+0.25초  ( ] / . )"), lambda: self.subtitle_offset_nudged.emit(250))
@@ -521,7 +524,7 @@ class _ControlBar(QWidget):
     def set_download_busy(self, busy: bool) -> None:
         """화질 확인 중에는 ⬇ 버튼을 잠근다(중복 조회 방지)."""
         self._btn_dl.setEnabled(not busy)
-        self._btn_dl.setToolTip("화질 확인 중…" if busy else "다운로드")
+        self._btn_dl.setToolTip(tr("화질 확인 중…") if busy else tr("다운로드"))
 
     def _max_height(self) -> "int | None":
         return max(self._heights) if self._heights else None
@@ -570,7 +573,7 @@ class _ControlBar(QWidget):
 
         vm = menu.addMenu(tr("🎬  동영상"))
         top = self._max_height()
-        best_label = f"최고 화질  ({top}p)" if top else "최고 화질"
+        best_label = tr("최고 화질  ({top}p)").format(top=top) if top else tr("최고 화질")
         for quality, height, label in [
             (Quality.BEST,  None, best_label),
             (Quality.P2160, 2160, "2160p  (4K)"),

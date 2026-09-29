@@ -115,7 +115,7 @@ class DetailInfoMixin:
         if channel:
             meta_parts.append(channel)
         if view_count is not None:
-            meta_parts.append(f"조회수 {view_count:,}회")
+            meta_parts.append(tr("조회수 {n:,}회").format(n=view_count))
         if published_at:
             meta_parts.append(published_at)
         if duration_sec is not None:
@@ -128,9 +128,9 @@ class DetailInfoMixin:
 
         statuses = []
         if watched:
-            statuses.append("✓ 시청완료")
+            statuses.append(tr("✓ 시청완료"))
         if favorite:
-            statuses.append("★ 즐겨찾기")
+            statuses.append(tr("★ 즐겨찾기"))
         if statuses:
             st_lbl = QLabel("  ".join(statuses))
             st_lbl.setStyleSheet(f"color:{_t().text_muted};")

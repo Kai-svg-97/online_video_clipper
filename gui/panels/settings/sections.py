@@ -160,9 +160,11 @@ class _CloudSyncSection(QWidget):
 
         # 안내 — 폴더 방식이 기본. 로그인·개발자 설정 없이 바로 동기화.
         help_lbl = QLabel(
-            "여러 PC에서 라이브러리·메모·다운로드 이력·미디어 파일을 동기화합니다.\n"
-            "OneDrive/Google Drive 데스크톱 앱이 동기화하는 폴더를 지정하면 로그인 없이 바로 "
-            "동기화됩니다. 다른 PC에서도 같은 폴더(그 PC의 OneDrive 안 같은 위치)를 지정하세요."
+            tr(
+                "여러 PC에서 라이브러리·메모·다운로드 이력·미디어 파일을 동기화합니다.\n"
+                "OneDrive/Google Drive 데스크톱 앱이 동기화하는 폴더를 지정하면 로그인 없이 바로 "
+                "동기화됩니다. 다른 PC에서도 같은 폴더(그 PC의 OneDrive 안 같은 위치)를 지정하세요."
+            )
         )
         help_lbl.setWordWrap(True)
         help_lbl.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
@@ -239,7 +241,7 @@ class _CloudSyncSection(QWidget):
         self._client_secret.setVisible(self._provider_combo.currentData() == "gdrive")
 
     def _on_browse(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "동기화 폴더 선택")
+        path = QFileDialog.getExistingDirectory(self, tr("동기화 폴더 선택"))
         if path:
             self._folder_path.setText(path)
 
@@ -272,9 +274,13 @@ class _CloudSyncSection(QWidget):
         if dto is None:
             return
         if dto.connected:
-            acct = dto.account_name or "(계정 미상)"
-            last = dto.last_pull_utc[:19].replace("T", " ") if dto.last_pull_utc else "없음"
-            self._status_lbl.setText(f"연결됨: {acct} · 마지막 동기화: {last}")
+            acct = dto.account_name or tr("(계정 미상)")
+            last = (
+                dto.last_pull_utc[:19].replace("T", " ") if dto.last_pull_utc else tr("없음")
+            )
+            self._status_lbl.setText(
+                tr("연결됨: {acct} · 마지막 동기화: {last}").format(acct=acct, last=last)
+            )
             self._connect_btn.setEnabled(False)
             self._disconnect_btn.setEnabled(True)
             self._sync_btn.setEnabled(True)
@@ -290,10 +296,14 @@ class _CloudSyncSection(QWidget):
         self._sync_btn.setEnabled(not busy and self._vm.is_connected())
 
     def _on_sync_finished(self, pushed: int, pulled: int) -> None:
-        self._status_lbl.setText(f"동기화 완료 (올림 {pushed} · 내려받음 {pulled})")
+        self._status_lbl.setText(
+            tr("동기화 완료 (올림 {pushed} · 내려받음 {pulled})").format(
+                pushed=pushed, pulled=pulled
+            )
+        )
 
     def _on_error(self, msg: str) -> None:
-        self._status_lbl.setText(f"오류: {msg}")
+        self._status_lbl.setText(tr("오류: {msg}").format(msg=msg))
 
 class _ImportExportSection(QWidget):
     """라이브러리 가져오기/내보내기 UI (transfer_vm 주입 시에만 표시).
@@ -326,9 +336,11 @@ class _ImportExportSection(QWidget):
         root.setSpacing(8)
 
         help_lbl = QLabel(
-            "선택한 카테고리의 영상·태그·노래 정보(가사·싱크 오프셋)를 파일 하나로 내보내\n"
-            "다른 사람에게 전달하거나 백업할 수 있습니다. 가져올 때 같은 이름의 카테고리는\n"
-            "합쳐지고, 이미 있는 영상은 값이 다른 항목만 골라서 반영합니다."
+            tr(
+                "선택한 카테고리의 영상·태그·노래 정보(가사·싱크 오프셋)를 파일 하나로 내보내\n"
+                "다른 사람에게 전달하거나 백업할 수 있습니다. 가져올 때 같은 이름의 카테고리는\n"
+                "합쳐지고, 이미 있는 영상은 값이 다른 항목만 골라서 반영합니다."
+            )
         )
         help_lbl.setWordWrap(True)
         help_lbl.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
@@ -346,9 +358,11 @@ class _ImportExportSection(QWidget):
 
         # ── 미디어 서버용 사이드카 ──
         media_help = QLabel(
-            "Plex·Jellyfin·Kodi가 읽는 정보 파일(.nfo)을 받아 둔 영상 옆에 만들고, "
-            "재생목록(.m3u)을 함께 저장합니다. 제목·설명·채널·태그·업로드일이 서버에 "
-            "그대로 넘어가고, 노래로 표시한 영상은 가수·앨범까지 들어갑니다."
+            tr(
+                "Plex·Jellyfin·Kodi가 읽는 정보 파일(.nfo)을 받아 둔 영상 옆에 만들고, "
+                "재생목록(.m3u)을 함께 저장합니다. 제목·설명·채널·태그·업로드일이 서버에 "
+                "그대로 넘어가고, 노래로 표시한 영상은 가수·앨범까지 들어갑니다."
+            )
         )
         media_help.setWordWrap(True)
         media_help.setStyleSheet(f"color: {_t().text_secondary}; font-size: 11px;")
@@ -376,7 +390,7 @@ class _ImportExportSection(QWidget):
         if not categories:
             self._status_lbl.setText(tr("내보낼 카테고리가 없습니다."))
             return
-        dlg = CategorySelectDialog(categories, "내보낼 카테고리 선택", self)
+        dlg = CategorySelectDialog(categories, tr("내보낼 카테고리 선택"), self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         selected = dlg.selected_category_ids()
@@ -384,7 +398,7 @@ class _ImportExportSection(QWidget):
             self._status_lbl.setText(tr("내보낼 카테고리를 선택하세요."))
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "내보내기", "", "라이브러리 패키지 (*.ovcpkg)"
+            self, tr("내보내기"), "", tr("라이브러리 패키지 (*.ovcpkg)")
         )
         if not path:
             return
@@ -395,8 +409,11 @@ class _ImportExportSection(QWidget):
 
     def _on_export_finished(self, result) -> None:
         self._status_lbl.setText(
-            f"● 내보내기 완료 — 카테고리 {result.category_count}개, "
-            f"영상 {result.video_count}개 → {result.path}"
+            tr("● 내보내기 완료 — 카테고리 {categories}개, 영상 {videos}개 → {path}").format(
+                categories=result.category_count,
+                videos=result.video_count,
+                path=result.path,
+            )
         )
 
     # ── 미디어 서버용 사이드카 ────────────────────────────────────────────
@@ -413,7 +430,7 @@ class _ImportExportSection(QWidget):
         if not categories:
             self._status_lbl.setText(tr("내보낼 카테고리가 없습니다."))
             return
-        dlg = CategorySelectDialog(categories, "정보 파일을 만들 카테고리 선택", self)
+        dlg = CategorySelectDialog(categories, tr("정보 파일을 만들 카테고리 선택"), self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         selected = dlg.selected_category_ids()
@@ -423,7 +440,10 @@ class _ImportExportSection(QWidget):
 
         # 재생목록은 선택 사항 — 취소하면 .nfo 만 만든다.
         m3u_path, _ = QFileDialog.getSaveFileName(
-            self, "재생목록 저장 위치 (취소하면 만들지 않음)", "", "재생목록 (*.m3u)"
+            self,
+            tr("재생목록 저장 위치 (취소하면 만들지 않음)"),
+            "",
+            tr("재생목록 (*.m3u)"),
         )
         if m3u_path and not m3u_path.lower().endswith(".m3u"):
             m3u_path += ".m3u"
@@ -433,21 +453,23 @@ class _ImportExportSection(QWidget):
             self._status_lbl.setText(tr("미디어 서버 내보내기를 쓸 수 없습니다."))
 
     def _on_media_server_finished(self, result) -> None:
-        parts = [f"● 정보 파일 {result.nfo_written}개 생성"]
+        parts = [tr("● 정보 파일 {n}개 생성").format(n=result.nfo_written)]
         if result.m3u_path and result.m3u_entries:
-            parts.append(f"재생목록 {result.m3u_entries}곡 → {result.m3u_path}")
+            parts.append(
+                tr("재생목록 {n}곡 → {path}").format(n=result.m3u_entries, path=result.m3u_path)
+            )
         if result.skipped_no_file:
             # 가장 흔한 '왜 적게 나왔지?'의 답이라 반드시 알린다.
-            parts.append(f"{result.skipped_no_file}개는 받아 둔 파일이 없어 건너뜀")
+            parts.append(tr("{n}개는 받아 둔 파일이 없어 건너뜀").format(n=result.skipped_no_file))
         if result.failed:
-            parts.append(f"{len(result.failed)}개 쓰기 실패(로그 확인)")
+            parts.append(tr("{n}개 쓰기 실패(로그 확인)").format(n=len(result.failed)))
         self._status_lbl.setText(" · ".join(parts))
 
     # ── 가져오기 ──────────────────────────────────────────────────────────
 
     def _on_import_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "가져오기", "", "라이브러리 패키지 (*.ovcpkg)"
+            self, tr("가져오기"), "", tr("라이브러리 패키지 (*.ovcpkg)")
         )
         if not path:
             return
@@ -461,7 +483,7 @@ class _ImportExportSection(QWidget):
         if not preview.categories:
             self._status_lbl.setText(tr("패키지에 카테고리가 없습니다."))
             return
-        dlg = CategorySelectDialog(list(preview.categories), "가져올 카테고리 선택", self)
+        dlg = CategorySelectDialog(list(preview.categories), tr("가져올 카테고리 선택"), self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             self._status_lbl.setText("")
             return
@@ -490,12 +512,15 @@ class _ImportExportSection(QWidget):
 
     def _on_import_finished(self, result) -> None:
         self._status_lbl.setText(
-            f"● 가져오기 완료 — 새 영상 {result.created_count}개, "
-            f"병합 {result.merged_count}개, 카테고리 {result.category_count}개"
+            tr("● 가져오기 완료 — 새 영상 {created}개, 병합 {merged}개, 카테고리 {categories}개").format(
+                created=result.created_count,
+                merged=result.merged_count,
+                categories=result.category_count,
+            )
         )
 
     def _on_error(self, msg: str) -> None:
-        self._status_lbl.setText(f"오류: {msg[:200]}")
+        self._status_lbl.setText(tr("오류: {msg}").format(msg=msg[:200]))
 
     def _on_busy_changed(self, busy: bool) -> None:
         self._export_btn.setEnabled(not busy)

@@ -409,7 +409,7 @@ class _HistoryCardDelegate(QStyledItemDelegate):
             progress = job.progress if job else None
             if bool(index.data(_HistoryModel.IsWaitingRole)):
                 # 게이트에 걸려 아직 시작하지 않았다 — 0%는 거짓말이다.
-                pct_text = "대기 중"
+                pct_text = tr("대기 중")
                 pct_font_size = 11
             elif progress is not None and progress.is_indeterminate:
                 from gui.text.formats import format_recording_progress  # noqa: PLC0415
@@ -501,7 +501,7 @@ def _make_related_item(v):
     from gui.panels.video_detail_panel import RelatedItem  # noqa: PLC0415
     meta: list[str] = []
     if v.view_count:
-        meta.append(f"조회수 {v.view_count:,}회")
+        meta.append(tr("조회수 {n}회").format(n=f"{v.view_count:,}"))
     if v.published_at:
         meta.append(str(v.published_at))
     yt_vid_id = ""
@@ -711,7 +711,7 @@ class DownloadPanel(QWidget):
             return
         waiting = bool(index.data(_HistoryModel.IsWaitingRole))
         menu = QMenu(self)
-        action = menu.addAction("대기 취소" if waiting else "다운로드 취소")
+        action = menu.addAction(tr("대기 취소") if waiting else tr("다운로드 취소"))
         if menu.exec(self._list.viewport().mapToGlobal(pos)) is action:
             self._vm.cancel_download(job.id)
             self.refresh()

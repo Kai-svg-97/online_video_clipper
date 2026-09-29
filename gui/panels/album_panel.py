@@ -46,11 +46,26 @@ from gui.text import tr
 logger = logging.getLogger(__name__)
 
 # 수록곡 출처 배지 문구 — 화면 문구는 GUI만 갖는다(DTO는 식별자만 싣는다).
-ORIGIN_LABELS = {
-    TRACK_ORIGIN_LIBRARY: "내 등록",
-    TRACK_ORIGIN_AUTO: "자동 매핑",
-    TRACK_ORIGIN_MISSING: "없음",
-}
+def origin_labels() -> dict[str, str]:
+    """언어가 정해진 뒤 불려야 하므로 상수가 아니라 함수다."""
+    return {
+        TRACK_ORIGIN_LIBRARY: tr("내 등록"),
+        TRACK_ORIGIN_AUTO: tr("자동 매핑"),
+        TRACK_ORIGIN_MISSING: tr("없음"),
+    }
+
+
+def _status_text(detail) -> str:
+    """수록곡 상태 줄 — 없는 곡이 있으면 완성된 문장이 다른 것을 쓴다."""
+    if detail.missing_count:
+        return tr("내 등록 {lib}곡  ·  자동 {auto}곡  ·  없음 {missing}곡").format(
+            lib=detail.library_count,
+            auto=detail.auto_count,
+            missing=detail.missing_count,
+        )
+    return tr("내 등록 {lib}곡  ·  자동 {auto}곡").format(
+        lib=detail.library_count, auto=detail.auto_count
+    )
 
 
 def _t():
@@ -146,9 +161,11 @@ class _AlbumCard(QFrame):
         col.addWidget(self._title_lbl)
 
         sub = self._dto.artist or ""
-        counts = f"{self._dto.library_count}곡"
+        counts = tr("{n}곡").format(n=self._dto.library_count)
         if self._dto.track_count and self._dto.track_count != self._dto.library_count:
-            counts = f"{self._dto.library_count}/{self._dto.track_count}곡"
+            counts = tr("{n}/{total}곡").format(
+                n=self._dto.library_count, total=self._dto.track_count
+            )
         self._sub_lbl = QLabel("  ·  ".join(p for p in (sub, counts) if p))
         fs = QFont()
         fs.setPointSize(8)
@@ -402,7 +419,7 @@ class _TrackRow(QFrame):
         self._dur_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self._dur_lbl)
 
-        self._badge = QLabel(ORIGIN_LABELS.get(self._track.origin, ""))
+        self._badge = QLabel(origin_labels().get(self._track.origin, ""))
         self._badge.setFixedWidth(64)
         self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         row.addWidget(self._badge)
@@ -640,10 +657,7 @@ class AlbumDetailPanel(QWidget):
         )
         self._load_art(detail)
         self._render_tracks(detail.tracks)
-        self.set_status(
-            f"내 등록 {detail.library_count}곡  ·  자동 {detail.auto_count}곡"
-            + (f"  ·  없음 {detail.missing_count}곡" if detail.missing_count else "")
-        )
+        self.set_status(_status_text(detail))
 
     def set_status(self, text: str) -> None:
         self._status_lbl.setText(text)
@@ -659,7 +673,7 @@ class AlbumDetailPanel(QWidget):
     def set_add_busy(self, busy: bool) -> None:
         """담기 진행 중 버튼 잠금 — 같은 곡을 두 번 등록하지 않게."""
         self._btn_add_all.setEnabled(not busy)
-        self._btn_add_all.setText("담는 중…" if busy else "＋ 현재 카테고리에 등록")
+        self._btn_add_all.setText(tr("담는 중…") if busy else tr("＋ 현재 카테고리에 등록"))
 
     def set_loading(self, loading: bool) -> None:
         """앨범 정보 조회 중 자켓·수록곡 표 자리에 스켈레톤을 보여준다."""
@@ -700,11 +714,7 @@ class AlbumDetailPanel(QWidget):
         self._render_tracks(tracks)
         self._btn_play.setEnabled(any(t.playable for t in tracks))
         self._btn_add_all.setEnabled(any(t.origin == TRACK_ORIGIN_AUTO for t in tracks))
-        self.set_status(
-            f"내 등록 {self._detail.library_count}곡  ·  자동 {self._detail.auto_count}곡"
-            + (f"  ·  없음 {self._detail.missing_count}곡"
-               if self._detail.missing_count else "")
-        )
+        self.set_status(_status_text(self._detail))
 
     # ── 내부 ───────────────────────────────────────────────────────
     def _render_track_skeleton(self) -> None:
@@ -741,7 +751,7 @@ class AlbumDetailPanel(QWidget):
 
     def _on_edit_toggled(self, checked: bool) -> None:
         self._edit_mode = checked
-        self._btn_edit.setText("완료" if checked else "✎ 수정")
+        self._btn_edit.setText(tr("완료") if checked else tr("✎ 수정"))
         for row in self._rows:
             row.set_edit_mode(checked)
 

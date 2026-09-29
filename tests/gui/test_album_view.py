@@ -22,7 +22,7 @@ from application.song.album_dtos import (
     AlbumDetailDTO,
     AlbumTrackDTO,
 )
-from gui.panels.album_panel import ORIGIN_LABELS, AlbumDetailPanel, AlbumGrid, _TrackRow
+from gui.panels.album_panel import origin_labels, AlbumDetailPanel, AlbumGrid, _TrackRow
 from gui.panels.library_panel import _VIEW_ALBUMS, _VIEW_DETAIL, _VIEW_LIST, LibraryPanel
 
 
@@ -113,9 +113,9 @@ class TestAlbumDetailPanel:
 
         badges = [row._badge.text() for row in panel._rows]
         assert badges == [
-            ORIGIN_LABELS[TRACK_ORIGIN_LIBRARY],
-            ORIGIN_LABELS[TRACK_ORIGIN_AUTO],
-            ORIGIN_LABELS[TRACK_ORIGIN_MISSING],
+            origin_labels()[TRACK_ORIGIN_LIBRARY],
+            origin_labels()[TRACK_ORIGIN_AUTO],
+            origin_labels()[TRACK_ORIGIN_MISSING],
         ]
 
     def test_없는_곡은_클릭해도_재생을_요청하지_않는다(self, qtbot):
@@ -153,7 +153,7 @@ class TestAlbumDetailPanel:
             stream_url="https://youtu.be/auto3", stream_yt_id="auto3",
         ))
 
-        assert panel._rows[2]._badge.text() == ORIGIN_LABELS[TRACK_ORIGIN_AUTO]
+        assert panel._rows[2]._badge.text() == origin_labels()[TRACK_ORIGIN_AUTO]
         assert "없음" not in panel.status_text()
 
     def test_앨범_재생_버튼이_DTO를_보낸다(self, qtbot):

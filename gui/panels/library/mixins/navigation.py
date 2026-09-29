@@ -15,12 +15,14 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from gui.text import tr
+
 
 
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
 from gui.panels.library.constants import (  # noqa: F401
-    MATCH_FIELD_LABELS,
+    match_field_labels,
     _BADGE_EMPTY_BG,
     _CAT_ID_ROLE,
     _CAT_PARENT_ROLE,
@@ -152,8 +154,8 @@ class NavigationMixin:
         이미 root에 있으면(cat_id=None) 마지막 세그먼트라 비클릭."""
         if cat_id is None:
             # 이미 루트 → "로컬"은 마지막이므로 click_val=None (비클릭)
-            return [("로컬", None)]
-        segments: list = [("로컬", "root")]
+            return [(tr("로컬"), None)]
+        segments: list = [(tr("로컬"), "root")]
         cats_by_id = {c.id: c for c in self._vm.categories}
         parts: list = []
         current = cat_id
@@ -177,7 +179,7 @@ class NavigationMixin:
         if pl.source == "youtube":
             prefix, root_val = "YouTube", "section:youtube"
         else:
-            prefix, root_val = "로컬", "root"
+            prefix, root_val = tr("로컬"), "root"
         segs = [(prefix, root_val)]
         if pl.folder_id:
             folder = next((f for f in self._playlist_vm.folders if f.id == pl.folder_id), None)
@@ -196,7 +198,7 @@ class NavigationMixin:
         if folder.source == "youtube":
             prefix, root_val = "YouTube", "section:youtube"
         else:
-            prefix, root_val = "로컬", "root"
+            prefix, root_val = tr("로컬"), "root"
         return [(prefix, root_val), (folder.name, None)]
 
     def _refresh_breadcrumb(self) -> None:
@@ -205,15 +207,15 @@ class NavigationMixin:
         view = self._view_stack.currentIndex()
         if view == _VIEW_CHANNELS:
             self._breadcrumb_bar.update_path(
-                [("YouTube", "section:youtube"), ("구독 채널", None)], [])
+                [("YouTube", "section:youtube"), (tr("구독 채널"), None)], [])
             return
         if view == _VIEW_FEED:
             if self._feed_show_channel:
-                segments = [("YouTube", "section:youtube"), ("전체 구독 피드", None)]
+                segments = [("YouTube", "section:youtube"), (tr("전체 구독 피드"), None)]
             else:
-                name = self._channel_name_for_url(self._current_channel_url) or "채널"
+                name = self._channel_name_for_url(self._current_channel_url) or tr("채널")
                 segments = [("YouTube", "section:youtube"),
-                            ("구독 채널", "channels_root"), (name, None)]
+                            (tr("구독 채널"), "channels_root"), (name, None)]
             self._breadcrumb_bar.update_path(segments, [])
             return
         if self._current_playlist_id is not None:

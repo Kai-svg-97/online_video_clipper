@@ -28,6 +28,7 @@ from application.clip.sponsor_queries import (
     GetSkipSegmentsQuery,
 )
 from gui.view_models.base import WorkerOwnerMixin
+from gui.text import tr
 
 logger = logging.getLogger(__name__)
 
@@ -274,7 +275,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
         self.clips_changed.emit()
         self.chapter_finished.emit(len(clips or []), len(failed or []))
         for title, error in (failed or []):
-            self.error_occurred.emit(f"'{title}' 추출 실패: {error}")
+            self.error_occurred.emit(tr("'{title}' 추출 실패: {error}").format(title=title, error=error))
 
     def load_clips(self, video_id: UUID) -> None:
         try:

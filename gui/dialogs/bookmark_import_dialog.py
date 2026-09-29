@@ -82,7 +82,7 @@ class BookmarkImportDialog(QDialog):
 
         self._tree = QTreeWidget()
         self._tree.setColumnCount(3)
-        self._tree.setHeaderLabels(["제목", "북마크 폴더", "주소"])
+        self._tree.setHeaderLabels([tr("제목"), tr("북마크 폴더"), tr("주소")])
         self._tree.setRootIsDecorated(False)
         self._tree.setUniformRowHeights(True)
         self._tree.itemChanged.connect(self._refresh_summary)
@@ -98,10 +98,10 @@ class BookmarkImportDialog(QDialog):
         cat_row.addWidget(self._cat_combo, 1)
         root.addLayout(cat_row)
 
-        hint = QLabel(
+        hint = QLabel(tr(
             "가져오면 각 주소의 제목·채널·썸네일을 인터넷에서 한 번씩 조회하므로 "
             "건수가 많으면 시간이 걸립니다. 이미 라이브러리에 있는 영상은 건너뜁니다."
-        )
+        ))
         hint.setWordWrap(True)
         root.addWidget(hint)
 
@@ -160,7 +160,9 @@ class BookmarkImportDialog(QDialog):
         total = len(self._bookmarks)
         shown = self._tree.topLevelItemCount()
         self._summary.setText(
-            f"북마크 {total}개 중 {shown}개 표시 · {picked}개 선택됨"
+            tr("북마크 {total}개 중 {shown}개 표시 · {picked}개 선택됨").format(
+                total=total, shown=shown, picked=picked
+            )
         )
         # 아무것도 안 고르고 누르면 아무 일이 없다 — 누를 수 없게 막는다.
         self._buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(picked > 0)

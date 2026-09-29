@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 
 from gui.themes.manager import ThemeManager
 
-from gui.panels.library.constants import MATCH_FIELD_LABELS, _BADGE_EMPTY_BG, _COLOR_ROLE, _COUNT_ROLE, _FAV_BADGE_W, _GLYPH_ROLE, _ICON_PAD, _ICON_TEXT_H, _MATCH_ROW_H, _NAME_ROLE, _STAR_ROLE, _TH_ICON, _TH_LIST, _TW_ICON, _TW_LIST
+from gui.panels.library.constants import match_field_labels, _BADGE_EMPTY_BG, _COLOR_ROLE, _COUNT_ROLE, _FAV_BADGE_W, _GLYPH_ROLE, _ICON_PAD, _ICON_TEXT_H, _MATCH_ROW_H, _NAME_ROLE, _STAR_ROLE, _TH_ICON, _TH_LIST, _TW_ICON, _TW_LIST
 from gui.panels.library.formatting import _fmt_views, _relative_time, _t, chip_colors
 from gui.panels.library.models import VideoListModel
 from gui.panels.library.thumbnails import _load_thumb_async
@@ -100,8 +100,9 @@ def _paint_match_badges(painter, rect, keys: tuple[str, ...]) -> None:
     fm = painter.fontMetrics()
     x = rect.left()
     h = 15
+    labels = match_field_labels()
     for key in keys:
-        label = MATCH_FIELD_LABELS.get(key, key)
+        label = labels.get(key, key)
         w = fm.horizontalAdvance(label) + 12
         if x + w > rect.right():
             break

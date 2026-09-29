@@ -104,8 +104,7 @@ class SubtitleTab(QWidget):
         self._asr_btn = QPushButton(tr("음성 인식으로 만들기"))
         self._asr_btn.setFixedWidth(180)
         self._asr_btn.setToolTip(
-            "영상의 소리를 듣고 자막을 만듭니다. 받아 둔 파일이 있어야 하며 "
-            "영상 길이에 따라 몇 분이 걸립니다."
+            tr("영상의 소리를 듣고 자막을 만듭니다. 받아 둔 파일이 있어야 하며 영상 길이에 따라 몇 분이 걸립니다.")
         )
         self._asr_btn.clicked.connect(self.transcribe_requested.emit)
         # 긴 영상은 몇십 분이 걸린다 — 시작한 사람이 되돌릴 길이 있어야 한다.
@@ -174,7 +173,9 @@ class SubtitleTab(QWidget):
             self._list.addItem(item)
         total = len(lines or [])
         self._count_lbl.setText(
-            f"{total}줄" if total <= _MAX_ROWS else f"{_MAX_ROWS}/{total}줄"
+            tr("{n}줄").format(n=total)
+            if total <= _MAX_ROWS
+            else tr("{shown}/{total}줄").format(shown=_MAX_ROWS, total=total)
         )
         self._stop_btn.setVisible(False)
         self._stack.setCurrentIndex(self._PAGE_LIST)
@@ -225,8 +226,7 @@ class SubtitleTab(QWidget):
     def show_no_subtitle(self) -> None:
         """자막을 찾지 못했을 때 — 왜 비었는지 말해 준다."""
         self._empty_lbl.setText(
-            "이 영상에는 가져올 수 있는 자막이 없습니다.\n"
-            "(YouTube가 자동 자막도 제공하지 않는 영상입니다)"
+            tr("이 영상에는 가져올 수 있는 자막이 없습니다.\n(YouTube가 자동 자막도 제공하지 않는 영상입니다)")
         )
         self._index_btn.setVisible(True)
         # 자막이 아예 없는 영상 — 음성 인식이 **가장 쓸모 있는 경우**다.
@@ -242,8 +242,7 @@ class SubtitleTab(QWidget):
         """
         self._list.clear()
         self._empty_lbl.setText(
-            "라이브러리에 담지 않은 영상은 자막을 색인할 수 없습니다.\n"
-            "카테고리에 담으면 자막 찾기를 쓸 수 있습니다."
+            tr("라이브러리에 담지 않은 영상은 자막을 색인할 수 없습니다.\n카테고리에 담으면 자막 찾기를 쓸 수 있습니다.")
         )
         self._index_btn.setVisible(False)
         self._asr_btn.setVisible(False)

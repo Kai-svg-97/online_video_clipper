@@ -26,6 +26,8 @@ import logging
 from datetime import date, datetime, timezone
 from enum import Enum
 
+from gui.text import active_language, tr
+
 logger = logging.getLogger(__name__)
 
 _KB = 1024
@@ -84,8 +86,8 @@ def format_long_duration(seconds: int | None) -> str:
     h, rem = divmod(int(seconds), 3600)
     m, _ = divmod(rem, 60)
     if h >= 24:
-        return f"{h // 24}일 {h % 24}시간"
-    return f"{h}시간 {m}분"
+        return tr("{d}일 {h}시간").format(d=h // 24, h=h % 24)
+    return tr("{h}시간 {m}분").format(h=h, m=m)
 
 
 def format_elapsed_span(seconds: float) -> str:
@@ -97,10 +99,10 @@ def format_elapsed_span(seconds: float) -> str:
     hours, rem = divmod(total, 3600)
     minutes, secs = divmod(rem, 60)
     if hours:
-        return f"{hours}시간 {minutes}분"
+        return tr("{h}시간 {m}분").format(h=hours, m=minutes)
     if minutes:
-        return f"{minutes}분 {secs}초"
-    return f"{secs}초"
+        return tr("{m}분 {s}초").format(m=minutes, s=secs)
+    return tr("{s}초").format(s=secs)
 
 
 def format_recording_progress(elapsed_sec: float, downloaded_bytes: float) -> str:
@@ -153,16 +155,16 @@ def _relative_precise(iso: str, now: datetime | None) -> str:
         logger.exception("경과 시간 포맷 변환 실패")
         return ""
     if s < 60:
-        return "방금"
+        return tr("방금")
     if s < 3600:
-        return f"{int(s // 60)}분 전"
+        return tr("{n}분 전").format(n=int(s // 60))
     if s < 86400:
-        return f"{int(s // 3600)}시간 전"
+        return tr("{n}시간 전").format(n=int(s // 3600))
     if s < 86400 * 30:
-        return f"{int(s // 86400)}일 전"
+        return tr("{n}일 전").format(n=int(s // 86400))
     if s < 86400 * 365:
-        return f"{int(s // (86400 * 30))}개월 전"
-    return f"{int(s // (86400 * 365))}년 전"
+        return tr("{n}개월 전").format(n=int(s // (86400 * 30)))
+    return tr("{n}년 전").format(n=int(s // (86400 * 365)))
 
 
 def _relative_coarse(value: str, now: datetime | None) -> str:
@@ -181,12 +183,12 @@ def _relative_coarse(value: str, now: datetime | None) -> str:
     if days < 0:
         return ""
     if days < 7:
-        return f"{days}일 전" if days > 0 else "오늘"
+        return tr("{n}일 전").format(n=days) if days > 0 else tr("오늘")
     if days < 30:
-        return f"{days // 7}주 전"
+        return tr("{n}주 전").format(n=days // 7)
     if days < 365:
-        return f"{days // 30}개월 전"
-    return f"{days // 365}년 전"
+        return tr("{n}개월 전").format(n=days // 30)
+    return tr("{n}년 전").format(n=days // 365)
 
 
 # ── 용량 ──────────────────────────────────────────────────────────
@@ -225,16 +227,21 @@ def format_bytes(
 
 # (임계값, 나눌 값, 표기) — **이 표 자체가 번역 단위다.**
 # 한국어는 천/만/억, 영어는 K/M/B 로 **구간 경계가 다르다**. 문자열을 바꿔치기해서는
-# 될 일이 아니라 표를 통째로 갈아야 한다. 2단계에서 `_view_buckets()`만 분기한다.
+# 될 일이 아니라 표를 통째로 갈아야 한다. 그래서 `_view_buckets()`가 언어로 표를 고른다.
 _VIEW_BUCKETS_KO: tuple[tuple[int, int, str], ...] = (
     (100_000_000, 100_000_000, "{v:.1f}억"),
     (10_000, 10_000, "{v:.1f}만"),
     (1_000, 1_000, "{v:.1f}천"),
 )
+_VIEW_BUCKETS_EN: tuple[tuple[int, int, str], ...] = (
+    (1_000_000_000, 1_000_000_000, "{v:.1f}B"),
+    (1_000_000, 1_000_000, "{v:.1f}M"),
+    (1_000, 1_000, "{v:.1f}K"),
+)
 
 
 def _view_buckets() -> tuple[tuple[int, int, str], ...]:
-    return _VIEW_BUCKETS_KO
+    return _VIEW_BUCKETS_KO if active_language() == "ko" else _VIEW_BUCKETS_EN
 
 
 def format_view_count(count: int | None) -> str:
@@ -252,8 +259,8 @@ def views_label(count: int | None) -> str:
     if count is None:
         return ""
     if count < 1_000:
-        return f"조회수 {count}회"
-    return f"조회수 {format_view_count(count)} 회"
+        return tr("조회수 {n}회").format(n=count)
+    return tr("조회수 {v} 회").format(v=format_view_count(count))
 
 
 def format_count(n: int) -> str:
@@ -270,6 +277,12 @@ def format_compact_count(count: int | None, unit: str = "") -> str:
     """
     if count is None:
         return ""
+    if active_language() != "ko":
+        if count >= 1_000_000_000:
+            return f"{count / 1_000_000_000:.1f}B{unit}"
+        if count >= 1_000_000:
+            return f"{count / 1_000_000:.1f}M{unit}"
+        return f"{count:,}{unit}"
     if count >= 100_000_000:
         return f"{count / 100_000_000:.1f}억{unit}"
     if count >= 10_000:

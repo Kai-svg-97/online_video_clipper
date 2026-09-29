@@ -30,7 +30,7 @@ from gui.dialogs.batch_download_dialog import BatchDownloadDialog
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
 from gui.panels.library.constants import (  # noqa: F401
-    MATCH_FIELD_LABELS,
+    match_field_labels,
     _BADGE_EMPTY_BG,
     _CAT_ID_ROLE,
     _CAT_PARENT_ROLE,
@@ -171,7 +171,7 @@ class VideoContextMenuMixin:
         ]
         video_ids = [d.id for d in dtos]
         menu = QMenu(self)
-        menu.addSection(f"{len(video_ids)}개 영상 선택됨")
+        menu.addSection(tr("{n}개 영상 선택됨").format(n=len(video_ids)))
 
         active_pl_id = self._vm.active_playlist_id
         in_playlist  = active_pl_id is not None and self._playlist_vm is not None
@@ -188,7 +188,7 @@ class VideoContextMenuMixin:
 
         # 재생목록 모드: "이 재생목록에서 일괄 제거"
         if in_playlist:
-            rm_pl_act = QAction(f"이 재생목록에서 제거 ({len(video_ids)}개)", self)
+            rm_pl_act = QAction(tr("이 재생목록에서 제거 ({n}개)").format(n=len(video_ids)), self)
             rm_pl_act.triggered.connect(
                 lambda: self._confirm_bulk_remove_from_playlist(video_ids, active_pl_id)
             )
@@ -212,7 +212,7 @@ class VideoContextMenuMixin:
                 pl_copy_menu.setEnabled(False)
             menu.addSeparator()
 
-        cat_menu_label = "카테고리 일괄 복사" if in_playlist else "카테고리 일괄 변경"
+        cat_menu_label = tr("카테고리 일괄 복사") if in_playlist else tr("카테고리 일괄 변경")
         cat_menu = menu.addMenu(cat_menu_label)
         uncat_act = QAction(tr("미분류"), self)
         uncat_act.triggered.connect(lambda: self._vm.assign_category_bulk(video_ids, None))
@@ -272,7 +272,7 @@ class VideoContextMenuMixin:
         menu.addSeparator()
 
         active_pl_id = self._vm.active_playlist_id
-        cat_menu_label = "카테고리로 복사" if active_pl_id is not None else "카테고리 이동"
+        cat_menu_label = tr("카테고리로 복사") if active_pl_id is not None else tr("카테고리 이동")
         cat_menu = menu.addMenu(cat_menu_label)
         uncat_act = QAction(tr("미분류"), self)
         uncat_act.triggered.connect(lambda: self._on_video_moved(dto.id, None))
@@ -308,7 +308,7 @@ class VideoContextMenuMixin:
 
         menu.addSeparator()
 
-        fav_act = QAction("즐겨찾기 해제" if dto.favorite else "즐겨찾기 추가", self)
+        fav_act = QAction(tr("즐겨찾기 해제") if dto.favorite else tr("즐겨찾기 추가"), self)
         fav_act.triggered.connect(lambda: self._toggle_video_favorite(dto))
         menu.addAction(fav_act)
 
@@ -350,11 +350,16 @@ class VideoContextMenuMixin:
         active_pl_id = self._vm.active_playlist_id
         in_playlist  = active_pl_id is not None and self._playlist_vm is not None
 
-        msg = (
-            f"'{dto.title}'\n이 영상을 라이브러리에서 완전히 삭제하시겠습니까?\n"
-            + ("(재생목록에서도 제거되며, YouTube 재생목록에도 반영됩니다)" if in_playlist
-               else "(라이브러리에서 완전히 삭제됩니다)")
-        )
+        if in_playlist:
+            msg = tr(
+                "'{title}'\n이 영상을 라이브러리에서 완전히 삭제하시겠습니까?\n"
+                "(재생목록에서도 제거되며, YouTube 재생목록에도 반영됩니다)"
+            ).format(title=dto.title)
+        else:
+            msg = tr(
+                "'{title}'\n이 영상을 라이브러리에서 완전히 삭제하시겠습니까?\n"
+                "(라이브러리에서 완전히 삭제됩니다)"
+            ).format(title=dto.title)
         reply = QMessageBox.question(
             self, tr("영상 삭제"),
             msg,

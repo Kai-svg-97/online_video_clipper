@@ -68,7 +68,7 @@ from gui.panels.library.mixins.shortcuts import ShortcutsMixin
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
 from gui.panels.library.constants import (  # noqa: F401
-    MATCH_FIELD_LABELS,
+    match_field_labels,
     _BADGE_EMPTY_BG,
     _CAT_ID_ROLE,
     _CAT_PARENT_ROLE,
@@ -419,7 +419,7 @@ class LibraryPanel(
         self._sort_combo.addItem(tr("길이 짧순"), ("duration_sec", True))
         # 이어보기 흐름 — 최근에 보던 것부터 다시 집어 들 수 있게.
         self._sort_combo.addItem(tr("최근 재생순"), ("last_played_at", False))
-        self._sort_combo.setFixedWidth(90)
+        self._sort_combo.setMinimumWidth(90)
         toolbar.addWidget(self._sort_combo)
 
         # 복합 필터 토글 — 걸린 개수를 버튼에 적어, 접혀 있어도 알 수 있게 한다.
@@ -495,7 +495,8 @@ class LibraryPanel(
         self._table = QTableWidget()
         self._table.setColumnCount(9)
         self._table.setHorizontalHeaderLabels(
-            ["제목", "채널", "재생시간", "카테고리", "★", "✓", "등록 일시", "영상", "음원"]
+            [tr("제목"), tr("채널"), tr("재생시간"), tr("카테고리"), "★", "✓",
+             tr("등록 일시"), tr("영상"), tr("음원")]
         )
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

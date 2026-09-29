@@ -358,7 +358,7 @@ class TestSearchKeywordStrip:
         kwargs = recommend_vm.load.call_args.kwargs
         assert kwargs["search_text"] == ""
         assert kwargs["seed_titles"] == ("파이썬 강의 1", "파이썬 강의 2")
-        assert panel._recommend_strip._title_lbl.text() == RecommendStrip.DEFAULT_TITLE
+        assert panel._recommend_strip._title_lbl.text() == RecommendStrip.default_title()
 
     def test_공백만_입력한_상태는_검색이_아니다(self, panel, qtbot, library_vm, recommend_vm):
         panel._recommend_strip.set_expanded(True, notify=False)
@@ -428,7 +428,7 @@ class TestCollapsedStripSearchOverride:
         assert not panel._recommend_forced_expand
         # 지운 검색어의 결과가 '추천 영상' 제목으로 남으면 안 된다.
         assert panel._recommend_strip.count() == 0
-        assert panel._recommend_strip._title_lbl.text() == RecommendStrip.DEFAULT_TITLE
+        assert panel._recommend_strip._title_lbl.text() == RecommendStrip.default_title()
 
     def test_임시_펼침은_설정에_저장하지_않는다(
         self, panel, qtbot, library_vm, recommend_vm, monkeypatch

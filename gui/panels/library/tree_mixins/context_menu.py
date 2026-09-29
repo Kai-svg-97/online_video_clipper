@@ -77,7 +77,7 @@ class _TreeContextMenuMixin:
             cat_id = item.data(0, _CAT_ID_ROLE)
             cat_name = item.text(0).replace("🏷  ", "").split("  (")[0]
             from application.library.favorites import is_favorite  # noqa: PLC0415
-            fav_label = "★ 즐겨찾기 제거" if is_favorite(str(cat_id), "category") else "☆ 즐겨찾기 추가"
+            fav_label = tr("★ 즐겨찾기 제거") if is_favorite(str(cat_id), "category") else tr("☆ 즐겨찾기 추가")
             fav_act = QAction(fav_label, self)
             fav_act.triggered.connect(lambda: self.favorite_toggle_req.emit("category", str(cat_id), cat_name))
             menu.addAction(fav_act)
@@ -109,7 +109,7 @@ class _TreeContextMenuMixin:
             pl_id = item.data(0, _PLAYLIST_ID_ROLE)
             pl_name = item.text(0).strip().rsplit("  (", 1)[0]
             from application.library.favorites import is_favorite  # noqa: PLC0415
-            fav_label = "★ 즐겨찾기 제거" if is_favorite(str(pl_id), "playlist") else "☆ 즐겨찾기 추가"
+            fav_label = tr("★ 즐겨찾기 제거") if is_favorite(str(pl_id), "playlist") else tr("☆ 즐겨찾기 추가")
             fav_act = QAction(fav_label, self)
             fav_act.triggered.connect(lambda: self.favorite_toggle_req.emit("playlist", str(pl_id), pl_name))
             menu.addAction(fav_act)

@@ -19,6 +19,7 @@ from gui.text.formats import (
     ByteUnit,
     RelativeStyle,
     format_bytes,
+    format_compact_count,
     format_count,
     format_duration,
     format_duration_ms,
@@ -223,3 +224,45 @@ class TestUnifiedSizeGoesToTB:
 
     def test_TB까지_올라간다(self):
         assert format_bytes(9999 * 1024 ** 3).endswith("TB")
+
+
+class TestEnglishFormats:
+    """영어 화면 — 단위가 한국어로 남지 않고, 조회수는 **영어 구간**(K/M/B)으로 줄인다.
+
+    통계 화면의 누적 시간이 영어에서 "4시간 7분"으로 나오던 것을 고친 회귀 시험이다.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _english(self):
+        from gui.text import active_language, set_language
+
+        before = active_language()
+        set_language("en")
+        yield
+        set_language(before)
+
+    def test_누적_시간(self):
+        assert format_long_duration(4 * 3600 + 7 * 60) == "4h 7m"
+        assert format_long_duration(3 * 86400 + 5 * 3600) == "3d 5h"
+
+    def test_경과_시간(self):
+        assert format_elapsed_span(3900) == "1h 5m"
+        assert format_elapsed_span(303) == "5m 3s"
+        assert format_elapsed_span(3) == "3s"
+
+    def test_상대_시간(self):
+        now = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+        assert format_relative_time("2026-09-26", now=now) == "3d ago"
+        assert format_relative_time("2026-09-29", now=now) == "Today"
+        just = (now - timedelta(seconds=10)).isoformat()
+        assert format_relative_time(just, style=RelativeStyle.PRECISE, now=now) == "Just now"
+
+    def test_조회수는_영어_구간으로_줄인다(self):
+        assert format_view_count(12_345) == "12.3K"
+        assert format_view_count(2_500_000) == "2.5M"
+        assert views_label(812) == "812 views"
+        assert views_label(12_345) == "12.3K views"
+
+    def test_큰_수는_백만_미만이면_줄이지_않는다(self):
+        assert format_compact_count(12_345) == "12,345"
+        assert format_compact_count(3_400_000) == "3.4M"

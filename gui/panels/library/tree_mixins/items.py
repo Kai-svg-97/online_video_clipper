@@ -30,6 +30,7 @@ from gui.panels.library.constants import (
     _STAR_ROLE,
 )
 from gui.panels.library.formatting import tag_color
+from gui.text import tr
 
 
 class _TreeItemsMixin:
@@ -114,18 +115,18 @@ class _TreeItemsMixin:
         # ── 구독 섹션 (피드 통합) ──
         # "전체 구독 피드" + 구독 채널 폴더 트리. 채널 클릭 시 해당 채널 영상을
         # 메인 영역에 카드로 표시한다.
-        feed_all = QTreeWidgetItem(["📡  전체 구독 피드"])
+        feed_all = QTreeWidgetItem([tr("📡  전체 구독 피드")])
         feed_all.setData(0, _ITEM_TYPE_ROLE, _ITYPE_FEED_ALL)
         feed_all.setData(0, _SECTION_ROLE, "youtube")
-        feed_all.setData(0, _NAME_ROLE, "전체 구독 피드")
+        feed_all.setData(0, _NAME_ROLE, tr("전체 구독 피드"))
         feed_all.setData(0, _GLYPH_ROLE, "feed")
         feed_all.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         self.addTopLevelItem(feed_all)
 
-        sub_group = QTreeWidgetItem(["📡  구독 채널"])
+        sub_group = QTreeWidgetItem([tr("📡  구독 채널")])
         sub_group.setData(0, _ITEM_TYPE_ROLE, _ITYPE_ROOT)
         sub_group.setData(0, _SECTION_ROLE, "youtube")
-        sub_group.setData(0, _NAME_ROLE, "구독 채널")
+        sub_group.setData(0, _NAME_ROLE, tr("구독 채널"))
         sub_group.setData(0, _GLYPH_ROLE, "group")
         sub_group.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         gf = sub_group.font(0)
@@ -159,7 +160,7 @@ class _TreeItemsMixin:
 
     def _load_both_sections(self, playlists, folders, categories) -> None:
         # ── 로컬 섹션 ──
-        local_root = self._make_root("로컬", "local")
+        local_root = self._make_root(tr("로컬"), "local")
         self.addTopLevelItem(local_root)
 
         if categories:
@@ -263,11 +264,11 @@ class _TreeItemsMixin:
 
     def _make_unfiled(self, source: str) -> QTreeWidgetItem:
         # 미분류도 디렉토리로 기능하므로 폴더 아이콘을 앞에 표시한다.
-        item = QTreeWidgetItem(["📂  미분류"])
+        item = QTreeWidgetItem([tr("📂  미분류")])
         item.setData(0, _ITEM_TYPE_ROLE, _ITYPE_FOLDER)
         item.setData(0, _FOLDER_ID_ROLE, None)   # None = 미분류
         item.setData(0, _SECTION_ROLE, source)
-        item.setData(0, _NAME_ROLE, "미분류")
+        item.setData(0, _NAME_ROLE, tr("미분류"))
         item.setData(0, _GLYPH_ROLE, "folder")
         item.setFlags(
             Qt.ItemFlag.ItemIsEnabled

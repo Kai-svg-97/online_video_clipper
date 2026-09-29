@@ -19,6 +19,7 @@ from application.library.playlist_queries import (
 )
 
 from typing import TYPE_CHECKING
+from gui.text import tr
 from gui.text.messages import render
 if TYPE_CHECKING:
     from infrastructure.auth.youtube_auth import YouTubeAuthService
@@ -248,7 +249,7 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
     def load_channel(self, channel_url: str, limit: int = 30, silent: bool = False) -> None:
         """특정 채널의 최신 영상을 가져온다. silent=True면 스피너 없이 조용히 갱신한다."""
         if self._channel_handler is None:
-            self.error_occurred.emit("채널 영상 조회 기능을 사용할 수 없습니다.")
+            self.error_occurred.emit(tr("채널 영상 조회 기능을 사용할 수 없습니다."))
             return
         cookie_opts = self._cookie_opts()
         self._start(
@@ -270,7 +271,7 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
         silent=True면 스피너 없이 조용히 갱신한다(캐시 표시 중 백그라운드 최신화).
         """
         if self._channel_infos_handler is None:
-            self.error_occurred.emit("채널 정보 조회 기능을 사용할 수 없습니다.")
+            self.error_occurred.emit(tr("채널 정보 조회 기능을 사용할 수 없습니다."))
             return
         self._start(
             lambda on_progress=None: self._channel_infos_handler.handle(

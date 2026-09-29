@@ -152,7 +152,7 @@ class _FavoritesBar(QWidget):
             wi = QListWidgetItem(f"{icon} {fav.name}")
             wi.setData(Qt.ItemDataRole.UserRole, (fav.type, fav.id, fav.name))
             wi.setData(Qt.ItemDataRole.UserRole + 1, cnt.get(f"{fav.type}:{fav.id}", 0))
-            wi.setToolTip(f"{fav.name} — 클릭: 필터 적용 / 숫자 클릭: 즐겨찾기 해제")
+            wi.setToolTip(tr("{name} — 클릭: 필터 적용 / 숫자 클릭: 즐겨찾기 해제").format(name=fav.name))
             self._list.addItem(wi)
         self.setVisible(self._list.count() > 0)
 
@@ -197,7 +197,7 @@ class _TagListWidget(QListWidget):
         tag_name = item.text().lstrip("#")
         from application.library.favorites import is_favorite  # noqa: PLC0415
         menu = QMenu(self)
-        fav_label = "★ 즐겨찾기 제거" if is_favorite(tag_id, "tag") else "☆ 즐겨찾기 추가"
+        fav_label = tr("★ 즐겨찾기 제거") if is_favorite(tag_id, "tag") else tr("☆ 즐겨찾기 추가")
         fav_act = QAction(fav_label, self)
         fav_act.triggered.connect(lambda: self.favorite_toggled.emit("tag", tag_id, tag_name))
         menu.addAction(fav_act)

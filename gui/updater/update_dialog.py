@@ -72,7 +72,7 @@ class UpdateDialog(QDialog):
         layout.addSpacing(14)
 
         size_mb = self._dto.size_bytes / (1024 * 1024)
-        size_lbl = QLabel(f"다운로드 크기  {size_mb:.1f} MB")
+        size_lbl = QLabel(tr("다운로드 크기  {size} MB").format(size=f"{size_mb:.1f}"))
         size_lbl.setStyleSheet(f"font-size: 11px; color: {tok().text_secondary};")
         layout.addWidget(size_lbl)
         layout.addSpacing(16)
@@ -100,14 +100,14 @@ class UpdateDialog(QDialog):
         btn_row.addStretch()
 
         self._later_btn = QPushButton(tr("나중에"))
-        self._later_btn.setFixedWidth(72)
+        self._later_btn.setMinimumWidth(72)
         self._later_btn.setFlat(True)
         self._later_btn.setStyleSheet(f"color: {tok().text_secondary};")
         self._later_btn.clicked.connect(self._on_later)
         btn_row.addWidget(self._later_btn)
 
         self._install_btn = QPushButton(tr("지금 업데이트"))
-        self._install_btn.setFixedWidth(110)
+        self._install_btn.setMinimumWidth(110)
         self._install_btn.setDefault(True)
         self._install_btn.clicked.connect(self._start_download)
         btn_row.addWidget(self._install_btn)
@@ -148,7 +148,7 @@ class UpdateDialog(QDialog):
             self._status_lbl.setText(f"{mb_d:.1f} / {mb_t:.1f} MB")
         else:
             self._progress.setRange(0, 0)
-            self._status_lbl.setText(f"{mb_d:.1f} MB 다운로드 중…")
+            self._status_lbl.setText(tr("{mb} MB 다운로드 중…").format(mb=f"{mb_d:.1f}"))
 
     def _on_done(self, installer_path: str) -> None:
         self._status_lbl.setText(tr("완료. 설치를 시작합니다…"))
@@ -173,7 +173,9 @@ class UpdateDialog(QDialog):
         else:
             QMessageBox.information(
                 self, tr("다운로드 완료"),
-                f"업데이트 파일:\n{installer_path}\n\n앱을 종료하고 새 버전으로 교체하세요.",
+                tr("업데이트 파일:\n{path}\n\n앱을 종료하고 새 버전으로 교체하세요.").format(
+                    path=installer_path
+                ),
             )
             self.accept()
 

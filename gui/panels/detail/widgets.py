@@ -266,7 +266,7 @@ class _EditableField(QStackedWidget):
 
     def __init__(
         self,
-        placeholder: str = "정보 없음",
+        placeholder: str | None = None,
         with_action: bool = False,
         action_tip: str = "",
         parent: QWidget | None = None,
@@ -274,7 +274,7 @@ class _EditableField(QStackedWidget):
         super().__init__(parent)
         self._value = ""
         self._editable = True
-        self._placeholder = placeholder
+        self._placeholder = placeholder if placeholder is not None else tr("정보 없음")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         # index 0: 표시 페이지 = [값 라벨(내용 폭)] [4칸 여백 + »(with_action)] [stretch]
@@ -297,7 +297,7 @@ class _EditableField(QStackedWidget):
             self._action_btn.setFlat(True)
             self._action_btn.setFixedSize(22, 20)
             self._action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._action_btn.setToolTip(action_tip or "같은 정보의 영상 보기")
+            self._action_btn.setToolTip(action_tip or tr("같은 정보의 영상 보기"))
             self._action_btn.clicked.connect(self.action_clicked.emit)
             self._action_btn.setVisible(False)
             dl.addWidget(self._action_btn)
@@ -316,7 +316,7 @@ class _EditableField(QStackedWidget):
 
     def set_editable(self, editable: bool) -> None:
         self._editable = editable
-        self._lbl.setToolTip("더블클릭하여 편집" if editable else "")
+        self._lbl.setToolTip(tr("더블클릭하여 편집") if editable else "")
 
     def set_value(self, value: str) -> None:
         self._value = value or ""
@@ -408,7 +408,7 @@ class _LockedNotice(QWidget):
     action_clicked = pyqtSignal()
 
     def __init__(
-        self, text: str, button_text: str = "카테고리에 담기",
+        self, text: str, button_text: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -420,7 +420,7 @@ class _LockedNotice(QWidget):
         self._lbl.setWordWrap(True)
         self._lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         col.addWidget(self._lbl)
-        self._btn = QPushButton(button_text)
+        self._btn = QPushButton(button_text if button_text is not None else tr("카테고리에 담기"))
         self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn.clicked.connect(self.action_clicked.emit)
         col.addWidget(self._btn, 0, Qt.AlignmentFlag.AlignHCenter)

@@ -124,9 +124,9 @@ class MiniPlayerBar(QWidget):
         self._click_area.setToolTip(tr("클릭하면 보던 화면으로 돌아갑니다"))
         root.addWidget(self._click_area)
 
-        self._btn_play = self._tool_button("⏸", "재생/일시정지", self.play_toggled.emit)
+        self._btn_play = self._tool_button("⏸", tr("재생/일시정지"), self.play_toggled.emit)
         root.addWidget(self._btn_play)
-        self._btn_next = self._tool_button("⏭", "다음 곡", self.next_requested.emit)
+        self._btn_next = self._tool_button("⏭", tr("다음 곡"), self.next_requested.emit)
         root.addWidget(self._btn_next)
 
         self._pos_lbl = QLabel("0:00")
@@ -143,7 +143,7 @@ class MiniPlayerBar(QWidget):
         self._dur_lbl.setFont(sf)
         root.addWidget(self._dur_lbl)
 
-        self._btn_close = self._tool_button("✕", "재생을 멈추고 닫기",
+        self._btn_close = self._tool_button("✕", tr("재생을 멈추고 닫기"),
                                             self.close_requested.emit)
         root.addWidget(self._btn_close)
 
@@ -195,7 +195,7 @@ class MiniPlayerBar(QWidget):
         poster: QPixmap | None = None,
         has_next: bool = False,
     ) -> None:
-        self._title_lbl.setText(title or "재생 중")
+        self._title_lbl.setText(title or tr("재생 중"))
         self._sub_lbl.setText(subtitle)
         if poster is not None and not poster.isNull():
             self._thumb.setPixmap(poster)

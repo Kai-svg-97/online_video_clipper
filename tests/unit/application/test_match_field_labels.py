@@ -10,20 +10,20 @@ from domain.library.repositories import MATCH_FIELD_KEYS
 
 class TestMatchFieldLabels:
     def test_every_key_has_korean_label(self):
-        from gui.panels.library_panel import MATCH_FIELD_LABELS
+        from gui.panels.library_panel import match_field_labels
 
         for key in MATCH_FIELD_KEYS:
-            assert key in MATCH_FIELD_LABELS, f"라벨 누락: {key}"
-            assert MATCH_FIELD_LABELS[key], f"라벨이 비었다: {key}"
+            assert key in match_field_labels(), f"라벨 누락: {key}"
+            assert match_field_labels()[key], f"라벨이 비었다: {key}"
 
     def test_no_extra_labels(self):
-        from gui.panels.library_panel import MATCH_FIELD_LABELS
+        from gui.panels.library_panel import match_field_labels
 
-        assert set(MATCH_FIELD_LABELS) == set(MATCH_FIELD_KEYS)
+        assert set(match_field_labels()) == set(MATCH_FIELD_KEYS)
 
     def test_expected_labels(self):
-        from gui.panels.library_panel import MATCH_FIELD_LABELS
+        from gui.panels.library_panel import match_field_labels
 
-        assert MATCH_FIELD_LABELS["title"] == "제목"
-        assert MATCH_FIELD_LABELS["lyrics"] == "가사"
-        assert MATCH_FIELD_LABELS["summary"] == "요약"
+        assert match_field_labels()["title"] == "제목"
+        assert match_field_labels()["lyrics"] == "가사"
+        assert match_field_labels()["summary"] == "요약"

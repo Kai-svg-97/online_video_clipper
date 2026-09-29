@@ -18,6 +18,7 @@ from domain.monitoring.value_objects import MonitoringRule
 from application.monitoring.dtos import SubscriptionDTO
 from application.monitoring.queries import GetSubscriptionsHandler
 from gui.view_models.base import WorkerOwnerMixin
+from gui.text import tr
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -107,7 +108,7 @@ class MonitoringViewModel(WorkerOwnerMixin, QObject):
 
     def import_from_youtube(self) -> None:
         if self._import_yt is None:
-            self.error_occurred.emit("YouTube 구독 가져오기 기능이 초기화되지 않았습니다.")
+            self.error_occurred.emit(tr("YouTube 구독 가져오기 기능이 초기화되지 않았습니다."))
             return
         if self._tracked_workers:
             return  # 이미 실행 중

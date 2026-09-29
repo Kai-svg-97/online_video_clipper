@@ -78,19 +78,21 @@ logger = logging.getLogger(__name__)
 # 쿠키 파일 등록 방법 안내 — "이건 컴퓨터 전문가용 앱이 아니다"는 사용자 신고에 따라,
 # 브라우저 프로필 자동 감지가 전혀 동작하지 않는 환경(기업 보안 정책, 지원되지 않는
 # 브라우저 등)에서도 일반 사용자가 이해할 수 있는 대체 경로를 안내한다.
-COOKIE_HELP_TEXT = (
-    "브라우저/프로필 자동 감지가 계속 실패한다면, 쿠키 파일을 직접 등록하는 "
-    "방법이 가장 확실합니다.\n\n"
-    "1. 사용 중인 브라우저의 웹 스토어에서 'Get cookies.txt LOCALLY' (또는 "
-    "'cookies.txt') 확장 프로그램을 설치하세요.\n"
-    "2. www.youtube.com 에 접속해 로그인되어 있는지 확인하세요.\n"
-    "3. 확장 프로그램 아이콘을 클릭하고 '내보내기(Export)'를 눌러 쿠키 파일을 "
-    "저장하세요. 특별히 지정하지 않으면 보통 다운로드 폴더에 저장됩니다.\n"
-    "4. 이 설정 화면으로 돌아와 '다시 검색'을 누르면 저장한 파일이 "
-    "'감지된 쿠키 파일' 목록에 나타납니다. 선택하면 끝입니다.\n\n"
-    "문제가 계속되면 아래 '로그 폴더 열기'로 연 폴더의 app.log 파일을 함께 "
-    "보내주세요."
-)
+def cookie_help_text() -> str:
+    """쿠키 파일 등록 안내문 — 언어가 정해진 뒤에 만들도록 함수로 둔다."""
+    return tr(
+        "브라우저/프로필 자동 감지가 계속 실패한다면, 쿠키 파일을 직접 등록하는 "
+        "방법이 가장 확실합니다.\n\n"
+        "1. 사용 중인 브라우저의 웹 스토어에서 'Get cookies.txt LOCALLY' (또는 "
+        "'cookies.txt') 확장 프로그램을 설치하세요.\n"
+        "2. www.youtube.com 에 접속해 로그인되어 있는지 확인하세요.\n"
+        "3. 확장 프로그램 아이콘을 클릭하고 '내보내기(Export)'를 눌러 쿠키 파일을 "
+        "저장하세요. 특별히 지정하지 않으면 보통 다운로드 폴더에 저장됩니다.\n"
+        "4. 이 설정 화면으로 돌아와 '다시 검색'을 누르면 저장한 파일이 "
+        "'감지된 쿠키 파일' 목록에 나타납니다. 선택하면 끝입니다.\n\n"
+        "문제가 계속되면 아래 '로그 폴더 열기'로 연 폴더의 app.log 파일을 함께 "
+        "보내주세요."
+    )
 
 
 
@@ -235,8 +237,10 @@ class SettingsPanel(QWidget):
         )
         layout.addWidget(label)
         hint = QLabel(
-            "화면별 사용법과 화면 갈무리를 담은 상세 설명서를 기본 브라우저로 엽니다. "
-            "어느 화면에서든 F1 을 눌러도 같은 문서가 열립니다."
+            tr(
+                "화면별 사용법과 화면 갈무리를 담은 상세 설명서를 기본 브라우저로 엽니다. "
+                "어느 화면에서든 F1 을 눌러도 같은 문서가 열립니다."
+            )
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
@@ -350,10 +354,10 @@ class SettingsPanel(QWidget):
         try:
             from config import settings as s
             paths = {
-                "데이터베이스": str(s.DATABASE_PATH),
-                "다운로드 폴더": str(s.DOWNLOAD_DIR),
-                "썸네일 폴더": str(s.THUMBNAIL_DIR),
-                "로그 폴더": str(s.LOG_DIR),
+                tr("데이터베이스"): str(s.DATABASE_PATH),
+                tr("다운로드 폴더"): str(s.DOWNLOAD_DIR),
+                tr("썸네일 폴더"): str(s.THUMBNAIL_DIR),
+                tr("로그 폴더"): str(s.LOG_DIR),
             }
         except Exception:
             logger.exception("설정 경로 로드 실패")
@@ -364,7 +368,7 @@ class SettingsPanel(QWidget):
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(12)
             lbl = QLabel(label_text)
-            lbl.setFixedWidth(90)
+            lbl.setMinimumWidth(90)
             lbl.setStyleSheet(f"font-size: 11px; color: {_t().text_muted};")
             val = QLabel(path_text)
             val.setStyleSheet(
@@ -419,7 +423,7 @@ class SettingsPanel(QWidget):
         concurrent_row = QHBoxLayout()
         concurrent_row.setContentsMargins(0, 0, 0, 0)
         concurrent_lbl = QLabel(tr("동시 다운로드 수"))
-        concurrent_lbl.setFixedWidth(130)
+        concurrent_lbl.setMinimumWidth(130)
         concurrent_lbl.setStyleSheet("font-size: 11px;")
         self._concurrent_spin = QSpinBox()
         self._concurrent_spin.setRange(1, 8)
@@ -436,7 +440,7 @@ class SettingsPanel(QWidget):
         feed_workers_row = QHBoxLayout()
         feed_workers_row.setContentsMargins(0, 0, 0, 0)
         feed_workers_lbl = QLabel(tr("노드 동시 로딩 수"))
-        feed_workers_lbl.setFixedWidth(130)
+        feed_workers_lbl.setMinimumWidth(130)
         feed_workers_lbl.setStyleSheet("font-size: 11px;")
         self._feed_workers_spin = QSpinBox()
         self._feed_workers_spin.setRange(1, 8)
@@ -463,10 +467,12 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._auto_enrich_check)
 
         enrich_hint = QLabel(
-            "영상을 한 건씩 등록할 때 음원용 영상은 가사를, 그 외 영상은 Gemini 요약을 "
-            "백그라운드에서 채웁니다. 재생목록·채널 일괄 가져오기는 대상이 아닙니다.\n"
-            "요약은 YouTube 로그인 쿠키가 필요합니다 — Chrome 127 이상은 쿠키 자동 추출이 "
-            "불가하므로 아래 인증 섹션에서 쿠키 파일을 직접 등록해야 합니다."
+            tr(
+                "영상을 한 건씩 등록할 때 음원용 영상은 가사를, 그 외 영상은 Gemini 요약을 "
+                "백그라운드에서 채웁니다. 재생목록·채널 일괄 가져오기는 대상이 아닙니다.\n"
+                "요약은 YouTube 로그인 쿠키가 필요합니다 — Chrome 127 이상은 쿠키 자동 추출이 "
+                "불가하므로 아래 인증 섹션에서 쿠키 파일을 직접 등록해야 합니다."
+            )
         )
         enrich_hint.setWordWrap(True)
         enrich_hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary}; margin-left: 22px;")
@@ -510,7 +516,7 @@ class SettingsPanel(QWidget):
         int_row = QHBoxLayout()
         int_row.setContentsMargins(22, 0, 0, 0)
         int_lbl = QLabel(tr("확인 주기(분)"))
-        int_lbl.setFixedWidth(100)
+        int_lbl.setMinimumWidth(100)
         self._watch_spin = QSpinBox()
         self._watch_spin.setRange(MIN_INTERVAL_MIN, MAX_INTERVAL_MIN)
         self._watch_spin.setValue(clamp_interval(cfg.WATCH_INTERVAL_MIN))
@@ -522,9 +528,11 @@ class SettingsPanel(QWidget):
         layout.addLayout(int_row)
 
         hint = QLabel(
-            "확인은 배경에서 조용히 이뤄지며 보고 있는 목록을 건드리지 않습니다. "
-            "너무 자주 확인하면 YouTube가 요청을 막을 수 있어 최소 "
-            f"{MIN_INTERVAL_MIN}분입니다. 바꾼 주기는 앱을 다시 켤 때 적용됩니다."
+            tr(
+                "확인은 배경에서 조용히 이뤄지며 보고 있는 목록을 건드리지 않습니다. "
+                "너무 자주 확인하면 YouTube가 요청을 막을 수 있어 최소 "
+                "{min}분입니다. 바꾼 주기는 앱을 다시 켤 때 적용됩니다."
+            ).format(min=MIN_INTERVAL_MIN)
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary}; margin-left: 22px;")
@@ -567,13 +575,13 @@ class SettingsPanel(QWidget):
         folder_row = QHBoxLayout()
         folder_row.setContentsMargins(0, 0, 0, 0)
         folder_lbl = QLabel(tr("다운로드 폴더"))
-        folder_lbl.setFixedWidth(100)
+        folder_lbl.setMinimumWidth(100)
         folder_lbl.setStyleSheet("font-size: 11px;")
         self._folder_edit = QLineEdit(cur_dl_dir)
         self._folder_edit.setReadOnly(True)
         self._folder_edit.setStyleSheet("font-size: 10px; font-family: monospace;")
         browse_btn = QPushButton(tr("찾아보기"))
-        browse_btn.setFixedWidth(72)
+        browse_btn.setMinimumWidth(72)
         browse_btn.clicked.connect(self._on_browse_folder)
         folder_row.addWidget(folder_lbl)
         folder_row.addWidget(self._folder_edit, 1)
@@ -585,11 +593,11 @@ class SettingsPanel(QWidget):
         quality_row = QHBoxLayout()
         quality_row.setContentsMargins(0, 0, 0, 0)
         quality_lbl = QLabel(tr("기본 품질"))
-        quality_lbl.setFixedWidth(100)
+        quality_lbl.setMinimumWidth(100)
         quality_lbl.setStyleSheet("font-size: 11px;")
         self._quality_combo = QComboBox()
         quality_options = [
-            ("자동 (최고 품질)", "best[ext=mp4]/best"),
+            (tr("자동 (최고 품질)"), "best[ext=mp4]/best"),
             ("4K / UHD (2160p)", "bestvideo[height<=2160][ext=mp4]+bestaudio/best[height<=2160]"),
             ("1440p / QHD", "bestvideo[height<=1440][ext=mp4]+bestaudio/best[height<=1440]"),
             ("1080p / FHD", "bestvideo[height<=1080][ext=mp4]+bestaudio/best[height<=1080]"),
@@ -612,7 +620,7 @@ class SettingsPanel(QWidget):
         format_row = QHBoxLayout()
         format_row.setContentsMargins(0, 0, 0, 0)
         format_lbl = QLabel(tr("기본 포맷"))
-        format_lbl.setFixedWidth(100)
+        format_lbl.setMinimumWidth(100)
         format_lbl.setStyleSheet("font-size: 11px;")
         self._format_combo = QComboBox()
         for fmt in ("mp4", "mkv", "webm", "mp3", "m4a"):
@@ -645,26 +653,26 @@ class SettingsPanel(QWidget):
         layout.addSpacing(10)
         row = QHBoxLayout()
         lbl = QLabel(tr("받는 방식"))
-        lbl.setFixedWidth(100)
+        lbl.setMinimumWidth(100)
         self._preset_combo = QComboBox()
         self._preset_combo.addItem(tr("프리셋 없음 (아래 설정 그대로)"), "")
         for preset in available_presets():
             self._preset_combo.addItem(download_preset_name(preset), preset.key)
         idx = self._preset_combo.findData(cfg.ACTIVE_PRESET_KEY or "")
         self._preset_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self._preset_combo.setFixedWidth(240)
+        self._preset_combo.setMinimumWidth(240)
         self._preset_combo.currentIndexChanged.connect(self._on_preset_changed)
         row.addWidget(lbl)
         row.addWidget(self._preset_combo)
         row.addStretch()
 
         self._preset_save_btn = QPushButton(tr("지금 설정을 프리셋으로…"))
-        self._preset_save_btn.setFixedWidth(160)
+        self._preset_save_btn.setMinimumWidth(160)
         self._preset_save_btn.clicked.connect(self._on_preset_save)
         row.addWidget(self._preset_save_btn)
 
         self._preset_del_btn = QPushButton(tr("프리셋 지우기"))
-        self._preset_del_btn.setFixedWidth(100)
+        self._preset_del_btn.setMinimumWidth(100)
         self._preset_del_btn.clicked.connect(self._on_preset_delete)
         row.addWidget(self._preset_del_btn)
         layout.addLayout(row)
@@ -686,14 +694,19 @@ class SettingsPanel(QWidget):
         self._preset_del_btn.setEnabled(preset is not None)
         if preset is None:
             self._preset_hint.setText(
-                "프리셋을 고르면 아래 화질·형식·자막·굽기 설정 대신 그 방식으로 받습니다. "
-                "속도 제한·프록시 같은 전송 옵션은 프리셋과 무관하게 늘 적용됩니다."
+                tr(
+                    "프리셋을 고르면 아래 화질·형식·자막·굽기 설정 대신 그 방식으로 받습니다. "
+                    "속도 제한·프록시 같은 전송 옵션은 프리셋과 무관하게 늘 적용됩니다."
+                )
             )
             return
-        langs = preset.subtitle_langs or "자막 없음"
+        langs = preset.subtitle_langs or tr("자막 없음")
+        if preset.sponsorblock_remove:
+            summary = tr("{quality} · {fmt} · 자막 {langs} · 광고 잘라내기")
+        else:
+            summary = tr("{quality} · {fmt} · 자막 {langs}")
         self._preset_hint.setText(
-            f"{preset.quality} · {preset.fmt} · 자막 {langs}"
-            + (" · 광고 잘라내기" if preset.sponsorblock_remove else "")
+            summary.format(quality=preset.quality, fmt=preset.fmt, langs=langs)
         )
 
     def _on_preset_changed(self, _index: int) -> None:
@@ -711,7 +724,7 @@ class SettingsPanel(QWidget):
         from application.download.defaults import available_presets  # noqa: PLC0415
         import uuid as _uuid  # noqa: PLC0415
 
-        name, ok = QInputDialog.getText(self, "프리셋 저장", "이름", text="내 프리셋")
+        name, ok = QInputDialog.getText(self, tr("프리셋 저장"), tr("이름"), text=tr("내 프리셋"))
         if not ok:
             return
         existing = [p.name for p in available_presets()]
@@ -782,7 +795,7 @@ class SettingsPanel(QWidget):
         sub_row = QHBoxLayout()
         sub_row.setContentsMargins(0, 0, 0, 0)
         sub_lbl = QLabel(tr("자막 언어"))
-        sub_lbl.setFixedWidth(100)
+        sub_lbl.setMinimumWidth(100)
         sub_lbl.setStyleSheet("font-size: 11px;")
         self._sub_langs_edit = QLineEdit(cur_sub_langs)
         self._sub_langs_edit.setPlaceholderText(tr("비우면 자막을 받지 않습니다 (예: ko,en)"))
@@ -813,9 +826,11 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._song_tags_check)
 
         embed_hint = QLabel(
-            "받은 파일 하나만 옮겨도 자막·표지·챕터가 따라가므로 다른 플레이어·차량·"
-            "휴대폰에서도 그대로 보입니다. 굽기를 켜면 자막은 별도 파일로 남기지 "
-            "않습니다(플레이어가 같은 자막을 두 번 잡는 것을 막습니다)."
+            tr(
+                "받은 파일 하나만 옮겨도 자막·표지·챕터가 따라가므로 다른 플레이어·차량·"
+                "휴대폰에서도 그대로 보입니다. 굽기를 켜면 자막은 별도 파일로 남기지 "
+                "않습니다(플레이어가 같은 자막을 두 번 잡는 것을 막습니다)."
+            )
         )
         embed_hint.setWordWrap(True)
         embed_hint.setStyleSheet(
@@ -855,7 +870,7 @@ class SettingsPanel(QWidget):
         rate_row = QHBoxLayout()
         rate_row.setContentsMargins(0, 0, 0, 0)
         rate_lbl = QLabel(tr("속도 제한"))
-        rate_lbl.setFixedWidth(100)
+        rate_lbl.setMinimumWidth(100)
         rate_lbl.setStyleSheet("font-size: 11px;")
         self._rate_edit = QLineEdit(cur_rate)
         self._rate_edit.setPlaceholderText(tr("비우면 무제한 (예: 2M, 500K)"))
@@ -868,7 +883,7 @@ class SettingsPanel(QWidget):
         frag_row = QHBoxLayout()
         frag_row.setContentsMargins(0, 0, 0, 0)
         frag_lbl = QLabel(tr("조각 동시 수"))
-        frag_lbl.setFixedWidth(100)
+        frag_lbl.setMinimumWidth(100)
         frag_lbl.setStyleSheet("font-size: 11px;")
         self._frag_spin = QSpinBox()
         self._frag_spin.setRange(1, 16)
@@ -887,7 +902,7 @@ class SettingsPanel(QWidget):
         proxy_row = QHBoxLayout()
         proxy_row.setContentsMargins(0, 0, 0, 0)
         proxy_lbl = QLabel(tr("프록시"))
-        proxy_lbl.setFixedWidth(100)
+        proxy_lbl.setMinimumWidth(100)
         proxy_lbl.setStyleSheet("font-size: 11px;")
         self._proxy_edit = QLineEdit(cur_proxy)
         self._proxy_edit.setPlaceholderText(tr("비우면 사용 안 함 (예: socks5://127.0.0.1:1080)"))
@@ -932,8 +947,10 @@ class SettingsPanel(QWidget):
         self._refresh_window_hint()
 
         tr_hint = QLabel(
-            f"동시에 받는 영상 수는 위 '일반'의 동시 다운로드 수({MIN_CONCURRENT}~"
-            f"{MAX_CONCURRENT})를 따릅니다. 자리가 찰 때까지 나머지는 대기합니다."
+            tr(
+                "동시에 받는 영상 수는 위 '일반'의 동시 다운로드 수({min}~"
+                "{max})를 따릅니다. 자리가 찰 때까지 나머지는 대기합니다."
+            ).format(min=MIN_CONCURRENT, max=MAX_CONCURRENT)
         )
         tr_hint.setWordWrap(True)
         tr_hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
@@ -1014,9 +1031,11 @@ class SettingsPanel(QWidget):
         layout.addLayout(cat_box)
 
         sb_hint = QLabel(
-            "SponsorBlock은 사용자들이 모은 공개 구간 정보입니다. 조회는 영상 ID를 "
-            "그대로 보내지 않고 해시 앞자리만 보내므로 어떤 영상을 보는지 서버가 알 수 "
-            "없습니다. 잘라내기는 파일을 실제로 바꾸므로 되돌릴 수 없습니다."
+            tr(
+                "SponsorBlock은 사용자들이 모은 공개 구간 정보입니다. 조회는 영상 ID를 "
+                "그대로 보내지 않고 해시 앞자리만 보내므로 어떤 영상을 보는지 서버가 알 수 "
+                "없습니다. 잘라내기는 파일을 실제로 바꾸므로 되돌릴 수 없습니다."
+            )
         )
         sb_hint.setWordWrap(True)
         sb_hint.setStyleSheet(
@@ -1140,10 +1159,12 @@ class SettingsPanel(QWidget):
         layout.addSpacing(8)
 
         hint = QLabel(
-            f"이 폴더에 주소가 든 파일({' · '.join(WATCHED_SUFFIXES)})을 넣어 두면 "
-            "앱이 30초마다 훑어 라이브러리에 담습니다. 브라우저에서 링크를 폴더로 끌면 "
-            f".url 파일이 생기므로 그것만으로 끝납니다. 담은 파일은 '{DONE_DIR_NAME}' "
-            "폴더로 옮겨 둬, 무엇이 처리됐는지 폴더만 봐도 알 수 있습니다."
+            tr(
+                "이 폴더에 주소가 든 파일({suffixes})을 넣어 두면 "
+                "앱이 30초마다 훑어 라이브러리에 담습니다. 브라우저에서 링크를 폴더로 끌면 "
+                ".url 파일이 생기므로 그것만으로 끝납니다. 담은 파일은 '{done_dir}' "
+                "폴더로 옮겨 둬, 무엇이 처리됐는지 폴더만 봐도 알 수 있습니다."
+            ).format(suffixes=" · ".join(WATCHED_SUFFIXES), done_dir=DONE_DIR_NAME)
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
@@ -1156,10 +1177,10 @@ class SettingsPanel(QWidget):
         self._watch_edit.setText(cfg.WATCH_FOLDER or "")
         self._watch_edit.editingFinished.connect(self._on_watch_folder_changed)
         browse = QPushButton(tr("찾기…"))
-        browse.setFixedWidth(60)
+        browse.setMinimumWidth(60)
         browse.clicked.connect(self._on_watch_folder_browse)
         clear = QPushButton(tr("사용 안 함"))
-        clear.setFixedWidth(80)
+        clear.setMinimumWidth(80)
         clear.clicked.connect(self._on_watch_folder_clear)
         row.addWidget(self._watch_edit, 1)
         row.addWidget(browse)
@@ -1199,7 +1220,7 @@ class SettingsPanel(QWidget):
         self._refresh_watch_status()
 
     def _on_watch_folder_browse(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "워치 폴더 선택")
+        folder = QFileDialog.getExistingDirectory(self, tr("워치 폴더 선택"))
         if folder:
             self._watch_edit.setText(folder)
             self._on_watch_folder_changed()
@@ -1230,9 +1251,11 @@ class SettingsPanel(QWidget):
         layout.addSpacing(8)
 
         hint = QLabel(
-            "브라우저에서 북마크를 HTML로 내보낸 뒤 그 파일을 고르면, 담을 영상을 "
-            "골라 라이브러리에 넣습니다. 북마크에는 영상이 아닌 링크도 섞여 있으므로 "
-            "흔한 영상 사이트만 미리 골라 두고 나머지는 직접 고르게 합니다."
+            tr(
+                "브라우저에서 북마크를 HTML로 내보낸 뒤 그 파일을 고르면, 담을 영상을 "
+                "골라 라이브러리에 넣습니다. 북마크에는 영상이 아닌 링크도 섞여 있으므로 "
+                "흔한 영상 사이트만 미리 골라 두고 나머지는 직접 고르게 합니다."
+            )
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
@@ -1261,7 +1284,7 @@ class SettingsPanel(QWidget):
         )
 
         path, _ = QFileDialog.getOpenFileName(
-            self, "북마크 파일 선택", "", "북마크 (*.html *.htm);;모든 파일 (*)"
+            self, tr("북마크 파일 선택"), "", tr("북마크 (*.html *.htm);;모든 파일 (*)")
         )
         if not path:
             return
@@ -1271,14 +1294,16 @@ class SettingsPanel(QWidget):
             content = Path(path).read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             logger.exception("북마크 파일 읽기 실패: %s", path)
-            self._bookmark_status.setText(f"파일을 읽지 못했습니다: {exc}")
+            self._bookmark_status.setText(tr("파일을 읽지 못했습니다: {exc}").format(exc=exc))
             return
 
         marks = parse_bookmarks(content)
         if not marks:
             self._bookmark_status.setText(
-                "이 파일에서 주소를 찾지 못했습니다. 브라우저의 '북마크 내보내기'로 "
-                "저장한 HTML 파일인지 확인해 주세요."
+                tr(
+                    "이 파일에서 주소를 찾지 못했습니다. 브라우저의 '북마크 내보내기'로 "
+                    "저장한 HTML 파일인지 확인해 주세요."
+                )
             )
             return
 
@@ -1291,7 +1316,9 @@ class SettingsPanel(QWidget):
             return
         self._add_videos_fn(urls, dlg.selected_category_id())
         self._bookmark_status.setText(
-            f"{len(urls)}개를 담는 중입니다 — 제목·썸네일은 조회되는 대로 채워집니다."
+            tr("{n}개를 담는 중입니다 — 제목·썸네일은 조회되는 대로 채워집니다.").format(
+                n=len(urls)
+            )
         )
 
     def _build_cleanup_section(self, layout) -> None:
@@ -1346,9 +1373,11 @@ class SettingsPanel(QWidget):
         layout.addSpacing(10)
 
         yt_desc = QLabel(
-            "Google 계정을 연결하면 YouTube 재생목록 동기화(읽기·쓰기)와\n"
-            "구독 채널 가져오기를 사용할 수 있습니다.\n"
-            "로그인은 기본 브라우저의 Google 페이지에서 안전하게 진행됩니다."
+            tr(
+                "Google 계정을 연결하면 YouTube 재생목록 동기화(읽기·쓰기)와\n"
+                "구독 채널 가져오기를 사용할 수 있습니다.\n"
+                "로그인은 기본 브라우저의 Google 페이지에서 안전하게 진행됩니다."
+            )
         )
         yt_desc.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
         yt_desc.setWordWrap(True)
@@ -1357,12 +1386,12 @@ class SettingsPanel(QWidget):
 
         yt_btn_row = QHBoxLayout()
         self._yt_auth_btn = QPushButton(tr("Google 계정으로 연결"))
-        self._yt_auth_btn.setFixedWidth(160)
+        self._yt_auth_btn.setMinimumWidth(160)
         self._yt_auth_btn.clicked.connect(self._on_yt_auth)
         yt_btn_row.addWidget(self._yt_auth_btn)
 
         self._yt_disconnect_btn = QPushButton(tr("연결 해제"))
-        self._yt_disconnect_btn.setFixedWidth(80)
+        self._yt_disconnect_btn.setMinimumWidth(80)
         self._yt_disconnect_btn.clicked.connect(self._on_yt_disconnect)
         yt_btn_row.addWidget(self._yt_disconnect_btn)
         yt_btn_row.addStretch()
@@ -1384,10 +1413,12 @@ class SettingsPanel(QWidget):
         )
         layout.addWidget(feed_label)
         feed_hint = QLabel(
-            "YouTube API는 구독 피드(최신 영상 목록) 엔드포인트를 제공하지 않아\n"
-            "브라우저 쿠키가 필요합니다. 가장 확실한 방법은 아래 '쿠키 파일 등록 "
-            "방법 보기'입니다 — 평소 쓰던 브라우저로 직접 로그인한 뒤 내보내는 "
-            "방식이라 항상 동작합니다."
+            tr(
+                "YouTube API는 구독 피드(최신 영상 목록) 엔드포인트를 제공하지 않아\n"
+                "브라우저 쿠키가 필요합니다. 가장 확실한 방법은 아래 '쿠키 파일 등록 "
+                "방법 보기'입니다 — 평소 쓰던 브라우저로 직접 로그인한 뒤 내보내는 "
+                "방식이라 항상 동작합니다."
+            )
         )
         feed_hint.setWordWrap(True)
         feed_hint.setStyleSheet(f"font-size: 8pt; color: {_t().text_secondary};")
@@ -1396,9 +1427,11 @@ class SettingsPanel(QWidget):
 
         self._browser_login_btn = QPushButton(tr("브라우저 열어서 로그인"))
         self._browser_login_btn.setToolTip(
-            "이 앱이 직접 띄운 브라우저 창에서 로그인합니다. Google이 자동화된\n"
-            "브라우저로 판단해 \"로그인할 수 없음\"으로 거부할 수 있습니다 —\n"
-            "그런 경우 아래 '쿠키 파일 등록 방법 보기'를 이용하세요."
+            tr(
+                "이 앱이 직접 띄운 브라우저 창에서 로그인합니다. Google이 자동화된\n"
+                "브라우저로 판단해 \"로그인할 수 없음\"으로 거부할 수 있습니다 —\n"
+                "그런 경우 아래 '쿠키 파일 등록 방법 보기'를 이용하세요."
+            )
         )
         self._browser_login_btn.clicked.connect(self._on_open_auth_dialog)
         layout.addWidget(self._browser_login_btn)
@@ -1410,7 +1443,7 @@ class SettingsPanel(QWidget):
 
         browser_row = QHBoxLayout()
         b_lbl = QLabel(tr("브라우저"))
-        b_lbl.setFixedWidth(100)
+        b_lbl.setMinimumWidth(100)
         self._feed_browser_combo = QComboBox()
         self._feed_browser_combo.addItems(["firefox", "chrome", "edge", "chromium"])
         self._feed_browser_combo.setFixedWidth(120)
@@ -1422,9 +1455,9 @@ class SettingsPanel(QWidget):
 
         profile_row = QHBoxLayout()
         p_lbl = QLabel(tr("프로필"))
-        p_lbl.setFixedWidth(100)
+        p_lbl.setMinimumWidth(100)
         self._feed_profile_combo = QComboBox()
-        self._feed_profile_combo.setFixedWidth(220)
+        self._feed_profile_combo.setMinimumWidth(220)
         self._feed_profile_combo.setToolTip(tr("브라우저 프로필을 선택하세요"))
         self._feed_profile_combo.currentIndexChanged.connect(self._on_feed_profile_changed)
         profile_row.addWidget(p_lbl)
@@ -1433,17 +1466,19 @@ class SettingsPanel(QWidget):
 
         cand_row = QHBoxLayout()
         cand_lbl = QLabel(tr("감지된 쿠키 파일"))
-        cand_lbl.setFixedWidth(100)
+        cand_lbl.setMinimumWidth(100)
         self._feed_cookie_candidates_combo = QComboBox()
         self._feed_cookie_candidates_combo.setToolTip(
-            "다운로드·데스크톱 폴더에서 자동으로 찾은 쿠키 파일입니다. 선택하면 "
-            "아래 경로란에 채워집니다."
+            tr(
+                "다운로드·데스크톱 폴더에서 자동으로 찾은 쿠키 파일입니다. 선택하면 "
+                "아래 경로란에 채워집니다."
+            )
         )
         self._feed_cookie_candidates_combo.currentIndexChanged.connect(
             self._on_cookie_candidate_selected
         )
         cand_refresh = QPushButton(tr("다시 검색"))
-        cand_refresh.setFixedWidth(70)
+        cand_refresh.setMinimumWidth(70)
         cand_refresh.clicked.connect(self._reload_cookie_candidates)
         cand_row.addWidget(cand_lbl)
         cand_row.addWidget(self._feed_cookie_candidates_combo, 1)
@@ -1452,11 +1487,11 @@ class SettingsPanel(QWidget):
 
         cookie_row = QHBoxLayout()
         ck_lbl = QLabel(tr("또는 쿠키 파일"))
-        ck_lbl.setFixedWidth(100)
+        ck_lbl.setMinimumWidth(100)
         self._feed_cookie_edit = QLineEdit()
         self._feed_cookie_edit.setPlaceholderText(tr("Netscape 포맷 쿠키 파일 경로 (선택)"))
         ck_browse = QPushButton(tr("찾기…"))
-        ck_browse.setFixedWidth(48)
+        ck_browse.setMinimumWidth(48)
         ck_browse.clicked.connect(self._on_browse_cookie_file)
         cookie_row.addWidget(ck_lbl)
         cookie_row.addWidget(self._feed_cookie_edit, 1)
@@ -1464,16 +1499,16 @@ class SettingsPanel(QWidget):
         layout.addLayout(cookie_row)
 
         ck_apply = QPushButton(tr("쿠키 파일 적용"))
-        ck_apply.setFixedWidth(110)
+        ck_apply.setMinimumWidth(110)
         ck_apply.clicked.connect(self._on_apply_cookie_file)
         layout.addWidget(ck_apply)
 
         help_row = QHBoxLayout()
         self._cookie_help_btn = QPushButton(tr("쿠키 파일 등록 방법 보기"))
-        self._cookie_help_btn.setFixedWidth(160)
+        self._cookie_help_btn.setMinimumWidth(160)
         self._cookie_help_btn.clicked.connect(self._on_show_cookie_help)
         self._open_log_dir_btn = QPushButton(tr("로그 폴더 열기"))
-        self._open_log_dir_btn.setFixedWidth(100)
+        self._open_log_dir_btn.setMinimumWidth(100)
         self._open_log_dir_btn.clicked.connect(self._on_open_log_dir)
         help_row.addWidget(self._cookie_help_btn)
         help_row.addWidget(self._open_log_dir_btn)
@@ -1555,7 +1590,7 @@ class SettingsPanel(QWidget):
     def set_update_ready(self, dto) -> None:
         """다운로드 완료 — 헤더 상태를 '준비됨'으로 바꾸고 설치 버튼을 노출한다."""
         self._pending_dto = dto
-        self._upd_status_lbl.setText(f"업데이트 준비됨 · v{dto.version}")
+        self._upd_status_lbl.setText(tr("업데이트 준비됨 · v{version}").format(version=dto.version))
         self._upd_status_lbl.setStyleSheet(
             f"font-size: 11px; color: {sem('danger')}; font-weight: 600;"
         )
@@ -1570,7 +1605,7 @@ class SettingsPanel(QWidget):
         업데이트를 진행할 방법이 화면에 없었다. 여기서 직접 내려받을 버튼을 준다.
         """
         self._pending_dto = dto
-        self._upd_status_lbl.setText(f"업데이트 있음 · v{dto.version}")
+        self._upd_status_lbl.setText(tr("업데이트 있음 · v{version}").format(version=dto.version))
         self._upd_status_lbl.setStyleSheet(
             f"font-size: 11px; color: {sem('warning')}; font-weight: 600;"
         )
@@ -1633,7 +1668,7 @@ class SettingsPanel(QWidget):
     def _on_browse_folder(self) -> None:
         from config import settings as s
         folder = QFileDialog.getExistingDirectory(
-            self, "다운로드 폴더 선택", self._folder_edit.text()
+            self, tr("다운로드 폴더 선택"), self._folder_edit.text()
         )
         if folder:
             self._folder_edit.setText(folder)
@@ -1662,9 +1697,17 @@ class SettingsPanel(QWidget):
 
     # ── YouTube API OAuth ──────────────────────────────────────────────────
 
-    _YT_BTN_DISCONNECTED = "Google 계정으로 연결"
-    _YT_BTN_WORKING = "연결 중…"
-    _YT_BTN_CONNECTED = "Google 계정 다시 연결"
+    @staticmethod
+    def _yt_btn_disconnected() -> str:
+        return tr("Google 계정으로 연결")
+
+    @staticmethod
+    def _yt_btn_working() -> str:
+        return tr("연결 중…")
+
+    @staticmethod
+    def _yt_btn_connected() -> str:
+        return tr("Google 계정 다시 연결")
 
     def _refresh_yt_status(self) -> None:
         if self._yt_oauth is None:
@@ -1678,20 +1721,22 @@ class SettingsPanel(QWidget):
             )
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('warning')};")
             self._yt_auth_btn.setEnabled(False)
-            self._yt_auth_btn.setText(self._YT_BTN_DISCONNECTED)
+            self._yt_auth_btn.setText(self._yt_btn_disconnected())
             return
         self._yt_auth_btn.setEnabled(True)
         if self._yt_oauth.is_authenticated():
-            name = self._yt_oauth.get_channel_name() or "인증됨"
+            name = self._yt_oauth.get_channel_name() or tr("인증됨")
             self._yt_status_lbl.setText(
-                f"● 연결됨: {name}\n앱을 다시 시작하면 모든 YouTube 연동 기능이 활성화됩니다."
+                tr(
+                    "● 연결됨: {name}\n앱을 다시 시작하면 모든 YouTube 연동 기능이 활성화됩니다."
+                ).format(name=name)
             )
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('success')};")
-            self._yt_auth_btn.setText(self._YT_BTN_CONNECTED)
+            self._yt_auth_btn.setText(self._yt_btn_connected())
         else:
             self._yt_status_lbl.setText(tr("○ 미연결 — Google 계정으로 연결하세요"))
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('danger')};")
-            self._yt_auth_btn.setText(self._YT_BTN_DISCONNECTED)
+            self._yt_auth_btn.setText(self._yt_btn_disconnected())
 
     def _on_yt_auth(self) -> None:
         if self._yt_oauth is None or not self._yt_oauth.has_client_config():
@@ -1710,14 +1755,14 @@ class SettingsPanel(QWidget):
             def run(self):
                 try:
                     self._oauth.run_auth_flow()
-                    name = self._oauth.get_channel_name() or "인증됨"
+                    name = self._oauth.get_channel_name() or tr("인증됨")
                     self.done.emit(name)
                 except Exception as exc:
                     logger.exception("YouTube OAuth 인증 실패")
                     self.err.emit(str(exc))
 
         self._yt_auth_btn.setEnabled(False)
-        self._yt_auth_btn.setText(self._YT_BTN_WORKING)
+        self._yt_auth_btn.setText(self._yt_btn_working())
         self._yt_status_lbl.setText(tr("브라우저에서 Google 계정으로 승인하세요…"))
         self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {_t().text_secondary};")
 
@@ -1726,17 +1771,19 @@ class SettingsPanel(QWidget):
 
         def _on_done(name: str) -> None:
             self._yt_auth_btn.setEnabled(True)
-            self._yt_auth_btn.setText(self._YT_BTN_CONNECTED)
+            self._yt_auth_btn.setText(self._yt_btn_connected())
             self._yt_status_lbl.setText(
-                f"● 연결됨: {name}\n앱을 다시 시작하면 모든 YouTube 연동 기능이 활성화됩니다."
+                tr(
+                    "● 연결됨: {name}\n앱을 다시 시작하면 모든 YouTube 연동 기능이 활성화됩니다."
+                ).format(name=name)
             )
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('success')};")
             self._yt_auth_worker = None
 
         def _on_err(msg: str) -> None:
             self._yt_auth_btn.setEnabled(True)
-            self._yt_auth_btn.setText(self._YT_BTN_DISCONNECTED)
-            self._yt_status_lbl.setText(f"연결 실패: {msg[:120]}")
+            self._yt_auth_btn.setText(self._yt_btn_disconnected())
+            self._yt_status_lbl.setText(tr("연결 실패: {msg}").format(msg=msg[:120]))
             self._yt_status_lbl.setStyleSheet(f"font-size: 9pt; color: {sem('danger')};")
             self._yt_auth_worker = None
 
@@ -1790,16 +1837,18 @@ class SettingsPanel(QWidget):
         if cookiefile:
             state = cookie_file_state(cookiefile)
             if state == COOKIE_OK:
-                return f"쿠키 파일: {cookiefile}"
+                return tr("쿠키 파일: {path}").format(path=cookiefile)
             trouble = {
-                COOKIE_NOT_FOUND: "이 경로에 파일이 없습니다(다른 PC에서 등록했거나 지워졌습니다)",
-                COOKIE_EMPTY: "파일이 비어 있습니다",
-                COOKIE_NOT_COOKIES: "쿠키 파일 형식이 아닙니다",
-            }.get(state, "쓸 수 없는 파일입니다")
-            return f"⚠ 쿠키 파일을 쓸 수 없습니다 — {trouble}\n{cookiefile}"
+                COOKIE_NOT_FOUND: tr("이 경로에 파일이 없습니다(다른 PC에서 등록했거나 지워졌습니다)"),
+                COOKIE_EMPTY: tr("파일이 비어 있습니다"),
+                COOKIE_NOT_COOKIES: tr("쿠키 파일 형식이 아닙니다"),
+            }.get(state, tr("쓸 수 없는 파일입니다"))
+            return tr("⚠ 쿠키 파일을 쓸 수 없습니다 — {trouble}\n{path}").format(
+                trouble=trouble, path=cookiefile
+            )
         if profile:
-            return f"프로필: {profile}"
-        return "미설정 — 로그인된 브라우저를 자동으로 찾습니다"
+            return tr("프로필: {profile}").format(profile=profile)
+        return tr("미설정 — 로그인된 브라우저를 자동으로 찾습니다")
 
     def _reload_cookie_candidates(self) -> None:
         """다운로드·데스크톱 폴더에서 쿠키 파일 후보를 다시 스캔해 목록에 채운다."""
@@ -1881,14 +1930,14 @@ class SettingsPanel(QWidget):
         browser = self._feed_browser_combo.currentText()
         YouTubeAuthService().save_auth(browser=browser, profile_key=profile_key, cookiefile=None)
         self._feed_status_lbl.setText(
-            f"저장됨: {self._feed_profile_combo.currentText()}"
+            tr("저장됨: {name}").format(name=self._feed_profile_combo.currentText())
         )
         self._feed_status_lbl.setStyleSheet(f"font-size: 8pt; color: {sem('success')};")
 
     def _on_browse_cookie_file(self) -> None:
         from PyQt6.QtWidgets import QFileDialog  # noqa: PLC0415
         path, _ = QFileDialog.getOpenFileName(
-            self, "쿠키 파일 선택", "", "텍스트 파일 (*.txt);;모든 파일 (*)"
+            self, tr("쿠키 파일 선택"), "", tr("텍스트 파일 (*.txt);;모든 파일 (*)")
         )
         if path:
             self._feed_cookie_edit.setText(path)
@@ -1907,7 +1956,7 @@ class SettingsPanel(QWidget):
         dialog = QDialog(self)
         dialog.setWindowTitle(tr("쿠키 파일 등록 방법"))
         v = QVBoxLayout(dialog)
-        text_lbl = QLabel(COOKIE_HELP_TEXT)
+        text_lbl = QLabel(cookie_help_text())
         text_lbl.setWordWrap(True)
         v.addWidget(text_lbl)
         btn_row = QHBoxLayout()
@@ -1970,9 +2019,11 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._sub_index_status)
 
         hint = QLabel(
-            "색인해 두면 라이브러리 검색이 영상 속 대사까지 찾고, 상세화면 자막 탭에서 "
-            "그 대사가 나온 시점으로 바로 건너뛸 수 있습니다. 영상마다 인터넷에 한 번씩 "
-            "물어보므로 시간이 걸리며, 이미 색인된 영상은 건너뜁니다."
+            tr(
+                "색인해 두면 라이브러리 검색이 영상 속 대사까지 찾고, 상세화면 자막 탭에서 "
+                "그 대사가 나온 시점으로 바로 건너뛸 수 있습니다. 영상마다 인터넷에 한 번씩 "
+                "물어보므로 시간이 걸리며, 이미 색인된 영상은 건너뜁니다."
+            )
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
@@ -2009,7 +2060,7 @@ class SettingsPanel(QWidget):
 
         model_row = QHBoxLayout()
         m_lbl = QLabel(tr("모델"))
-        m_lbl.setFixedWidth(100)
+        m_lbl.setMinimumWidth(100)
         self._asr_model_combo = QComboBox()
         for model in MODELS:
             self._asr_model_combo.addItem(
@@ -2018,7 +2069,7 @@ class SettingsPanel(QWidget):
         current = self._subtitle_vm.transcribe_model_key if self._subtitle_vm else ""
         idx = self._asr_model_combo.findData(current)
         self._asr_model_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self._asr_model_combo.setFixedWidth(220)
+        self._asr_model_combo.setMinimumWidth(220)
         self._asr_model_combo.currentIndexChanged.connect(self._on_asr_model_changed)
         model_row.addWidget(m_lbl)
         model_row.addWidget(self._asr_model_combo)
@@ -2040,16 +2091,18 @@ class SettingsPanel(QWidget):
             f"font-size: 10px; color: {_t().text_secondary};"
         )
         self._asr_delete_btn = QPushButton(tr("받아 둔 모델 지우기"))
-        self._asr_delete_btn.setFixedWidth(140)
+        self._asr_delete_btn.setMinimumWidth(140)
         self._asr_delete_btn.clicked.connect(self._on_asr_delete_clicked)
         del_row.addWidget(self._asr_installed_lbl, 1)
         del_row.addWidget(self._asr_delete_btn)
         layout.addLayout(del_row)
 
         asr_hint = QLabel(
-            "YouTube가 자막을 주지 않는 영상에서 씁니다. 상세화면 자막 탭의 "
-            "'음성 인식으로 만들기'를 누르면 받아 둔 파일의 소리를 듣고 자막을 만듭니다. "
-            "모델은 처음 한 번만 내려받으며, 인터넷 없이 이 PC에서 계산합니다."
+            tr(
+                "YouTube가 자막을 주지 않는 영상에서 씁니다. 상세화면 자막 탭의 "
+                "'음성 인식으로 만들기'를 누르면 받아 둔 파일의 소리를 듣고 자막을 만듭니다. "
+                "모델은 처음 한 번만 내려받으며, 인터넷 없이 이 PC에서 계산합니다."
+            )
         )
         asr_hint.setWordWrap(True)
         asr_hint.setStyleSheet(f"font-size: 10px; color: {_t().text_secondary};")
@@ -2066,16 +2119,22 @@ class SettingsPanel(QWidget):
         if key in installed:
             disk = self._subtitle_vm.model_disk_mb(key) if self._subtitle_vm else 0
             self._asr_installed_lbl.setText(
-                f"받아 둔 모델입니다 ({disk}MB) — 바로 쓸 수 있습니다."
+                tr("받아 둔 모델입니다 ({disk}MB) — 바로 쓸 수 있습니다.").format(disk=disk)
                 if disk
-                else "받아 둔 모델입니다 — 바로 쓸 수 있습니다."
+                else tr("받아 둔 모델입니다 — 바로 쓸 수 있습니다.")
             )
             self._asr_delete_btn.setEnabled(True)
             return
         # 아직 안 받은 모델 — 처음 쓸 때 받는다는 것을 미리 알린다(몇 분이 걸린다).
         others = sorted(installed)
-        tail = f" (받아 둔 것: {', '.join(others)})" if others else ""
-        self._asr_installed_lbl.setText(f"처음 쓸 때 내려받습니다.{tail}")
+        if others:
+            self._asr_installed_lbl.setText(
+                tr("처음 쓸 때 내려받습니다. (받아 둔 것: {models})").format(
+                    models=", ".join(others)
+                )
+            )
+        else:
+            self._asr_installed_lbl.setText(tr("처음 쓸 때 내려받습니다."))
         self._asr_delete_btn.setEnabled(False)
 
     def _on_asr_model_changed(self, _index: int) -> None:
@@ -2105,8 +2164,11 @@ class SettingsPanel(QWidget):
             self._sub_cover_lbl.setText(tr("색인 현황을 읽을 수 없습니다."))
             return
         self._sub_cover_lbl.setText(
-            f"영상 {coverage.total_videos}개 중 {coverage.indexed_videos}개 색인됨 "
-            f"(남은 {coverage.remaining}개)"
+            tr("영상 {total}개 중 {indexed}개 색인됨 (남은 {remaining}개)").format(
+                total=coverage.total_videos,
+                indexed=coverage.indexed_videos,
+                remaining=coverage.remaining,
+            )
         )
 
     def _on_bulk_subtitle_clicked(self) -> None:
@@ -2129,7 +2191,7 @@ class SettingsPanel(QWidget):
         self._sub_index_bar.setMaximum(max(1, total))
         self._sub_index_bar.setValue(current)
         self._sub_index_bar.setFormat(f"{current}/{total}")
-        self._sub_index_status.setText(f"확인 중 — {title}")
+        self._sub_index_status.setText(tr("확인 중 — {title}").format(title=title))
 
     def _on_bulk_subtitle_finished(self, result) -> None:
         self._sub_index_bar.setVisible(False)
@@ -2138,10 +2200,10 @@ class SettingsPanel(QWidget):
         if result is None:
             self._sub_index_status.setText(tr("색인 중 오류가 발생했습니다. 로그를 확인하세요."))
             return
-        parts = [f"{result.indexed}개 색인"]
+        parts = [tr("{n}개 색인").format(n=result.indexed)]
         if result.no_subtitle:
-            parts.append(f"{result.no_subtitle}개는 자막 없음")
+            parts.append(tr("{n}개는 자막 없음").format(n=result.no_subtitle))
         if result.stopped:
-            parts.append("중단됨")
+            parts.append(tr("중단됨"))
         self._sub_index_status.setText(" · ".join(parts))
         self._refresh_subtitle_coverage()

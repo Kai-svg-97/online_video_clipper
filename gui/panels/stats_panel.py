@@ -260,10 +260,10 @@ class StatsPanel(QWidget):
         cards_row = QHBoxLayout()
         cards_row.setSpacing(12)
         cards = [
-            ("총 영상", f"{stats.total_videos:,}개"),
-            ("총 재생시간", _fmt_dur(stats.total_duration_sec)),
-            ("시청 완료", f"{stats.watched_count:,}개"),
-            ("즐겨찾기", f"{stats.favorite_count:,}개"),
+            (tr("총 영상"), tr("{n:,}개").format(n=stats.total_videos)),
+            (tr("총 재생시간"), _fmt_dur(stats.total_duration_sec)),
+            (tr("시청 완료"), tr("{n:,}개").format(n=stats.watched_count)),
+            (tr("즐겨찾기"), tr("{n:,}개").format(n=stats.favorite_count)),
         ]
         for label, value in cards:
             cards_row.addWidget(_SummaryCard(label, value, tokens))
@@ -297,8 +297,8 @@ class StatsPanel(QWidget):
         dl_row = QHBoxLayout()
         dl_row.setSpacing(12)
         dl_cards = [
-            ("완료 다운로드", f"{stats.total_downloads:,}개"),
-            ("총 파일 용량", _fmt_bytes(stats.total_download_bytes)),
+            (tr("완료 다운로드"), tr("{n:,}개").format(n=stats.total_downloads)),
+            (tr("총 파일 용량"), _fmt_bytes(stats.total_download_bytes)),
         ]
         for label, value in dl_cards:
             dl_row.addWidget(_SummaryCard(label, value, tokens))
@@ -340,7 +340,7 @@ class StatsPanel(QWidget):
             name_btn = QPushButton(ch.channel_name)
             name_btn.setFlat(True)
             name_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            name_btn.setToolTip(f"브라우저에서 채널 열기\n{url}")
+            name_btn.setToolTip(tr("브라우저에서 채널 열기\n{url}").format(url=url))
             name_btn.setStyleSheet(
                 "QPushButton { font-weight:600; background:transparent;"
                 f" color:{tokens.accent};"
@@ -370,7 +370,7 @@ class StatsPanel(QWidget):
             )
             name_row.addWidget(plain)
 
-        total_lbl = QLabel(f"·  {ch.total:,}개")
+        total_lbl = QLabel("·  " + tr("{n:,}개").format(n=ch.total))
         total_lbl.setStyleSheet(
             f"color:{tokens.text_secondary}; background:transparent; border:none;"
         )
@@ -417,7 +417,7 @@ class StatsPanel(QWidget):
 
     def _show_error(self, msg: str) -> None:
         self._clear_content()
-        err_lbl = QLabel(f"통계 로드 실패: {msg}")
+        err_lbl = QLabel(tr("통계 로드 실패: {msg}").format(msg=msg))
         err_lbl.setStyleSheet(f"color: {_danger_color(ThemeManager.instance().current())};")
         self._content_layout.addWidget(err_lbl)
         self._content_layout.addStretch()

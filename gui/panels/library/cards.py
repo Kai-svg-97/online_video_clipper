@@ -163,7 +163,7 @@ class _UnfiledCard(_BaseCard):
         icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_lbl.setStyleSheet("font-size:36pt;")
         layout.addWidget(icon_lbl)
-        name_lbl = QLabel(f"미분류  ({count})" if count else "미분류")
+        name_lbl = QLabel(tr("미분류  ({count})").format(count=count) if count else tr("미분류"))
         name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # 옆 _FolderCard의 같은 라벨은 색을 지정하지 않아 전역 QSS 색을 물려받는다 —
         # 여기만 회색을 박아 두어 같은 그리드 안에서 두 카드의 글자색이 어긋났다.

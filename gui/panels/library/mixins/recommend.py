@@ -21,7 +21,7 @@ from gui.anim import track_animation
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
 from gui.panels.library.constants import (  # noqa: F401
-    MATCH_FIELD_LABELS,
+    match_field_labels,
     _BADGE_EMPTY_BG,
     _CAT_ID_ROLE,
     _CAT_PARENT_ROLE,
@@ -222,7 +222,7 @@ class RecommendStripMixin:
             # 목록이 바뀌어도(예: 스트립에서 한 건 담아 목록이 늘어도) 캐시가
             # 유지되어 같은 검색을 다시 돌리지 않는다.
             titles, channels, tags = (), (), ()
-            self._recommend_strip.set_title(f'"{search_text}" YouTube 검색 결과')
+            self._recommend_strip.set_title(tr('"{text}" YouTube 검색 결과').format(text=search_text))
         else:
             titles, channels, tags = self._recommend_seeds()
             self._recommend_strip.set_title()
