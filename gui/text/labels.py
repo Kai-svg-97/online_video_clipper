@@ -13,9 +13,20 @@
 빠뜨리면 화면에 키가 그대로 뜬다.
 
 덩어리 C2에서 채워진다.
+
+**표의 값은 한국어 원문이고, 접근 함수가 `tr()`을 씌운다.** 표 자체를 모듈 수준에서
+번역하면 언어가 정해지기 전에 평가된다. `scripts/extract_catalog.py`가 이 표들의
+한국어 값을 카탈로그로 모으므로 `tr("…")` 리터럴이 아니어도 번역에서 빠지지 않는다.
 """
 
 from __future__ import annotations
+
+from gui.text import tr
+
+
+def _tr(label: str | None, fallback: str) -> str:
+    """표에 있으면 번역, 없으면 키 그대로 — 새 키가 생겨도 화면이 비지 않는다."""
+    return tr(label) if label else fallback
 
 
 # ── SponsorBlock 건너뛰기 구간 ────────────────────────────────────
@@ -34,7 +45,7 @@ SPONSOR_CATEGORY_LABELS: dict[str, str] = {
 
 def sponsor_category_label(key: str) -> str:
     """모르는 카테고리는 키를 그대로 — API 가 새 값을 추가해도 화면이 비지 않는다."""
-    return SPONSOR_CATEGORY_LABELS.get(key, key)
+    return _tr(SPONSOR_CATEGORY_LABELS.get(key), key)
 
 
 # ── 원본 확인 상태 ────────────────────────────────────────────────
@@ -48,7 +59,7 @@ AVAILABILITY_LABELS: dict[str, str] = {
 
 
 def availability_label(status: str) -> str:
-    return AVAILABILITY_LABELS.get(status, status)
+    return _tr(AVAILABILITY_LABELS.get(status), status)
 
 
 # ── 복합 필터 프리셋 ──────────────────────────────────────────────
@@ -73,7 +84,7 @@ FILTER_PRESET_LABELS: dict[tuple[str, str], str] = {
 
 
 def filter_preset_label(group: str, key: str) -> str:
-    return FILTER_PRESET_LABELS.get((group, key), key)
+    return _tr(FILTER_PRESET_LABELS.get((group, key)), key)
 
 
 # ── 포맷 변환 프리셋 ──────────────────────────────────────────────
@@ -88,11 +99,13 @@ CONVERT_PRESET_LABELS: dict[str, tuple[str, str]] = {
 
 
 def convert_preset_name(key: str) -> str:
-    return CONVERT_PRESET_LABELS.get(key, (key, ""))[0]
+    pair = CONVERT_PRESET_LABELS.get(key)
+    return _tr(pair[0] if pair else None, key)
 
 
 def convert_preset_description(key: str) -> str:
-    return CONVERT_PRESET_LABELS.get(key, (key, ""))[1]
+    pair = CONVERT_PRESET_LABELS.get(key)
+    return _tr(pair[1] if pair else None, "")
 
 
 # ── 음성 인식 모델 ────────────────────────────────────────────────
@@ -105,11 +118,13 @@ TRANSCRIBE_MODEL_LABELS: dict[str, tuple[str, str]] = {
 
 
 def transcribe_model_name(key: str) -> str:
-    return TRANSCRIBE_MODEL_LABELS.get(key, (key, ""))[0]
+    pair = TRANSCRIBE_MODEL_LABELS.get(key)
+    return _tr(pair[0] if pair else None, key)
 
 
 def transcribe_model_note(key: str) -> str:
-    return TRANSCRIBE_MODEL_LABELS.get(key, (key, ""))[1]
+    pair = TRANSCRIBE_MODEL_LABELS.get(key)
+    return _tr(pair[1] if pair else None, "")
 
 
 # ── 재생 화질 ─────────────────────────────────────────────────────
@@ -127,7 +142,7 @@ QUALITY_MENU_LABELS: dict[str, str] = {
 
 
 def quality_menu_label(key: str) -> str:
-    return QUALITY_MENU_LABELS.get(key, key)
+    return _tr(QUALITY_MENU_LABELS.get(key), key)
 
 
 def quality_badge_text(key: str) -> str:
@@ -161,10 +176,10 @@ def subtitle_track_label(track) -> str:
     """
     base = track.name or track.lang
     if track.auto:
-        base = f"{base} (자동 생성)"
+        base = tr("{name} (자동 생성)").format(name=base)
     if track.translate_to:
         target = LANGUAGE_NAMES.get(track.translate_to, track.translate_to)
-        base = f"{base} → {target} 번역"
+        base = tr("{name} → {target} 번역").format(name=base, target=target)
     return base
 
 
@@ -182,12 +197,17 @@ DEFAULT_PRESET_NAME = "내 프리셋"
 DEFAULT_SAVED_SEARCH_NAME = "저장된 검색"
 
 
+def default_preset_name() -> str:
+    """저장하는 **그 순간의** 화면 언어로 준다. 저장된 뒤에는 사용자 데이터라 번역하지 않는다."""
+    return tr(DEFAULT_PRESET_NAME)
+
+
 def download_preset_name(preset) -> str:
     """빌트인은 표에서, 사용자 프리셋은 저장된 이름 그대로."""
-    return preset.name or BUILTIN_PRESET_LABELS.get(preset.key, preset.key)
+    return preset.name or _tr(BUILTIN_PRESET_LABELS.get(preset.key), preset.key)
 
 
 # ── 챕터 ──────────────────────────────────────────────────────────
 def chapter_title(title: str, index: int) -> str:
     """제목 없는 챕터에 붙이는 이름. 도메인은 빈 제목을 그대로 둔다."""
-    return title or f"챕터 {index}"
+    return title or tr("챕터 {n}").format(n=index)

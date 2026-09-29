@@ -5,14 +5,18 @@
 이미 다음 버전을 설명하고 있을 수 있다). 그래서 번들된 HTML을 먼저 찾고, 없을 때만
 저장소 문서로 보낸다.
 
-번들 HTML은 `scripts/build_manual.py`가 `docs/manual.md`에서 만들어 낸다 —
-설명서 원본은 하나뿐이고, 두 벌을 손으로 맞추지 않는다.
+번들 HTML은 `scripts/build_manual.py`가 `docs/manual.md`(영어는 `manual.en.md`)에서
+만들어 낸다 — 언어마다 원본은 하나뿐이고, 두 벌을 손으로 맞추지 않는다.
+
+**앱 언어의 설명서를 연다.** 그 언어판이 없으면 한국어판으로 간다 — 설명서가 아예
+안 열리는 것보다 원문이라도 보이는 편이 낫다(`tr()`의 원문 폴백과 같은 생각).
 """
 
 from __future__ import annotations
 
 import logging
 
+from gui.text import active_language
 from utils.resources import get_resource_path
 
 logger = logging.getLogger(__name__)
@@ -22,7 +26,13 @@ MANUAL_URL = (
     "https://github.com/Kai-svg-97/online_video_clipper/blob/main/docs/manual.md"
 )
 
+_MANUAL_URL_EN = (
+    "https://github.com/Kai-svg-97/online_video_clipper/blob/main/docs/manual.en.md"
+)
+
 _LOCAL_MANUAL = "docs/manual/index.html"
+# 한국어 밖의 언어판 — 파일 이름에 언어 코드를 끼운다(`index.en.html`).
+_LOCAL_MANUAL_LANG = "docs/manual/index.{lang}.html"
 
 
 def manual_target() -> str:
@@ -31,13 +41,18 @@ def manual_target() -> str:
     로컬 파일은 `file://` URI로 돌려준다 — 경로를 그대로 넘기면 Windows에서
     드라이브 문자(`C:`)가 스킴으로 해석돼 열리지 않는다.
     """
+    lang = active_language()
+    candidates = [_LOCAL_MANUAL]
+    if lang != "ko":
+        candidates.insert(0, _LOCAL_MANUAL_LANG.format(lang=lang))
     try:
-        local = get_resource_path(_LOCAL_MANUAL)
-        if local.exists():
-            return local.as_uri()
+        for rel in candidates:
+            local = get_resource_path(rel)
+            if local.exists():
+                return local.as_uri()
     except Exception:
         logger.warning("번들 설명서 경로 확인 실패 — 온라인 문서로", exc_info=True)
-    return MANUAL_URL
+    return MANUAL_URL if lang == "ko" else _MANUAL_URL_EN
 
 
 def open_manual() -> bool:

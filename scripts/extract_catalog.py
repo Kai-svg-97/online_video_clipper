@@ -53,8 +53,35 @@ def _message_templates() -> set[str]:
     return set(_TEMPLATES.values())
 
 
+def _label_values() -> set[str]:
+    """`gui/text/labels.py` 표의 한국어 값 — 접근 함수가 `tr()`을 씌운다.
+
+    `LANGUAGE_NAMES`는 뺀다(언어 이름은 **자국어 표기**가 의도다 — "日本語").
+    한글이 없는 값("1080p")은 번역할 것이 없어 뺀다.
+    """
+    import re  # noqa: PLC0415
+
+    from gui.text import labels  # noqa: PLC0415
+
+    hangul = re.compile(r"[가-힣]")
+    out: set[str] = set()
+    for name, value in vars(labels).items():
+        if name == "LANGUAGE_NAMES" or name.startswith("_"):
+            continue
+        if isinstance(value, str) and name.isupper():
+            items = [value]
+        elif isinstance(value, dict):
+            items = []
+            for v in value.values():
+                items.extend(v if isinstance(v, tuple) else [v])
+        else:
+            continue
+        out.update(s for s in items if isinstance(s, str) and hangul.search(s))
+    return out
+
+
 def collect() -> set[str]:
-    return _tr_literals(_ROOT / "gui") | _message_templates()
+    return _tr_literals(_ROOT / "gui") | _message_templates() | _label_values()
 
 
 def main() -> int:

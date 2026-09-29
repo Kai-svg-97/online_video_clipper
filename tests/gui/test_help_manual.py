@@ -47,6 +47,47 @@ class TestManualTarget:
         assert built.exists(), "python scripts/build_manual.py 를 돌려야 한다"
 
 
+
+class TestManualLanguage:
+    """앱 언어의 설명서를 연다 — 없으면 한국어판으로(아예 못 여는 것보다 낫다)."""
+
+    @pytest.fixture
+    def english(self, monkeypatch):
+        monkeypatch.setattr(help_mod, "active_language", lambda: "en")
+
+    def _make(self, tmp_path, name):
+        f = tmp_path / "docs" / "manual" / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x", encoding="utf-8")
+        return f
+
+    def test_영어면_영어판을_연다(self, tmp_path, monkeypatch, english):
+        self._make(tmp_path, "index.html")
+        en = self._make(tmp_path, "index.en.html")
+        monkeypatch.setattr(help_mod, "get_resource_path", lambda rel: tmp_path / rel)
+        assert help_mod.manual_target() == en.as_uri()
+
+    def test_영어판이_없으면_한국어판으로(self, tmp_path, monkeypatch, english):
+        ko = self._make(tmp_path, "index.html")
+        monkeypatch.setattr(help_mod, "get_resource_path", lambda rel: tmp_path / rel)
+        assert help_mod.manual_target() == ko.as_uri()
+
+    def test_영어인데_번들이_없으면_영어_온라인_문서로(self, tmp_path, monkeypatch, english):
+        monkeypatch.setattr(help_mod, "get_resource_path", lambda rel: tmp_path / rel)
+        assert help_mod.manual_target().endswith("/docs/manual.en.md")
+
+    def test_한국어는_영어판을_보지_않는다(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(help_mod, "active_language", lambda: "ko")
+        ko = self._make(tmp_path, "index.html")
+        self._make(tmp_path, "index.en.html")
+        monkeypatch.setattr(help_mod, "get_resource_path", lambda rel: tmp_path / rel)
+        assert help_mod.manual_target() == ko.as_uri()
+
+    def test_영어판도_저장소에_만들어져_있다(self):
+        built = Path(__file__).resolve().parents[2] / "docs" / "manual" / "index.en.html"
+        assert built.exists(), "python scripts/build_manual.py 를 돌려야 한다"
+
+
 class TestEntryPoints:
     """F1과 설정 단추가 같은 함수를 부르는지 — 한쪽만 고쳐지는 것을 막는다."""
 

@@ -86,15 +86,19 @@ class TestImagePaths:
         out = render("![x](manual/images/library.png)")
         assert 'src="images/library.png"' in out
 
+    def test_영어판_이미지_경로도_줄인다(self):
+        out = render("![x](manual/images-en/library.png)")
+        assert 'src="images-en/library.png"' in out
+
 
 class TestRealManual:
-    """실제 설명서를 렌더해 렌더되지 않고 남은 마크다운이 없는지 본다."""
+    """실제 설명서를 렌더해 렌더되지 않고 남은 마크다운이 없는지 본다(언어마다)."""
 
-    @pytest.fixture(scope="class")
-    def rendered(self):
-        src = _ROOT / "docs" / "manual.md"
+    @pytest.fixture(scope="class", params=["manual.md", "manual.en.md"])
+    def rendered(self, request):
+        src = _ROOT / "docs" / request.param
         if not src.exists():
-            pytest.skip("docs/manual.md 없음")
+            pytest.skip(f"docs/{request.param} 없음")
         return render(src.read_text(encoding="utf-8"))
 
     def test_표와_제목과_이미지가_모두_변환됐다(self, rendered):
@@ -114,3 +118,37 @@ class TestRealManual:
         links = set(re.findall(r'<a href="#([^"]+)"', rendered))
         assert links, "목차 링크를 찾지 못했다"
         assert links <= anchors, f"가리키는 곳이 없는 링크: {links - anchors}"
+
+
+class TestEnglishManual:
+    """영어판은 한국어판과 **같은 모양**이어야 한다 — 한쪽만 고치면 여기서 드러난다."""
+
+    @pytest.fixture(scope="class")
+    def pair(self):
+        ko = _ROOT / "docs" / "manual.md"
+        en = _ROOT / "docs" / "manual.en.md"
+        if not en.exists():
+            pytest.skip("docs/manual.en.md 없음")
+        return (
+            render(ko.read_text(encoding="utf-8")),
+            en.read_text(encoding="utf-8"),
+            render(en.read_text(encoding="utf-8")),
+        )
+
+    def test_구조가_같다(self, pair):
+        ko, _src, en = pair
+        for tag in ("<table>", "<h2", "<h3", "<img", "<ol>", "<ul>", "<blockquote>"):
+            assert ko.count(tag) == en.count(tag), tag
+
+    def test_한글이_없다(self, pair):
+        _ko, src, _en = pair
+        assert not re.search(r"[가-힣]", src)
+
+    def test_영어_갈무리를_쓴다(self, pair):
+        _ko, src, _en = pair
+        assert "manual/images/" not in src
+        assert src.count("manual/images-en/") >= 5
+
+    def test_영어판_html_제목과_언어(self):
+        page = build_manual._TEMPLATE.format(lang="en", title="t", body="")
+        assert '<html lang="en">' in page

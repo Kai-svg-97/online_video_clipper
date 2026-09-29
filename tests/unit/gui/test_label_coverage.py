@@ -131,3 +131,75 @@ class TestQualityKeys:
         from gui.widgets.player.constants import QUALITY_AUTO, _QUALITY_HEIGHTS
 
         assert QUALITY_AUTO not in _QUALITY_HEIGHTS
+
+
+
+class TestEnglishLabels:
+    """영어 화면에서 라벨 함수가 한국어를 돌려주지 않는다.
+
+    표의 값은 한국어 원문이고 접근 함수가 `tr()`을 씌운다 — 한때 씌우지 않아서
+    화질 "자동 (최고 화질)"·SponsorBlock 구간 이름이 영어 화면에 한국어로 나왔다.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _english(self):
+        from gui.text import active_language, set_language
+
+        before = active_language()
+        set_language("en")
+        yield
+        set_language(before)
+
+    def _no_hangul(self, text: str) -> None:
+        import re
+
+        assert not re.search(r"[가-힣]", text), text
+
+    def test_표로_고르는_라벨(self):
+        from gui.text.labels import (
+            BUILTIN_PRESET_LABELS,
+            QUALITY_MENU_LABELS,
+            convert_preset_description,
+            convert_preset_name,
+            quality_menu_label,
+            transcribe_model_name,
+            transcribe_model_note,
+        )
+
+        for k in SPONSOR_CATEGORY_LABELS:
+            self._no_hangul(sponsor_category_label(k))
+        for k in AVAILABILITY_LABELS:
+            self._no_hangul(availability_label(k))
+        for g, k in FILTER_PRESET_LABELS:
+            self._no_hangul(filter_preset_label(g, k))
+        for k in CONVERT_PRESET_LABELS:
+            self._no_hangul(convert_preset_name(k))
+            self._no_hangul(convert_preset_description(k))
+        for k in TRANSCRIBE_MODEL_LABELS:
+            self._no_hangul(transcribe_model_name(k))
+            self._no_hangul(transcribe_model_note(k))
+        for k in QUALITY_MENU_LABELS:
+            self._no_hangul(quality_menu_label(k))
+        assert quality_menu_label("auto") == "Auto (best quality)"
+        assert BUILTIN_PRESET_LABELS  # 아래 시험이 빈 표를 통과시키지 않게
+
+    def test_조립하는_라벨(self):
+        from types import SimpleNamespace
+
+        from gui.text.labels import (
+            BUILTIN_PRESET_LABELS,
+            chapter_title,
+            default_preset_name,
+            download_preset_name,
+            subtitle_track_label,
+        )
+
+        track = SimpleNamespace(name="English", lang="en", auto=True, translate_to="ja")
+        assert subtitle_track_label(track) == "English (auto-generated) → 日本語 translation"
+        assert chapter_title("", 3) == "Chapter 3"
+        for key in BUILTIN_PRESET_LABELS:
+            self._no_hangul(download_preset_name(SimpleNamespace(name="", key=key)))
+        self._no_hangul(default_preset_name())
+
+    def test_모르는_키는_그대로(self):
+        assert sponsor_category_label("new_category") == "new_category"

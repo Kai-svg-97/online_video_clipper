@@ -276,9 +276,14 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
 
 ## 도움말 문서 규칙 (mandatory)
 
-- **설명서 원본은 `docs/manual.md` 하나다.** 고쳤으면 `python scripts/build_manual.py`로
-  `docs/manual/index.html`을 다시 만든다 — F1과 설정 → 도움말이 여는 것이 그 HTML이고,
-  빌드가 그 파일을 번들한다(`packaging/online_video_clipper.spec`).
+- **설명서 원본은 언어마다 하나다** — 한국어 `docs/manual.md`, 영어 `docs/manual.en.md`.
+  고쳤으면 `python scripts/build_manual.py`로 `docs/manual/index.html`·`index.en.html`을
+  다시 만든다 — F1과 설정 → 도움말이 **앱 언어에 맞는** HTML을 열고(없으면 한국어판),
+  빌드가 `docs/manual` 폴더째 번들한다(`packaging/online_video_clipper.spec`).
+  **한쪽만 고치지 않는다** — 두 원본의 구조(표·장·이미지 수)가 다르면
+  `tests/unit/test_build_manual.py::TestEnglishManual`이 실패한다. 영어판의 메뉴 이름은
+  `gui/text/locales/en.json`의 화면 문구와 같아야 한다(설명서만 보고 찾을 수 있게).
+  영어 갈무리는 `python scripts/capture_screenshots.py --lang en`(`images-en/`).
 - **화면이 바뀌면 `python scripts/capture_screenshots.py`로 갈무리를 다시 만든다.** 손으로
   찍지 않는다 — 사용자의 실제 라이브러리가 찍힐 수 있고 조용히 낡는다.
 - **사용자 자료를 읽는 새 저장소를 만들면 `OVC_DATA_DIR`를 보게 한다.** 이 환경 변수는

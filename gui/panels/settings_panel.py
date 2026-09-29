@@ -37,7 +37,7 @@ from version import __version__
 from gui.themes.colors import sem
 from gui.text.labels import transcribe_model_name, transcribe_model_note
 from gui.text.messages import render
-from gui.text.labels import DEFAULT_PRESET_NAME, download_preset_name
+from gui.text.labels import default_preset_name, download_preset_name
 
 
 # ── 분할된 부품 (gui/panels/settings/*) ─────────────────────────────
@@ -730,7 +730,7 @@ class SettingsPanel(QWidget):
         existing = [p.name for p in available_presets()]
         preset = DownloadPreset(
             key=f"user:{_uuid.uuid4().hex[:8]}",
-            name=unique_name(name, existing, fallback=DEFAULT_PRESET_NAME),
+            name=unique_name(name, existing, fallback=default_preset_name()),
             quality=quality_from_selector(self._quality_combo.currentData()),
             fmt=self._format_combo.currentText() or "mp4",
             subtitle_langs=self._sub_langs_edit.text().strip(),

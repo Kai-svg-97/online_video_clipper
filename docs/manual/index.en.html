@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube Content Manager — User manual</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0;
+    --surface: #f6f8fa; --accent: #0969da;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --border: #3d444d;
+      --surface: #151b23; --accent: #4493f8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+    font-size: 16px; line-height: 1.7;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 48px 16px 96px; }
+  h1 { font-size: 2em; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
+  h2 { font-size: 1.5em; border-bottom: 1px solid var(--border);
+       padding-bottom: .3em; margin-top: 2.2em; }
+  h3 { font-size: 1.2em; margin-top: 1.8em; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 2.5em 0; }
+  a { color: var(--accent); }
+  code {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 5px;
+    padding: .15em .4em; font-size: .88em;
+    font-family: "Cascadia Mono", Consolas, monospace;
+  }
+  blockquote {
+    margin: 1em 0; padding: .6em 1em; color: var(--muted);
+    border-left: 4px solid var(--border); background: var(--surface);
+  }
+  table { border-collapse: collapse; width: 100%; margin: 1.2em 0; display: block;
+          overflow-x: auto; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+  th { background: var(--surface); }
+  tr:nth-child(2n) td { background: var(--surface); }
+  img { max-width: 100%; border: 1px solid var(--border); border-radius: 8px;
+        margin: 1em 0; display: block; }
+  li { margin: .3em 0; }
+</style>
+</head>
+<body>
+<main>
+<h1 id="full-manual">Full manual</h1>
+<p>This is the user manual for YouTube Content Manager. It covers, screen by screen, <strong>what you can do and where to click</strong>.</p>
+<blockquote>In the app, press <strong>F1</strong> on any screen, or choose <strong>Settings → Help → Open the full manual</strong>, to open this document.</blockquote>
+<p>The screenshots were produced by <code>scripts/capture_screenshots.py</code>, which draws the real screens with sample data, so the contents differ from what you see on your own screen.</p>
+<hr>
+<h2 id="table-of-contents">Table of contents</h2>
+<ol><li><a href="#getting-started">Getting started</a></li><li><a href="#library">Library</a></li><li><a href="#video-playback">Video playback</a></li><li><a href="#downloads">Downloads</a></li><li><a href="#channel-monitoring">Channel monitoring</a></li><li><a href="#statistics">Statistics</a></li><li><a href="#settings">Settings</a></li><li><a href="#keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ol>
+<hr>
+<h2 id="getting-started">Getting started</h2>
+<ol><li>When you launch the app, the <strong>Library</strong> screen opens.</li><li>When you copy a video address (URL), the app detects it on the clipboard and asks whether to add it. You can turn this off under <strong>Settings → General → Detect URLs on the clipboard</strong>.</li><li>The title, length and channel of each video you add are filled in automatically.</li></ol>
+<p>You can check where your data is stored (database, download folder, logs) under <strong>Settings → Storage paths</strong>, and change it with <code>data/config.yaml</code>.</p>
+<hr>
+<h2 id="library">Library</h2>
+<p>The central screen for collecting, organizing, finding and playing videos.</p>
+<p><img src="images-en/library.png" alt="Library screen"></p>
+<h3 id="left-side-category-tree">Left side — category tree</h3>
+<table>
+<thead><tr>
+<th>Item</th>
+<th>Description</th>
+</tr></thead>
+<tbody>
+<tr><td><strong>Local</strong></td><td>Videos you added yourself. Build a hierarchy of categories (folders) beneath it.</td></tr>
+<tr><td><strong>Uncategorized</strong></td><td>Videos that have not been given a category yet</td></tr>
+<tr><td><strong>YouTube</strong></td><td>Subscriptions and playlists of the account you are signed in with</td></tr>
+<tr><td><strong>Top tags / All tags</strong></td><td>Filter instantly by tag</td></tr>
+</tbody>
+</table>
+<p>You can change the order and nesting of categories by <strong>dragging and dropping</strong> them, and you can move videos by dragging them onto a category.</p>
+<h3 id="top-search-and-filters">Top — search and filters</h3>
+<ul><li><strong>Search box</strong>: full-text search across titles, descriptions and notes. <code>Ctrl+F</code> jumps to it, <code>Enter</code> searches immediately, and <code>Esc</code> clears it.</li><li><strong>View switch</strong>: grid, list or compact. <code>Ctrl+wheel</code> also switches the view.</li><li><strong>Sort</strong>: newest first, by title, by length and more</li><li><strong>Filters</strong>: combine period, duration, channel, download state and favorites.</li><li><strong>Saved searches</strong>: save frequently used search and filter combinations under a name.</li></ul>
+<h3 id="video-cards">Video cards</h3>
+<ul><li><strong>Single click</strong> — detail view (info, notes, subtitles, clips)</li><li><strong>Double click</strong> — play</li><li><strong>Right click</strong> — move to a category, edit tags, download, delete and more</li></ul>
+<p>The ★ at the top right of a card marks a favorite, and the bottom right shows the duration. Videos you are partway through show a progress strip below the thumbnail.</p>
+<h3 id="summary-gemini">Summary (Gemini)</h3>
+<p>The <strong>Summary</strong> tab of the detail view shows YouTube's Gemini AI summary. Press <strong>⟳</strong> to fetch it again (you must be signed in to YouTube). Double-click to edit it yourself.</p>
+<ul><li>The summary is generated <strong>in the app language</strong> and saved <strong>separately for each language</strong>. Fetching a new one in English leaves your Korean summary untouched.</li><li>If there is no summary in the current language, the app shows one in another language that exists, and a <strong>language chip</strong> (Korean / English) appears at the top of the summary so you can switch between them.</li><li>Your edits are saved to the summary of the <strong>language you are viewing</strong>.</li></ul>
+<hr>
+<h2 id="video-playback">Video playback</h2>
+<p>Double-click a video to play it right in the app. You do not need to download the file first.</p>
+<h3 id="quality">Quality</h3>
+<p>Choose it with the quality button on the right of the control bar.</p>
+<table>
+<thead><tr>
+<th>Choice</th>
+<th>Behavior</th>
+</tr></thead>
+<tbody>
+<tr><td><strong>Auto (best quality)</strong></td><td>The default. Plays up to 1080p by <strong>merging the streams on the fly</strong> (nothing is downloaded).</td></tr>
+<tr><td>1080p / 720p / 480p</td><td>The same method at the quality you pick</td></tr>
+<tr><td>360p / 240p</td><td>A single stream that needs no merging — starts the fastest</td></tr>
+</tbody>
+</table>
+<p>High-quality video and audio are delivered separately, so they must be merged just before playback. The app <strong>fetches only as much as it needs and streams it through</strong>, so playback starts within a few seconds. If your connection cannot keep the stream going, the app automatically falls back to "download first, then play" (a brief preparing indicator appears).</p>
+<p>The quality you choose is kept while you use the app. If your PC struggles, lower it to 720p or below.</p>
+<h3 id="subtitles">Subtitles</h3>
+<ul><li>Choose a subtitle track with the <strong>CC</strong> button on the control bar. You can turn on <strong>two lines at once</strong>, the original language and your native language.</li><li>For videos without subtitles, you can generate them with speech recognition (<strong>Settings → Subtitles</strong>).</li><li>If the sync is off, nudge it by 0.25 seconds with <code>[</code> and <code>]</code>.</li></ul>
+<h3 id="other">Other</h3>
+<ul><li><strong>Skip segments (SponsorBlock)</strong>: automatically skips ads and sponsored segments (turn it on or off in Settings).</li><li><strong>Clip extraction</strong>: mark a start and an end in the detail view to save just that range as a file.</li><li><strong>PiP / full screen</strong>: the buttons on the control bar, or <code>F</code></li></ul>
+<hr>
+<h2 id="downloads">Downloads</h2>
+<p><img src="images-en/download.png" alt="Downloads screen"></p>
+<ul><li>You can download a single video, a playlist or a whole channel.</li><li>Choose the quality (2160p to 360p) and format (mp4, mkv, webm, mp3, m4a).</li><li>Set the <strong>number of concurrent downloads</strong> from 1 to 8 in Settings.</li><li>Failed downloads are retried automatically, and the history is kept.</li><li>You can choose separately whether to download subtitles, thumbnails and metadata along with the video.</li></ul>
+<p>Jobs in progress also appear in the strip at the bottom of the window, so you can see their status from any other screen.</p>
+<hr>
+<h2 id="channel-monitoring">Channel monitoring</h2>
+<p><img src="images-en/monitor.png" alt="Channel monitoring screen"></p>
+<p>Register a channel address and the app periodically checks whether new videos have been posted.</p>
+<ul><li>Set the check interval under <strong>Settings → Notifications</strong>.</li><li>You can attach an <strong>automatic download rule</strong> (title keyword, minimum and maximum duration) to each channel.</li><li>When a new video is detected, you are notified with a system tray notification.</li></ul>
+<hr>
+<h2 id="statistics">Statistics</h2>
+<p><img src="images-en/stats.png" alt="Statistics screen"></p>
+<ul><li>Video count and total duration by category and channel</li><li>Trend of additions over time</li><li>Click a channel entry to jump straight to its category.</li></ul>
+<hr>
+<h2 id="settings">Settings</h2>
+<p><img src="images-en/settings.png" alt="Settings screen"></p>
+<p><strong>Help</strong> is at the top, followed by the other items.</p>
+<table>
+<thead><tr>
+<th>Item</th>
+<th>Contents</th>
+</tr></thead>
+<tbody>
+<tr><td><strong>Help</strong></td><td>Opens this manual in your default browser (= <code>F1</code>)</td></tr>
+<tr><td><strong>App language</strong></td><td>The display language (Korean / English). It takes effect <strong>after a restart</strong>, and any text that has not been translated stays in Korean. It is separate from the subtitle language setting.</td></tr>
+<tr><td><strong>Theme</strong></td><td>11 presets. A preset applies immediately when you click it and is kept after you restart.</td></tr>
+<tr><td><strong>Storage paths</strong></td><td>View and open the locations of the database, downloads, thumbnails and logs</td></tr>
+<tr><td><strong>General</strong></td><td>Concurrent downloads, concurrent node loads, clipboard detection, automatic enrichment</td></tr>
+<tr><td><strong>Notifications</strong></td><td>Staying in the tray, channel check interval</td></tr>
+<tr><td><strong>Downloads</strong></td><td>Default folder, quality and format, filename rules, embedding metadata</td></tr>
+<tr><td><strong>Lyrics sources / Cloud sync / Transfer</strong></td><td>Lyrics providers, OneDrive and Google Drive integration</td></tr>
+<tr><td><strong>Watch folder / Import from bookmarks</strong></td><td>Automatic folder registration, bulk import of browser bookmarks</td></tr>
+<tr><td><strong>Library cleanup</strong></td><td>Find duplicate videos and missing files (you choose what to delete)</td></tr>
+<tr><td><strong>Subtitle index / YouTube API / Cookies / Hidden tags</strong></td><td>Advanced settings</td></tr>
+</tbody>
+</table>
+<hr>
+<h2 id="keyboard-shortcuts">Keyboard shortcuts</h2>
+<h3 id="everywhere">Everywhere</h3>
+<table>
+<thead><tr>
+<th>Key</th>
+<th>Action</th>
+</tr></thead>
+<tbody>
+<tr><td><code>F1</code></td><td>Open this manual</td></tr>
+<tr><td><code>Ctrl+F</code></td><td>Jump to the search box</td></tr>
+<tr><td><code>Esc</code></td><td>Clear the search / go back</td></tr>
+<tr><td><code>F5</code></td><td>Refresh</td></tr>
+<tr><td>Mouse ‹ ›</td><td>Back / forward</td></tr>
+</tbody>
+</table>
+<h3 id="during-playback">During playback</h3>
+<table>
+<thead><tr>
+<th>Key</th>
+<th>Action</th>
+</tr></thead>
+<tbody>
+<tr><td><code>Space</code>, <code>K</code></td><td>Play / pause</td></tr>
+<tr><td><code>J</code>, <code>L</code></td><td>Back / forward 10 seconds</td></tr>
+<tr><td><code>←</code>, <code>→</code></td><td>Back / forward 5 seconds</td></tr>
+<tr><td><code>↑</code>, <code>↓</code></td><td>Volume up / down</td></tr>
+<tr><td><code>0</code>~<code>9</code></td><td>Jump to that percentage of the video</td></tr>
+<tr><td><code>M</code></td><td>Mute</td></tr>
+<tr><td><code>F</code></td><td>Full screen</td></tr>
+<tr><td><code>P</code></td><td>PiP</td></tr>
+<tr><td><code>C</code></td><td>Subtitles on/off</td></tr>
+<tr><td><code>[</code>, <code>]</code></td><td>Subtitle sync -0.25 s / +0.25 s</td></tr>
+<tr><td><code>\</code></td><td>Reset subtitle sync</td></tr>
+<tr><td><code>Ctrl</code> + wheel</td><td>Subtitle size</td></tr>
+<tr><td><code>Ctrl+Shift</code> + wheel</td><td>Subtitle position</td></tr>
+</tbody>
+</table>
+<h3 id="reading-screens">Reading screens</h3>
+<table>
+<thead><tr>
+<th>Key</th>
+<th>Action</th>
+</tr></thead>
+<tbody>
+<tr><td><code>Ctrl</code> <code>+</code> / <code>-</code></td><td>Larger / smaller text</td></tr>
+<tr><td><code>Ctrl+0</code></td><td>Reset text size</td></tr>
+</tbody>
+</table>
+<hr>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p><strong>Playback is only at low quality</strong><br>Check that the quality on the control bar is not fixed at 360p. The default is "Auto (best quality)".</p>
+<p><strong>Playback stutters at high quality</strong><br>Sometimes the video provider limits how far ahead the app can read. The app automatically falls back to "download first, then play", but if your connection is slow, choosing 720p or below is more stable.</p>
+<p><strong>A video will not play at all</strong><br>The reason is shown where the video should be. Use the 🌐 button at the top right to open it in your browser and check that the original still exists. It may be region-restricted or deleted.</p>
+<p><strong>Downloads keep failing</strong><br>Connect your browser cookies under <strong>Settings → Cookies</strong> to download videos that require you to be signed in.</p>
+<p><strong>I want to see the log</strong><br><strong>Settings → Storage paths → Log folder → Open</strong>. When you report a problem, please send <code>app.log</code> along with it so the cause is easier to find.</p>
+</main>
+</body>
+</html>

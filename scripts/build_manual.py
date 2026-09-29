@@ -1,7 +1,8 @@
-"""`docs/manual.md` → `docs/manual/index.html` — F1이 브라우저로 여는 설명서.
+"""`docs/manual*.md` → `docs/manual/index*.html` — F1이 브라우저로 여는 설명서.
 
-**설명서 원본은 하나다.** GitHub에서 읽히는 마크다운과 앱이 여는 HTML을 따로 쓰면
-반드시 한쪽이 낡는다. 여기서 한쪽을 다른 쪽으로 만든다.
+**언어마다 원본은 하나다.** GitHub에서 읽히는 마크다운과 앱이 여는 HTML을 따로 쓰면
+반드시 한쪽이 낡는다. 여기서 한쪽을 다른 쪽으로 만든다. 한국어는 `manual.md` →
+`index.html`, 영어는 `manual.en.md` → `index.en.html`(`gui/help.py`가 앱 언어로 고른다).
 
 마크다운 라이브러리를 새로 들이지 않는다 — 설명서가 쓰는 문법(제목·문단·목록·표·
 인용·수평선·이미지·링크·굵게·인라인 코드)만 다루면 충분하고, 그만큼은 의존성을
@@ -23,9 +24,20 @@ _ROOT = Path(__file__).resolve().parent.parent
 SRC = _ROOT / "docs" / "manual.md"
 OUT = _ROOT / "docs" / "manual" / "index.html"
 
+# 언어 → (원본, 결과, <html lang>, 제목). 원본이 없는 언어는 건너뛴다.
+MANUALS: dict[str, tuple[Path, Path, str, str]] = {
+    "ko": (SRC, OUT, "ko", "YouTube Content Manager — 상세 설명서"),
+    "en": (
+        _ROOT / "docs" / "manual.en.md",
+        _ROOT / "docs" / "manual" / "index.en.html",
+        "en",
+        "YouTube Content Manager — User manual",
+    ),
+}
+
 # 마크다운은 `docs/` 기준 경로를 쓰고(GitHub에서 읽힌다), HTML은 `docs/manual/`
-# 안에 놓인다 — 이미지 경로를 그만큼 줄여 준다.
-_IMG_PREFIX = re.compile(r"\]\(manual/images/")
+# 안에 놓인다 — 이미지 경로를 그만큼 줄여 준다. 영어판은 `images-en/`을 쓴다.
+_IMG_PREFIX = re.compile(r"\]\(manual/(images(?:-[a-z]+)?)/")
 
 _INLINE_CODE = re.compile(r"`([^`]+)`")
 _BOLD = re.compile(r"\*\*([^*]+)\*\*")
@@ -76,7 +88,7 @@ def _table(rows: list[str]) -> str:
 
 def render(markdown: str) -> str:
     """설명서 마크다운을 본문 HTML로 바꾼다."""
-    markdown = _IMG_PREFIX.sub("](images/", markdown)
+    markdown = _IMG_PREFIX.sub(r"](\1/", markdown)
     lines = markdown.splitlines()
     out: list[str] = []
     i = 0
@@ -151,11 +163,11 @@ def render(markdown: str) -> str:
 
 
 _TEMPLATE = """<!DOCTYPE html>
-<html lang="ko">
+<html lang="{lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YouTube Content Manager — 상세 설명서</title>
+<title>{title}</title>
 <style>
   :root {{
     --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --border: #d1d9e0;
@@ -208,21 +220,30 @@ _TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def build() -> Path:
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(
-        _TEMPLATE.format(body=render(SRC.read_text(encoding="utf-8"))),
+def build(lang: str = "ko") -> Path:
+    src, out, html_lang, title = MANUALS[lang]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        _TEMPLATE.format(
+            lang=html_lang,
+            title=html.escape(title, quote=False),
+            body=render(src.read_text(encoding="utf-8")),
+        ),
         encoding="utf-8",
     )
-    return OUT
+    return out
 
 
 def main() -> int:
     if not SRC.exists():
         print(f"원본이 없습니다: {SRC}", file=sys.stderr)
         return 1
-    out = build()
-    print(f"만들었습니다: {out.relative_to(_ROOT)}  ({out.stat().st_size:,} bytes)")
+    for lang, (src, *_rest) in MANUALS.items():
+        if not src.exists():
+            print(f"건너뜁니다({lang}): 원본이 없습니다 — {src.relative_to(_ROOT)}")
+            continue
+        out = build(lang)
+        print(f"만들었습니다: {out.relative_to(_ROOT)}  ({out.stat().st_size:,} bytes)")
     return 0
 
 
