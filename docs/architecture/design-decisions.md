@@ -20,6 +20,7 @@
 | 다국어화 | [`decisions/i18n.md`](decisions/i18n.md) |
 | 설명서·갈무리 | [`decisions/manual.md`](decisions/manual.md) |
 | 코드 구조 — 큰 파일을 나누는 방식 | [`decisions/code-structure.md`](decisions/code-structure.md) |
+| 테스트 — 느림과 흔들림의 원인 | [`decisions/testing.md`](decisions/testing.md) |
 
 ## [기반 — 레이어·스레드 원칙, 시작 성능, 데이터 안전, CI](decisions/foundations.md)
 
@@ -88,3 +89,7 @@
 ## [코드 구조 — 큰 파일을 나누는 방식](decisions/code-structure.md)
 
 - 큰 파일 넷을 조립부 + mixin으로 (2026-09-30)
+
+## [테스트 — 느림과 흔들림의 원인](decisions/testing.md)
+
+- 전체 시험 742초 → 443초 (2026-09-30)
