@@ -14,8 +14,9 @@ from gui.panels.video_detail_panel import _LyricRow, _SongTab
 
 
 @pytest.fixture
-def tab(qapp_instance):
+def tab(qtbot):
     w = _SongTab()
+    qtbot.addWidget(w)
     w.resize(400, 600)
     return w
 

@@ -29,17 +29,19 @@ class TestSmartFolderRemoved:
             return
         raise AssertionError("application.library.smart_folders가 아직 남아 있다")
 
-    def test_panel_has_no_smart_folder_state(self, library_vm, clip_vm, download_vm):
+    def test_panel_has_no_smart_folder_state(self, library_vm, clip_vm, download_vm, qtbot):
         from gui.panels.library_panel import LibraryPanel
 
         panel = LibraryPanel(vm=library_vm, clip_vm=clip_vm, download_vm=download_vm)
+        qtbot.addWidget(panel)
         for attr in ("_sf_list", "_smart_folders", "_load_smart_folders_ui", "_on_save_smart_folder"):
             assert not hasattr(panel, attr), f"스마트 폴더 잔재: {attr}"
 
-    def test_no_smart_folder_text_in_ui(self, library_vm, clip_vm, download_vm):
+    def test_no_smart_folder_text_in_ui(self, library_vm, clip_vm, download_vm, qtbot):
         from gui.panels.library_panel import LibraryPanel
 
         panel = LibraryPanel(vm=library_vm, clip_vm=clip_vm, download_vm=download_vm)
+        qtbot.addWidget(panel)
         hits = [
             w.text()
             for w in panel.findChildren((QLabel, QPushButton))
@@ -51,8 +53,9 @@ class TestSmartFolderRemoved:
 class TestSelectSnapshotHighlights:
     """select_snapshot이 스냅샷에 해당하는 노드를 선택 표시한다."""
 
-    def test_category_snapshot_selects_node(self, qapp_instance):
+    def test_category_snapshot_selects_node(self, qtbot):
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         tree = panel.trees[0]
         cat_id = uuid4()
         other = tree._make_category("다른 카테고리", uuid4(), video_count=2)
@@ -64,8 +67,9 @@ class TestSelectSnapshotHighlights:
 
         assert tree.currentItem() is target, "즐겨찾기한 카테고리 노드가 선택되지 않았다"
 
-    def test_playlist_snapshot_selects_node(self, qapp_instance):
+    def test_playlist_snapshot_selects_node(self, qtbot):
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         tree = panel.trees[0]
         pl_id = uuid4()
         target = tree._make_playlist("내 재생목록", 3, pl_id, None)
@@ -76,9 +80,10 @@ class TestSelectSnapshotHighlights:
 
         assert tree.currentItem() is target, "즐겨찾기한 재생목록 노드가 선택되지 않았다"
 
-    def test_nested_category_ancestors_expanded(self, qapp_instance):
+    def test_nested_category_ancestors_expanded(self, qtbot):
         """하위 카테고리는 조상이 접혀 있으면 보이지 않으므로 펼쳐져야 한다."""
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         tree = panel.trees[0]
         child_id = uuid4()
         parent = tree._make_category("Music", uuid4(), video_count=0)
@@ -92,9 +97,10 @@ class TestSelectSnapshotHighlights:
         assert parent.isExpanded() is True, "부모 카테고리가 펼쳐지지 않아 자식이 가려진다"
         assert tree.currentItem() is child
 
-    def test_selection_does_not_reemit(self, qapp_instance):
+    def test_selection_does_not_reemit(self, qtbot):
         """선택 변경이 핸들러를 다시 실행하면 목록 조회가 두 번 돈다(이중 실행 방지)."""
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         tree = panel.trees[0]
         cat_id = uuid4()
         tree.addTopLevelItem(tree._make_category("음악", cat_id, video_count=5))
@@ -105,9 +111,10 @@ class TestSelectSnapshotHighlights:
 
         assert received == [], f"select_snapshot이 category_selected를 방출했다: {received}"
 
-    def test_unmatched_snapshot_activates_local_root(self, qapp_instance):
+    def test_unmatched_snapshot_activates_local_root(self, qtbot):
         """어떤 노드와도 일치하지 않으면 '로컬' 루트 화면으로 본다."""
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         panel.select_snapshot({"kind": "category", "cat_id": uuid4()})
         assert panel.is_local_root_active() is True
 
@@ -132,8 +139,9 @@ class TestSelectSnapshotScrolls:
             tree.addTopLevelItem(tree._make_category(f"카테고리 {i:02d}", cat_id, video_count=1))
         return tree, target_id
 
-    def test_offscreen_node_scrolled_into_view(self, qapp_instance):
+    def test_offscreen_node_scrolled_into_view(self, qtbot):
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         tree, target_id = self._build_long_tree(panel)
         panel.resize(240, 400)
         panel.show()
@@ -154,9 +162,10 @@ class TestSelectSnapshotScrolls:
         )
         panel.hide()
 
-    def test_node_is_centred_not_merely_visible(self, qapp_instance):
+    def test_node_is_centred_not_merely_visible(self, qtbot):
         """EnsureVisible(경계까지만 밀기)로 되돌아가면 이 테스트가 실패한다."""
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         tree, target_id = self._build_long_tree(panel)
         panel.resize(240, 400)
         panel.show()

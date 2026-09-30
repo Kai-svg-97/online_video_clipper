@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import itertools
+import shutil
+from pathlib import Path
 
 from domain.sync.services import origin_key, video_key
 from domain.sync.value_objects import Op, OpKind
@@ -27,7 +29,21 @@ def _op(op_id, install, lamport, kind=OpKind.UPSERT, fields=None, refs=None, nke
     )
 
 
+_TEMPLATE_DB: list[Path] = []
+
+
 def _fresh_db(tmp_path, name):
+    """빈 스키마 DB — 한 번 초기화한 파일을 복사해 쓴다.
+
+    새 DB 초기화는 마이그레이션마다 커밋(fsync)을 치러 1초 가까이 걸리는데, 순열
+    테스트는 DB를 수십 개 만든다(24개 → 11초대). 복사본에 initialize()를 다시 불러
+    같은 시작 경로를 밟되, 이미 적용된 마이그레이션은 건너뛰므로 수 ms로 끝난다.
+    """
+    if not _TEMPLATE_DB:
+        template = tmp_path / "_template.db"
+        Database(template).initialize()
+        _TEMPLATE_DB.append(template)
+    shutil.copyfile(_TEMPLATE_DB[0], tmp_path / name)
     d = Database(tmp_path / name)
     d.initialize()
     return d
