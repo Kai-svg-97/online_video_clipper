@@ -58,7 +58,9 @@ class TestLoadingChangedSignal:
         """실제 스레드 타이밍에 의존하지 않도록, 워커를 가짜로 바꿔 완료 순서를
         직접 통제한다(첫 번째 조회를 먼저 등록하고, 두 번째가 아직 진행 중인
         상태에서 첫 번째만 끝내 본다)."""
-        import gui.view_models.library_vm as vm_mod
+        # 워커를 쓰는 쪽(목록 mixin)을 패치한다 — library_vm의 재수출 이름을 바꿔도
+        # mixin이 보는 이름은 그대로라 가짜가 끼지 않는다.
+        import gui.view_models.library.listing as vm_mod
 
         started: list[object] = []
 
