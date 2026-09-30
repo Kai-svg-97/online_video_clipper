@@ -67,8 +67,11 @@ All development follows DDD principles:
 ## Development Commands
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies — CI·릴리즈와 같은 버전으로(yt-dlp만 최신)
+pip install -r requirements-dev.txt -c constraints.txt
+
+# requirements*.txt 를 바꿨으면 잠금을 다시 만든다(설치 없이 3.12/win_amd64로 푼다)
+python scripts/lock_deps.py
 
 # Run the application
 python main.py

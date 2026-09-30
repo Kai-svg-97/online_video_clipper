@@ -26,6 +26,7 @@ online_video_clipper/
 │   └── view_models.py               # 뷰모델 배선 → `ViewModels` + `build_media_services()` → `MediaServices`(상세 화면·플레이어용 인프라 기능 묶음, `AppGraph.media`)
 ├── requirements.txt
 ├── requirements-dev.txt             # PyInstaller, ruff, pytest (not bundled)
+├── constraints.txt                  # **자동 생성** — CI·릴리즈 설치 버전 고정(`-c`). yt-dlp만 고정하지 않는다. `scripts/lock_deps.py`로 다시 만든다
 ├── ruff.toml                        # 린트 규칙(기본 E4·E7·E9·F를 명시) — **위반 0건이 기준**. `ruff format`은 저장소 전체에 돌리지 않는다
 ├── .github/workflows/
 │   ├── test.yml                     # main push·PR마다 `ruff check .` + `pytest`(windows-latest) — 릴리즈 워크플로에는 테스트가 없어서 둔 게이트
@@ -51,6 +52,7 @@ online_video_clipper/
 ├── scripts/
 │   ├── build_windows.ps1            # PowerShell: runs PyInstaller → Inno Setup
 │   ├── build_linux.sh               # Bash: runs PyInstaller → appimagetool
+│   ├── lock_deps.py                 # constraints.txt 생성 — `pip install --dry-run --report`로 설치 없이 Python 3.12/win_amd64 휠 기준으로 푼다. yt-dlp 제외
 │   ├── build_manual.py              # docs/manual.md → docs/manual/index.html, docs/manual.en.md → index.en.html (F1이 여는 설명서, 언어마다 원본 하나)
 │   ├── capture_screenshots.py       # 설명서 갈무리(OVC_DATA_DIR 샌드박스). `--lang en`이면 영어 화면을 docs/manual/images-en/에 저장
 │   ├── extract_catalog.py           # `tr("…")` 리터럴 + `messages._TEMPLATES`를 모아 locales/en.json 뼈대 갱신(기존 번역 보존, 사라진 원문 제거). `--report`는 채움률만

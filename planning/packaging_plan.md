@@ -248,6 +248,12 @@ Filename: "{app}\YouTubeContentManager.exe"; Description: "Launch app"; Flags: p
 
 ## requirements 분리
 
+> **버전 고정은 `constraints.txt`가 한다**(2026-09-30~). 아래 두 파일은 무엇이 필요한가(`>=`
+> 하한)만 적고, CI·릴리즈는 `pip install -r requirements-dev.txt -c constraints.txt`로 설치해
+> 같은 태그가 같은 번들이 되게 한다. yt-dlp만 고정하지 않는다(YouTube 변화 추종).
+> 다시 만들기: `python scripts/lock_deps.py`(설치 없이 Python 3.12 / win_amd64 휠로 푼다).
+> 아래 목록은 시점 기록이며 실제 목록은 저장소의 `requirements*.txt`가 기준이다.
+
 **`requirements.txt`** (런타임 — 번들에 포함):
 
 ```text

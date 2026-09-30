@@ -3,6 +3,15 @@
 <!-- delta 확인(2026-09-18): release.yml 최종 변경은 여전히 d3ab43e(2026-08-10)로
      규칙 변화 없음. 테스트 건수만 현재 값으로 갱신했다(린트 기준선 10건은 그대로). -->
 
+## 의존성 버전 (2026-09-30~)
+- CI·릴리즈는 `pip install -r requirements-dev.txt -c constraints.txt`로 설치한다 —
+  **같은 태그는 같은 번들**이 된다. 예외는 yt-dlp 하나: 고정하지 않아 빌드하는 날의
+  최신판이 들어간다(YouTube 변화 추종).
+- `requirements*.txt`를 바꿨으면 `python scripts/lock_deps.py`로 `constraints.txt`를
+  다시 만들어 같은 커밋에 넣는다. 오래된 고정이 걱정되면 릴리즈 전에 한 번 돌려
+  diff를 보고, 네이티브 확장(PyQt6·ctranslate2·onnxruntime·av)이 바뀌었으면 아래
+  "네이티브 의존이 늘었을 때의 추가 게이트"대로 로컬 빌드 + 실행으로 확인한다.
+
 ## Version Sources
 - `version.py` — `__version__ = "X.Y.Z"` (단일 출처)
 - `installer.iss` 는 CI에서 `/DAppVersion=` 파라미터로 주입되므로 수동 수정 불필요
