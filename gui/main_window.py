@@ -1,19 +1,21 @@
-"""메인 윈도우 — 아이콘 사이드바 + 콘텐츠 스택 레이아웃."""
+"""메인 윈도우 — 아이콘 사이드바 + 콘텐츠 스택 레이아웃.
+
+**창 자체만 여기 있다** — frameless 타이틀바·`nativeEvent`·`closeEvent`(`shutdown_all`)·
+중복 실행 복원·시그널 배선. 셸 부품(사이드바·라이브러리 페이지·다운로드 상태바·DB 백업
+워커)은 `gui/shell/` 패키지에 있다.
+"""
 from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import QEvent, QSize, QThread, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QColor, QIcon, QPainter, QPen, QPixmap, QPixmapCache
-from PyQt6.QtSvg import QSvgRenderer
+from PyQt6.QtCore import QEvent, QTimer, Qt
+from PyQt6.QtGui import QCloseEvent, QPixmapCache
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
     QMessageBox,
     QProgressBar,
-    QPushButton,
     QStackedWidget,
     QStatusBar,
     QVBoxLayout,
@@ -24,7 +26,6 @@ from config.settings import PIXMAP_CACHE_LIMIT_KB, THEME
 from domain.updater.badge_state import ClickAction
 # YouTubeAuthDialog는 단독 다이얼로그 대신 Settings 패널로 통합됨
 from gui.panels.download_panel import DownloadPanel
-from gui.panels.library_panel import LibraryPanel
 from gui.panels.monitoring_panel import MonitoringPanel
 from gui.panels.settings_panel import SettingsPanel  # noqa: F401 (used in isinstance check)
 from gui.panels.stats_panel import StatsPanel
@@ -33,20 +34,20 @@ from gui.frameless import install_frameless, safe_dispatch
 from gui.window_state import restore_from_tray
 from gui.widgets.title_bar import TitleBar
 from gui.widgets.update_badge import UpdateBadge
-from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.toast import KIND_ERROR, KIND_SUCCESS, show_toast
 from gui.workers import retire_thread, track_thread, wait_all
 
+# 셸 부품은 gui/shell/ 에 있다. `_SideBar` 등은 기존 임포트 경로
+# (`from gui.main_window import _SideBar`)를 지키려고 재수출한다 — 테스트에서
+# **패치할 때는 쓰는 쪽 모듈**(gui.shell.*)을 패치할 것.
+from gui.shell.library_page import _DownloadBar, _LibraryPage  # noqa: F401 — 재수출
+from gui.shell.pages import _PAGE_LIBRARY, _PAGE_STATS
+from gui.shell.sidebar import _NavButton, _SideBar  # noqa: F401 — 재수출
+from gui.shell.workers import _DbBackupWorker
+
 from gui.view_models.base import shutdown_all
 from gui.view_models.bundle import ViewModels
-from gui.themes.tokens import ThemeTokens
-from gui.view_models.clip_vm import ClipViewModel
-from gui.view_models.download_vm import DownloadViewModel
-from gui.view_models.feed_vm import FeedViewModel
-from gui.view_models.library_vm import LibraryViewModel
-from gui.view_models.monitoring_vm import MonitoringViewModel
-from gui.view_models.playlist_vm import PlaylistViewModel
 from domain.shared.ports import IYouTubeAuth
 from gui.media_services import MediaServices
 from version import __version__
@@ -61,381 +62,6 @@ _BOOKMARK_IMPORT_LIMIT = 200
 # 워치 폴더를 얼마나 자주 훑나(ms). 폴더 목록을 읽는 것뿐이라 싸지만, 너무 자주
 # 돌면 절전 중인 디스크를 계속 깨운다.
 _WATCH_SCAN_MS = 30_000
-
-# ---------------------------------------------------------------------------
-# SVG 아이콘 정의 (인라인)
-# ---------------------------------------------------------------------------
-
-_SVG_LIBRARY = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-  <rect x="3" y="3" width="7" height="7" rx="1"/>
-  <rect x="14" y="3" width="7" height="7" rx="1"/>
-  <rect x="3" y="14" width="7" height="7" rx="1"/>
-  <rect x="14" y="14" width="7" height="7" rx="1"/>
-</svg>"""
-
-_SVG_DOWNLOAD = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-  <path d="M12 3v12M6 12l6 6 6-6"/><line x1="3" y1="20" x2="21" y2="20"/>
-</svg>"""
-
-_SVG_MONITOR = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-  <path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.9L15 14"/>
-  <rect x="3" y="6" width="12" height="12" rx="2"/>
-</svg>"""
-
-_SVG_STATS = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-  <rect x="3" y="12" width="4" height="9"/><rect x="10" y="7" width="4" height="14"/>
-  <rect x="17" y="3" width="4" height="18"/>
-</svg>"""
-
-_SVG_FEED = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-  <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
-  <polyline points="9 22 9 12 15 12 15 22"/>
-</svg>"""
-
-_SVG_SETTINGS = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-  fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-  <circle cx="12" cy="12" r="3"/>
-  <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83
-    2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33
-    1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09
-    A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06
-    a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15
-    a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09
-    A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06
-    a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68
-    a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09
-    a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06
-    a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9
-    a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09
-    a1.65 1.65 0 00-1.51 1z"/>
-</svg>"""
-
-
-def _make_svg_icon(svg_bytes: bytes, color: str, size: int = 16) -> QIcon:
-    """SVG 바이트에서 지정 색상의 QIcon을 생성한다."""
-    colored = svg_bytes.replace(b'stroke="currentColor"',
-                                f'stroke="{color}"'.encode())
-    renderer = QSvgRenderer(colored)
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    renderer.render(painter)
-    painter.end()
-    return QIcon(pixmap)
-
-
-# ---------------------------------------------------------------------------
-# 사이드바 내비게이션 버튼
-# ---------------------------------------------------------------------------
-
-_PAGE_LIBRARY  = 0
-_PAGE_DOWNLOAD = 1
-_PAGE_MONITOR  = 2
-_PAGE_STATS    = 3
-_PAGE_SETTINGS = 4
-
-
-class _NavButton(QPushButton):
-    """사이드바 아이콘 내비게이션 버튼."""
-
-    def __init__(
-        self,
-        svg: bytes,
-        tooltip: str,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._svg = svg
-        self.setToolTip(tooltip)
-        self.setFixedSize(32, 32)
-        self.setCheckable(True)
-        self.setFlat(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._apply_theme(ThemeManager.instance().current())
-        ThemeManager.instance().theme_changed.connect(self._apply_theme)
-        self._show_badge = False
-
-    def set_badge(self, visible: bool) -> None:
-        self._show_badge = visible
-        self.update()
-
-    def paintEvent(self, event) -> None:  # type: ignore[override]
-        super().paintEvent(event)
-        if self._show_badge:
-            p = QPainter(self)
-            p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            p.setPen(Qt.PenStyle.NoPen)
-            # 주의를 끄는 알림 점 — 의미 색(danger)이 테마 밝기에 맞는 톤을 준다.
-            p.setBrush(QColor(sem("danger")))
-            r = 5
-            p.drawEllipse(self.width() - r * 2 - 2, 2, r * 2, r * 2)
-            p.end()
-
-    def _apply_theme(self, tokens: ThemeTokens) -> None:
-        icon_color = tokens.text_secondary
-        active_color = tokens.text_primary
-        bg_overlay = tokens.bg_overlay
-        self._update_icons(icon_color, active_color)
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: none;
-                border-radius: 6px;
-            }}
-            QPushButton:hover {{
-                background: {bg_overlay};
-            }}
-            QPushButton:checked {{
-                background: {bg_overlay};
-                border-left: 2px solid {tokens.accent};
-                border-radius: 0px 6px 6px 0px;
-            }}
-        """)
-
-    def _update_icons(self, normal: str, active: str) -> None:
-        self.setIcon(_make_svg_icon(self._svg, normal, 16))
-        self.setIconSize(QSize(16, 16))
-
-
-# ---------------------------------------------------------------------------
-# 사이드바
-# ---------------------------------------------------------------------------
-
-class _SideBar(QWidget):
-    """48px 고정 너비 아이콘 사이드바."""
-
-    settings_navigated_with_badge = pyqtSignal()
-
-    def __init__(self, stack: QStackedWidget, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._stack = stack
-        self._buttons: list[_NavButton] = []
-        # paintEvent가 _apply_theme보다 먼저 불릴 수 있어 기본값을 먼저 잡는다.
-        _tok = ThemeManager.instance().current()
-        self._bg = QColor(_tok.bg_surface)
-        self._border = QColor(_tok.border)
-        self.setFixedWidth(48)
-        self._build_ui()
-        self._apply_theme(ThemeManager.instance().current())
-        ThemeManager.instance().theme_changed.connect(self._apply_theme)
-
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 12, 8, 12)
-        layout.setSpacing(4)
-        layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-
-        # 주 내비게이션 버튼
-        nav_defs = [
-            (_SVG_LIBRARY,  tr("라이브러리"),        _PAGE_LIBRARY),
-            (_SVG_DOWNLOAD, tr("다운로드"),          _PAGE_DOWNLOAD),
-            (_SVG_MONITOR,  tr("채널 모니터링"),      _PAGE_MONITOR),
-            (_SVG_STATS,    tr("통계"),              _PAGE_STATS),
-        ]
-        for svg, tip, page in nav_defs:
-            btn = _NavButton(svg, tip)
-            btn.clicked.connect(lambda checked, p=page: self._navigate(p))
-            layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-            self._buttons.append(btn)
-
-        layout.addStretch()
-
-        # 설정 버튼 (하단)
-        self._settings_btn = _NavButton(_SVG_SETTINGS, tr("설정"))
-        self._settings_btn.clicked.connect(lambda: self._navigate(_PAGE_SETTINGS))
-        layout.addWidget(self._settings_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-        self._buttons.append(self._settings_btn)
-
-        # 첫 번째(라이브러리) 선택
-        self._buttons[0].setChecked(True)
-
-    def show_update_badge(self, visible: bool) -> None:
-        self._settings_btn.set_badge(visible)
-
-    def set_settings_tooltip(self, text: str) -> None:
-        self._settings_btn.setToolTip(text)
-
-    def _navigate(self, page: int) -> None:
-        if page == _PAGE_SETTINGS \
-                and getattr(self, "_settings_btn", None) \
-                and self._settings_btn._show_badge:
-            self._settings_btn.set_badge(False)
-            self.settings_navigated_with_badge.emit()
-        self._stack.setCurrentIndex(page)
-        page_to_btn = {
-            _PAGE_LIBRARY:  0,
-            _PAGE_DOWNLOAD: 1,
-            _PAGE_MONITOR:  2,
-            _PAGE_STATS:    3,
-            _PAGE_SETTINGS: 4,
-        }
-        for i, btn in enumerate(self._buttons):
-            btn.setChecked(i == page_to_btn.get(page, 0))
-
-    def _apply_theme(self, tokens: ThemeTokens) -> None:
-        # 배경은 paintEvent에서 직접 칠한다. 앱 레벨 QSS의 `QWidget { background-color }`가
-        # 위젯 레벨 스타일시트(ID 선택자 포함)를 덮어써서 bg_surface가 적용되지 않았다
-        # (slate에서는 base/surface 차이가 3단위라 눈에 안 띄어 방치돼 있었음).
-        self._bg = QColor(tokens.bg_surface)
-        self._border = QColor(tokens.border)
-        self.setObjectName("sidebar")
-        self.update()
-
-    def paintEvent(self, event) -> None:  # type: ignore[override]
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), self._bg)
-        painter.setPen(QPen(self._border, 1))
-        x = self.width() - 1
-        painter.drawLine(x, 0, x, self.height())
-        painter.end()
-        super().paintEvent(event)
-
-
-# ---------------------------------------------------------------------------
-# 다운로드 상태바
-# ---------------------------------------------------------------------------
-
-class _DownloadBar(QWidget):
-    """하단 슬림 다운로드 상태 표시바.
-
-    활성 다운로드가 없으면 숨긴다.
-    클릭 시 다운로드 페이지로 이동한다.
-    """
-
-    def __init__(
-        self,
-        stack: QStackedWidget,
-        download_vm: DownloadViewModel,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._stack = stack
-        self._vm = download_vm
-        self.setFixedHeight(28)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(8)
-
-        self._dot = QLabel("●")
-        self._dot.setStyleSheet("font-size: 8px;")
-        layout.addWidget(self._dot)
-
-        self._msg = QLabel(tr("다운로드 없음"))
-        self._msg.setStyleSheet("font-size: 10px;")
-        layout.addWidget(self._msg)
-        layout.addStretch()
-
-        self._apply_theme(ThemeManager.instance().current())
-        ThemeManager.instance().theme_changed.connect(self._apply_theme)
-
-        # DownloadViewModel 연결
-        self._vm.queue_changed.connect(self._refresh)
-        self._refresh()
-
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        self._stack.setCurrentIndex(_PAGE_DOWNLOAD)
-
-    def _refresh(self) -> None:
-        jobs = self._vm.queue
-        active = [j for j in jobs if j.status in ("pending", "running", "downloading")]
-        if active:
-            first = active[0]
-            pct = first.progress.percent if hasattr(first, "progress") else 0
-            self._msg.setText(f"{first.title} — {pct:.0f}%")
-            self.show()
-        else:
-            self.hide()
-
-    def _apply_theme(self, tokens: ThemeTokens) -> None:
-        self.setStyleSheet(f"""
-            _DownloadBar {{
-                background-color: {tokens.bg_surface};
-                border-top: 1px solid {tokens.border};
-            }}
-        """)
-        self.setObjectName("dlbar")
-        self.setAutoFillBackground(True)
-        self._dot.setStyleSheet(f"font-size: 8px; color: {tokens.text_muted};")
-        self._msg.setStyleSheet(f"font-size: 10px; color: {tokens.text_muted};")
-
-
-# ---------------------------------------------------------------------------
-# 라이브러리 페이지 (URL 바 + LibraryPanel + DownloadBar)
-# ---------------------------------------------------------------------------
-
-class _LibraryPage(QWidget):
-    def __init__(
-        self,
-        library_vm: LibraryViewModel,
-        download_vm: DownloadViewModel,
-        clip_vm: ClipViewModel,
-        stack: QStackedWidget,
-        playlist_vm: PlaylistViewModel | None = None,
-        feed_vm: FeedViewModel | None = None,
-        monitoring_vm: MonitoringViewModel | None = None,
-        song_vm=None,
-        recommend_vm=None,
-        album_vm=None,
-        subtitle_vm=None,
-        media: MediaServices | None = None,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self._library_panel = LibraryPanel(
-            library_vm,
-            clip_vm=clip_vm,
-            download_vm=download_vm,
-            playlist_vm=playlist_vm,
-            feed_vm=feed_vm,
-            monitoring_vm=monitoring_vm,
-            song_vm=song_vm,
-            recommend_vm=recommend_vm,
-            album_vm=album_vm,
-            subtitle_vm=subtitle_vm,
-            media=media,
-        )
-        layout.addWidget(self._library_panel, 1)
-
-        self._dl_bar = _DownloadBar(stack, download_vm)
-        layout.addWidget(self._dl_bar)
-
-    def library_panel(self) -> LibraryPanel:
-        return self._library_panel
-
-
-# ---------------------------------------------------------------------------
-# DB 백업 워커
-# ---------------------------------------------------------------------------
-
-class _DbBackupWorker(QThread):
-    """하루 한 번 DB 사본을 남긴다 — **배경에서**.
-
-    큰 라이브러리는 복사에 몇 초가 걸린다. 시작 경로에서 동기로 돌리면 그만큼
-    창이 멈춰 보인다(CLAUDE.md 의 시작 성능 규칙).
-    """
-
-    done = pyqtSignal(object)   # 만든 경로(str) 또는 None
-
-    def __init__(self, backup) -> None:
-        # 부모를 주지 않는다 — 창이 먼저 닫힐 때 실행 중 스레드가 파괴되면
-        # Qt가 프로세스를 즉시 종료한다(gui/workers.py).
-        super().__init__(None)
-        self._backup = backup
-
-    def run(self) -> None:
-        made = self._backup.run_daily()
-        self.done.emit(str(made) if made else None)
 
 
 # ---------------------------------------------------------------------------
