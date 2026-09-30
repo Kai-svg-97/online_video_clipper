@@ -22,9 +22,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
+        # constraints.txt 가 버전을 고정해 같은 태그는 같은 번들이 된다. yt-dlp 만은 고정하지
+        # 않아 **빌드하는 날의 최신판**이 들어간다(YouTube 변화 추종 — scripts/lock_deps.py).
+        run: pip install -r requirements-dev.txt -c constraints.txt
 
       - name: Derive version from tag
         id: ver

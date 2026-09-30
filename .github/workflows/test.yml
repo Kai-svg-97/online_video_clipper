@@ -38,11 +38,11 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            constraints.txt
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
+        # constraints.txt 가 버전을 고정한다(yt-dlp 만 최신) — scripts/lock_deps.py 로 다시 만든다.
+        run: pip install -r requirements-dev.txt -c constraints.txt
 
       - name: Lint
         run: python -m ruff check .
