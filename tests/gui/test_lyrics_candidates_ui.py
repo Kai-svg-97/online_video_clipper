@@ -15,8 +15,9 @@ from gui.panels.video_detail_panel import _LyricsCandidateList, _SongTab
 
 
 @pytest.fixture
-def clist(qapp_instance):
+def clist(qtbot):
     w = _LyricsCandidateList()
+    qtbot.addWidget(w)
     w.resize(700, 300)
     return w
 
@@ -167,8 +168,9 @@ class TestSongTabIntegration:
     """검색 버튼 → 후보 목록 전환 → 선택 방출까지 탭 수준 배선."""
 
     @pytest.fixture
-    def tab(self, qapp_instance):
+    def tab(self, qtbot):
         w = _SongTab()
+        qtbot.addWidget(w)
         w.resize(600, 500)
         return w
 

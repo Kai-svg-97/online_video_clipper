@@ -11,12 +11,14 @@ from gui.panels.library_panel import _PlaylistPanel
 
 
 class TestLocalRootActive:
-    def test_starts_inactive(self, qapp_instance):
+    def test_starts_inactive(self, qtbot):
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         assert panel.is_local_root_active() is False
 
-    def test_header_click_activates_and_emits(self, qapp_instance):
+    def test_header_click_activates_and_emits(self, qtbot):
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         received: list = []
         panel.category_selected.connect(received.append)
 
@@ -25,9 +27,10 @@ class TestLocalRootActive:
         assert panel.is_local_root_active() is True
         assert received == [None]
 
-    def test_header_click_clears_tree_selection(self, qapp_instance):
+    def test_header_click_clears_tree_selection(self, qtbot):
         """핵심 회귀 — 이전에 선택한 노드의 선택이 지워져야 한다."""
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         tree = panel.trees[0]
         item = tree._make_category("AI Coding", uuid4(), video_count=1)
         tree.addTopLevelItem(item)
@@ -38,9 +41,10 @@ class TestLocalRootActive:
 
         assert tree.selectedItems() == [], "로컬 클릭 후에도 트리 선택이 남아 있다"
 
-    def test_clearing_selection_does_not_reemit(self, qapp_instance):
+    def test_clearing_selection_does_not_reemit(self, qtbot):
         """선택 해제가 시그널을 타 핸들러를 다시 실행하면 안 된다(이중 실행 방지)."""
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         tree = panel.trees[0]
         item = tree._make_category("Movies", uuid4(), video_count=1)
         tree.addTopLevelItem(item)
@@ -52,8 +56,9 @@ class TestLocalRootActive:
 
         assert received == [None], f"category_selected가 중복 방출됨: {received}"
 
-    def test_tree_selection_deactivates_header(self, qapp_instance):
+    def test_tree_selection_deactivates_header(self, qtbot):
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         panel.set_local_root_active(True)
         tree = panel.trees[0]
         item = tree._make_category("Redis", uuid4(), video_count=1)
@@ -63,9 +68,10 @@ class TestLocalRootActive:
 
         assert panel.is_local_root_active() is False
 
-    def test_checked_state_follows_active(self, qapp_instance):
+    def test_checked_state_follows_active(self, qtbot):
         """QSS :checked 규칙이 걸리도록 체크 상태가 동기화돼야 한다."""
         panel = _PlaylistPanel()
+        qtbot.addWidget(panel)
         panel.set_local_root_active(True)
         assert panel._local_hdr.isChecked() is True
         panel.set_local_root_active(False)

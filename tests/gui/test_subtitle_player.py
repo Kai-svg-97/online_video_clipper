@@ -385,7 +385,7 @@ class TestShortcutReachability:
     """
 
     @pytest.fixture
-    def host(self, qapp_instance):
+    def host(self, qapp_instance, qtbot):
         # 상세화면처럼 플레이어 밖에도 포커스 대상이 있는 창을 만든다.
         w = QWidget()
         lay = QVBoxLayout(w)
@@ -397,41 +397,65 @@ class TestShortcutReachability:
         w.resize(700, 500)
         w.show()
         QTest.qWaitForWindowExposed(w)
+        # 활성화는 노출보다 늦게(비동기로) 온다. 부하가 걸리면 그 사이에 클릭이 먼저
+        # 가서 QApplication.focusWidget()이 None으로 남아 간헐 실패했다. 활성 창이 될
+        # 때까지 기다리되, OS가 전경 전환을 끝내 허락하지 않아도(다른 프로세스가 창을
+        # 띄우는 중 등) 판정은 창 안의 포커스 소유자로 하므로 결과가 흔들리지 않는다.
+        w.activateWindow()
+        try:
+            qtbot.waitUntil(w.isActiveWindow, timeout=2000)
+        except AssertionError:
+            pass  # 비활성이어도 _focus_owner 판정은 유효하다
         yield p, edit
         p.stop()
         w.hide()
         w.deleteLater()
+
+    @staticmethod
+    def _focus_owner(player):
+        """창 안에서 키 입력을 받을 위젯.
+
+        `QApplication.focusWidget()`은 **활성 창**의 포커스 위젯만 돌려주므로 창이
+        아직(또는 끝내) 활성화되지 않으면 None이다 — 그건 OS 창 활성화 타이밍이지
+        포커스 위임 배선의 문제가 아니다. 창의 포커스 자식은 활성 여부와 무관하게
+        클릭 포커스로 갱신되고, 창이 활성화되는 순간 그대로 키 입력 대상이 된다.
+        """
+        return player.window().focusWidget()
+
+    def _focus_edit(self, qtbot, player, edit) -> None:
+        edit.setFocus()
+        qtbot.waitUntil(lambda: self._focus_owner(player) is edit, timeout=2000)
 
     def _nudges(self, player) -> list[int]:
         seen: list[int] = []
         player.subtitle_offset_changed.connect(seen.append)
         return seen
 
-    def test_영상_클릭_후_괄호키가_오프셋을_바꾼다(self, host):
+    def test_영상_클릭_후_괄호키가_오프셋을_바꾼다(self, host, qtbot):
         player, edit = host
         player.set_lyrics(_track())
         seen = self._nudges(player)
-        edit.setFocus()
+        self._focus_edit(qtbot, player, edit)
         QTest.mouseClick(
             player._video_view.viewport(), Qt.MouseButton.LeftButton,
             Qt.KeyboardModifier.NoModifier, QPoint(200, 100),
         )
-        assert QApplication.focusWidget() is player
+        assert self._focus_owner(player) is player
         QTest.keyClick(player, Qt.Key.Key_BracketRight)
         assert seen == [250]
 
-    def test_컨트롤바_버튼_클릭_후에도_괄호키가_동작한다(self, host):
+    def test_컨트롤바_버튼_클릭_후에도_괄호키가_동작한다(self, host, qtbot):
         # 버튼은 TabFocus라 자신은 포커스를 안 갖지만, 클릭이 InlinePlayer로 올라가야 한다.
         player, edit = host
         player.set_lyrics(_track())
         seen = self._nudges(player)
-        edit.setFocus()
+        self._focus_edit(qtbot, player, edit)
         QTest.mouseClick(player._bar._btn_play, Qt.MouseButton.LeftButton)
-        assert QApplication.focusWidget() is player
+        assert self._focus_owner(player) is player
         QTest.keyClick(player, Qt.Key.Key_BracketRight)
         assert seen == [250]
 
-    def test_플레이어_밖에_포커스가_있으면_도달하지_않는다(self, host):
+    def test_플레이어_밖에_포커스가_있으면_도달하지_않는다(self, host, qtbot):
         # 경계 확인: 검색창 등에 포커스가 있으면 ']'는 그 위젯의 입력이다.
         player, edit = host
         player.set_lyrics(_track())
@@ -441,16 +465,16 @@ class TestShortcutReachability:
         assert seen == []
         assert edit.text() == "]"
 
-    def test_영상_클릭_후_마침표키도_오프셋을_바꾼다(self, host):
+    def test_영상_클릭_후_마침표키도_오프셋을_바꾼다(self, host, qtbot):
         player, edit = host
         player.set_lyrics(_track())
         seen = self._nudges(player)
-        edit.setFocus()
+        self._focus_edit(qtbot, player, edit)
         QTest.mouseClick(
             player._video_view.viewport(), Qt.MouseButton.LeftButton,
             Qt.KeyboardModifier.NoModifier, QPoint(200, 100),
         )
-        assert QApplication.focusWidget() is player
+        assert self._focus_owner(player) is player
         QTest.keyClick(player, Qt.Key.Key_Period)
         assert seen == [250]
 

@@ -53,12 +53,19 @@ class Database:
         with self.connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
-            conn.executescript(schema_sql)
+            # executescript는 문장마다 자동 커밋해 새 DB에서는 CREATE 하나하나가 따로
+            # 커밋(fsync)된다(50여 번, 실측 ~0.36초). 한 트랜잭션으로 묶어 한 번만 커밋한다.
+            conn.executescript("BEGIN;\n" + schema_sql + "\nCOMMIT;")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations "
                 "(id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
             )
+            # 적용 여부를 한 번에 읽는다 — 마이그레이션마다 연결을 열어 확인하면 이미
+            # 다 적용된 DB(두 번째 실행부터의 시작 경로)에서도 연결을 17번 여닫는다.
+            applied = {row[0] for row in conn.execute("SELECT id FROM schema_migrations")}
         for migration_id in MIGRATION_IDS:
+            if migration_id in applied:
+                continue
             self._run_once(migration_id, getattr(self, "_" + migration_id))
 
     def _run_once(self, migration_id: str, func) -> None:

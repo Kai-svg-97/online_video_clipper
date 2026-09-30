@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication
 
 
@@ -19,6 +20,22 @@ def qapp_instance():
     """세션 전체에서 QApplication 인스턴스를 하나만 생성한다."""
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+@pytest.fixture(autouse=True)
+def _flush_deferred_deletes():
+    """테스트가 끝날 때 `deleteLater()`로 예약된 삭제를 실제로 수행한다.
+
+    테스트에는 앱처럼 도는 이벤트 루프가 없어서 `deleteLater()`(qtbot.addWidget의
+    정리 포함)가 예약만 되고 **세션이 끝날 때까지 집행되지 않았다.** 그렇게 쌓인
+    위젯이 1만 개 가까이 되자, 전역 QSS를 바꾸는 테스트(ThemeManager.apply)가
+    살아 있는 모든 위젯을 다시 polish하느라 한 번에 20초 넘게 걸렸다. 앱에서는
+    이벤트 루프가 곧바로 집행하는 일이므로 여기서도 테스트마다 집행한다.
+    """
+    yield
+    app = QApplication.instance()
+    if app is not None:
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
 
 
 @pytest.fixture
