@@ -28,7 +28,7 @@ from infrastructure.persistence.database import MIGRATION_IDS
 from infrastructure.sync.cloud_oplog_store import CloudOplogStore
 from infrastructure.sync.device import Device, LamportClock
 from infrastructure.sync.file_syncer import FileSyncer
-from infrastructure.sync.keyring_secret_store import KeyringSecretStore
+from infrastructure.sync.keyring_secret_store import KeyringSecretStore, scoped_service
 from infrastructure.sync.local_oplog_store import LocalOplogStore
 from infrastructure.sync.merge_applier import MergeApplier
 from infrastructure.sync.recorder import OplogRecorder
@@ -47,7 +47,10 @@ def _sync_dir() -> Path:
 
 
 def build_secret_store() -> KeyringSecretStore:
-    return KeyringSecretStore(_KEYRING_SERVICE, _sync_dir() / "secrets.json")
+    return KeyringSecretStore(
+        scoped_service(_KEYRING_SERVICE, settings.DATA_DIR, settings.DEFAULT_DATA_DIR),
+        _sync_dir() / "secrets.json",
+    )
 
 
 def build_provider(provider_key: str, secret_store, *, client_id: str | None = None,
@@ -109,7 +112,8 @@ class SyncService:
         self._data_dir = Path(data_dir) if data_dir else Path(settings.DATA_DIR)
         self._sdir = self._data_dir / "sync"
         self._secret = secret_store or KeyringSecretStore(
-            _KEYRING_SERVICE, self._sdir / "secrets.json"
+            scoped_service(_KEYRING_SERVICE, self._data_dir, settings.DEFAULT_DATA_DIR),
+            self._sdir / "secrets.json",
         )
         self._device = Device(self._secret)
         self._install = self._device.install_id()

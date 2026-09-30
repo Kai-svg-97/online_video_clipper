@@ -9,12 +9,33 @@ Windows(주 대상)에서는 Windows Credential Manager를 쓴다. keyring 백�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def scoped_service(base: str, data_dir: Path, default_dir: Path) -> str:
+    """keyring 서비스 이름을 **데이터 폴더 단위로** 가른다.
+
+    keyring(Windows 자격 증명 관리자)은 OS 사용자 하나에 저장소가 하나다. 이름을 고정하면
+    데이터 폴더가 달라도 같은 비밀값을 본다 — `OVC_DATA_DIR`로 격리한 실행(설명서 갈무리)이
+    사용자의 **실제** 동기화 자격증명·YouTube 토큰을 읽고, 동기화 시험의 "두 기기"가
+    install_id를 공유해 수렴하지 않는다(CI에서 실제로 드러났다 — 로컬 파이썬엔 keyring이
+    없어 파일 폴백이 폴더별로 갈라 주는 바람에 가려져 있었다). 시험이 개발 PC의 실제
+    install_id를 덮어쓸 수도 있었다.
+
+    **기본 폴더는 이름을 바꾸지 않는다** — 바꾸면 기존 사용자가 저장해 둔 토큰을 찾지 못해
+    로그아웃된 것처럼 보인다. 다른 폴더만 경로 해시를 덧붙인다.
+    """
+    here = Path(data_dir).resolve()
+    if here == Path(default_dir).resolve():
+        return base
+    digest = hashlib.sha1(str(here).lower().encode("utf-8")).hexdigest()[:10]
+    return f"{base}@{digest}"
 
 
 class KeyringSecretStore:

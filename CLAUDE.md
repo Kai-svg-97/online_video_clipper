@@ -309,6 +309,12 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
   두는 코드가 특히 위험하다** — `application/library/favorites.py`가 OS 사용자 데이터
   경로를 쓰는 바람에 격리를 빠져나가, v1.32.0 갈무리에 사용자의 즐겨찾기가 찍혀 공개
   저장소와 설치본에 들어갔다. 계약은 `tests/unit/test_capture_isolation.py`가 강제한다.
+  **OS 전역 저장소(keyring)도 같다** — 서비스 이름을 고정하면 데이터 폴더가 달라도 같은
+  비밀값을 읽는다. `KeyringSecretStore`를 만들 때는 이름을
+  `scoped_service(이름, 데이터폴더, DEFAULT_DATA_DIR)`로 준다(기본 폴더는 이름 그대로 —
+  바꾸면 기존 사용자가 로그아웃된다). 로컬 파이썬에 keyring이 없으면 파일 폴백이 폴더별로
+  갈라 주어 **이 결함이 가려진다** — CI(keyring 있음)에서야 드러났다
+  (`tests/unit/infrastructure/test_keyring_scope.py`).
 - **갈무리 스크립트 위쪽에 앱 모듈을 임포트하지 않는다.** 경로 상수는 모듈을 불러올 때
   정해지므로, 환경 변수를 세우기 전에 한 줄이라도 앱을 불러오면 격리가 **조용히** 깨진다.
 - **설명서에 새 마크다운 문법을 쓰기 전에 렌더러가 그것을 아는지 확인한다.** 모르는 문법은

@@ -105,8 +105,10 @@ class TestAreaHeightRule:
 
         capped = area.heightForWidth(2400)
 
+        # 요청한 800이 아니라 **실제** 창 높이로 잰다 — 화면이 작으면(CI 러너) 창 관리자가
+        # 창을 줄인다(실측: 800 → 749). 지키려는 것은 "창 높이의 비율로 제한한다"이다.
         assert capped < 2400 * 9 // 16
-        assert capped == int(800 * _VideoArea._MAX_WINDOW_RATIO)
+        assert capped == int(window.height() * _VideoArea._MAX_WINDOW_RATIO)
 
     def test_배치_전_초기_크기에서는_제한하지_않는다(self, qtbot):
         """창 높이를 아직 모를 때 제한하면 영역이 찌부러진 채로 굳는다."""

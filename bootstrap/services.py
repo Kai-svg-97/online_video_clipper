@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from config.settings import BACKUP_DIR, DATA_DIR
+from config.settings import BACKUP_DIR, DATA_DIR, DEFAULT_DATA_DIR
 from infrastructure.auth.youtube_auth import YouTubeAuthService
 from infrastructure.browser.gemini_extractor import (
     GeminiExtractor,
@@ -29,7 +29,7 @@ from infrastructure.subtitle.whisper_transcriber import WhisperTranscriber
 from infrastructure.song.album_providers import build_default_album_provider
 from infrastructure.song.lyrics_providers import build_default_providers
 from infrastructure.song.translator import DeepTranslatorAdapter
-from infrastructure.sync.keyring_secret_store import KeyringSecretStore
+from infrastructure.sync.keyring_secret_store import KeyringSecretStore, scoped_service
 from infrastructure.sync.sync_service import SyncService
 from infrastructure.watch.folder_scanner import WatchFolderScanner
 from infrastructure.youtube.oauth_adapter import YouTubeOAuthAdapter
@@ -57,7 +57,8 @@ def build_youtube_oauth(db) -> YouTubeOAuthAdapter:
     보인다.
     """
     yt_secret_store = KeyringSecretStore(
-        "online-video-clipper.youtube-oauth",
+        # 격리 실행(OVC_DATA_DIR)이 사용자의 실제 토큰을 읽지 않게 폴더 단위로 가른다.
+        scoped_service("online-video-clipper.youtube-oauth", DATA_DIR, DEFAULT_DATA_DIR),
         Path(DATA_DIR) / "secrets" / "youtube_oauth.json",
     )
     return YouTubeOAuthAdapter(

@@ -193,11 +193,19 @@ def test_build_youtube_oauth_uses_expected_service_and_fallback_path(tmp_path, m
         _FakeAdapter,
     )
     monkeypatch.setattr("bootstrap.services.DATA_DIR", tmp_path)
+    # 기본 데이터 폴더에서는 keyring 이름이 **예전 그대로**여야 한다 — 기존 사용자가 저장해 둔
+    # 토큰을 찾는 이름이다(바꾸면 로그아웃된 것처럼 보인다).
+    monkeypatch.setattr("bootstrap.services.DEFAULT_DATA_DIR", tmp_path)
 
     adapter = svc.build_youtube_oauth(db=object())
 
     assert adapter.secret_store.service == "online-video-clipper.youtube-oauth"
     assert adapter.secret_store.fallback_path == tmp_path / "secrets" / "youtube_oauth.json"
+
+    # 격리 실행(OVC_DATA_DIR)처럼 다른 폴더에서는 이름을 갈라 사용자의 실제 토큰을 읽지 않는다.
+    monkeypatch.setattr("bootstrap.services.DEFAULT_DATA_DIR", tmp_path / "elsewhere")
+    isolated = svc.build_youtube_oauth(db=object())
+    assert isolated.secret_store.service.startswith("online-video-clipper.youtube-oauth@")
 
 
 def test_build_youtube_oauth_missing_client_config_does_not_stop_startup(tmp_path, monkeypatch) -> None:

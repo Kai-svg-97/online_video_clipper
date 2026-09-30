@@ -36,9 +36,15 @@ def _run_isolated(code: str, data_dir: Path) -> str:
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],
         cwd=_ROOT,
-        env={"PATH": "", "SystemRoot": "C:\\Windows", "OVC_DATA_DIR": str(data_dir)},
+        # tmp_path 에는 한글 시험 이름이 들어간다. 콘솔 코드페이지가 cp1252(CI 러너)면
+        # print 에서 UnicodeEncodeError 로 죽는다 — cp949(한국어 PC)에서는 가려진다.
+        env={
+            "PATH": "", "SystemRoot": "C:\\Windows", "OVC_DATA_DIR": str(data_dir),
+            "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1",
+        },
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
     assert result.returncode == 0, result.stderr[-2000:]

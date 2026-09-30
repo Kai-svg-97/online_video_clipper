@@ -30,6 +30,10 @@ def _data_dir() -> Path:
 
 
 DATA_DIR: Path = _data_dir()
+# `OVC_DATA_DIR` 이 없을 때의 데이터 폴더 — 실제 사용자의 자리다. OS 전역 저장소(keyring)에
+# 둔 비밀값의 이름을 이 폴더와 **다른** 실행에서만 갈라 쓰려고 둔다(infrastructure/sync/
+# keyring_secret_store.py: `scoped_service`).
+DEFAULT_DATA_DIR: Path = _app_root() / "data"
 _CONFIG_FILE: Path = DATA_DIR / "config.yaml"
 
 
