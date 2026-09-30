@@ -19,6 +19,7 @@
 | 클라우드 동기화 | [`decisions/sync.md`](decisions/sync.md) |
 | 다국어화 | [`decisions/i18n.md`](decisions/i18n.md) |
 | 설명서·갈무리 | [`decisions/manual.md`](decisions/manual.md) |
+| 코드 구조 — 큰 파일을 나누는 방식 | [`decisions/code-structure.md`](decisions/code-structure.md) |
 
 ## [기반 — 레이어·스레드 원칙, 시작 성능, 데이터 안전, CI](decisions/foundations.md)
 
@@ -83,3 +84,7 @@
 
 - 설명서는 원본을 하나만 둔다 (v1.32)
 - 갈무리가 사용자의 즐겨찾기를 담아 배포됐다 (v1.32.1)
+
+## [코드 구조 — 큰 파일을 나누는 방식](decisions/code-structure.md)
+
+- 큰 파일 넷을 조립부 + mixin으로 (2026-09-30)
