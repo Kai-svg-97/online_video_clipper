@@ -94,16 +94,14 @@ def _source_size(url: str, headers: dict) -> int:
         return 0
 
 
-def _to_sources(info: dict):
-    """yt-dlp info → (video StreamSource, audio StreamSource|None).
+def _to_sources(info: dict, relay):
+    """yt-dlp info → (video 원본, audio 원본|None) — 원본은 `relay.source()`가 만든다.
 
     `requested_formats`가 있으면 영상/오디오가 분리된 선택이고, 없으면 muxed 단일
     포맷이다(그때는 audio가 None이고 ffmpeg가 입력의 모든 스트림을 그대로 복사한다).
     크기를 모르면 중계가 Range를 계산할 수 없으므로 직접 물어서라도 채운다.
     """
-    from infrastructure.streaming import StreamSource  # noqa: PLC0415
-
-    def build(fmt: dict) -> "StreamSource | None":
+    def build(fmt: dict):
         url = fmt.get("url")
         if not url:
             return None
@@ -111,7 +109,7 @@ def _to_sources(info: dict):
         size = int(fmt.get("filesize") or fmt.get("filesize_approx") or 0)
         if not size:
             size = _source_size(url, headers)
-        return StreamSource(url=url, headers=headers, size=size) if size else None
+        return relay.source(url, headers, size) if size else None
 
     requested = info.get("requested_formats")
     if requested:
@@ -136,9 +134,12 @@ class _StreamWorker(QThread):
         merge: bool = False,
         parent=None,
         prefer_remux: bool = True,
+        relay=None,
     ) -> None:
         super().__init__(parent)
         self._url = url
+        # `IStreamRelay` — 조립 루트가 준 중계. 없으면 실시간 remux를 하지 않는다.
+        self._relay = relay
         self._quality_fmt = quality_fmt
         self._merge = merge           # True면 영상+오디오를 합쳐야 하는 화질
         # 실시간 remux를 먼저 시도할지. 그 스트림이 버티지 못한 영상에서는 호출측이
@@ -148,7 +149,7 @@ class _StreamWorker(QThread):
     def run(self) -> None:
         try:
             import yt_dlp  # noqa: PLC0415
-            if self._merge and self._prefer_remux:
+            if self._merge and self._prefer_remux and self._relay is not None:
                 self._run_remux(yt_dlp)
             elif self._merge:
                 self._run_merge(yt_dlp)
@@ -183,7 +184,7 @@ class _StreamWorker(QThread):
         for client in clients:
             try:
                 info = self._extract(yt_dlp, client)
-                video, audio = _to_sources(info)
+                video, audio = _to_sources(info, self._relay)
             except Exception as exc:
                 logger.warning(
                     "remux 정보 추출 실패(client=%s): %s", client or "기본", str(exc)[:200]
@@ -192,16 +193,14 @@ class _StreamWorker(QThread):
             if video is None:
                 logger.warning("remux 가능한 포맷 없음(client=%s)", client or "기본")
                 continue
-            from infrastructure.streaming import get_relay  # noqa: PLC0415
-
             # 재생이 길어지면 googlevideo URL이 만료된다. 중계가 바닥 조각 크기에서도
             # 403을 맞으면 이 콜백으로 새 URL을 받아 이어 간다 — 그렇지 않으면 한
             # 시간쯤 뒤부터 스트림이 조용히 끊긴다.
             def refresh(_client=client):
                 fresh = self._extract(yt_dlp, _client)
-                return _to_sources(fresh)
+                return _to_sources(fresh, self._relay)
 
-            play_url = get_relay().open_session(
+            play_url = self._relay.open_session(
                 video, audio,
                 duration_ms=int((info.get("duration") or 0) * 1000),
                 ffmpeg=ffmpeg,
@@ -403,17 +402,17 @@ class _SubtitleListWorker(QThread):
 
     done = pyqtSignal(str, list)   # (video_url, tracks)
 
-    def __init__(self, url: str, cookie_opts: dict | None = None, parent=None) -> None:
+    def __init__(
+        self, source, url: str, cookie_opts: dict | None = None, parent=None
+    ) -> None:
         super().__init__(parent)
+        self._source = source          # IVideoSubtitleSource
         self._url = url
         self._cookie_opts = cookie_opts or {}
 
     def run(self) -> None:
-        from infrastructure.subtitle.youtube_subtitles import (  # noqa: PLC0415
-            fetch_tracks_for_url,
-        )
         try:
-            tracks = fetch_tracks_for_url(self._url, self._cookie_opts)
+            tracks = self._source.list_tracks(self._url, self._cookie_opts)
         except Exception as exc:
             logger.warning("자막 목록 조회 실패: %s", exc)
             tracks = []
@@ -428,15 +427,15 @@ class _SubtitleFetchWorker(QThread):
 
     done = pyqtSignal(int, str, list)   # (slot, track_key, cues)
 
-    def __init__(self, slot: int, track, parent=None) -> None:
+    def __init__(self, source, slot: int, track, parent=None) -> None:
         super().__init__(parent)
+        self._source = source          # IVideoSubtitleSource
         self._slot = slot
         self._track = track
 
     def run(self) -> None:
-        from infrastructure.subtitle.youtube_subtitles import fetch_cues  # noqa: PLC0415
         try:
-            cues = fetch_cues(self._track)
+            cues = self._source.fetch_cues(self._track)
         except Exception as exc:
             logger.warning("자막 내려받기 실패: %s", exc)
             cues = []

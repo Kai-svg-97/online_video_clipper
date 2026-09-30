@@ -29,6 +29,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from domain.shared.ports import (
+    COOKIE_EMPTY,
+    COOKIE_NOT_COOKIES,
+    COOKIE_NOT_FOUND,
+    COOKIE_OK,
+    IYouTubeAuth,
+)
 from gui.smooth_scroll import apply_smooth_scroll_tree
 from gui.themes.manager import ThemeManager
 from gui.workers import track_thread
@@ -141,10 +148,14 @@ class SettingsPanel(QWidget):
         subtitle_vm=None,        # SubtitleViewModel | None
         get_categories_fn: Callable | None = None,
         add_videos_fn: Callable | None = None,   # (urls, category_id) -> None
+        auth_service: IYouTubeAuth | None = None,   # 브라우저 쿠키 인증 | None
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._get_tags_fn = get_tags_fn
+        # 구독 피드 — 브라우저 쿠키 섹션이 쓴다. 없으면 그 섹션의 동작만 빠진다
+        # (프로필·후보 목록이 비고, 저장·로그인 버튼은 아무것도 하지 않는다).
+        self._auth = auth_service
         self._subtitle_vm = subtitle_vm
         self._yt_oauth = yt_oauth
         self._song_vm = song_vm
@@ -1816,29 +1827,30 @@ class SettingsPanel(QWidget):
             if cookiefile:
                 self._feed_cookie_edit.setText(cookiefile)
             profile = getattr(s, "YT_AUTH_PROFILE", None)
-            self._feed_status_lbl.setText(self._cookie_status_text(profile, cookiefile))
+            self._feed_status_lbl.setText(self._cookie_status_text(
+                profile, cookiefile, self._auth.cookie_file_state if self._auth else None
+            ))
             self._reload_cookie_candidates()
         except Exception:
             logger.exception("브라우저 쿠키 설정 UI 반영 실패")
 
     @staticmethod
-    def _cookie_status_text(profile: "str | None", cookiefile: "str | None") -> str:
+    def _cookie_status_text(
+        profile: "str | None",
+        cookiefile: "str | None",
+        cookie_state: "Callable[[str], str] | None" = None,
+    ) -> str:
         """지금 무엇으로 인증하는지 + **그게 쓸 수 있는 상태인지**.
 
         예전에는 경로만 적었다. 그래서 다른 PC에서 등록한 경로가 그대로 남아 있어도
         멀쩡해 보였고, 요약이 "로그인된 브라우저를 찾지 못했습니다"로 실패하는데
         설정 화면만 봐서는 원인을 알 수 없었다(실제 신고).
-        """
-        from infrastructure.auth.youtube_auth import (  # noqa: PLC0415
-            COOKIE_EMPTY,
-            COOKIE_NOT_COOKIES,
-            COOKIE_NOT_FOUND,
-            COOKIE_OK,
-            cookie_file_state,
-        )
 
+        `cookie_state`는 판정 함수(`IYouTubeAuth.cookie_file_state`)다. 없으면 판정할
+        수 없으므로 경로만 보여 준다.
+        """
         if cookiefile:
-            state = cookie_file_state(cookiefile)
+            state = cookie_state(cookiefile) if cookie_state else COOKIE_OK
             if state == COOKIE_OK:
                 return tr("쿠키 파일: {path}").format(path=cookiefile)
             trouble = {
@@ -1855,14 +1867,10 @@ class SettingsPanel(QWidget):
 
     def _reload_cookie_candidates(self) -> None:
         """다운로드·데스크톱 폴더에서 쿠키 파일 후보를 다시 스캔해 목록에 채운다."""
-        from infrastructure.auth.youtube_auth import (  # noqa: PLC0415
-            find_cookie_file_candidates,
-        )
-
         self._feed_cookie_candidates_combo.blockSignals(True)
         self._feed_cookie_candidates_combo.clear()
         try:
-            candidates = find_cookie_file_candidates()
+            candidates = self._auth.find_cookie_file_candidates() if self._auth else []
         except Exception:
             logger.exception("쿠키 파일 후보 탐색 실패")
             candidates = []
@@ -1893,21 +1901,22 @@ class SettingsPanel(QWidget):
         `YouTubeAuthDialog`는 이미 구현돼 있었지만 이 버튼이 생기기 전까지는
         앱 어디에서도 열리지 않는 코드였다.
         """
-        from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
+        if self._auth is None:
+            logger.info("브라우저 로그인 요청을 무시한다 — 인증 서비스가 주입되지 않았다")
+            return
         from gui.dialogs.youtube_auth_dialog import YouTubeAuthDialog  # noqa: PLC0415
 
-        dialog = YouTubeAuthDialog(YouTubeAuthService(), self)
+        dialog = YouTubeAuthDialog(self._auth, self)
         dialog.auth_changed.connect(self._refresh_feed_auth_ui)
         dialog.exec()
 
     def _reload_profiles(self, browser: str) -> None:
-        from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
         import config.settings as s  # noqa: PLC0415
         self._feed_profile_combo.blockSignals(True)
         self._feed_profile_combo.clear()
         self._feed_profile_combo.addItem(tr("(선택 안 함)"), None)
         try:
-            profiles = YouTubeAuthService().detect_profiles(browser)
+            profiles = self._auth.detect_profiles(browser) if self._auth else []
             for p in profiles:
                 self._feed_profile_combo.addItem(p.display_name, p.profile_key)
             # 현재 저장된 프로필 선택
@@ -1927,11 +1936,10 @@ class SettingsPanel(QWidget):
 
     def _on_feed_profile_changed(self, _index: int) -> None:
         profile_key = self._feed_profile_combo.currentData()
-        if profile_key is None:
+        if profile_key is None or self._auth is None:
             return
-        from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
         browser = self._feed_browser_combo.currentText()
-        YouTubeAuthService().save_auth(browser=browser, profile_key=profile_key, cookiefile=None)
+        self._auth.save_auth(browser=browser, profile_key=profile_key, cookiefile=None)
         self._feed_status_lbl.setText(
             tr("저장됨: {name}").format(name=self._feed_profile_combo.currentText())
         )
@@ -1947,11 +1955,10 @@ class SettingsPanel(QWidget):
 
     def _on_apply_cookie_file(self) -> None:
         cookiefile = self._feed_cookie_edit.text().strip()
-        if not cookiefile:
+        if not cookiefile or self._auth is None:
             return
-        from infrastructure.auth.youtube_auth import YouTubeAuthService  # noqa: PLC0415
         browser = self._feed_browser_combo.currentText()
-        YouTubeAuthService().save_auth(browser=browser, profile_key=None, cookiefile=cookiefile)
+        self._auth.save_auth(browser=browser, profile_key=None, cookiefile=cookiefile)
         self._feed_status_lbl.setText(tr("쿠키 파일이 설정되었습니다."))
         self._feed_status_lbl.setStyleSheet(f"font-size: 8pt; color: {sem('success')};")
 

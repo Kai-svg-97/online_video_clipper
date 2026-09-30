@@ -29,7 +29,7 @@ from bootstrap.context import AppGraph
 from bootstrap.handlers import build_handlers
 from bootstrap.persistence import bootstrap_cloud_snapshot, build_repositories, open_database
 from bootstrap.services import build_services
-from bootstrap.view_models import build_view_models
+from bootstrap.view_models import build_media_services, build_view_models
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ def build_app_graph(db) -> AppGraph:
         services=services,
         handlers=handlers,
         view_models=view_models,
+        media=build_media_services(services),
     )
 
 

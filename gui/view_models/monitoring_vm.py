@@ -23,7 +23,7 @@ from gui.text import tr
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from infrastructure.auth.youtube_auth import YouTubeAuthService
+    from domain.shared.ports import IYouTubeAuth
 
 
 class _ImportYTSubsWorker(QThread):
@@ -62,7 +62,7 @@ class MonitoringViewModel(WorkerOwnerMixin, QObject):
         set_rule_handler: SetMonitoringRuleHandler,
         get_subs_handler: GetSubscriptionsHandler,
         import_yt_handler: ImportYouTubeSubscriptionsHandler | None = None,
-        auth_service: "YouTubeAuthService | None" = None,
+        auth_service: "IYouTubeAuth | None" = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)

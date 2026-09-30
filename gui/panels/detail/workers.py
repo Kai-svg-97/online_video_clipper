@@ -25,16 +25,17 @@ class _GeminiSummaryWorker(QThread):
     # 않게 한다(요약은 언어별로 저장된다).
     done = pyqtSignal(object, str, str, str)
 
-    def __init__(self, url: str, video_id, lang: str = "ko", parent=None) -> None:
+    def __init__(self, source, url: str, video_id, lang: str = "ko", parent=None) -> None:
         super().__init__(parent)
+        # `ISummarySource` — 조립 루트가 준 추출기(상태가 없어 공유해도 된다).
+        self._source = source
         self._url = url
         self._video_id = video_id
         self._lang = lang
 
     def run(self) -> None:
         try:
-            from infrastructure.browser.gemini_extractor import GeminiExtractor  # noqa: PLC0415
-            summary, reason = GeminiExtractor().extract_with_reason(self._url, self._lang)
+            summary, reason = self._source.extract_with_reason(self._url, self._lang)
             self.done.emit(self._video_id, self._lang, summary or "", reason)
         except Exception:
             logger.exception("Gemini 요약 워커 실패")

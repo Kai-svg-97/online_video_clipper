@@ -183,8 +183,12 @@ class InlinePlayer(QWidget):
         "240p":  {"240p"},
     }
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, stream_relay=None, subtitles=None) -> None:
         super().__init__(parent)
+        # 조립 루트가 주는 인프라 기능(`gui/media_services.py`). 비어 있으면 그 기능만
+        # 빠진다 — 중계가 없으면 고화질을 병합 방식으로, 자막 소스가 없으면 CC 목록 없이.
+        self._stream_relay = stream_relay     # IStreamRelay | None
+        self._subtitles = subtitles           # IVideoSubtitleSource | None
         self._downloads: list[DownloadInfoDTO] = []
         self._video_url: str    = ""
         self._video_title: str  = ""
@@ -290,6 +294,7 @@ class InlinePlayer(QWidget):
         # _VideoView renders via Qt texture system (no native D3D HWND),
         # so the control bar overlay is composited correctly by Qt.
         self._bar = _ControlBar()
+        self._bar.set_translate_targets_source(self._translate_targets_source())
         self._subtitle = LyricsOverlay()
         self._video_area = _VideoArea(self._visual_stack)
         self._video_area.set_overlay_subtitle(self._subtitle)
@@ -697,18 +702,22 @@ class InlinePlayer(QWidget):
     def _load_video_subtitle_list(self) -> None:
         """이 영상이 제공하는 자막 목록을 백그라운드로 조회한다(캐시 있으면 즉시)."""
         url = self._video_url
-        if not url:
+        if not url or self._subtitles is None:
             return
         cached = _VSUB_LIST_CACHE.get(url)
         if cached is not None:
             self._on_video_subtitle_list(url, cached)
             return
-        worker = _SubtitleListWorker(url, self._cookie_opts_for_subtitles())
+        worker = _SubtitleListWorker(self._subtitles, url, self._cookie_opts_for_subtitles())
         worker.done.connect(self._on_video_subtitle_list)
         worker.finished.connect(lambda w=worker: retire_thread(w, "done"))
         track_thread(worker)
         self._vsub_list_worker = worker
         worker.start()
+
+    def _translate_targets_source(self):
+        """컨트롤바가 자동 번역 메뉴를 열 때 부를 함수(자막 소스가 없으면 None)."""
+        return self._subtitles.translate_targets if self._subtitles is not None else None
 
     def _cookie_opts_for_subtitles(self) -> dict:
         """자막 조회용 yt-dlp 옵션(쿠키 등). 없으면 익명으로 — 자막은 대개 공개다."""
@@ -783,17 +792,17 @@ class InlinePlayer(QWidget):
 
     def _fetch_video_subtitle(self, slot: int, base) -> None:
         """자막 파일을 백그라운드로 받아 트랙으로 만든다."""
-        from infrastructure.subtitle.youtube_subtitles import translated  # noqa: PLC0415
-
+        if self._subtitles is None:
+            return
         lang = self._vsub_langs[slot]
-        track_info = translated(base, lang) if lang else base
+        track_info = self._subtitles.translated(base, lang) if lang else base
         self._status_lbl.setText(tr("자막을 받는 중…"))
         self._status_lbl.show()
         self._start_subtitle_fetch(slot, track_info)
 
     def _start_subtitle_fetch(self, slot: int, track_info) -> None:
         """자막 내려받기 워커를 띄운다(테스트가 여기만 가로채면 네트워크가 없다)."""
-        worker = _SubtitleFetchWorker(slot, track_info)
+        worker = _SubtitleFetchWorker(self._subtitles, slot, track_info)
         worker.done.connect(self._on_video_subtitle_cues)
         worker.finished.connect(lambda w=worker: retire_thread(w, "done"))
         track_thread(worker)
@@ -982,12 +991,10 @@ class InlinePlayer(QWidget):
         self._stream_duration_ms = 0
         self._pending_seek_ms = None
         self._seek_commit.stop()
-        if not url:
+        if not url or self._stream_relay is None:
             return
         try:
-            from infrastructure.streaming import get_relay  # noqa: PLC0415
-
-            get_relay().close_session(url)
+            self._stream_relay.close_session(url)
         except Exception:
             logger.debug("중계 세션 정리 실패", exc_info=True)
 
@@ -1170,6 +1177,7 @@ class InlinePlayer(QWidget):
         bar.set_subtitle_on(self._subtitle_on)
         bar.set_subtitle_offset_ms(self._track.offset_ms if has else 0)
         # 영상 자막 목록·선택도 새 바에 그대로 실어야 분리 창에서 고를 수 있다.
+        bar.set_translate_targets_source(self._translate_targets_source())
         bar.set_video_subtitle_tracks(self._vsub_available)
         for slot in (0, 1):
             bar.set_video_subtitle_selection(
@@ -1258,6 +1266,7 @@ class InlinePlayer(QWidget):
         bar.set_subtitle_on(self._subtitle_on)
         bar.set_subtitle_offset_ms(self._track.offset_ms if has else 0)
         # 영상 자막 목록·선택도 새 바에 그대로 실어야 분리 창에서 고를 수 있다.
+        bar.set_translate_targets_source(self._translate_targets_source())
         bar.set_video_subtitle_tracks(self._vsub_available)
         for slot in (0, 1):
             bar.set_video_subtitle_selection(
@@ -1511,6 +1520,7 @@ class InlinePlayer(QWidget):
         self._worker = track_thread(_StreamWorker(
             self._video_url, self._current_quality_fmt, self._current_merge,
             prefer_remux=self._prefer_remux,
+            relay=self._stream_relay,
         ))
         # 끝나면 참조를 놓는다 — 끝난 워커를 계속 들고 있으면 뒤늦은 정리에서 헷갈린다.
         self._worker.finished.connect(lambda w=self._worker: self._forget_stream_worker(w))

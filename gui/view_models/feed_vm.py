@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from gui.text import tr
 from gui.text.messages import render
 if TYPE_CHECKING:
-    from infrastructure.auth.youtube_auth import YouTubeAuthService
+    from domain.shared.ports import IYouTubeAuth
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
         handler: GetSubscriptionFeedHandler,
         channel_handler: GetChannelVideosHandler | None = None,
         channel_infos_handler: GetSubscribedChannelInfosHandler | None = None,
-        auth_service: "YouTubeAuthService | None" = None,
+        auth_service: "IYouTubeAuth | None" = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)

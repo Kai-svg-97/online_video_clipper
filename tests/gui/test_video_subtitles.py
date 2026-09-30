@@ -15,6 +15,7 @@ from gui.widgets.lyrics_overlay import LyricsOverlay
 from gui.widgets.player.controls import _ControlBar
 from gui.widgets.subtitle_track import SubtitleCue, SubtitleTrack
 from gui.widgets.video_player import InlinePlayer
+from infrastructure.subtitle.gateway import YouTubeSubtitleSource
 from infrastructure.subtitle.youtube_subtitles import SubtitleTrackInfo
 
 
@@ -116,7 +117,8 @@ class TestControlBarMenu:
 
 class TestPlayerSelection:
     def _player(self, qtbot) -> InlinePlayer:
-        player = InlinePlayer()
+        # 조립 루트처럼 실제 자막 소스를 넣는다(번역 트랙 조합은 네트워크 없이 만들어진다).
+        player = InlinePlayer(subtitles=YouTubeSubtitleSource())
         qtbot.addWidget(player)
         player._video_url = "https://youtu.be/abc"
         player._vsub_available = [

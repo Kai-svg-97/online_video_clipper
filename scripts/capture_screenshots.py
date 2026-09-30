@@ -155,6 +155,8 @@ def main() -> int:
         yt_oauth=graph.services.youtube_oauth,
         cleanup_fns=graph.handlers.library.cleanup_fns,
         db_backup=graph.services.db_backup,
+        watch_folder_scan=graph.services.watch_folder_scan,
+        media=graph.media,
     )
     window.resize(*WINDOW_SIZE)
     window.show()

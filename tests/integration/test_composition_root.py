@@ -79,6 +79,11 @@ class TestGraphBuilds:
                 f"뷰모델 {f.name}이 조립되지 않았다 — 화면에서 그 기능이 조용히 죽는다"
             )
 
+    def test_media_services_fully_wired(self, graph):
+        """상세 화면·플레이어용 묶음이 비지 않았는가 — 빈 칸은 그 기능을 조용히 끈다."""
+        for f in dataclasses.fields(graph.media):
+            assert getattr(graph.media, f.name), f"MediaServices.{f.name}이 비었다"
+
     def test_every_handler_group_fully_wired(self, graph):
         """핸들러 묶음의 모든 필드가 채워졌는지 — 빈 칸은 런타임 AttributeError가 된다."""
         missing: list[str] = []
@@ -184,6 +189,8 @@ class TestMainWindowWiring:
             auth_service=graph.services.auth_service,
             yt_oauth=graph.services.youtube_oauth,
             cleanup_fns=graph.handlers.library.cleanup_fns,
+            watch_folder_scan=graph.services.watch_folder_scan,
+            media=graph.media,
         )
         try:
             # 사이드바가 가리키는 페이지가 전부 만들어졌는지 — 하나라도 빠지면
@@ -195,6 +202,15 @@ class TestMainWindowWiring:
             assert window._library_vm is graph.view_models.library
             assert window._song_vm is graph.view_models.song
             assert window._transfer_vm is graph.view_models.transfer
+            # 인프라 기능은 주입으로만 내려간다(`gui/`는 인프라를 임포트하지 않는다) —
+            # 한 단계라도 빠지면 그 화면에서 요약·자막·중계·쿠키 인증이 조용히 빠진다.
+            detail = window._library_page.library_panel()._detail_widget
+            assert detail._media is graph.media
+            assert detail._player._stream_relay is graph.media.stream_relay
+            assert detail._player._subtitles is graph.media.subtitles
+            assert window._download_panel._detail_widget._media is graph.media
+            assert window._settings_panel._auth is graph.services.auth_service
+            assert window._watch_folder_scan is graph.services.watch_folder_scan
         finally:
             window.close()
 
@@ -216,6 +232,8 @@ class TestMainWindowWiring:
             auth_service=graph.services.auth_service,
             yt_oauth=graph.services.youtube_oauth,
             cleanup_fns=graph.handlers.library.cleanup_fns,
+            watch_folder_scan=graph.services.watch_folder_scan,
+            media=graph.media,
         )
         called: set[str] = set()
         for f in dataclasses.fields(graph.view_models):

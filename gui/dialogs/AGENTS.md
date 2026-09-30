@@ -11,19 +11,19 @@
 | File | Description |
 |------|-------------|
 | `__init__.py` | 패키지 마커 |
-| `youtube_auth_dialog.py` | YouTube OAuth 인증 플로우 다이얼로그 — `infrastructure.auth.youtube_auth` 직접 참조 (수용된 경계) |
+| `youtube_auth_dialog.py` | YouTube 쿠키 인증 다이얼로그 — `IYouTubeAuth`를 생성자로 받는다 |
 | `batch_download_dialog.py` | 일괄 다운로드 URL 입력 다이얼로그 |
 
 ## For AI Agents
 
 ### Working In This Directory
-- `youtube_auth_dialog.py`가 `infrastructure.auth`를 직접 참조하는 것은 설계 의도 — 로그인 플로우의 본질적 인프라 의존 때문.
+- `youtube_auth_dialog.py`는 `infrastructure`를 임포트하지 않는다 — `IYouTubeAuth`(`domain/shared/ports.py`)를 생성자로 받는다(`tests/unit/test_gui_does_not_import_infrastructure.py`).
 - OAuth 플로우 변경 시 `infrastructure/auth/youtube_auth.py`와 함께 수정.
 - **GUI 파일 수정 후 `/verify` 스킬 실행 필수**.
 
 ## Dependencies
 
 ### Internal
-- `infrastructure/auth/youtube_auth.py` — YouTubeAuthService (youtube_auth_dialog에서 직접)
+- `domain/shared/ports.py` — `IYouTubeAuth` (구현 `infrastructure/auth/youtube_auth.py:YouTubeAuthService`, 조립 루트가 주입)
 
 <!-- MANUAL: -->
