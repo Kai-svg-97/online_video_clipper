@@ -38,18 +38,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from application.download.dtos import DownloadJobDTO
 from gui.themes.colors import sem
+from gui.themes.manager import ThemeManager
 from gui.text import tr
+from gui.view_models.download_vm import DownloadViewModel
+from gui.workers import retire_thread, track_thread
+
+logger = logging.getLogger(__name__)
 
 _PAGE_LIST   = 0
 _PAGE_DETAIL = 1
-
-from application.download.dtos import DownloadJobDTO
-from gui.themes.manager import ThemeManager
-from gui.workers import retire_thread, track_thread
-from gui.view_models.download_vm import DownloadViewModel
-
-logger = logging.getLogger(__name__)
 
 _VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".m4a", ".mp3", ".opus"}
 _THUMB_EXTS = (".jpg", ".webp", ".png")

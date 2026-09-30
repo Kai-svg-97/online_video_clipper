@@ -8,25 +8,21 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 
 from PyQt6.QtCore import (
     QThread,
     pyqtSignal,
 )
 
-
-# 영상별 사용 가능한 화질 목록 캐시 — 같은 URL을 다시 조회하지 않는다.
-
-from collections import OrderedDict
-
 from gui.text import tr
-
-_HEIGHT_CACHE: "OrderedDict[str, list[int]]" = OrderedDict()
-_HEIGHT_CACHE_MAX = 64
-
 from gui.widgets.player.constants import _FALLBACK_STREAM_FMT, _PROBE_RANGE, _PROBE_TIMEOUT, _PROBE_UA, _STREAM_CLIENTS
 
 logger = logging.getLogger(__name__)
+
+# 영상별 사용 가능한 화질 목록 캐시 — 같은 URL을 다시 조회하지 않는다.
+_HEIGHT_CACHE: "OrderedDict[str, list[int]]" = OrderedDict()
+_HEIGHT_CACHE_MAX = 64
 
 
 def _is_youtube(url: str) -> bool:

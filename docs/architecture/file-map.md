@@ -26,6 +26,10 @@ online_video_clipper/
 │   └── view_models.py               # 뷰모델 배선 → `ViewModels`
 ├── requirements.txt
 ├── requirements-dev.txt             # PyInstaller, ruff, pytest (not bundled)
+├── ruff.toml                        # 린트 규칙(기본 E4·E7·E9·F를 명시) — **위반 0건이 기준**. `ruff format`은 저장소 전체에 돌리지 않는다
+├── .github/workflows/
+│   ├── test.yml                     # main push·PR마다 `ruff check .` + `pytest`(windows-latest) — 릴리즈 워크플로에는 테스트가 없어서 둔 게이트
+│   └── release.yml                  # `v*.*.*` 태그 → PyInstaller + Inno Setup → GitHub Release(테스트는 돌리지 않는다)
 ├── config/
 │   └── settings.py                  # 사용자 설정과 데이터 경로 상수. **`OVC_DATA_DIR` 로 데이터 디렉터리를 통째로 갈아끼울 수 있다** — "사용자의 실제 설정을 절대 읽으면 안 되는 실행"(설명서 갈무리)을 위한 단일 스위치다. 경로 상수는 **모듈을 불러올 때** 정해지므로 그 변수는 `config.settings` 임포트보다 먼저 세워야 한다. `application/library/favorites.py`도 같은 변수를 본다(그 파일만 `DATA_DIR` 밖, OS 사용자 데이터 경로를 쓴다 — 이것 때문에 v1.32.0 갈무리에 사용자 즐겨찾기가 찍혔다). 계약: `tests/unit/test_capture_isolation.py`
 ├── utils/

@@ -181,6 +181,7 @@ echo "Output: dist/YouTubeContentManager-x86_64.AppImage"
   파일 경로와 누락 필드명만 담은 예외를 던진다.
 - **주입 범위**: `OVC_YOUTUBE_OAUTH_CONFIG`는 PyInstaller 하위 프로세스에만 설정되고
   빌드 스크립트 종료 시(`finally`) 복원/제거된다.
+- **GitHub Actions(`test.yml`)**: main push·PR마다 `ruff check .`와 `pytest`를 돌린다 — `release.yml`은 빌드만 하므로 테스트 게이트는 이쪽이다. 태그 전에 그 커밋이 초록인지 본다.
 - **GitHub Actions(`release.yml`)**: 로컬 `data/OAuth2.json`은 gitignore라 CI 체크아웃에
   없으므로, 저장소 시크릿 `YOUTUBE_OAUTH_CLIENT_JSON`(그 파일 내용 그대로)을 읽어
   `$RUNNER_TEMP/OAuth2.json`으로 복원 후 `OVC_YOUTUBE_OAUTH_CONFIG`로 넘긴다("Write

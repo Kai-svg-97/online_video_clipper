@@ -27,11 +27,14 @@ version.py does not contain 'X.Y.Z' — update version.py before tagging
 - 태그 **이동**(force push)도 동일하게 트리거된다
 
 ## Test Gate
-- CI 릴리즈 워크플로우에 test step 없음 — 빌드 성공만이 게이트다.
-  따라서 **로컬에서 전체 테스트를 돌리고 릴리즈해야 한다**: `pytest` (2026-09-29 기준 3,176건)
-- 린트: `ruff check gui/ application/` — 이 저장소는 `ruff format` 미적용이라
-  기존 E402가 기준선이다(2026-09-18 기준 10건 — 조립 루트 분해로 main.py 8건이 사라졌다).
-  "새 위반이 늘지 않았는가"로만 판단한다.
+- 릴리즈 워크플로(`release.yml`)에는 test step이 없다 — 빌드 성공만 본다. 대신
+  **`test.yml`이 main push·PR마다 `ruff check .`와 `pytest`를 돌린다**(2026-09-30~).
+  태그를 붙이기 전에 **태그할 커밋의 Test 워크플로가 초록인지** 확인한다
+  (`gh run list --workflow test.yml --limit 1`). 로컬 전체 테스트는 여전히 권장:
+  `pytest` (2026-09-30 기준 3,176건, 약 6~10분)
+- 린트: `ruff check .` — **위반 0건이 기준이다**(`ruff.toml`, 2026-09-30에 E402 10건을
+  고쳐 0으로 만들었다). 한 건이라도 있으면 CI가 실패한다. `ruff format`은 저장소
+  전체에 돌리지 않는다(적용된 적 없는 저장소라 거의 모든 파일이 바뀐다).
 
 ## 네이티브 의존이 늘었을 때의 추가 게이트 (v1.27.0~)
 음성 인식(faster-whisper→ctranslate2·onnxruntime·av)처럼 **네이티브 확장**을 번들에

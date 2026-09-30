@@ -85,11 +85,13 @@ pytest tests/integration/
 # Run GUI smoke tests only
 pytest tests/gui/ -v
 
-# Lint
+# Lint — 위반 0건이 기준(ruff.toml). CI(.github/workflows/test.yml)가 push·PR마다
+# ruff check . 와 pytest 를 돌린다.
 ruff check .
 
-# Format
-ruff format .
+# Format — 내가 만든/고친 파일에만. 저장소 전체에 돌리지 않는다
+# (적용된 적 없는 저장소라 거의 모든 파일이 바뀐다).
+ruff format <파일>
 ```
 
 ---

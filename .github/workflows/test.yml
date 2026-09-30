@@ -1,0 +1,52 @@
+name: Test
+
+# 테스트·린트 게이트. 릴리즈 워크플로(release.yml)는 빌드만 하므로, 이것이 없으면
+# 3천여 건의 테스트가 **누가 로컬에서 돌릴 때만** 지켜진다.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # 주 대상이 Windows다 — 프레임리스 창·QThread 수명처럼 Windows에서만 드러나는
+    # 사망 경로를 지키는 시험이 많다(CLAUDE.md 에러 처리 규칙).
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      # 한글 시험 이름·출력이 콘솔 코드페이지에서 깨지지 않게.
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: python -m ruff check .
+
+      - name: Test
+        # ffmpeg가 없으면 변환 통합 시험은 스스로 건너뛴다(tests/integration/test_ffmpeg_convert.py).
+        run: python -m pytest -q -p no:cacheprovider -rfE

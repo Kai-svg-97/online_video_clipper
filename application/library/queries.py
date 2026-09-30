@@ -7,6 +7,22 @@ from pathlib import Path
 from uuid import UUID
 
 from domain.download.entities import JobStatus
+from application.library.dtos import (
+    CategoryDTO,
+    CategoryStatDTO,
+    ChannelCategoryStatDTO,
+    ChannelStatDTO,
+    DownloadInfoDTO,
+    FailedDownloadInfoDTO,
+    LibraryStatsDTO,
+    TagDTO,
+    VideoDTO,
+    VideoDetailDTO,
+)
+from domain.download.repositories import IDownloadRepository
+from domain.download.value_objects import AUDIO_FORMAT_VALUES
+from domain.library.aggregates import VideoAggregate
+from domain.library.repositories import IVideoRepository, SearchQuery
 
 _QUALITY_LABELS = frozenset({"UHD (4K)", "QHD (2K)", "FHD", "HD", "SD", "LD"})
 _BRACKET_RE = re.compile(r'\[([^\]]+)\]')
@@ -25,22 +41,6 @@ def _actual_quality(file_path: str | None, fallback: str) -> str:
             return label
     return fallback
 
-from application.library.dtos import (
-    CategoryDTO,
-    CategoryStatDTO,
-    ChannelCategoryStatDTO,
-    ChannelStatDTO,
-    DownloadInfoDTO,
-    FailedDownloadInfoDTO,
-    LibraryStatsDTO,
-    TagDTO,
-    VideoDTO,
-    VideoDetailDTO,
-)
-from domain.download.repositories import IDownloadRepository
-from domain.download.value_objects import AUDIO_FORMAT_VALUES
-from domain.library.aggregates import VideoAggregate
-from domain.library.repositories import IVideoRepository, SearchQuery
 
 logger = logging.getLogger(__name__)
 
