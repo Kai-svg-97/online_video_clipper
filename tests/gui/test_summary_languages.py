@@ -15,9 +15,11 @@ import gui.panels.detail.mixins.summary as summary_mod
 
 
 def _widget(summaries=None, statuses=None):
+    from gui.media_services import MediaServices
     from gui.panels.video_detail_panel import VideoDetailWidget
 
-    widget = VideoDetailWidget()
+    # 조립 루트처럼 요약 추출기가 아는 언어(ko·en)를 넣는다.
+    widget = VideoDetailWidget(media=MediaServices(summary_languages=("ko", "en")))
     video_id = uuid4()
     widget._detail = SimpleNamespace(id=video_id, url="https://youtu.be/x")
     widget._streaming = False

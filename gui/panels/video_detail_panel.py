@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 
 
 from application.library.dtos import VideoDetailDTO
+from gui.media_services import MediaServices
 from gui.panels.detail.text_zoom import (
     DEFAULT_SCALE as DEFAULT_TEXT_SCALE,
     STEP as ZOOM_STEP,
@@ -211,9 +212,13 @@ class VideoDetailWidget(
         clip_vm=None,
         download_vm=None,
         subtitle_vm=None,
+        media: MediaServices | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        # 요약 추출기·중계·자막 — 조립 루트가 준다. 비어 있으면 그 기능만 빠진다
+        # (`gui/media_services.py` 머리말).
+        self._media = media or MediaServices()
         self._detail: VideoDetailDTO | None = None
         self._tag_add_input: QLineEdit | None = None
         self._clip_vm = clip_vm
@@ -367,7 +372,11 @@ class VideoDetailWidget(
 
         # 플레이어 — 상단 고정. 16:9 자연 높이(여백 없음); 창이 넓어지면 커지고
         # 나머지 요소는 아래 탭이 남는 공간을 흡수하며 자연스럽게 따라 내려간다.
-        self._player = InlinePlayer(left_w)
+        self._player = InlinePlayer(
+            left_w,
+            stream_relay=self._media.stream_relay,
+            subtitles=self._media.subtitles,
+        )
         self._player.playback_failed.connect(self._on_play_failed)
         self._player.download_requested.connect(self.download_requested.emit)
         self._player.playback_finished.connect(self._on_playback_finished)
@@ -502,6 +511,10 @@ class VideoDetailWidget(
         self._summary_refresh_btn.setFixedSize(28, 28)
         self._summary_refresh_btn.setToolTip(tr("Gemini 요약 갱신"))
         self._summary_refresh_btn.clicked.connect(self._on_refresh_summary)
+        # 요약 추출기가 없으면 ⟳ 로 할 수 있는 일이 없다 — 버튼을 숨긴다.
+        # (아직 부모가 없는 위젯이라 `setVisible(True)`를 부르면 따로 창이 뜬다 — 숨기기만.)
+        if self._media.summary_source is None:
+            self._summary_refresh_btn.hide()
         refresh_row.addWidget(self._summary_refresh_btn)
         summary_layout.addLayout(refresh_row)
 

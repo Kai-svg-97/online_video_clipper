@@ -11,7 +11,11 @@ from pathlib import Path
 
 from config.settings import BACKUP_DIR, DATA_DIR
 from infrastructure.auth.youtube_auth import YouTubeAuthService
-from infrastructure.browser.gemini_extractor import GeminiExtractor, page_lang
+from infrastructure.browser.gemini_extractor import (
+    GeminiExtractor,
+    page_lang,
+    supported_summary_languages,
+)
 from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
 from infrastructure.event_bus import EventBus
 from infrastructure.persistence.db_backup import DbBackup
@@ -19,12 +23,15 @@ from infrastructure.ffmpeg.ffmpeg_adapter import FfmpegAdapter
 from infrastructure.song.audio_tagger import MutagenAudioTagger
 from infrastructure.downloader.availability import YouTubeAvailabilityChecker
 from infrastructure.sponsorblock.client import SponsorBlockClient
+from infrastructure.streaming.gateway import StreamRelayGateway
+from infrastructure.subtitle.gateway import YouTubeSubtitleSource
 from infrastructure.subtitle.whisper_transcriber import WhisperTranscriber
 from infrastructure.song.album_providers import build_default_album_provider
 from infrastructure.song.lyrics_providers import build_default_providers
 from infrastructure.song.translator import DeepTranslatorAdapter
 from infrastructure.sync.keyring_secret_store import KeyringSecretStore
 from infrastructure.sync.sync_service import SyncService
+from infrastructure.watch.folder_scanner import WatchFolderScanner
 from infrastructure.youtube.oauth_adapter import YouTubeOAuthAdapter
 from infrastructure.youtube.oauth_client_config import find_youtube_oauth_config
 
@@ -86,6 +93,11 @@ def _make_youtube_api_provider(yt_oauth):
     return provider
 
 
+def scan_watch_folder(folder: str):
+    """워치 폴더를 한 번 훑는다 — `MainWindow`가 주기적으로 부른다(`ScanResult`)."""
+    return WatchFolderScanner(folder).scan()
+
+
 def build_services(db) -> Services:
     """인프라 어댑터를 모아 `Services`로 만든다.
 
@@ -108,6 +120,11 @@ def build_services(db) -> Services:
         lyrics_providers=build_default_providers(),
         translator=DeepTranslatorAdapter(),
         summary_source=GeminiExtractor(),
+        summary_languages=supported_summary_languages(),
+        # 중계 서버는 첫 재생 때 뜬다 — 이 객체는 포트를 열지 않는다.
+        stream_relay=StreamRelayGateway(),
+        subtitle_source=YouTubeSubtitleSource(),
+        watch_folder_scan=scan_watch_folder,
         album_provider=build_default_album_provider(),
         sync_service=SyncService(db),
         db_backup=DbBackup(db.path, Path(BACKUP_DIR)),

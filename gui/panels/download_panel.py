@@ -538,6 +538,7 @@ class DownloadPanel(QWidget):
         thumb_provider: Callable[[str], str | None] | None = None,
         title_provider: Callable[[str], str | None] | None = None,
         library_vm=None,
+        media=None,      # MediaServices | None — 상세 화면·플레이어용 인프라 기능
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -545,6 +546,7 @@ class DownloadPanel(QWidget):
         self._thumb_provider = thumb_provider
         self._title_provider = title_provider
         self._library_vm = library_vm
+        self._media = media
         self._worker: _ThumbWorker | None = None
         self._setup_ui()
 
@@ -615,7 +617,7 @@ class DownloadPanel(QWidget):
         detail_layout.setContentsMargins(0, 0, 0, 0)
         detail_layout.setSpacing(0)
 
-        self._detail_widget = VideoDetailWidget(download_vm=self._vm)
+        self._detail_widget = VideoDetailWidget(download_vm=self._vm, media=self._media)
         self._detail_widget.back_requested.connect(self._on_detail_back)
         self._detail_widget.item_selected.connect(self._on_related_item_selected)
         self._detail_widget.download_requested.connect(

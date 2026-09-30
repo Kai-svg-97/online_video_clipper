@@ -283,3 +283,101 @@ class ISummarySource(Protocol):
     def extract(self, url: str, lang: str = "ko") -> str | None:
         """`lang` 언어로 요약한다. 요약은 언어별로 따로 저장된다(한 영상에 ko·en 공존)."""
         ...
+
+    def extract_with_reason(self, url: str, lang: str = "ko") -> tuple[str | None, str]:
+        """`extract`와 같되 실패 사유 키도 준다 — (요약 또는 None, 사유 키).
+
+        사유 키는 `infrastructure.browser.gemini_extractor`의 `SUMMARY_REASON_*`
+        (성공이면 빈 문자열). 화면이 실패를 설명할 때 쓴다(⟳ 재추출).
+        """
+        ...
+
+
+# ── 화면(gui)이 쓰는 인프라 기능 ─────────────────────────────────────────
+# `gui/`는 `infrastructure/`를 임포트하지 않는다(`tests/unit/
+# test_gui_does_not_import_infrastructure.py`가 강제). 화면이 인프라 기능을 써야
+# 하면 여기 포트를 두고, 구체 구현은 조립 루트(`bootstrap/`)가 생성자로 넣는다.
+
+# 등록된 쿠키 파일의 상태 키 — 판정은 인프라가, 표시 문구는 화면이 정한다.
+COOKIE_UNSET = "unset"              # 등록한 적이 없다
+COOKIE_NOT_FOUND = "not_found"      # 경로는 있는데 파일이 없다(다른 PC·삭제됨)
+COOKIE_EMPTY = "empty"              # 파일은 있는데 비었다
+COOKIE_NOT_COOKIES = "not_cookies"  # 쿠키 파일 형식이 아니다
+COOKIE_OK = "ok"
+
+
+class IYouTubeAuth(Protocol):
+    """브라우저 쿠키 기반 YouTube 인증(yt-dlp 옵션·프로필·쿠키 파일).
+
+    구현체: infrastructure.auth.youtube_auth.YouTubeAuthService
+
+    OAuth(`YouTubeOAuthAdapter`)와는 다른 경로다 — 이쪽은 yt-dlp가 읽을 쿠키를
+    다룬다. keyring을 건드리지 않으므로 조립 시점에 만들어도 시작이 느려지지 않는다.
+    """
+
+    def detect_profiles(self, browser: str) -> list: ...
+    def get_ytdlp_opts(self) -> dict: ...
+    def check_login_status(self) -> str | None: ...
+
+    def save_auth(
+        self,
+        browser: str,
+        profile_key: str | None = None,
+        cookiefile: str | None = None,
+        account_name: str | None = None,
+    ) -> None: ...
+
+    def clear_auth(self) -> None: ...
+
+    def cookie_file_state(self, path: str | Path | None) -> str:
+        """`COOKIE_*` 키 하나."""
+        ...
+
+    def find_cookie_file_candidates(self) -> list[Path]: ...
+    def write_netscape_cookies(self, path: Path, cookies: list[dict]) -> None: ...
+
+
+class IStreamRelay(Protocol):
+    """재생용 실시간 중계(원본을 내려받지 않고 remux해 흘린다).
+
+    구현체: infrastructure.streaming.gateway.StreamRelayGateway — 중계 서버는
+    **처음 재생할 때** 뜬다(시작 성능을 건드리지 않는다).
+
+    `source()`가 돌려주는 값은 중계가 내부 상태(조각 크기 학습)를 담는 객체라
+    호출 측은 들여다보지 않고 `open_session()`에 그대로 넘긴다.
+    """
+
+    def source(self, url: str, headers: dict[str, str], size: int) -> object: ...
+
+    def open_session(
+        self,
+        video: object,
+        audio: object | None,
+        duration_ms: int,
+        ffmpeg: str,
+        refresh: Callable[[], tuple[object, object | None]] | None = None,
+    ) -> str:
+        """세션을 열고 재생 URL을 돌려준다."""
+        ...
+
+    def close_session(self, play_url: str) -> None: ...
+
+
+class IVideoSubtitleSource(Protocol):
+    """영상이 제공하는 자막 트랙 조회·내려받기(네트워크 — QThread에서만 부른다).
+
+    구현체: infrastructure.subtitle.gateway.YouTubeSubtitleSource
+
+    트랙 객체는 `.key`·`.lang`·`.auto`·`.translate_to`를 가진다.
+    """
+
+    def list_tracks(self, url: str, cookie_opts: dict | None = None) -> list: ...
+    def fetch_cues(self, track) -> list: ...
+
+    def translated(self, track, target_lang: str):
+        """같은 트랙의 자동 번역본(`target_lang`)."""
+        ...
+
+    def translate_targets(self) -> tuple[tuple[str, str], ...]:
+        """자동 번역 메뉴에 올릴 (언어 코드, 그 언어로 쓴 이름) 목록."""
+        ...

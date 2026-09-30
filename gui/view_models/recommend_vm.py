@@ -23,7 +23,7 @@ from application.library.playlist_queries import (
 )
 
 if TYPE_CHECKING:
-    from infrastructure.auth.youtube_auth import YouTubeAuthService
+    from domain.shared.ports import IYouTubeAuth
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class RecommendViewModel(WorkerOwnerMixin, QObject):
     def __init__(
         self,
         handler: GetRecommendationsHandler,
-        auth_service: "YouTubeAuthService | None" = None,
+        auth_service: "IYouTubeAuth | None" = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)

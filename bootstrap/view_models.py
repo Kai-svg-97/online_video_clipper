@@ -15,7 +15,19 @@ from gui.view_models.subtitle_vm import SubtitleViewModel
 from gui.view_models.sync_vm import SyncViewModel
 from gui.view_models.transfer_vm import LibraryTransferViewModel
 
+from gui.media_services import MediaServices
+
 from bootstrap.context import Handlers, Services, ViewModels
+
+
+def build_media_services(services: Services) -> MediaServices:
+    """상세 화면·플레이어가 쓸 인프라 기능을 묶는다(`gui/`는 인프라를 모른다)."""
+    return MediaServices(
+        summary_source=services.summary_source,
+        summary_languages=services.summary_languages,
+        stream_relay=services.stream_relay,
+        subtitles=services.subtitle_source,
+    )
 
 
 def build_view_models(handlers: Handlers, services: Services) -> ViewModels:

@@ -10,18 +10,24 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import infrastructure.auth.youtube_auth as youtube_auth
+from infrastructure.auth.youtube_auth import YouTubeAuthService
+
+
+def _panel():
+    """조립 루트처럼 실제 인증 서비스를 넣는다 — 모듈 함수 패치가 그대로 먹는다."""
+    from gui.panels.settings_panel import SettingsPanel
+
+    return SettingsPanel(get_tags_fn=lambda: [], auth_service=YouTubeAuthService())
 
 
 class TestCookieFileCandidates:
     def test_후보가_있으면_콤보에_채워진다(self, qtbot, monkeypatch):
-        from gui.panels.settings_panel import SettingsPanel
-
         candidates = [Path("/home/u/Downloads/youtube.com_cookies.txt")]
         monkeypatch.setattr(
             youtube_auth, "find_cookie_file_candidates", lambda: candidates
         )
 
-        panel = SettingsPanel(get_tags_fn=lambda: [])
+        panel = _panel()
         qtbot.addWidget(panel)
 
         combo = panel._feed_cookie_candidates_combo
@@ -30,9 +36,31 @@ class TestCookieFileCandidates:
         assert "youtube.com_cookies.txt" in combo.itemText(1)
 
     def test_후보가_없으면_안내_문구만_보여준다(self, qtbot, monkeypatch):
-        from gui.panels.settings_panel import SettingsPanel
-
         monkeypatch.setattr(youtube_auth, "find_cookie_file_candidates", lambda: [])
+
+        panel = _panel()
+        qtbot.addWidget(panel)
+
+        combo = panel._feed_cookie_candidates_combo
+        assert combo.count() == 1
+        assert combo.itemData(0) is None
+
+    def test_후보_선택시_경로란이_채워진다(self, qtbot, monkeypatch):
+        target = Path("/home/u/Desktop/cookies.txt")
+        monkeypatch.setattr(
+            youtube_auth, "find_cookie_file_candidates", lambda: [target]
+        )
+
+        panel = _panel()
+        qtbot.addWidget(panel)
+
+        combo = panel._feed_cookie_candidates_combo
+        combo.setCurrentIndex(1)
+
+        assert panel._feed_cookie_edit.text() == str(target)
+
+    def test_인증_서비스가_없으면_후보를_찾지_않는다(self, qtbot):
+        from gui.panels.settings_panel import SettingsPanel
 
         panel = SettingsPanel(get_tags_fn=lambda: [])
         qtbot.addWidget(panel)
@@ -41,29 +69,11 @@ class TestCookieFileCandidates:
         assert combo.count() == 1
         assert combo.itemData(0) is None
 
-    def test_후보_선택시_경로란이_채워진다(self, qtbot, monkeypatch):
-        from gui.panels.settings_panel import SettingsPanel
-
-        target = Path("/home/u/Desktop/cookies.txt")
-        monkeypatch.setattr(
-            youtube_auth, "find_cookie_file_candidates", lambda: [target]
-        )
-
-        panel = SettingsPanel(get_tags_fn=lambda: [])
-        qtbot.addWidget(panel)
-
-        combo = panel._feed_cookie_candidates_combo
-        combo.setCurrentIndex(1)
-
-        assert panel._feed_cookie_edit.text() == str(target)
-
     def test_다시_검색_버튼을_누르면_재스캔한다(self, qtbot, monkeypatch):
-        from gui.panels.settings_panel import SettingsPanel
-
         scan = MagicMock(return_value=[])
         monkeypatch.setattr(youtube_auth, "find_cookie_file_candidates", scan)
 
-        panel = SettingsPanel(get_tags_fn=lambda: [])
+        panel = _panel()
         qtbot.addWidget(panel)
         call_count_after_init = scan.call_count
 

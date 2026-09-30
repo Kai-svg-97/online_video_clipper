@@ -129,7 +129,7 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
 | `bootstrap/handlers/*.py` | 컨텍스트별 유스케이스 조립 |
 | `bootstrap/view_models.py` | 뷰모델 배선 |
 
-규칙 3가지:
+규칙 4가지:
 
 1. **`main.py` 상단에서 `bootstrap`을 임포트하지 않는다.** 스플래시를 띄운 **뒤에**
    임포트해야 시작 체감 성능이 유지된다(인프라·GUI를 끌어오는 무거운 임포트다).
@@ -137,6 +137,11 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
    전, 중복 실행 가드는 DB 열기 전, 업데이트 설치는 앱 종료 후다.
 3. **핸들러 사이 의존은 함수 인자로 드러낸다.** `song → library → {download,
    playlist, album}` 순서가 `bootstrap/handlers/__init__.py`에 명시돼 있다.
+4. **`gui/`는 `infrastructure/`를 임포트하지 않는다**(함수 안·`TYPE_CHECKING` 포함 —
+   `tests/unit/test_gui_does_not_import_infrastructure.py`가 강제, 허용 목록 없음). 화면이
+   인프라 기능을 써야 하면 `domain/shared/ports.py`에 포트를 두고 `bootstrap/`이 생성자로
+   넣는다(`MainWindow`의 `auth_service`·`watch_folder_scan`·`media`). 상세 화면·플레이어처럼
+   깊은 사슬은 `gui/media_services.py`의 `MediaServices` 묶음으로 내린다.
 
 조립은 `tests/integration/test_composition_root.py`가 검증한다 — 그래프가 성립하는지,
 모든 뷰모델·핸들러가 채워졌는지, 조립 중 네트워크를 쓰지 않는지, YouTube 인증이

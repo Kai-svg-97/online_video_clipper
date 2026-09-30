@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from infrastructure.auth.youtube_auth import YouTubeAuthService
+
 
 class _FakeAuthDialog(QObject):
     auth_changed = pyqtSignal()
@@ -42,7 +44,8 @@ class TestBrowserLoginButton:
         _FakeAuthDialog.instances.clear()
         monkeypatch.setattr(yad, "YouTubeAuthDialog", _FakeAuthDialog)
 
-        panel = SettingsPanel(get_tags_fn=lambda: [])
+        auth = YouTubeAuthService()
+        panel = SettingsPanel(get_tags_fn=lambda: [], auth_service=auth)
         qtbot.addWidget(panel)
 
         refreshed = []
@@ -55,6 +58,7 @@ class TestBrowserLoginButton:
         assert len(_FakeAuthDialog.instances) == 1
         dialog = _FakeAuthDialog.instances[0]
         assert dialog.exec_called
+        assert dialog.auth_service is auth     # 주입받은 서비스를 그대로 넘긴다
 
         dialog.auth_changed.emit()
         assert refreshed == [True]
@@ -67,7 +71,6 @@ class TestRealDialogConstructs:
     def test_실제_다이얼로그가_예외없이_생성된다(self, qtbot, monkeypatch):
         import config.settings as s
         import gui.dialogs.youtube_auth_dialog as yad
-        from infrastructure.auth.youtube_auth import YouTubeAuthService
 
         # 실사용 config.yaml에 저장된 프로필이 있으면 백그라운드 상태 확인
         # 워커가 실제 네트워크 요청(yt-dlp)을 시도한다 — 테스트에서는 비워둔다.

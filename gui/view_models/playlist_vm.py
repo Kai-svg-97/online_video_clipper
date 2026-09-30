@@ -51,7 +51,7 @@ from gui.text import tr
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from infrastructure.auth.youtube_auth import YouTubeAuthService
+    from domain.shared.ports import IYouTubeAuth
 
 
 class _AddUrlWorker(QThread):
@@ -225,7 +225,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
         copy_yt_to_local: CopyYouTubePlaylistToLocalHandler | None = None,
         push_to_yt: PushPlaylistToYouTubeHandler | None = None,
         move_video: MoveVideoToPlaylistHandler | None = None,
-        auth_service: "YouTubeAuthService | None" = None,
+        auth_service: "IYouTubeAuth | None" = None,
         parent: "QObject | None" = None,
     ) -> None:
         super().__init__(parent)

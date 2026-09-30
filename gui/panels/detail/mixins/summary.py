@@ -71,20 +71,19 @@ from gui.text.catalog import AVAILABLE_LANGUAGES, language_name
 logger = logging.getLogger(__name__)
 
 
-def summary_generation_lang() -> str:
+def summary_generation_lang(supported: tuple[str, ...]) -> str:
     """⟳ 가 요약을 만드는 언어 = 앱 언어(모르는 언어면 한국어).
 
     조립 루트(`bootstrap.services.summary_language`)의 자동 요약과 **같은 규칙**이어야
     한다 — 둘이 다르면 자동으로 받은 요약과 ⟳ 로 받은 요약이 다른 칸에 들어간다.
     그래서 둘 다 "요약 추출기가 아는 언어"를 기준으로 삼는다. 화면 언어만 늘리고
     추출기에 그 언어가 없으면, 그 언어 칸에 한국어 요약이 들어가는 대신 한국어로 받는다.
-    """
-    from infrastructure.browser.gemini_extractor import (  # noqa: PLC0415
-        supported_summary_languages,
-    )
 
+    `supported`는 추출기가 아는 언어다 — 조립 루트가 `MediaServices.summary_languages`
+    로 준다(`gui/`는 추출기 모듈을 임포트하지 않는다).
+    """
     lang = active_language()
-    return lang if lang in supported_summary_languages() else "ko"
+    return lang if lang in supported else "ko"
 
 
 class SummaryTabMixin:
@@ -134,6 +133,10 @@ class SummaryTabMixin:
             logger.info("요약 추출이 이미 진행 중이다 — 중복 요청 무시")
             self._summary_status_lbl.setText(tr("이미 추출 중입니다…"))
             return
+        if self._media.summary_source is None:
+            # ⟳ 버튼이 숨겨져 있으므로 여기 닿는 것은 코드 경로뿐이다.
+            logger.info("요약 추출 요청을 무시한다 — 요약 추출기가 주입되지 않았다")
+            return
         logger.info("요약 추출 시작: %s", self._detail.url)
         self._summary_refresh_btn.setEnabled(False)
         self._summary_status_lbl.setText(tr("추출 중…"))
@@ -145,7 +148,12 @@ class SummaryTabMixin:
         # 남아 **종료 시 `wait_all()`이 거기서 터졌다**. 참조만 놓으면 마지막 참조가
         # 사라질 때 파이썬이 정리한다(CLAUDE.md의 워커 수명 규칙).
         worker = track_thread(
-            _GeminiSummaryWorker(self._detail.url, self._detail.id, summary_generation_lang())
+            _GeminiSummaryWorker(
+                self._media.summary_source,
+                self._detail.url,
+                self._detail.id,
+                summary_generation_lang(self._media.summary_languages),
+            )
         )
         worker.done.connect(self._on_gemini_done)
         worker.start()
@@ -187,7 +195,7 @@ class SummaryTabMixin:
         """상세를 열 때 — 앱 언어의 요약을 먼저, 없으면 있는 다른 언어를 보여 준다."""
         self._summaries = dict(getattr(detail, "summaries", None) or {})
         self._summary_statuses = dict(getattr(detail, "summary_statuses", None) or {})
-        gen = summary_generation_lang()
+        gen = summary_generation_lang(self._media.summary_languages)
         if gen in self._summaries:
             lang = gen
         else:
@@ -206,7 +214,7 @@ class SummaryTabMixin:
         self._summary_edit.setHtml(
             self._render_timestamped_html(self._summary_raw, line_gap=self._SUMMARY_LINE_GAP)
         )
-        gen = summary_generation_lang()
+        gen = summary_generation_lang(self._media.summary_languages)
         if lang != gen and gen not in self._summaries:
             # 앱 언어 요약이 없어 다른 언어를 보여 주는 중 — 왜 이 언어인지 말한다.
             self._summary_status_lbl.setText(
@@ -226,7 +234,7 @@ class SummaryTabMixin:
         선택된 칩은 **굵은 글씨**로만 구분한다 — 색을 칠하지 않으므로 테마를 바꿔도
         다시 칠할 것이 없다.
         """
-        gen = summary_generation_lang()
+        gen = summary_generation_lang(self._media.summary_languages)
         _clear_layout(self._summary_lang_layout)
         langs = [c for c, _ in AVAILABLE_LANGUAGES if c in self._summaries or c == gen]
         visible = any(c != gen for c in self._summaries)
@@ -282,7 +290,7 @@ class SummaryTabMixin:
             )
             if self._detail is not None and not self._streaming:
                 # **보고 있는 언어**로 저장한다 — 영어 화면에서 한국어 요약을 고칠 수도 있다.
-                lang = self._summary_lang or summary_generation_lang()
+                lang = self._summary_lang or summary_generation_lang(self._media.summary_languages)
                 if text:
                     self._summaries[lang] = text
                 else:

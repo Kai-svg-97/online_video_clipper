@@ -1577,3 +1577,45 @@ F1은 앱 언어의 판(`index.en.html`)을 먼저 찾고 없으면 한국어판
 영어판의 메뉴 경로는 **화면 문구와 똑같이** 적는다(`en.json`에서 찾아 쓴다). 한국어
 설명서가 "감시 폴더"라고 쓰는 곳도 화면 이름("워치 폴더" → Watch folder)을 따랐다 —
 영어 사용자는 설명서의 말로 화면에서 항목을 찾는다.
+
+## 화면은 인프라를 임포트하지 않는다 — 포트 + 조립 루트 주입
+
+레이어 규칙은 `gui → application → domain ← infrastructure`인데, `gui/`가 `infrastructure/`를
+**22곳**에서 직접 임포트하고 있었다(쿠키 인증 서비스·쿠키 파일 도우미, 워치 폴더 스캐너,
+Gemini 추출기·지원 언어, 재생 중계, 영상 자막 모듈, 뷰모델 넷의 `TYPE_CHECKING` 힌트).
+대부분 함수 안의 지연 임포트라 눈에 띄지 않았고, 설정 화면은 `YouTubeAuthService()`를
+**버튼을 누를 때마다 새로 만들었다** — 조립 루트가 만든 인스턴스가 이미 `MainWindow`에
+들어와 있었는데도 아무도 쓰지 않았다.
+
+### 어떻게 옮겼나
+
+- **포트는 `domain/shared/ports.py`에 둔다**(기존 관례): `IYouTubeAuth`·`IStreamRelay`·
+  `IVideoSubtitleSource` + `ISummarySource.extract_with_reason`. 쿠키 파일 상태 키
+  (`COOKIE_*`)는 화면도 비교하므로 도메인으로 올리고 인프라가 재수출한다.
+- **인프라에는 얇은 창구만 새로 만든다**(`infrastructure/streaming/gateway.py`·
+  `infrastructure/subtitle/gateway.py`). 기존 모듈을 고치지 않고 모듈 함수에 잇기만 한다 —
+  무거운 모듈은 **쓸 때 임포트**하고 중계 서버는 **첫 재생 때** 뜬다(예전과 같은 시점).
+- **쿠키 도우미는 `YouTubeAuthService`의 메서드로 잇는다.** 화면이 서비스 하나만 받으면
+  된다. 메서드가 호출할 때 모듈 전역을 찾으므로 모듈 함수를 바꿔 끼우는 기존 테스트가 그대로
+  먹는다.
+- **깊은 위젯 사슬은 묶음 하나로 내린다**(`gui/media_services.py:MediaServices`).
+  `MainWindow → LibraryPanel/DownloadPanel → VideoDetailWidget → InlinePlayer →
+  워커`로 낱개 인자 넷을 흘리면 한 단계를 잊는 순간 그 기능만 **조용히** 빠진다 —
+  `ViewModels` 묶음과 같은 이유다. 조립 시험(`test_composition_root.py`)이 창을 실제로
+  만들어 묶음이 플레이어까지 내려갔는지 본다.
+- **주입이 없으면 그 기능만 빠진다**(다른 패널의 `vm=None` 관례와 같다): ⟳ 요약 버튼을
+  숨기고, CC 목록을 조회하지 않고, 고화질은 실시간 remux 대신 병합 방식으로 받는다.
+  앱에서는 조립 루트가 전부 채운다. 위젯 테스트는 최소 구성으로 만들 수 있다.
+
+### 동작이 달라진 것 한 가지
+
+⟳ 요약 워커가 매번 `GeminiExtractor()`를 새로 만들던 것을 **조립 루트의 공유 인스턴스**를
+쓰게 했다. 추출기는 인스턴스 상태가 없고(호출마다 Playwright를 따로 띄운다) 자동 보강·다운로드
+캡처가 이미 같은 인스턴스를 공유하므로 결과는 같다.
+
+### `TYPE_CHECKING` 임포트도 막는다
+
+`tests/unit/test_gui_does_not_import_infrastructure.py`가 `gui/**/*.py`를 AST로 훑어
+**모든** 인프라 임포트(최상단·함수 안·`TYPE_CHECKING`)를 센다. 타입 힌트만을 위한
+임포트를 허용하면 화면이 구체 형에 묶여 있다는 사실이 가려지고, "타입만"이 어느새 런타임
+임포트로 번진다. 타입이 필요하면 포트를 쓴다. 허용 목록은 비어 있다.

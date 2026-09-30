@@ -213,6 +213,9 @@ class _ControlBar(QWidget):
         self._has_subtitle = False
         # 영상 자막 상태: 목록과 두 칸의 선택(트랙 key + 번역 대상)
         self._video_tracks: list = []
+        # 자동 번역 대상 목록을 주는 함수 — 플레이어가 자막 소스에서 꺼내 준다.
+        # 메뉴를 열 때 부른다(그 전에는 자막 모듈을 불러오지 않는다).
+        self._translate_targets_fn = None
         self._vsub_keys: list[str] = ["", ""]
         self._vsub_langs: list[str] = ["", ""]
         self._subtitle_on = True
@@ -477,12 +480,12 @@ class _ControlBar(QWidget):
                 tgroup.addAction(act)
         menu.exec(self._btn_vsub.mapToGlobal(self._btn_vsub.rect().bottomLeft()))
 
-    @staticmethod
-    def _translate_targets() -> tuple:
-        from infrastructure.subtitle.youtube_subtitles import (  # noqa: PLC0415
-            TRANSLATE_TARGETS,
-        )
-        return TRANSLATE_TARGETS
+    def set_translate_targets_source(self, fn) -> None:
+        """자동 번역 메뉴의 (언어 코드, 이름) 목록을 줄 함수. None이면 대상이 없다."""
+        self._translate_targets_fn = fn
+
+    def _translate_targets(self) -> tuple:
+        return self._translate_targets_fn() if self._translate_targets_fn else ()
 
     def _build_subtitle_menu(self) -> "QMenu | None":
         """💬 우클릭 메뉴를 만든다. 열 이유가 없으면 None.

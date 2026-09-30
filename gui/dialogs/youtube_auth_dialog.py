@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config.settings import DATA_DIR
-from infrastructure.auth.youtube_auth import YouTubeAuthService, write_netscape_cookies
+from domain.shared.ports import IYouTubeAuth
 from gui.themes.colors import sem, tok
 from gui.text import tr
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 class _LoginStatusWorker(QThread):
     finished = pyqtSignal(object)  # str | None
 
-    def __init__(self, auth_service: YouTubeAuthService, parent: QObject | None = None) -> None:
+    def __init__(self, auth_service: IYouTubeAuth, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._auth = auth_service
 
@@ -85,8 +85,9 @@ class _PlaywrightLoginWorker(QThread):
     login_failed   = pyqtSignal(str)   # error message
     browser_opened = pyqtSignal()      # 시스템 브라우저를 열었을 때 (playwright 없음)
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(self, auth_service: IYouTubeAuth, parent: QObject | None = None) -> None:
         super().__init__(parent)
+        self._auth = auth_service
 
     def run(self) -> None:
         cookie_path = DATA_DIR / "auth" / "youtube_cookies.txt"
@@ -126,7 +127,7 @@ class _PlaywrightLoginWorker(QThread):
                     # 로그인 완료 후 YouTube 메인으로 리디렉션될 때까지 대기 (최대 5분)
                     page.wait_for_url("*://www.youtube.com/**", timeout=300_000)
                     cookies = context.cookies("https://www.youtube.com")
-                    write_netscape_cookies(cookie_path, cookies)
+                    self._auth.write_netscape_cookies(cookie_path, cookies)
                 finally:
                     # 타임아웃·사용자 취소 등 예외 시에도 브라우저 프로세스를
                     # 반드시 종료해 좀비 chromium이 남지 않게 한다.
@@ -163,7 +164,7 @@ class YouTubeAuthDialog(QDialog):
 
     def __init__(
         self,
-        auth_service: YouTubeAuthService,
+        auth_service: IYouTubeAuth,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -459,7 +460,7 @@ class YouTubeAuthDialog(QDialog):
         self._progress_lbl.setText(
             tr("Chromium 창에서 Google 계정으로 로그인한 후 YouTube로 이동하면 자동 완료됩니다.")
         )
-        self._login_worker = _PlaywrightLoginWorker(self)
+        self._login_worker = _PlaywrightLoginWorker(self._auth, self)
         self._login_worker.login_success.connect(self._on_login_success)
         self._login_worker.login_failed.connect(self._on_login_failed)
         self._login_worker.browser_opened.connect(self._on_browser_opened)

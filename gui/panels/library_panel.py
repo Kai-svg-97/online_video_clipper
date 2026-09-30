@@ -221,10 +221,12 @@ class LibraryPanel(
         recommend_vm=None,
         album_vm=None,
         subtitle_vm=None,
+        media=None,      # MediaServices | None — 상세 화면·플레이어용 인프라 기능
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._vm = vm
+        self._media = media
         self._clip_vm = clip_vm
         self._download_vm = download_vm
         self._playlist_vm = playlist_vm
@@ -559,6 +561,7 @@ class LibraryPanel(
             clip_vm=self._clip_vm,
             download_vm=self._download_vm,
             subtitle_vm=self._subtitle_vm,
+            media=self._media,
         )
         self._nav_stack.addWidget(self._detail_widget)
 

@@ -47,7 +47,8 @@ from gui.view_models.feed_vm import FeedViewModel
 from gui.view_models.library_vm import LibraryViewModel
 from gui.view_models.monitoring_vm import MonitoringViewModel
 from gui.view_models.playlist_vm import PlaylistViewModel
-from infrastructure.auth.youtube_auth import YouTubeAuthService
+from domain.shared.ports import IYouTubeAuth
+from gui.media_services import MediaServices
 from version import __version__
 from gui.text import tr
 
@@ -383,6 +384,7 @@ class _LibraryPage(QWidget):
         recommend_vm=None,
         album_vm=None,
         subtitle_vm=None,
+        media: MediaServices | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -401,6 +403,7 @@ class _LibraryPage(QWidget):
             recommend_vm=recommend_vm,
             album_vm=album_vm,
             subtitle_vm=subtitle_vm,
+            media=media,
         )
         layout.addWidget(self._library_panel, 1)
 
@@ -445,10 +448,12 @@ class MainWindow(QMainWindow):
         vms: ViewModels,
         *,
         stats_handler=None,
-        auth_service: YouTubeAuthService | None = None,
+        auth_service: IYouTubeAuth | None = None,
         yt_oauth=None,      # YouTubeOAuthAdapter | None
         cleanup_fns=None,   # 라이브러리 정리 콜백 3종 | None
         db_backup=None,     # DbBackup — 하루 한 번 DB 사본 | None
+        watch_folder_scan=None,   # (폴더) -> ScanResult | None — 없으면 워치 폴더를 돌지 않는다
+        media: MediaServices | None = None,   # 상세 화면·플레이어용 인프라 기능
     ) -> None:
         """뷰모델은 **묶음 하나로** 받는다.
 
@@ -462,6 +467,9 @@ class MainWindow(QMainWindow):
 
         뷰모델이 아닌 것(통계 핸들러·정리 콜백·인증 서비스)은 성격이 달라 낱개로
         남긴다 — 묶음에 섞으면 "이게 뷰모델인가" 하는 혼란이 생긴다.
+
+        인프라 기능은 전부 **주입받는다** — `gui/`는 `infrastructure/`를 임포트하지
+        않는다(`tests/unit/test_gui_does_not_import_infrastructure.py`).
         """
         super().__init__()
         QPixmapCache.setCacheLimit(PIXMAP_CACHE_LIMIT_KB)
@@ -488,7 +496,9 @@ class MainWindow(QMainWindow):
         # 워치 폴더 — 설정이 비어 있으면 아예 돌지 않는다.
         self._watch_timer = None
         self._yt_oauth = yt_oauth
-        self._auth_service = auth_service or YouTubeAuthService()
+        self._auth_service = auth_service
+        self._watch_folder_scan = watch_folder_scan
+        self._media = media
         self._update_controller = None
         # 통계 채널 섹션 → 카테고리 드릴다운 시 복귀할 페이지(라이브러리 뒤로가기 소진 후)
         self._return_to_page: int | None = None
@@ -561,6 +571,7 @@ class MainWindow(QMainWindow):
             recommend_vm=self._recommend_vm,
             album_vm=self._album_vm,
             subtitle_vm=self._subtitle_vm,
+            media=self._media,
         )
         self._stack.addWidget(self._library_page)                  # 0
 
@@ -570,6 +581,7 @@ class MainWindow(QMainWindow):
             thumb_provider=self._library_vm.find_thumbnail_by_url,
             title_provider=self._library_vm.find_title_by_url,
             library_vm=self._library_vm,
+            media=self._media,
         )
         self._download_panel.retry_requested.connect(self._on_retry_download)
         self._download_panel.navigate_to_category_requested.connect(
@@ -605,6 +617,7 @@ class MainWindow(QMainWindow):
             subtitle_vm=self._subtitle_vm,
             get_categories_fn=lambda: self._library_vm.categories,
             add_videos_fn=self._add_videos_from_bookmarks,
+            auth_service=self._auth_service,
         )
         self._stack.addWidget(self._settings_panel)                  # 4
 
@@ -969,6 +982,9 @@ class MainWindow(QMainWindow):
 
         if not (cfg.WATCH_FOLDER or "").strip():
             return
+        if self._watch_folder_scan is None:
+            logger.info("워치 폴더가 설정돼 있지만 훑는 기능이 주입되지 않아 감시하지 않는다")
+            return
         timer = QTimer(self)
         timer.setInterval(_WATCH_SCAN_MS)
         timer.timeout.connect(self._scan_watch_folder)
@@ -984,15 +1000,12 @@ class MainWindow(QMainWindow):
         밀리초 단위다. 실제로 오래 걸리는 등록은 뷰모델이 워커로 띄운다.
         """
         from config import settings as cfg  # noqa: PLC0415
-        from infrastructure.watch.folder_scanner import (  # noqa: PLC0415
-            WatchFolderScanner,
-        )
 
         folder = (cfg.WATCH_FOLDER or "").strip()
-        if not folder:
+        if not folder or self._watch_folder_scan is None:
             return
         try:
-            result = WatchFolderScanner(folder).scan()
+            result = self._watch_folder_scan(folder)
         except Exception:
             logger.exception("워치 폴더 훑기 실패 (무시하고 계속): %s", folder)
             return

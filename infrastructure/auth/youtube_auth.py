@@ -11,6 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from config.settings import DATA_DIR, save_setting
+from domain.shared.ports import (
+    COOKIE_EMPTY,
+    COOKIE_NOT_COOKIES,
+    COOKIE_NOT_FOUND,
+    COOKIE_OK,
+    COOKIE_UNSET,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +223,17 @@ class YouTubeAuthService:
         save_setting("yt_auth_cookiefile", None)
         save_setting("yt_auth_account_name", None)
 
+    # ── 쿠키 파일 도우미 — 화면이 이 서비스 하나만 주입받아 쓰도록 모듈 함수를 잇는다.
+    # 호출할 때 모듈 전역을 찾으므로 테스트가 모듈 함수를 바꿔 끼워도 그대로 먹는다.
+    def cookie_file_state(self, path: "str | Path | None") -> str:
+        return cookie_file_state(path)
+
+    def find_cookie_file_candidates(self) -> list[Path]:
+        return find_cookie_file_candidates()
+
+    def write_netscape_cookies(self, path: Path, cookies: list[dict]) -> None:
+        write_netscape_cookies(path, cookies)
+
 
 # 브라우저 확장(Get cookies.txt 등)이 내보낸 쿠키 파일을 사용자가 두는 흔한 위치.
 # 확장은 파일명을 제각각으로 짓기 때문에(예: "youtube.com_cookies.txt",
@@ -229,11 +247,8 @@ _COOKIE_CONTENT_SCAN_BYTES = 65536
 # PC에서 등록한 경로(`C:\Users\<남의계정>\...`)가 그대로 남아, 요약이 "로그인된
 # 브라우저를 찾지 못했습니다"로 실패하는데 사용자는 설정만 보고는 원인을 알 수
 # 없었다. 그래서 경로와 함께 **지금 쓸 수 있는 상태인지**를 같이 보여준다.
-COOKIE_UNSET = "unset"        # 등록한 적이 없다
-COOKIE_NOT_FOUND = "not_found"  # 경로는 있는데 파일이 없다(다른 PC·삭제됨)
-COOKIE_EMPTY = "empty"          # 파일은 있는데 비었다
-COOKIE_NOT_COOKIES = "not_cookies"  # 쿠키 파일 형식이 아니다
-COOKIE_OK = "ok"
+# 상태 키(`COOKIE_*`)는 화면도 비교하므로 `domain/shared/ports.py`가 갖는다 —
+# 이 모듈은 그 이름을 재수출한다(기존 임포트가 그대로 동작한다).
 
 
 def cookie_file_state(path: "str | Path | None") -> str:

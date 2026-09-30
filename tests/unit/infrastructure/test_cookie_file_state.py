@@ -61,7 +61,7 @@ class TestSettingsWording:
     def _text(self, qtbot, profile, cookiefile):
         from gui.panels.settings_panel import SettingsPanel
 
-        return SettingsPanel._cookie_status_text(profile, cookiefile)
+        return SettingsPanel._cookie_status_text(profile, cookiefile, cookie_file_state)
 
     def test_죽은_경로는_경고로_표시한다(self, qtbot):
         text = self._text(qtbot, None, _OTHER_PC)

@@ -40,6 +40,7 @@ from typing import Any
 # 뷰모델 묶음은 **프레젠테이션 계층이 소유한다** — 조립 루트가 GUI를 의존하는 것은
 # 정상이지만 그 반대는 레이어 역전이다(gui/view_models/bundle.py 참조).
 # 여기서는 조립부가 한곳에서 꺼내 쓰도록 재수출만 한다.
+from gui.media_services import MediaServices
 from gui.view_models.bundle import ViewModels
 
 
@@ -92,6 +93,10 @@ class Services:
     lyrics_providers: Any
     translator: Any
     summary_source: Any          # GeminiExtractor — ISummarySource
+    summary_languages: tuple[str, ...]   # 요약 추출기가 만들 수 있는 언어
+    stream_relay: Any            # StreamRelayGateway — IStreamRelay
+    subtitle_source: Any         # YouTubeSubtitleSource — IVideoSubtitleSource
+    watch_folder_scan: Callable[[str], Any]   # 폴더 → ScanResult
     album_provider: Any
     sync_service: Any
     db_backup: Any                # DbBackup — 하루 한 번 DB 사본
@@ -307,3 +312,5 @@ class AppGraph:
     services: Services
     handlers: Handlers
     view_models: ViewModels
+    # 상세 화면·플레이어용 인프라 기능 묶음(`gui/media_services.py`).
+    media: MediaServices
