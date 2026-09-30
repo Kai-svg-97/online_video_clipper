@@ -73,7 +73,56 @@ def _method_names(node: ast.ClassDef) -> set[str]:
     }
 
 
-WORKER_MODULES = [p for p in _vm_modules() if _worker_classes(_parse(p))]
+def _all_worker_names() -> set[str]:
+    """`gui/view_models/` **아래 어디서든** 선언된 QThread 워커 이름.
+
+    워커가 뷰모델 파일 밖(예: `gui/view_models/library/workers.py`)으로 옮겨 가도 계약이
+    빠지지 않게 한다 — `library_vm.py`를 나눴을 때 워커가 다른 모듈로 가면서 이 시험의
+    대상에서 조용히 빠졌다(통과는 하지만 아무것도 지키지 않는 상태).
+    """
+    names: set[str] = set()
+    for path in VM_DIR.rglob("*.py"):
+        if "__pycache__" not in path.parts:
+            names.update(_worker_classes(_parse(path)))
+    return names
+
+
+_WORKER_NAMES = _all_worker_names()
+
+
+def _uses_worker_names(tree: ast.Module) -> bool:
+    """워커 이름을 임포트하거나 코드에서 부르는가."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in _WORKER_NAMES:
+            return True
+        if isinstance(node, ast.ImportFrom) and any(a.name in _WORKER_NAMES for a in node.names):
+            return True
+    return False
+
+
+def _mixin_modules_using_workers() -> set[str]:
+    """워커를 쓰는 **믹스인 클래스** 이름 — 뷰모델이 이것을 섞으면 워커를 띄우는 뷰모델이다."""
+    out: set[str] = set()
+    for path in VM_DIR.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        tree = _parse(path)
+        if not _uses_worker_names(tree):
+            continue
+        out.update(n.name for n in tree.body if isinstance(n, ast.ClassDef) and n.name.endswith("Mixin"))
+    return out
+
+
+_WORKER_MIXINS = _mixin_modules_using_workers()
+
+
+def _owns_workers(tree: ast.Module) -> bool:
+    if _worker_classes(tree) or _uses_worker_names(tree):
+        return True
+    return any(_base_names(vm) & _WORKER_MIXINS for vm in _viewmodel_classes(tree))
+
+
+WORKER_MODULES = [p for p in _vm_modules() if _owns_workers(_parse(p))]
 
 
 class TestShutdownContract:
@@ -82,6 +131,10 @@ class TestShutdownContract:
     def test_worker_modules_found(self):
         """스캐너가 실제로 뭔가 찾았는지 — 0건이면 아래 테스트가 공허하게 통과한다."""
         assert WORKER_MODULES, "gui/view_models/에서 QThread 워커를 하나도 못 찾았다"
+
+    def test_워커를_밖으로_옮긴_뷰모델도_잡는다(self):
+        """library_vm의 워커는 library/workers.py에 있다 — 그래도 계약 대상이어야 한다."""
+        assert "library_vm.py" in {p.name for p in WORKER_MODULES}
 
     @pytest.mark.parametrize("path", WORKER_MODULES, ids=lambda p: p.name)
     def test_viewmodel_exposes_shutdown(self, path: Path):
