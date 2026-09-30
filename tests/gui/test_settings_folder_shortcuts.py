@@ -41,7 +41,8 @@ class TestPathRowOpenButtons:
         assert len(open_buttons) == 4
 
     def test_열기_버튼_클릭시_해당_경로로_open_folder가_호출된다(self, qtbot, monkeypatch):
-        import gui.panels.settings_panel as sp
+        # 쓰는 쪽 모듈을 패치한다 — 저장 경로 섹션은 general mixin에 있다.
+        import gui.panels.settings.mixins.general as sp
         from gui.panels.settings_panel import SettingsPanel
 
         called = MagicMock()
@@ -60,7 +61,8 @@ class TestPathRowOpenButtons:
 
 class TestOpenLogDir:
     def test_로그_폴더_열기_버튼이_LOG_DIR로_open_folder를_호출한다(self, qtbot, monkeypatch):
-        import gui.panels.settings_panel as sp
+        # 쓰는 쪽 모듈을 패치한다 — 쿠키 섹션은 feed_cookies mixin에 있다.
+        import gui.panels.settings.mixins.feed_cookies as sp
         from gui.panels.settings_panel import SettingsPanel
 
         called = MagicMock()
@@ -95,7 +97,8 @@ class TestCookieHelpDialog:
         assert any(lbl.text() == cookie_help_text() for lbl in labels)
 
     def test_다운로드_폴더_열기_버튼이_홈_다운로드로_연다(self, qtbot, monkeypatch):
-        import gui.panels.settings_panel as sp
+        # 쓰는 쪽 모듈을 패치한다 — 쿠키 도움말 대화상자는 feed_cookies mixin에 있다.
+        import gui.panels.settings.mixins.feed_cookies as sp
         from gui.panels.settings_panel import SettingsPanel
 
         captured: list[QDialog] = []
