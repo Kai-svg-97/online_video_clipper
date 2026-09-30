@@ -82,8 +82,12 @@ class TestSuggestions:
 
         pick = _handle(repos, agg, limit=1)[0]
 
-        assert pick.title and pick.end_sec > pick.start_sec
+        assert pick.end_sec > pick.start_sec
         assert pick.duration_sec > 0
+        # 제목 없는 제안은 빈 제목으로 온다 — "제안 구간 N"이라는 이름은 화면이 붙인다.
+        from gui.text.labels import highlight_title  # noqa: PLC0415
+
+        assert highlight_title(pick.title, 1) == (pick.title or "제안 구간 1")
 
     def test_설명의_챕터를_반영한다(self, repos):
         videos, subs = repos

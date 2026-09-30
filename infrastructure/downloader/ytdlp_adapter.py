@@ -9,17 +9,23 @@ import requests
 
 from config.settings import DOWNLOAD_DIR, THUMBNAIL_DIR
 from domain.download.value_objects import DownloadProgress, DownloadSettings, MediaFormat, Quality
+from domain.shared.messages import DisplayError, Message
+from domain.shared.ports import COOKIE_DECRYPT_FAILED
 from utils.resources import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
 
-_DPAPI_USER_MSG = (
-    "Chrome 쿠키를 복호화할 수 없습니다 (DPAPI 오류).\n"
-    "다음 중 하나를 시도해 주세요:\n"
-    "• Chrome을 완전히 종료한 후 다시 시도\n"
-    "• 설정 > YouTube 계정에서 Firefox를 선택\n"
-    "• 설정 > YouTube 계정에서 재로그인(Playwright 방식)"
-)
+
+class MediaSourceError(DisplayError, RuntimeError):
+    """yt-dlp 실패를 사용자 안내로 바꾼 것 — 사유는 `Message`(화면이 번역한다).
+
+    `RuntimeError`를 잡던 자리는 그대로 동작한다. 쿠키 복호화 실패는 키가
+    `COOKIE_DECRYPT_FAILED`라 화면이 문장 비교 없이 알아본다.
+    """
+
+
+def _dpapi_error() -> MediaSourceError:
+    return MediaSourceError(Message.of(COOKIE_DECRYPT_FAILED))
 
 
 def _is_dpapi_error(exc: Exception) -> bool:
@@ -365,7 +371,7 @@ class YtDlpAdapter:
         # clients는 항상 최소 1개 원소를 가지므로 이 지점에는 도달하지 않지만
         # 정적 분석·방어적 코드로 남겨둔다.
         self._cleanup_partial_files()
-        raise last_exc or RuntimeError("다운로드 실패")
+        raise last_exc or RuntimeError("download failed")   # 도달하지 않는 방어 코드
 
     def _cleanup_partial_files(self) -> None:
         """실패한 다운로드가 남긴 임시(``.part``) 파일을 정리한다.
@@ -480,10 +486,8 @@ class YtDlpAdapter:
                 raise
 
             if not cookie_opts:
-                raise RuntimeError(
-                    "비공개 재생목록을 가져오려면 YouTube 계정 인증이 필요합니다.\n"
-                    "설정 > YouTube 계정에서 브라우저 프로필을 선택하거나\n"
-                    "쿠키 파일(.txt)을 등록해 주세요."
+                raise MediaSourceError(
+                    Message.of("playlist.private_needs_auth")
                 ) from first_exc
 
             # 쿠키 포함 재시도
@@ -493,10 +497,8 @@ class YtDlpAdapter:
             except Exception as cookie_exc:
                 err_str = str(cookie_exc)
                 if "could not copy" in err_str.lower() and "cookie" in err_str.lower():
-                    raise RuntimeError(
-                        "브라우저 쿠키를 읽을 수 없습니다.\n"
-                        "Chrome이 실행 중이면 종료 후 재시도하거나,\n"
-                        "설정 > YouTube 계정에서 쿠키 파일을 직접 등록하세요."
+                    raise MediaSourceError(
+                        Message.of("media.browser_cookie_unreadable")
                     ) from cookie_exc
                 raise
         # info.get("title") = 재생목록 제목 (e.g. "AI-Agent")
@@ -550,7 +552,7 @@ class YtDlpAdapter:
                 ) or {}
         except Exception as exc:
             if _is_dpapi_error(exc):
-                raise RuntimeError(_DPAPI_USER_MSG) from exc
+                raise _dpapi_error() from exc
             raise
         result = []
         for e in (info.get("entries") or [])[:limit]:
@@ -604,7 +606,7 @@ class YtDlpAdapter:
                 ) or {}
         except Exception as exc:
             if _is_dpapi_error(exc):
-                raise RuntimeError(_DPAPI_USER_MSG) from exc
+                raise _dpapi_error() from exc
             raise
         result = []
         # 지연 제너레이터를 list로 완전히 소진해 continuation을 끝까지 따라간다.
@@ -645,7 +647,7 @@ class YtDlpAdapter:
                 info = ydl.extract_info(url, download=False) or {}
         except Exception as exc:
             if _is_dpapi_error(exc):
-                raise RuntimeError(_DPAPI_USER_MSG) from exc
+                raise _dpapi_error() from exc
             raise
         channel_name = info.get("channel") or info.get("uploader") or info.get("title") or ""
         result = []
@@ -706,7 +708,7 @@ class YtDlpAdapter:
                 info = ydl.extract_info(f"ytsearch{limit}:{query}", download=False) or {}
         except Exception as exc:
             if _is_dpapi_error(exc):
-                raise RuntimeError(_DPAPI_USER_MSG) from exc
+                raise _dpapi_error() from exc
             raise
         result = []
         for e in (info.get("entries") or [])[:limit]:

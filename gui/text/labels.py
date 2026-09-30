@@ -211,3 +211,28 @@ def download_preset_name(preset) -> str:
 def chapter_title(title: str, index: int) -> str:
     """제목 없는 챕터에 붙이는 이름. 도메인은 빈 제목을 그대로 둔다."""
     return title or tr("챕터 {n}").format(n=index)
+
+
+def highlight_title(title: str, index: int) -> str:
+    """제목 없는 '볼 만한 구간' 제안에 붙이는 이름. 애플리케이션은 빈 제목을 그대로 둔다."""
+    return title or tr("제안 구간 {n}").format(n=index)
+
+
+# ── 라이브러리 가져오기 충돌 필드 ─────────────────────────────────
+# 키는 `application/transfer/commands.py` 의 충돌 비교 행(`ImportFieldDiffDTO.field`).
+TRANSFER_FIELD_LABELS: dict[str, str] = {
+    "title": "제목",
+    "notes": "메모",
+    "description": "설명",
+    "category": "카테고리",
+    "artist": "가수",
+    "album": "앨범",
+    "song_title": "노래 제목",
+    "release_year": "발매년도",
+    "lyrics": "가사",
+    "lyrics_offset_ms": "가사 싱크 오프셋",
+}
+
+
+def transfer_field_label(field: str) -> str:
+    return _tr(TRANSFER_FIELD_LABELS.get(field), field)

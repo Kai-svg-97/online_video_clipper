@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from application.clip.convert import ConvertMediaCommand, ConvertMediaHandler, list_presets
+from domain.shared.messages import Message
 
 
 class _Converter:
@@ -62,16 +63,19 @@ class TestOutput:
 
 class TestGuards:
     def test_모르는_프리셋은_거부한다(self, source):
-        with pytest.raises(ValueError, match="프리셋"):
+        # 사유는 문장이 아니라 `Message`다 — `ValueError`로 잡던 자리는 그대로 동작한다.
+        with pytest.raises(ValueError) as exc:
             ConvertMediaHandler(_Converter()).handle(
                 ConvertMediaCommand(str(source), "없는키")
             )
+        assert exc.value.message == Message.of("convert.unknown_preset", preset="없는키")
 
     def test_원본이_없으면_거부한다(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(FileNotFoundError) as exc:
             ConvertMediaHandler(_Converter()).handle(
                 ConvertMediaCommand(str(tmp_path / "없음.mp4"), "mp3")
             )
+        assert exc.value.message.key == "convert.source_missing"
 
 
 class TestProgress:

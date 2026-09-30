@@ -45,6 +45,12 @@ class IEventBus(Protocol):
     def publish_all(self, events: list) -> None: ...
 
 
+# `IMediaSource`가 브라우저 쿠키를 복호화하지 못했을 때(Windows DPAPI) 내는 `DisplayError`의
+# 메시지 키. 화면이 **이 키로** 그 오류를 알아본다 — 예전에는 한국어 안내 문장에
+# "복호화"가 들어 있는지로 판정해 번역하는 순간 어긋날 판이었다.
+COOKIE_DECRYPT_FAILED = "media.cookie_decrypt_failed"
+
+
 class IMediaSource(Protocol):
     """동영상 메타데이터 조회·다운로드·재생목록/구독 조회 공급자 추상화.
 

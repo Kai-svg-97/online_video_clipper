@@ -470,7 +470,7 @@ class SqliteVideoRepository(IVideoRepository):
                 FROM videos"""
             ).fetchone()
             cat_rows = conn.execute(
-                """SELECT COALESCE(c.name, '미분류') as name, COUNT(v.id) as cnt
+                """SELECT COALESCE(c.name, '') as name, COUNT(v.id) as cnt
                 FROM categories c
                 LEFT JOIN videos v ON v.category_id = c.id
                 GROUP BY c.id
@@ -493,7 +493,7 @@ class SqliteVideoRepository(IVideoRepository):
         channel_url/channel_id는 같은 채널 그룹에서 비지 않은 값 하나(MAX)를 대표로 쓴다."""
         with self._db.connection() as conn:
             rows = conn.execute(
-                """SELECT COALESCE(NULLIF(channel_name, ''), '(채널 없음)') AS channel,
+                """SELECT COALESCE(channel_name, '') AS channel,
                           COALESCE(MAX(channel_url), '') AS ch_url,
                           COALESCE(MAX(channel_id), '')  AS ch_id,
                           category_id, COUNT(*) AS cnt

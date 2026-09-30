@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from domain.shared.messages import Message
+
 
 @dataclass(frozen=True)
 class ImportCategoryOptionDTO:
@@ -30,10 +32,9 @@ class ImportFieldDiffDTO:
     `existing_filled`/`incoming_filled`는 각 값이 비어있지 않은지를 나타내
     "채워진 정보가 어느 쪽에 있는지" 한눈에 판단할 수 있게 한다.
     """
-    field: str
-    label: str
-    existing_value: str
-    incoming_value: str
+    field: str                    # 표시 이름은 `gui/text/labels.py:transfer_field_label`
+    existing_value: Message | str  # 가사는 줄 수를 담은 `Message`(미리보기), 나머지는 값 그대로
+    incoming_value: Message | str
     existing_filled: bool
     incoming_filled: bool
     default_choice: str   # "existing" | "incoming"

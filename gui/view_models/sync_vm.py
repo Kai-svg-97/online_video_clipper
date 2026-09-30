@@ -11,6 +11,7 @@ import logging
 
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
+from gui.text.messages import describe_error
 from gui.view_models.base import WorkerOwnerMixin
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class _SyncWorker(QThread):
             self.done.emit(pushed, pulled)
         except Exception as exc:
             logger.exception("동기화 실패")
-            self.failed.emit(str(exc))
+            self.failed.emit(describe_error(exc))
 
 
 class _ConnectWorker(QThread):
@@ -66,7 +67,7 @@ class _ConnectWorker(QThread):
             self.done.emit(bool(ok))
         except Exception as exc:
             logger.exception("provider 연결 실패")
-            self.failed.emit(str(exc))
+            self.failed.emit(describe_error(exc))
 
 
 class SyncViewModel(WorkerOwnerMixin, QObject):
@@ -91,7 +92,7 @@ class SyncViewModel(WorkerOwnerMixin, QObject):
             self.status_changed.emit(self._service.status())
         except Exception as exc:
             logger.exception("동기화 상태 조회 실패")
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def is_connected(self) -> bool:
         return self._service.is_connected()
@@ -150,7 +151,7 @@ class SyncViewModel(WorkerOwnerMixin, QObject):
             self._service.disconnect()
         except Exception as exc:
             logger.exception("연결 해제 실패")
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
         self.connection_changed.emit(False)
         self.refresh_status()
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from domain.shared.messages import Message
+
 # 수록곡 1건이 어디서 왔는지 — 목록에 배지로 표시한다.
 TRACK_ORIGIN_LIBRARY = "library"   # 내가 등록한 라이브러리 영상
 TRACK_ORIGIN_AUTO = "auto"         # 자동 검색으로 붙인 스트리밍 영상(official 음원 추정)
@@ -71,6 +73,9 @@ class AlbumDetailDTO:
     source_name: str = ""
     source_url: str = ""
     tracks: list[AlbumTrackDTO] = field(default_factory=list)
+    # 출처가 설명을 주지 않을 때 화면이 잇는 요약 조각(가수·장르·발매일·수록곡 수).
+    # 문장이 필요한 조각만 `Message`이고 가수·장르처럼 외부 값은 문자열 그대로다.
+    summary_parts: tuple[Message | str, ...] = ()
 
     @property
     def library_count(self) -> int:

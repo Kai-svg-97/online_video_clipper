@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 from config import settings
+from domain.shared.messages import DisplayError, Message
 from utils.resources import get_resource_path
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 _UTF8_BOM = b"\xef\xbb\xbf"
 
 
-class OAuthClientConfigError(RuntimeError):
+class OAuthClientConfigError(DisplayError, RuntimeError):
     """OAuth 클라이언트 설정 JSON이 없거나 형식이 올바르지 않을 때."""
 
 
@@ -34,20 +35,22 @@ def validate_youtube_oauth_config(path: Path) -> None:
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise OAuthClientConfigError(f"OAuth 설정 JSON을 읽을 수 없습니다: {path}") from exc
+        raise OAuthClientConfigError(Message.of("oauth.config_unreadable", path=str(path))) from exc
     installed = data.get("installed") if isinstance(data, dict) else None
     if not isinstance(installed, dict):
-        raise OAuthClientConfigError(f"Desktop installed OAuth 설정이 아닙니다: {path}")
+        raise OAuthClientConfigError(Message.of("oauth.not_desktop_installed", path=str(path)))
     for field in ("client_id", "client_secret", "auth_uri", "token_uri"):
         if not isinstance(installed.get(field), str) or not installed[field].strip():
-            raise OAuthClientConfigError(f"OAuth 설정 필드가 없습니다: {field} ({path})")
+            raise OAuthClientConfigError(
+                Message.of("oauth.missing_field", field=field, path=str(path))
+            )
     redirects = installed.get("redirect_uris")
     if not isinstance(redirects, list) or not any(
         isinstance(uri, str)
         and uri.startswith(("http://localhost", "http://127.0.0.1"))
         for uri in redirects
     ):
-        raise OAuthClientConfigError(f"localhost loopback redirect가 없습니다: {path}")
+        raise OAuthClientConfigError(Message.of("oauth.no_loopback_redirect", path=str(path)))
 
 
 def find_youtube_oauth_config(explicit_path: Path | None = None) -> Path | None:

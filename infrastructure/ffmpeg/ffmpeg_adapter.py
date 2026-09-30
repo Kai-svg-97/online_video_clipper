@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from domain.clip.value_objects import TimeRange
+from domain.shared.messages import DisplayError, Message
 from utils.resources import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,10 @@ def _probe_duration_us(path: Path) -> int:
     hours, minutes, seconds, frac = match.groups()
     total = int(hours) * 3600 + int(minutes) * 60 + int(seconds)
     return int((total + float(f"0.{frac}")) * 1_000_000)
+
+
+class ConvertFailedError(DisplayError, RuntimeError):
+    """ffmpeg 변환이 0이 아닌 코드로 끝났다 — 사유는 `Message`(화면이 번역한다)."""
 
 
 class FfmpegAdapter:
@@ -148,5 +153,5 @@ class FfmpegAdapter:
         finally:
             proc.wait()
         if proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg 변환 실패 (코드 {proc.returncode})")
+            raise ConvertFailedError(Message.of("convert.ffmpeg_failed", code=proc.returncode))
         return output_path

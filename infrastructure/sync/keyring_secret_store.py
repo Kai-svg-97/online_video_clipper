@@ -32,7 +32,7 @@ class KeyringSecretStore:
             from keyring.backends.fail import Keyring as _Fail  # noqa: PLC0415
 
             if isinstance(keyring.get_keyring(), _Fail):
-                raise RuntimeError("사용 가능한 keyring 백엔드 없음")
+                raise RuntimeError("no usable keyring backend")   # 바로 아래에서 잡아 파일 폴백한다
             return keyring
         except Exception as exc:
             # keyring 미설치·백엔드 부재는 **예상된 폴백**이라 트레이스백 없이 한 줄 경고만 남긴다

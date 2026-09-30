@@ -17,6 +17,7 @@ from application.monitoring.commands import (
 from domain.monitoring.value_objects import MonitoringRule
 from application.monitoring.dtos import SubscriptionDTO
 from application.monitoring.queries import GetSubscriptionsHandler
+from gui.text.messages import describe_error
 from gui.view_models.base import WorkerOwnerMixin
 from gui.text import tr
 
@@ -46,7 +47,7 @@ class _ImportYTSubsWorker(QThread):
             )
             self.finished_ok.emit(count)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class MonitoringViewModel(WorkerOwnerMixin, QObject):
@@ -82,14 +83,14 @@ class MonitoringViewModel(WorkerOwnerMixin, QObject):
             self._subscriptions = self._get_subs.handle()
             self.subscriptions_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def subscribe_channel(self, channel_url: str) -> None:
         try:
             self._subscribe.handle(SubscribeChannelCommand(channel_url=channel_url))
             self.load()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def unsubscribe_channel(self, subscription_id: UUID) -> None:
         try:
@@ -97,14 +98,14 @@ class MonitoringViewModel(WorkerOwnerMixin, QObject):
             self._subscriptions = [s for s in self._subscriptions if s.id != subscription_id]
             self.subscriptions_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def set_rule(self, subscription_id: UUID, rule: MonitoringRule) -> None:
         try:
             self._set_rule.handle(SetMonitoringRuleCommand(subscription_id=subscription_id, rule=rule))
             self.load()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def import_from_youtube(self) -> None:
         if self._import_yt is None:

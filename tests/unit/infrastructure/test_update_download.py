@@ -136,8 +136,10 @@ class TestIntegrity:
         sess = _Session([_Resp(PAYLOAD)])
         checker = GithubUpdateChecker("1.0.0", session=sess)
 
-        with pytest.raises(RuntimeError, match="SHA-256"):
+        with pytest.raises(RuntimeError) as exc:
             checker.download_asset(_info(sha="0" * 64), tmp_path)
+        # 사유는 배지 툴팁까지 올라가므로 문장이 아니라 `Message`다.
+        assert exc.value.message.key == "update.checksum_mismatch"
         assert list(tmp_path.iterdir()) == []
 
     def test_missing_sha_is_fail_closed(self, tmp_path):

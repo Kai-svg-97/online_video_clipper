@@ -140,7 +140,10 @@ from gui.panels.library.tree import (  # noqa: F401
     _PlaylistPanel,
     _PlaylistTree,
 )
+from domain.shared.messages import Message
+from domain.shared.ports import COOKIE_DECRYPT_FAILED
 from gui.text import tr
+from gui.text.messages import render
 
 logger = logging.getLogger(__name__)
 
@@ -475,15 +478,16 @@ class FeedViewMixin:
                 "Chrome이 실행 중입니다 — Chrome을 완전히 종료 후 재시도하거나,\n"
                 "설정 > YouTube 계정에서 브라우저를 Firefox로 변경하세요."
             )
-        elif "복호화" in msg or "dpapi" in ml or "failed to decrypt" in ml:
-            # ytdlp_adapter가 이미 한국어 안내문으로 변환한 DPAPI 메시지를 그대로 표시
-            display = msg
-        elif "cookie" in ml or "쿠키" in msg:
+        elif msg == COOKIE_DECRYPT_FAILED or "dpapi" in ml or "failed to decrypt" in ml:
+            # 어댑터가 DPAPI 실패를 `DisplayError`(키 COOKIE_DECRYPT_FAILED)로 바꿔 올린다 —
+            # 워커가 `str(exc)`로 넘기면 그 키가 곧 문자열이다. 안내문은 여기서 번역한다.
+            display = render(Message.of(COOKIE_DECRYPT_FAILED))
+        elif "cookie" in ml:
             display = tr(
                 "쿠키 인증 실패 — 설정 > YouTube 계정에서 Firefox로 변경하거나\n"
                 "Chrome을 완전히 종료 후 재시도하세요."
             )
-        elif "sign in" in ml or "로그인" in msg:
+        elif "sign in" in ml:
             display = tr("YouTube 로그인 필요 — 설정 > YouTube 계정에서 로그인하세요.")
         else:
             display = tr("오류: {msg}").format(msg=msg[:200])

@@ -239,8 +239,12 @@ class TestAlbumDetail:
             GetAlbumDetailQuery(album_key=make_album_key("IU", "Palette"), category_id=cat.id)
         )
 
-        assert "K-Pop" in detail.description
-        assert "2017-04-21" in detail.description
+        # 출처 설명이 없으면 화면이 잇는 조각으로 온다 — 문장은 `Message`다.
+        from domain.shared.messages import Message  # noqa: PLC0415
+
+        assert detail.description == ""
+        assert "K-Pop" in detail.summary_parts
+        assert Message.of("album.released", date="2017-04-21") in detail.summary_parts
 
     def test_먼저_등록한_곡의_가수_제목으로_앨범을_확정한다(self, repos):
         """앨범명 텍스트 검색(fetch_album)보다 정확한 곡 기준 조회(find_album_of_track)를

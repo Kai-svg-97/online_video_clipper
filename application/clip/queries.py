@@ -106,11 +106,11 @@ class GetHighlightsHandler:
         cues = [(ln.start_ms, ln.end_ms, ln.text) for ln in lines]
         return [
             ChapterDTO(
-                title=h.title or f"제안 구간 {i}",
+                # 빈 제목은 그대로 둔다 — "제안 구간 N"이라는 이름은 화면이 붙인다
+                # (`gui/text/labels.py:highlight_title`).
+                title=h.title,
                 start_sec=h.start_sec,
                 end_sec=h.end_sec,
             )
-            for i, h in enumerate(
-                suggest_highlights(cues, duration, chapters, limit=query.limit), start=1
-            )
+            for h in suggest_highlights(cues, duration, chapters, limit=query.limit)
         ]

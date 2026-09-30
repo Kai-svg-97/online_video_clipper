@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
+from domain.shared.messages import DisplayError
 from domain.sync.value_objects import Op, SnapshotManifest
+
+
+class CloudAuthRequiredError(DisplayError, RuntimeError):
+    """클라우드 제공자에 연결(인증)되지 않았다 — 사유는 제공자별 `Message`."""
 
 
 @dataclass(frozen=True, slots=True)

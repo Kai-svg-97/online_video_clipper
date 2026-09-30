@@ -11,6 +11,7 @@ from uuid import UUID
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.text.messages import describe_error
 from gui.view_models.base import WorkerOwnerMixin
 
 from application.transfer.commands import (
@@ -44,7 +45,7 @@ class _CommandWorker(QThread):
             self.done.emit(result)
         except Exception as exc:
             logger.exception("라이브러리 가져오기/내보내기 작업 실패")
-            self.failed.emit(str(exc))
+            self.failed.emit(describe_error(exc))
 
 
 class LibraryTransferViewModel(WorkerOwnerMixin, QObject):

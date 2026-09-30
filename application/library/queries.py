@@ -255,7 +255,7 @@ class GetVideoDetailHandler:
         failed_jobs = self._dl_repo.find_failed_by_url(v.url.value)
         failed_downloads = [
             FailedDownloadInfoDTO(
-                error_msg=j.error_msg or "알 수 없는 오류",
+                error_msg=j.error_msg or "",   # 빈 사유의 표시 문구는 화면이 준다
                 created_at=j.created_at,
             )
             for j in failed_jobs
@@ -468,7 +468,7 @@ class LibraryStatsHandler:
             grouped[channel].append(
                 ChannelCategoryStatDTO(
                     category_id=cid,
-                    category_path=path_of(cid) or "미분류",
+                    category_path=path_of(cid),   # 빈 경로의 표시 이름("미분류")은 화면이 준다
                     count=cnt,
                 )
             )

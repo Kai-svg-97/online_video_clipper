@@ -102,11 +102,12 @@ class YouTubeOAuthAdapter:
     def run_auth_flow(self) -> Any:
         """시스템 브라우저 OAuth(Desktop/PKCE/loopback) 플로우를 실행한다."""
         from google_auth_oauthlib.flow import InstalledAppFlow  # noqa: PLC0415
+        from domain.shared.messages import Message  # noqa: PLC0415
         from infrastructure.youtube.oauth_client_config import (  # noqa: PLC0415
             OAuthClientConfigError,
         )
         if self._client_config_path is None:
-            raise OAuthClientConfigError("YouTube OAuth 클라이언트 설정이 포함되지 않았습니다.")
+            raise OAuthClientConfigError(Message.of("oauth.client_config_missing"))
         flow = InstalledAppFlow.from_client_secrets_file(
             str(self._client_config_path),
             SCOPES,

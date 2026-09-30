@@ -14,9 +14,22 @@ from domain.library.repositories import (
     IPlaylistRepository,
     IVideoRepository,
 )
+from domain.shared.messages import DisplayError, Message, error_message
 from domain.shared.ports import IMediaSource
 
 logger = logging.getLogger(__name__)
+
+
+class YouTubeCredentialsUnavailable(DisplayError, RuntimeError):
+    """OAuth 자격증명이 없어 YouTube API 경로를 쓸 수 없다(yt-dlp 오류를 우선한다)."""
+
+
+class YouTubeApiNotConnected(DisplayError, RuntimeError):
+    """YouTube API가 연결되지 않아 재생목록을 올릴 수 없다."""
+
+
+class PlaylistImportError(DisplayError, RuntimeError):
+    """yt-dlp와 YouTube API 두 경로 모두 재생목록을 가져오지 못했다."""
 
 
 def _resolve_yt_api(yt_api, yt_api_provider: "Callable[[], object | None] | None"):
@@ -293,13 +306,14 @@ class ImportYouTubePlaylistHandler:
                 _entries_have_item_ids = True
             except Exception as api_exc:
                 # 두 경로 모두 실패 — API 오류가 더 구체적이면 그것을 전파
-                api_msg = str(api_exc)
-                if api_msg and "자격증명" not in api_msg:
-                    raise RuntimeError(
-                        f"재생목록을 가져올 수 없습니다.\n"
-                        f"• yt-dlp: {ytdlp_exc}\n"
-                        f"• YouTube API: {api_exc}"
-                    ) from api_exc
+                # 자격증명이 없어 API를 못 쓴 것이면 yt-dlp 오류가 더 쓸모 있다.
+                # (예전에는 오류 문장에 "자격증명"이 있는지로 판정했다 — 번역하면 어긋난다.)
+                if str(api_exc) and not isinstance(api_exc, YouTubeCredentialsUnavailable):
+                    raise PlaylistImportError(Message.of(
+                        "playlist.import_failed",
+                        ytdlp_error=error_message(ytdlp_exc),
+                        api_error=error_message(api_exc),
+                    )) from api_exc
                 raise ytdlp_exc
 
         total = len(entries)
@@ -406,7 +420,7 @@ class ImportYouTubePlaylistHandler:
         """OAuth API로 재생목록 내용 가져오기. entries에 yt_item_id 포함."""
         api = self._get_active_yt_api()
         if api is None:
-            raise RuntimeError("YouTube API 자격증명을 가져올 수 없습니다.")
+            raise YouTubeCredentialsUnavailable(Message.of("playlist.api_credentials_unavailable"))
         entries = api.list_items_full(yt_playlist_id)
         title = api.get_playlist_title(yt_playlist_id) or yt_playlist_id
         return title, entries
@@ -636,9 +650,7 @@ class PushPlaylistToYouTubeHandler:
 
         yt = _resolve_yt_api(self._yt, self._yt_api_provider)
         if yt is None:
-            raise RuntimeError(
-                "YouTube API가 연결되지 않았습니다.\n설정 > YouTube API 연동에서 인증하세요."
-            )
+            raise YouTubeApiNotConnected(Message.of("playlist.api_not_connected"))
 
         pl = self._repo.get_by_id(cmd.playlist_id)
         if pl is None:

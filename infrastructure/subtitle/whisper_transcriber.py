@@ -23,8 +23,14 @@ from domain.library.transcribe import (
     resolve_model,
     segments_to_cues,
 )
+from domain.shared.messages import DisplayError, Message
 
 logger = logging.getLogger(__name__)
+
+
+class TranscribeFileMissingError(DisplayError, FileNotFoundError):
+    """전사할 파일이 없다 — `FileNotFoundError`를 잡던 자리가 그대로 동작한다."""
+
 
 # 저사양 PC가 목표라 CPU·int8 로 고정한다. GPU(cuda)는 사용자의 드라이버 상태에
 # 따라 조용히 실패하는 경로가 많아, 되면 좋은 것보다 **항상 되는 것**을 택했다.
@@ -160,7 +166,7 @@ class WhisperTranscriber:
         """
         path = Path(media_path)
         if not path.exists():
-            raise FileNotFoundError(f"전사할 파일이 없습니다: {path}")
+            raise TranscribeFileMissingError(Message.of("transcribe.file_missing", path=str(path)))
 
         model = self._load(resolve_model(model_key).key, local_files_only=False)
         segments, info = model.transcribe(str(path), language=language or None)

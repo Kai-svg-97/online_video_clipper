@@ -6,6 +6,7 @@ from uuid import UUID
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.text.messages import describe_error, render
 from gui.view_models.base import WorkerOwnerMixin
 from gui.text import tr
 
@@ -83,7 +84,7 @@ class _AddVideoWorker(QThread):
             agg = self._handler.handle(self._cmd)
             self.finished_ok.emit(agg.id)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _EnrichWorker(QThread):
@@ -104,10 +105,11 @@ class _EnrichWorker(QThread):
     def run(self) -> None:
         try:
             result = self._handler.handle(self._cmd)
-            self.finished_result.emit(self._url, result.kind, result.ok, result.detail)
+            # 사유는 `Message`로 온다 — 신호는 문자열이라 여기서 문장으로 만든다.
+            self.finished_result.emit(self._url, result.kind, result.ok, render(result.detail))
         except Exception as exc:
             logger.exception("영상 보강 워커 실패: %s", self._url)
-            self.finished_result.emit(self._url, "skipped", False, str(exc))
+            self.finished_result.emit(self._url, "skipped", False, describe_error(exc))
 
 
 class _ImportYTToCatWorker(QThread):
@@ -131,7 +133,7 @@ class _ImportYTToCatWorker(QThread):
             count = self._handler.handle(self._cmd)
             self.finished_ok.emit(count)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _ListVideosWorker(QThread):
@@ -150,7 +152,7 @@ class _ListVideosWorker(QThread):
             results = self._fetch()
             self.finished_ok.emit(results, self._append)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _RefreshThumbnailWorker(QThread):
@@ -174,7 +176,7 @@ class _RefreshThumbnailWorker(QThread):
             if new_path:
                 self.finished_ok.emit(self._cmd.video_id, new_path)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _RefreshMetadataWorker(QThread):
@@ -200,7 +202,7 @@ class _RefreshMetadataWorker(QThread):
             )
             self.finished_ok.emit(count)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _RefreshVideoMetaWorker(QThread):
@@ -224,7 +226,7 @@ class _RefreshVideoMetaWorker(QThread):
             self.finished_ok.emit(self._cmd.video_id, bool(updated))
         except Exception as exc:
             logger.exception("영상 메타데이터 갱신 실패: %s", self._cmd.video_id)
-            self.finished_err.emit(self._cmd.video_id, str(exc))
+            self.finished_err.emit(self._cmd.video_id, describe_error(exc))
 
 
 class LibraryViewModel(WorkerOwnerMixin, QObject):
@@ -450,7 +452,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
         except Exception as exc:
             logger.exception("스코프 태그 집계 실패")
             self._scoped_tags = []
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
             return
         self.scoped_tags_changed.emit()
 
@@ -632,7 +634,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
             )
             self._apply_category_order(category_id)
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     @property
     def active_playlist_id(self) -> "UUID | None":
@@ -757,28 +759,28 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
             self._delete_video.handle(DeleteVideoCommand(video_id))
             self._refresh_videos(bust_cache=True)
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def mark_watched(self, video_id: UUID) -> None:
         try:
             self._mark_watched.handle(MarkWatchedCommand(video_id))
             self._refresh_videos(bust_cache=True)
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def assign_category(self, video_id: UUID, category_id: UUID | None) -> None:
         try:
             self._assign_category.handle(AssignCategoryCommand(video_id, category_id))
             self._refresh_videos(bust_cache=True)
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def assign_category_bulk(self, video_ids: list[UUID], category_id: UUID | None) -> None:
         for vid_id in video_ids:
             try:
                 self._assign_category.handle(AssignCategoryCommand(vid_id, category_id))
             except Exception as exc:
-                self.error_occurred.emit(str(exc))
+                self.error_occurred.emit(describe_error(exc))
         self._refresh_videos(bust_cache=True)
 
     def delete_tag(self, tag_id: UUID) -> None:
@@ -790,13 +792,13 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
             self._refresh_tags()
             self._refresh_videos(bust_cache=True)
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def get_video_detail(self, video_id: UUID) -> VideoDetailDTO | None:
         try:
             return self._get_video_detail.handle(video_id)
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
             return None
 
     def get_downloaded_flags(self, urls: list[str]) -> dict[str, tuple[bool, bool]]:
@@ -919,14 +921,14 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
             self._create_category.handle(CreateCategoryCommand(name=name, parent_id=parent_id))
             self._refresh_categories()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def rename_category(self, category_id: UUID, new_name: str) -> None:
         try:
             self._rename_category.handle(RenameCategoryCommand(category_id=category_id, new_name=new_name))
             self._refresh_categories()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def delete_category(self, category_id: UUID) -> None:
         try:
@@ -934,7 +936,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
             self._refresh_categories()  # _refresh_categories()가 캐시 무효화 포함
             self._refresh_videos(bust_cache=True)
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def reparent_category(self, category_id: UUID, new_parent_id: UUID | None) -> None:
         if new_parent_id is not None:
@@ -946,7 +948,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
             self._move_category.handle(MoveCategoryCommand(category_id, new_parent_id))
             self._refresh_categories()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def _resolve_category_ids(self, cat_id: UUID) -> list[UUID]:
         """Return cat_id plus all descendant IDs via BFS.
@@ -1198,7 +1200,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
             self._refresh_tags()
             self._refresh_videos(bust_cache=True)
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def add_tags_bulk(self, video_ids: list[UUID], tag_names: list[str]) -> None:
         """Append *tag_names* to each video in *video_ids*, preserving existing tags."""
@@ -1210,7 +1212,7 @@ class LibraryViewModel(WorkerOwnerMixin, QObject):
                 merged = list(dict.fromkeys(list(detail.tags) + tag_names))
                 self._update_video.handle(UpdateVideoCommand(video_id=vid_id, tags=merged))
             except Exception as exc:
-                self.error_occurred.emit(str(exc))
+                self.error_occurred.emit(describe_error(exc))
         self._refresh_tags()
         self._refresh_videos(bust_cache=True)
 

@@ -33,7 +33,7 @@ from application.library.dtos import FailedDownloadInfoDTO
 from gui.themes.colors import sem
 from gui.toast import show_toast
 from gui.text.labels import convert_preset_description, convert_preset_name
-from gui.text.labels import chapter_title
+from gui.text.labels import chapter_title, highlight_title
 
 
 # ── 분할된 부품 (gui/panels/detail/*) ─────────────────────────────
@@ -203,7 +203,7 @@ class FilesTabMixin:
             )
             dl_layout.addWidget(fail_hdr)
             for fd in failed_downloads:
-                err_text = self._strip_ansi(fd.error_msg)
+                err_text = self._strip_ansi(fd.error_msg or tr("알 수 없는 오류"))
                 date_str = (
                     fd.created_at.astimezone(tz=None).strftime("%Y-%m-%d %H:%M")
                     if fd.created_at else ""
@@ -647,6 +647,12 @@ class FilesTabMixin:
         self._chapter_hint_text = tr(
             "자막에서 말이 몰린 곳을 찾은 구간입니다. 고른 구간을 각각 클립으로 저장합니다."
         )
+        # 제목 없는 제안에 이름을 붙인다 — 챕터 이름("챕터 N")과 다르고, 클립 이름으로도 쓰인다.
+        from dataclasses import replace  # noqa: PLC0415
+
+        picks = [
+            replace(p, title=highlight_title(p.title, i)) for i, p in enumerate(picks, start=1)
+        ]
         self._on_chapters_loaded(picks)
         if hasattr(self, "_chapter_status_lbl"):
             self._chapter_status_lbl.setText(tr("{n}개 구간을 제안했습니다.").format(n=len(picks)))

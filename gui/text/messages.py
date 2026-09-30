@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
-from domain.shared.messages import Message
+from domain.shared.messages import DisplayError, Message
 from gui.text import tr
 from gui.text.formats import ByteUnit, format_bytes
 
@@ -84,6 +84,86 @@ _TEMPLATES: dict[str, str] = {
     "availability.removed": "원본이 삭제되었거나 주소가 바뀌었습니다",
     "availability.private": "비공개로 바뀌어 볼 수 없습니다",
     "availability.http_code": "응답 코드 {code}",
+    "availability.not_youtube": "YouTube 영상이 아닙니다",
+
+    # ── 오류 사유 — 애플리케이션·인프라의 `DisplayError` ──────────────
+    # 번역할 수 없는 원문(yt-dlp·네트워크가 준 영어 메시지)을 그대로 싣는 자리.
+    "error.raw": "{reason}",
+
+    # ── 등록 후 자동 보강(가사·요약) 결과 ────────────────────────────
+    "enrich.video_not_found": "영상을 찾을 수 없습니다",
+    "enrich.lyrics_exists": "가사가 이미 있습니다",
+    "enrich.no_lyrics_fetcher": "가사 조회기가 설정되지 않았습니다",
+    "enrich.lyrics_not_found": "가사를 찾지 못했습니다",
+    "enrich.lyrics_lines": "{n}줄",
+    "enrich.summary_exists": "요약이 이미 있습니다",
+    "enrich.no_summary_source": "요약 추출기가 설정되지 않았습니다",
+    "enrich.summary_no_button": "이 영상에는 '질문하기' 버튼이 없어 요약을 가져올 수 없습니다",
+    "enrich.summary_needs_login": "YouTube 로그인이 필요합니다(설정에서 쿠키 등록)",
+    "enrich.summary_failed": "요약을 가져오지 못했습니다",
+    "enrich.summary_chars": "{n}자",
+
+    # ── 라이브러리 가져오기 충돌 — 가사 미리보기 ─────────────────────
+    "transfer.lyrics_preview": "{lines}줄 · {preview}",
+
+    # ── 앨범 요약 조각(출처가 설명을 주지 않을 때) ───────────────────
+    "album.released": "{date} 발매",
+    "album.track_count": "{n}곡",
+    "album.library_count": "내 라이브러리 {n}곡",
+
+    # ── 포맷 변환 ─────────────────────────────────────────────────
+    "convert.unknown_preset": "알 수 없는 변환 프리셋: {preset}",
+    "convert.source_missing": "원본 파일이 없습니다: {path}",
+    "convert.ffmpeg_failed": "ffmpeg 변환 실패 (코드 {code})",
+
+    # ── 음성 인식 ─────────────────────────────────────────────────
+    "transcribe.file_missing": "전사할 파일이 없습니다: {path}",
+
+    # ── YouTube 재생목록 ──────────────────────────────────────────
+    "playlist.api_credentials_unavailable": "YouTube API 자격증명을 가져올 수 없습니다.",
+    "playlist.api_not_connected":
+        "YouTube API가 연결되지 않았습니다.\n설정 > YouTube API 연동에서 인증하세요.",
+    "playlist.import_failed":
+        "재생목록을 가져올 수 없습니다.\n• yt-dlp: {ytdlp_error}\n• YouTube API: {api_error}",
+    "playlist.private_needs_auth":
+        "비공개 재생목록을 가져오려면 YouTube 계정 인증이 필요합니다.\n"
+        "설정 > YouTube 계정에서 브라우저 프로필을 선택하거나\n"
+        "쿠키 파일(.txt)을 등록해 주세요.",
+    "media.browser_cookie_unreadable":
+        "브라우저 쿠키를 읽을 수 없습니다.\n"
+        "Chrome이 실행 중이면 종료 후 재시도하거나,\n"
+        "설정 > YouTube 계정에서 쿠키 파일을 직접 등록하세요.",
+    "media.cookie_decrypt_failed":
+        "Chrome 쿠키를 복호화할 수 없습니다 (DPAPI 오류).\n"
+        "다음 중 하나를 시도해 주세요:\n"
+        "• Chrome을 완전히 종료한 후 다시 시도\n"
+        "• 설정 > YouTube 계정에서 Firefox를 선택\n"
+        "• 설정 > YouTube 계정에서 재로그인(Playwright 방식)",
+
+    # ── 클라우드 동기화 ───────────────────────────────────────────
+    "sync.schema_newer": "원격 변경이 더 최신 스키마를 요구합니다 — 앱 업데이트가 필요합니다.",
+    "sync.snapshot_sha_mismatch":
+        "스냅샷 sha256 불일치 — 손상/불완전 다운로드: {actual} != {expected}",
+    "sync.snapshot_integrity_failed": "스냅샷 integrity_check 실패: {result}",
+    "sync.snapshot_schema_newer": "원격 스냅샷이 더 최신 스키마 — 앱 업데이트 필요: {ids}",
+    "sync.gdrive_auth_required": "Google Drive 인증 필요 — 먼저 연결하세요",
+    "sync.onedrive_auth_required": "OneDrive 인증 필요 — 먼저 연결하세요",
+
+    # ── YouTube OAuth 클라이언트 설정 ─────────────────────────────
+    "oauth.client_config_missing": "YouTube OAuth 클라이언트 설정이 포함되지 않았습니다.",
+    "oauth.config_unreadable": "OAuth 설정 JSON을 읽을 수 없습니다: {path}",
+    "oauth.not_desktop_installed": "Desktop installed OAuth 설정이 아닙니다: {path}",
+    "oauth.missing_field": "OAuth 설정 필드가 없습니다: {field} ({path})",
+    "oauth.no_loopback_redirect": "localhost loopback redirect가 없습니다: {path}",
+
+    # ── 업데이트 내려받기 실패 사유 ───────────────────────────────
+    "update.bad_url_scheme": "허용되지 않은 URL 스킴: {scheme}",
+    "update.bad_host": "허용되지 않은 다운로드 호스트: {host}",
+    "update.bad_asset_name": "비정상 자산 이름: {name}",
+    "update.checksum_missing": "SHA-256 체크섬이 없어 무결성을 검증할 수 없습니다 — 설치 중단",
+    "update.checksum_mismatch": "SHA-256 불일치: expected {expected}, got {actual}",
+    "update.download_interrupted": "다운로드가 도중에 끊겼습니다({downloaded}/{total} bytes)",
+    "update.download_failed": "업데이트 다운로드 실패",
 }
 
 # 여러 조각을 한 줄로 이을 때 쓰는 구분자. 구분자도 언어 설정이라 여기 둔다.
@@ -95,18 +175,29 @@ def _prepare(params: dict[str, object]) -> dict[str, object]:
 
     도메인이 "179.4MB" 같은 문자열을 만들지 않게 하는 장치다 — 바이트 수만 넘기면
     단위 표기는 여기서 붙는다(단위 표기도 언어 설정이다).
+
+    값이 `Message`면 그것도 문장으로 만든다 — 다른 예외의 사유를 한 문장에 담을 때
+    (`error_message()`) 안쪽 문장도 번역돼야 한다.
     """
     out = dict(params)
     for name, value in params.items():
-        if name.endswith("_bytes") and isinstance(value, (int, float)):
+        if isinstance(value, Message):
+            out[name] = render(value)
+        elif name.endswith("_bytes") and isinstance(value, (int, float)):
             out[name] = format_bytes(value, unit=ByteUnit.MB)
     return out
 
 
-def render(msg: Message | None) -> str:
-    """문장 하나를 만든다. 실패해도 예외를 내지 않는다(모듈 설명 참조)."""
+def render(msg: Message | str | None) -> str:
+    """문장 하나를 만든다. 실패해도 예외를 내지 않는다(모듈 설명 참조).
+
+    **문자열은 그대로 돌려준다.** 한 줄에 `Message`와 외부에서 온 값(가수 이름·장르처럼
+    번역할 것이 없는 문자열)이 섞여 오는 경우가 있어서다(앨범 요약 조각).
+    """
     if msg is None:
         return ""
+    if isinstance(msg, str):
+        return msg
     template = _TEMPLATES.get(msg.key)
     if template is None:
         logger.warning("표시 문구 템플릿이 없다: %s", msg.key)
@@ -119,6 +210,25 @@ def render(msg: Message | None) -> str:
         return tr(template)
 
 
-def render_all(msgs: Sequence[Message], sep: str = JOIN_SEPARATOR) -> str:
+def render_all(msgs: Sequence[Message | str], sep: str = JOIN_SEPARATOR) -> str:
     """여러 조각을 한 줄로 잇는다(필터 요약 등)."""
     return sep.join(render(m) for m in msgs)
+
+
+def describe_error(exc: BaseException | None) -> str:
+    """예외 → 화면에 올릴 사유. **예외를 내지 않는다.**
+
+    `DisplayError`는 `.message`를 문장으로 만들고, 그 밖의 예외는 예전처럼 `str(exc)`다
+    (yt-dlp·네트워크가 준 원문 — 번역할 방법이 없다). 뷰모델이
+    `error_occurred.emit(str(exc))` 대신 이것을 부른다.
+    """
+    if exc is None:
+        return ""
+    try:
+        if isinstance(exc, DisplayError):
+            return render(exc.message)
+        return str(exc)
+    except Exception:
+        # __str__이 터지는 예외도 있다. 오류를 알리려다 두 번째 오류로 죽지 않는다.
+        logger.exception("오류 사유를 문장으로 만들지 못했다: %s", type(exc).__name__)
+        return type(exc).__name__

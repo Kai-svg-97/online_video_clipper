@@ -5,6 +5,7 @@ from uuid import UUID
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.text.messages import describe_error
 from gui.view_models.base import WorkerOwnerMixin
 
 from application.song.commands import (
@@ -57,7 +58,7 @@ class _SongFetchWorker(QThread):
             self.done.emit(self._cmd.video_id, agg is not None)
         except Exception as exc:
             logger.exception("노래 정보 조회 실패: %s", self._cmd.video_id)
-            self.failed.emit(self._cmd.video_id, str(exc))
+            self.failed.emit(self._cmd.video_id, describe_error(exc))
 
 
 class _TranslateWorker(QThread):
@@ -78,7 +79,7 @@ class _TranslateWorker(QThread):
             self.done.emit(self._cmd.video_id, True)
         except Exception as exc:
             logger.exception("가사 번역 실패: %s", self._cmd.video_id)
-            self.failed.emit(self._cmd.video_id, str(exc))
+            self.failed.emit(self._cmd.video_id, describe_error(exc))
 
 
 class _CandidateSearchWorker(QThread):
@@ -121,7 +122,7 @@ class _CandidateSearchWorker(QThread):
             self.finished_ok.emit(len(found))
         except Exception as exc:
             logger.exception("가사 후보 검색 실패: %s", self._cmd.video_id)
-            self.failed.emit(str(exc))
+            self.failed.emit(describe_error(exc))
 
 
 class _ApplyCandidateWorker(QThread):
@@ -146,7 +147,7 @@ class _ApplyCandidateWorker(QThread):
             self.done.emit(self._cmd.video_id, agg is not None)
         except Exception as exc:
             logger.exception("가사 후보 적용 실패: %s", self._cmd.video_id)
-            self.failed.emit(self._cmd.video_id, str(exc))
+            self.failed.emit(self._cmd.video_id, describe_error(exc))
 
 
 class SongViewModel(WorkerOwnerMixin, QObject):
@@ -347,7 +348,7 @@ class SongViewModel(WorkerOwnerMixin, QObject):
             )
         except Exception as exc:
             logger.exception("자막 오프셋 저장 실패: %s", video_id)
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
         # song_info_changed는 방출하지 않는다 — 방출하면 set_song_info가 트랙을 새로
         # 만들어 사용자가 슬라이더/단축키로 조정 중인 오프셋 값이 저장 직전 값으로
         # 되돌아가는 왕복이 생긴다(플레이어가 이미 자체 상태로 반영을 마쳤음).
@@ -388,7 +389,7 @@ class SongViewModel(WorkerOwnerMixin, QObject):
                 self.song_info_changed.emit(self.get_song_info(video_id))
         except Exception as exc:
             logger.exception("노래 필드 저장 실패: %s.%s", video_id, field)
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def save_lyrics(self, video_id: UUID, lines: list[LyricsLine]) -> None:
         try:
@@ -397,14 +398,14 @@ class SongViewModel(WorkerOwnerMixin, QObject):
                 self.song_info_changed.emit(self.get_song_info(video_id))
         except Exception as exc:
             logger.exception("가사 저장 실패: %s", video_id)
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def toggle_song(self, video_id: UUID, is_song: bool) -> None:
         try:
             self._set_flag.handle(SetSongFlagCommand(video_id, is_song))
         except Exception as exc:
             logger.exception("노래 토글 실패: %s", video_id)
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
             return
         dto = self.get_song_info(video_id)
         if video_id == self._current:
@@ -426,7 +427,7 @@ class SongViewModel(WorkerOwnerMixin, QObject):
             self._add_source.handle(AddLyricsSourceCommand(name, provider_key, base_url))
             self.sources_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def update_lyrics_source(
         self, source_id: UUID, *, name=None, enabled=None, base_url=None
@@ -437,21 +438,21 @@ class SongViewModel(WorkerOwnerMixin, QObject):
             )
             self.sources_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def delete_lyrics_source(self, source_id: UUID) -> None:
         try:
             self._delete_source.handle(DeleteLyricsSourceCommand(source_id))
             self.sources_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def reorder_lyrics_sources(self, ordered_ids: list[UUID]) -> None:
         try:
             self._reorder_sources.handle(ReorderLyricsSourcesCommand(ordered_ids))
             self.sources_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     # ── 정리 ─────────────────────────────────────────────────────
     def shutdown(self) -> None:

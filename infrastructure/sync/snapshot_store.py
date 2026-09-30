@@ -17,6 +17,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from domain.shared.messages import Message
 from domain.sync.services import SyncSchemaError
 from domain.sync.value_objects import SnapshotManifest
 
@@ -99,14 +100,14 @@ class SnapshotStore:
         finally:
             conn.close()
         if not row or row[0] != "ok":
-            raise SyncSchemaError(f"스냅샷 integrity_check 실패: {row}")
+            raise SyncSchemaError(Message.of("sync.snapshot_integrity_failed", result=str(row)))
 
     def _check_schema_gate(self, path: Path) -> None:
         remote_ids = self._read_migration_ids(path)
         unknown = remote_ids - self._migration_ids
         if unknown:
             raise SyncSchemaError(
-                f"원격 스냅샷이 더 최신 스키마 — 앱 업데이트 필요: {sorted(unknown)}"
+                Message.of("sync.snapshot_schema_newer", ids=str(sorted(unknown)))
             )
 
     @staticmethod

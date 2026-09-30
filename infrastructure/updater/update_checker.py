@@ -18,9 +18,24 @@ from urllib.parse import urlparse
 import requests
 
 from application.updater.version_compare import is_newer
+from domain.shared.messages import DisplayError, Message
 from domain.shared.ports import UpdateInfo
 
 logger = logging.getLogger(__name__)
+
+
+# 실패 사유는 업데이트 배지 툴팁("내려받지 못했습니다: {reason}")까지 올라간다 — 그래서
+# 문장이 아니라 `Message`로 싣는다. 기존 예외 계층은 다중 상속으로 지킨다.
+class UpdateValidationError(DisplayError, ValueError):
+    """다운로드 주소·자산 이름이 허용 범위 밖이다(변조된 릴리스 방어)."""
+
+
+class UpdateDownloadError(DisplayError, RuntimeError):
+    """내려받기·무결성 검증 실패."""
+
+
+class UpdateInterruptedError(DisplayError, requests.ConnectionError):
+    """받는 도중 끊겼다 — `requests.RequestException`으로 잡혀 이어받기 재시도된다."""
 
 _API_URL = "https://api.github.com/repos/Kai-svg-97/online_video_clipper/releases/latest"
 _TIMEOUT = 10
@@ -46,10 +61,10 @@ def _validate_url(url: str) -> None:
     """다운로드 URL이 HTTPS이고 허용된 호스트임을 확인한다."""
     parsed = urlparse(url)
     if parsed.scheme != "https":
-        raise ValueError(f"허용되지 않은 URL 스킴: {parsed.scheme!r}")
+        raise UpdateValidationError(Message.of("update.bad_url_scheme", scheme=repr(parsed.scheme)))
     host = parsed.netloc.lower().split(":")[0]
     if host not in _ALLOWED_HOSTS:
-        raise ValueError(f"허용되지 않은 다운로드 호스트: {host!r}")
+        raise UpdateValidationError(Message.of("update.bad_host", host=repr(host)))
 
 
 def _sha256_of(path: Path) -> str:
@@ -69,7 +84,7 @@ def _validate_asset_name(name: str) -> str:
     """자산 이름에서 경로 구성요소를 제거하고 안전한 파일명인지 확인한다."""
     bare = os.path.basename(name)
     if not _ASSET_NAME_RE.match(bare):
-        raise ValueError(f"비정상 자산 이름: {name!r}")
+        raise UpdateValidationError(Message.of("update.bad_asset_name", name=repr(name)))
     return bare
 
 
@@ -163,13 +178,13 @@ class GithubUpdateChecker:
         # SHA-256 검증 — 체크섬 없으면 fail-closed
         if not info.sha256:
             part.unlink(missing_ok=True)
-            raise RuntimeError("SHA-256 체크섬이 없어 무결성을 검증할 수 없습니다 — 설치 중단")
+            raise UpdateDownloadError(Message.of("update.checksum_missing"))
 
         digest = _sha256_of(part)
         if not hmac.compare_digest(digest, info.sha256.lower()):
             part.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"SHA-256 불일치: expected {info.sha256}, got {digest}"
+            raise UpdateDownloadError(
+                Message.of("update.checksum_mismatch", expected=info.sha256, actual=digest)
             )
 
         dest.unlink(missing_ok=True)
@@ -220,9 +235,9 @@ class GithubUpdateChecker:
                             on_progress(downloaded, total)
 
                 if total and downloaded < total:
-                    raise requests.ConnectionError(
-                        f"다운로드가 도중에 끊겼습니다({downloaded}/{total} bytes)"
-                    )
+                    raise UpdateInterruptedError(Message.of(
+                        "update.download_interrupted", downloaded=downloaded, total=total,
+                    ))
                 return
             except requests.RequestException as exc:
                 last_exc = exc
@@ -235,7 +250,7 @@ class GithubUpdateChecker:
                     break
                 time.sleep(_DL_RETRY_BACKOFF_SEC * attempt)
 
-        raise last_exc if last_exc else RuntimeError("업데이트 다운로드 실패")
+        raise last_exc if last_exc else UpdateDownloadError(Message.of("update.download_failed"))
 
     # ------------------------------------------------------------------
     @staticmethod

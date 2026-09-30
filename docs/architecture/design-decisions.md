@@ -1547,9 +1547,8 @@ v1.33.0을 내보낸 뒤 `gui/`를 AST로 훑으니 `tr()` 밖의 한국어 문�
 
 ### 남은 것
 
-- `infrastructure/downloader/ytdlp_adapter.py`가 DPAPI 오류를 **한국어 안내문**으로 만들어
-  올린다. 표시 문구 규칙 위반이고, 영어 화면에서 이 안내만 한국어로 나온다. 어댑터가 오류
-  **종류**를 돌려주고 화면이 문장을 고르게 바꾸면 `feed.py`의 문구 판정 3건도 함께 걷힌다.
+- ~~`infrastructure/downloader/ytdlp_adapter.py`가 DPAPI 오류를 **한국어 안내문**으로 만들어
+  올린다.~~ → 해결: 아래 "애플리케이션·인프라의 표시 문구" 절.
 - ~~영어 설명서는 아직 없다.~~ → 해결: 아래 "영어 설명서" 절.
 
 ### 라벨 표도 번역을 거치지 않고 있었다
@@ -1577,3 +1576,62 @@ F1은 앱 언어의 판(`index.en.html`)을 먼저 찾고 없으면 한국어판
 영어판의 메뉴 경로는 **화면 문구와 똑같이** 적는다(`en.json`에서 찾아 쓴다). 한국어
 설명서가 "감시 폴더"라고 쓰는 곳도 화면 이름("워치 폴더" → Watch folder)을 따랐다 —
 영어 사용자는 설명서의 말로 화면에서 항목을 찾는다.
+
+## 애플리케이션·인프라의 표시 문구 (v1.35 준비)
+
+표시 문구 가드(`tests/unit/test_no_display_text_in_domain.py`)가 `domain/`만 훑는 사이
+`application/`·`infrastructure/`에 한국어 문장이 쌓여 영어 화면에 그대로 올라왔다 —
+등록 후 자동 보강 결과("가사가 이미 있습니다"·"{n}자"), 가져오기 충돌 필드 이름, 앨범 요약
+조각("{date} 발매"), 재생목록·변환·동기화·업데이트 실패 사유, DPAPI 쿠키 안내. 가드가 이제
+세 계층을 모두 본다. **로그 호출의 인자는 세지 않는다**(개발자가 읽는 글 — `gui/` 가드와
+같은 기준). 허용 목록은 대입 대상뿐 아니라 **감싼 함수·클래스 이름**(`Database._migrate_song_tables`)
+으로도 적을 수 있고, 한국어를 더는 담지 않는 항목은 낡은 것으로 실패한다.
+
+### 사용자에게 보이는 예외 — `DisplayError`
+
+오류 문장은 대부분 예외로 올라온다(뷰모델의 `error_occurred.emit(str(exc))`). 반환값처럼
+`Message`를 돌려줄 수 없으니 **예외가 `Message`를 싣는다**: `domain/shared/messages.py`의
+`DisplayError(message)`. 설계 판단 셋:
+
+- **`str(exc)`는 키(+파라미터)다.** 로그에는 번역 전 키가 남고, 한국어 문장은 어디서도 만들지
+  않는다. 파라미터가 없으면 키 그대로라 화면이 **키로** 오류 종류를 판정할 수 있다 — 피드의
+  DPAPI 안내가 그렇다(`msg == COOKIE_DECRYPT_FAILED`). 예전 `"복호화" in msg`는 번역하는 순간
+  조용히 어긋날 판정이었다. 피드 워커(`feed_vm`)는 그대로 `str(exc)`를 넘기므로 손대지 않았다.
+- **기존 계층은 다중 상속으로 지킨다.** `SyncSchemaError(DisplayError, RuntimeError)`,
+  `OAuthClientConfigError(DisplayError, RuntimeError)`, 변환의 `UnknownPresetError(…, ValueError)`
+  ·`SourceFileMissingError(…, FileNotFoundError)`, 업데이트의 `UpdateInterruptedError(…,
+  requests.ConnectionError)` — 이어받기 재시도가 `RequestException`으로 잡으므로 이 계층이 빠지면
+  재시도가 조용히 사라진다.
+- **화면은 `describe_error(exc)` 하나로 받는다**(`gui/text/messages.py`). `DisplayError`면 문장,
+  아니면 `str(exc)`(yt-dlp·네트워크 원문 — 번역할 방법이 없다). `__str__`이 터지는 예외에도
+  예외를 내지 않는다. 뷰모델의 `str(exc)` emit을 전부 이것으로 바꿨다 — 일반 예외에서는 결과가
+  같아 동작이 바뀌지 않는다.
+
+다른 예외의 사유를 한 문장에 담을 때(재생목록 가져오기가 yt-dlp·API 두 경로의 실패를 함께
+알린다)는 `error_message(exc)`로 **`Message`째** 파라미터에 넣는다. 문자열로 먼저 바꾸면 안쪽
+`DisplayError`가 키 문자열로 굳는다. 그래서 `render()`가 `Message` 파라미터도 문장으로 만든다.
+예전의 "API 오류 문장에 '자격증명'이 있으면 yt-dlp 오류를 올린다" 판정도 예외 타입
+(`YouTubeCredentialsUnavailable`) 검사로 바꿨다.
+
+### 반환값 — 조각은 화면이 잇는다
+
+- 보강 결과 `EnrichVideoResult.detail`은 `Message`다. 워커(`_EnrichWorker`)가 `render()`해 신호
+  (문자열)로 넘기므로 상태바·토스트 코드는 그대로다.
+- 앨범 요약은 `AlbumDetailDTO.summary_parts`(가수·장르는 외부 값 문자열, 발매일·곡 수는
+  `Message`)로 오고 화면이 `"  ·  "`로 잇는다. `render()`가 문자열을 통과시키는 이유다.
+- 가져오기 충돌의 필드 이름은 닫힌 키 집합이라 `labels.transfer_field_label`로 옮기고 DTO의
+  `label`을 없앴다. 가사 미리보기는 `transfer.lyrics_preview`(줄 수 + 앞 두 줄).
+- 빈 값의 표시 이름은 화면이 준다 — 실패 사유 없음("알 수 없는 오류"), 카테고리 없음("미분류"),
+  채널 없음("(채널 없음)" — SQL `COALESCE`에 박혀 있던 것), 제목 없는 제안 구간("제안 구간 N",
+  `labels.highlight_title`; 챕터의 "챕터 N"과 다른 말이라 따로 둔다).
+
+### 남긴 것 — 저장되는 값과 언어 데이터
+
+- **DB에 저장되는 이름**: 자막 트랙 라벨("음성 인식 (base)"·"번역 (ko → en)"), 로컬 사본 재생목록
+  이름("… (로컬 복사)"), 가져온 노래의 출처 이름("가져오기"), 기본 가사 출처 시드("지니"·"벅스"·
+  "멜론"), 이름 없는 저장된 검색의 기본 이름. 언어를 바꿨다고 저장된 값이 바뀌면 안 된다.
+- **한국어를 처리하기 위한 데이터**: 해시태그·제목 잡음 정규식, 한국어 YouTube 화면의
+  버튼·칩 문구(`gemini_extractor.py` — 화면을 **읽는** 선택자), 가사 페이지를 긁는 정규식,
+  번역 대상 판정용 한글 정규식, 자국어로 적는 언어 이름("한국어").
+- **개발자용 예외는 영어로**: 화면에 닿지 않는 것(가사 출처 id 없음, 버전 형식 오류, keyring
+  백엔드 탐지, 도달하지 않는 다운로드 실패 방어 코드)은 `DisplayError`로 만들 값어치가 없다.

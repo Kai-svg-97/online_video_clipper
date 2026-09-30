@@ -7,7 +7,7 @@ def parse_semver(s: str) -> tuple[int, int, int]:
     s = s.strip().lstrip("v")
     parts = s.split(".")
     if len(parts) != 3:
-        raise ValueError(f"버전 형식 오류: {s!r}")
+        raise ValueError(f"invalid version format: {s!r}")   # 개발자용 — is_newer가 잡는다
     return (int(parts[0]), int(parts[1]), int(parts[2]))
 
 

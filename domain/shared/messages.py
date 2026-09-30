@@ -50,3 +50,42 @@ class Message:
     def as_dict(self) -> dict[str, object]:
         """템플릿에 채워 넣기 위한 형태."""
         return dict(self.params)
+
+
+class DisplayError(Exception):
+    """사용자에게 보여 줄 사유를 **문장이 아니라 `Message`로** 나르는 예외.
+
+    애플리케이션·인프라가 `raise RuntimeError("YouTube API가 연결되지 않았습니다…")`처럼
+    한국어 문장을 예외에 담으면, 뷰모델의 `error_occurred.emit(str(exc))`가 그 문장을
+    그대로 화면에 올려 영어 화면에서도 한국어로 남는다. 이 예외는 `.message`에 키와
+    값을 담고, 표시 계층의 `gui/text/messages.describe_error()`가 문장으로 바꾼다.
+
+    `str(exc)`는 **로그용**이다 — 키(+파라미터)만 돌려주고 한국어 문장은 만들지 않는다.
+    파라미터가 없으면 키 그대로라 화면 쪽이 키로 오류 종류를 판정할 수 있다
+    (문장 비교는 번역하는 순간 어긋난다).
+
+    기존 예외 계층을 지켜야 하는 곳(`except RuntimeError`가 잡고 있는 자리)은
+    **다중 상속**으로 쓴다: `class SyncSchemaError(DisplayError, RuntimeError)`.
+    """
+
+    def __init__(self, message: Message) -> None:
+        super().__init__(message.key)
+        self.message = message
+
+    def __str__(self) -> str:
+        if not self.message.params:
+            return self.message.key
+        args = ", ".join(f"{k}={v}" for k, v in self.message.params)
+        return f"{self.message.key} ({args})"
+
+
+def error_message(exc: BaseException) -> Message:
+    """예외 → `Message`. `DisplayError`면 그 메시지, 아니면 `str(exc)`를 값으로 싣는다.
+
+    다른 예외의 사유를 **파라미터로** 끼워 넣을 때 쓴다(재생목록 가져오기가 두 경로의
+    실패를 한 문장에 담는 것처럼). 문자열로 먼저 바꿔 버리면 안쪽 `DisplayError`가
+    키 문자열로 굳어 번역할 기회를 잃는다.
+    """
+    if isinstance(exc, DisplayError):
+        return exc.message
+    return Message.of("error.raw", reason=str(exc))

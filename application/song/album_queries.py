@@ -27,6 +27,7 @@ from application.song.album_dtos import (
     AlbumTrackDTO,
 )
 from domain.library.repositories import IVideoRepository, SearchQuery
+from domain.shared.messages import Message
 from domain.song.album import (
     NO_ALBUM_TITLE,
     AlbumGroup,
@@ -241,6 +242,7 @@ class GetAlbumDetailHandler:
             record = self._fetch_and_cache(group)
 
         tracks = self._build_tracks(group, record)
+        description = record.description if record else ""
         return AlbumDetailDTO(
             key=group.key,
             album_title=group.album_title or NO_ALBUM_TITLE,
@@ -248,7 +250,8 @@ class GetAlbumDetailHandler:
             artwork_url=record.artwork_url if record else "",
             artwork_path=record.artwork_path if record else "",
             fallback_thumb_path=(group.songs[0].thumbnail_path if group.songs else ""),
-            description=(record.description if record else "") or self._describe(record, group),
+            description=description,
+            summary_parts=() if description else self._describe(record, group),
             release_date=record.release_date if record else "",
             genre=record.genre if record else "",
             source_name=record.source_name if record else "",
@@ -324,23 +327,28 @@ class GetAlbumDetailHandler:
         )
 
     @staticmethod
-    def _describe(record: AlbumCacheRecord | None, group: AlbumGroup) -> str:
-        """출처가 설명을 주지 않을 때 쓰는 요약 문구(장르·발매일·수록곡 수)."""
-        parts: list[str] = []
+    def _describe(
+        record: AlbumCacheRecord | None, group: AlbumGroup
+    ) -> tuple[Message | str, ...]:
+        """출처가 설명을 주지 않을 때 쓰는 요약 조각(장르·발매일·수록곡 수).
+
+        잇는 일은 화면이 한다 — 조각마다 완성된 말이라 언어가 바뀌어도 순서만 따른다.
+        """
+        parts: list[Message | str] = []
         if group.artist:
             parts.append(group.artist)
         if record:
             if record.genre:
                 parts.append(record.genre)
             if record.release_date:
-                parts.append(f"{record.release_date} 발매")
+                parts.append(Message.of("album.released", date=record.release_date))
             if record.track_count:
-                parts.append(f"{record.track_count}곡")
+                parts.append(Message.of("album.track_count", n=record.track_count))
             if record.copyright:
                 parts.append(record.copyright)
         else:
-            parts.append(f"내 라이브러리 {len(group.songs)}곡")
-        return "  ·  ".join(p for p in parts if p)
+            parts.append(Message.of("album.library_count", n=len(group.songs)))
+        return tuple(p for p in parts if p)
 
     def _build_tracks(
         self, group: AlbumGroup, record: AlbumCacheRecord | None

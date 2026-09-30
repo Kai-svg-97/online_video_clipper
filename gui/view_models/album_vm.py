@@ -14,6 +14,7 @@ from dataclasses import replace
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.text.messages import describe_error
 from gui.view_models.base import WorkerOwnerMixin
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ class _CallWorker(QThread):
             self.finished_ok.emit(self._fn())
         except Exception as exc:   # noqa: BLE001 — UI로 사유를 올린다
             logger.exception("앨범 작업 실패")
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _FillWorker(QThread):
@@ -63,7 +64,7 @@ class _FillWorker(QThread):
             self.finished_ok.emit(int(count or 0))
         except Exception as exc:   # noqa: BLE001
             logger.exception("앨범 수록곡 채우기 실패")
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _AddTracksWorker(QThread):
@@ -91,7 +92,7 @@ class _AddTracksWorker(QThread):
             self.finished_ok.emit(int(count or 0))
         except Exception as exc:   # noqa: BLE001
             logger.exception("앨범 곡 담기 실패")
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class AlbumViewModel(WorkerOwnerMixin, QObject):
@@ -285,7 +286,7 @@ class AlbumViewModel(WorkerOwnerMixin, QObject):
             )
         except Exception as exc:   # noqa: BLE001 — UI로 사유를 올린다
             logger.exception("자동 매핑 삭제 실패")
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
             return
         missing = AlbumTrackDTO(
             track_no=target.track_no,

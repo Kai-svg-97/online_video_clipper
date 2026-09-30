@@ -46,6 +46,7 @@ from application.library.playlist_queries import (
     GetYouTubePlaylistsQuery,
 )
 
+from gui.text.messages import describe_error
 from gui.view_models.base import WorkerOwnerMixin
 from gui.text import tr
 
@@ -77,7 +78,7 @@ class _AddUrlWorker(QThread):
             )
             self.finished_ok.emit()
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _FetchYTPlaylistsWorker(QThread):
@@ -99,7 +100,7 @@ class _FetchYTPlaylistsWorker(QThread):
             result = self._handler.handle(GetYouTubePlaylistsQuery(cookie_opts=self._cookie_opts))
             self.finished_ok.emit(result)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _ImportWorker(QThread):
@@ -130,7 +131,7 @@ class _ImportWorker(QThread):
             )
             self.finished_ok.emit(dto)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _PushToYTWorker(QThread):
@@ -162,7 +163,7 @@ class _PushToYTWorker(QThread):
             )
             self.finished_ok.emit(dto)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _CopyYTWorker(QThread):
@@ -194,7 +195,7 @@ class _CopyYTWorker(QThread):
             )
             self.finished_ok.emit(dto)
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class PlaylistViewModel(WorkerOwnerMixin, QObject):
@@ -268,14 +269,14 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             self._create_playlist.handle(CreatePlaylistCommand(title=title, folder_id=folder_id))
             self._refresh_playlists()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def delete_playlist(self, playlist_id: UUID) -> None:
         try:
             self._delete_playlist.handle(DeletePlaylistCommand(playlist_id=playlist_id))
             self._refresh_playlists()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def add_video_to_playlist(
         self, playlist_id: UUID, video_id: UUID, position: int | None = None
@@ -290,7 +291,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             )
             self._refresh_playlists()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def remove_video_from_playlist(self, playlist_id: UUID, video_id: UUID) -> None:
         try:
@@ -301,7 +302,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             )
             self._refresh_playlists()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def reorder_playlist(self, playlist_id: UUID, ordered_video_ids: list[UUID]) -> None:
         try:
@@ -312,7 +313,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
                 )
             )
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def import_youtube_playlist(self, yt_playlist_id: str) -> None:
         cookie_opts = self._auth.get_ytdlp_opts() if self._auth else {}
@@ -359,7 +360,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             self._create_folder_h.handle(CreatePlaylistFolderCommand(name=name, source=source))
             self._refresh_folders()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def rename_playlist(self, playlist_id: UUID, new_title: str) -> None:
         if self._rename_playlist_h is None:
@@ -368,7 +369,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             self._rename_playlist_h.handle(RenamePlaylistCommand(playlist_id=playlist_id, new_title=new_title))
             self._refresh_playlists()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def rename_folder(self, folder_id: UUID, new_name: str) -> None:
         if self._rename_folder_h is None:
@@ -377,7 +378,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             self._rename_folder_h.handle(RenamePlaylistFolderCommand(folder_id=folder_id, new_name=new_name))
             self._refresh_folders()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def delete_folder(self, folder_id: UUID) -> None:
         if self._delete_folder_h is None:
@@ -387,7 +388,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             self._refresh_folders()
             self._refresh_playlists()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def move_playlist_to_folder(self, playlist_id: UUID, folder_id: UUID | None) -> None:
         if self._move_to_folder_h is None:
@@ -398,7 +399,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             ))
             self._refresh_playlists()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def push_to_youtube(
         self,
@@ -438,7 +439,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             )
             self._refresh_playlists()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def copy_youtube_to_local(
         self,
@@ -480,7 +481,7 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             self._playlists = self._get_playlists.handle(GetPlaylistsQuery())
             self.playlists_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def _refresh_folders(self) -> None:
         if self._get_folders is None:
@@ -489,4 +490,4 @@ class PlaylistViewModel(WorkerOwnerMixin, QObject):
             self._folders = self._get_folders.handle(GetPlaylistFoldersQuery())
             self.folders_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))

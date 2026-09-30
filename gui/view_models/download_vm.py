@@ -6,6 +6,7 @@ from uuid import UUID
 
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
+from gui.text.messages import describe_error
 from gui.view_models.base import WorkerOwnerMixin
 from gui.text import tr
 
@@ -121,7 +122,7 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
         try:
             job = self._start.handle(StartDownloadCommand(url=url, title=title, settings=settings))
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
             return
         self._pending.append(job.id)
         self.queue_changed.emit()
@@ -150,7 +151,7 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
                 StartDownloadCommand(url=url, title=title, settings=settings)
             )
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
             return False
         self._recordings.add(job.id)
         self._launch(job.id)
@@ -286,7 +287,7 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
             self._cancel.handle(CancelDownloadCommand(job_id))
             self.queue_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def _on_progress(self) -> None:
         self.queue_changed.emit()

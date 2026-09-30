@@ -336,6 +336,17 @@ Infrastructure (SQLite Repositories, yt-dlp, ffmpeg adapters)
 
 `MediaSourceFactory`(진행률 콜백→`IMediaSource`)는 작업별 진행률 훅이 필요한 다운로드용 팩토리 타입이다.
 
+### 표시 문구 값 객체 (domain/shared/messages.py)
+
+| 타입 | 의미 |
+| --- | --- |
+| `Message` | 화면에 나갈 말 하나 — **키 + 파라미터**. 문장은 표시 계층(`gui/text/messages.py`)이 만든다 |
+| `DisplayError` | 사용자에게 보이는 예외. 사유를 `Message`로 싣는다(`str()`은 로그용 키). 기존 예외 계층은 다중 상속으로 지킨다 — `SyncSchemaError(DisplayError, RuntimeError)`, `OAuthClientConfigError`, 재생목록·변환·업데이트 실패 예외 |
+
+`error_message(exc)`는 다른 예외의 사유를 `Message` 파라미터로 끼울 때 쓴다(재생목록 가져오기가
+yt-dlp·YouTube API 두 경로의 실패를 한 문장에 담는 경우). 쿠키 복호화 실패는 키
+`COOKIE_DECRYPT_FAILED`(`ports.py`)로 알아본다.
+
 `IMediaSource`는 `fetch_subscription_feed`(전체 구독 피드)·`fetch_subscribed_channels`(구독 채널 목록, yt-dlp 페이지네이션 적용)에 더해 **`fetch_channel_videos(channel_url, limit, cookie_opts)`** (특정 채널 최신 영상)을 제공한다. 이를 사용하는 application use case는 `application/library/playlist_queries.py`의 **`GetChannelVideosQuery`/`GetChannelVideosHandler`** 이며, 전체 피드 핸들러와 동일하게 `FeedVideoDTO`를 반환해 GUI 카드 렌더링을 공유한다. GUI에서는 라이브러리 좌측 YouTube 트리의 "구독 채널"/"전체 구독 피드" 노드가 `FeedViewModel.load_channel`/`refresh`를 호출해 메인 영역에 피드 카드를 표시한다(별도 구독 피드 메뉴는 제거됨).
 
 또한 `IMediaSource`는 **`fetch_search_videos(query, limit, cookie_opts)`** (YouTube 검색 상위 N건)을 제공한다 — yt-dlp `ytsearchN:` 의사 URL을 쓰므로 쿠키·API 키 없이 동작한다. 이를 사용하는 use case는 `GetRecommendationsQuery`/`GetRecommendationsHandler`이며, 검색어 파생은 위 `derive_seed_queries`(도메인)에 위임하고 핸들러는 후보 수집·중복 제거·라이브러리 제외·API 메타 보강만 담당한다. 반환형은 피드와 동일한 `FeedVideoDTO`라 카드 렌더링을 공유한다. GUI는 `RecommendViewModel`(`gui/view_models/recommend_vm.py`)이 이를 QThread로 감싸고 `RecommendStrip`(영상 목록 아래 접이식 스트립)이 표시한다.

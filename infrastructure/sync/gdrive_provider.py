@@ -15,7 +15,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from application.sync.ports import ProgressCb, RemoteFile
+from application.sync.ports import CloudAuthRequiredError, ProgressCb, RemoteFile
+from domain.shared.messages import Message
 from infrastructure.sync.rest_client import RestClient
 
 logger = logging.getLogger(__name__)
@@ -130,7 +131,7 @@ class GoogleDriveProvider:
     def _bearer(self) -> str:
         creds = self._load_creds()
         if creds is None:
-            raise RuntimeError("Google Drive 인증 필요 — 먼저 연결하세요")
+            raise CloudAuthRequiredError(Message.of("sync.gdrive_auth_required"))
         if not creds.valid and creds.refresh_token:
             self._refresh(creds)
         return creds.token

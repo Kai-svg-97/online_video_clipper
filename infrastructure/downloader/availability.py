@@ -20,6 +20,7 @@ from domain.library.availability import (
     classify_http_status,
 )
 from domain.library.value_objects import extract_youtube_video_id
+from domain.shared.messages import Message
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class YouTubeAvailabilityChecker:
 
     def check(self, url: str) -> AvailabilityResult:
         if not extract_youtube_video_id(url):
-            return AvailabilityResult(STATUS_UNKNOWN, "YouTube 영상이 아닙니다")
+            return AvailabilityResult(STATUS_UNKNOWN, Message.of("availability.not_youtube"))
         try:
             resp = self._session.get(
                 _OEMBED,

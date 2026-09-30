@@ -27,6 +27,7 @@ from application.clip.sponsor_queries import (
     GetSkipSegmentsHandler,
     GetSkipSegmentsQuery,
 )
+from gui.text.messages import describe_error
 from gui.view_models.base import WorkerOwnerMixin
 from gui.text import tr
 
@@ -67,7 +68,7 @@ class _ExtractWorker(QThread):
         try:
             self.finished_ok.emit(_clip_to_dto(self._handler.handle(self._cmd)))
         except Exception as exc:
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class _ChapterExtractWorker(QThread):
@@ -87,7 +88,7 @@ class _ChapterExtractWorker(QThread):
             done, failed = self._handler.handle(self._cmd, on_progress=self._emit_progress)
             self.finished_all.emit([_clip_to_dto(agg) for agg in done], failed)
         except Exception as exc:
-            self.finished_all.emit([], [("", str(exc))])
+            self.finished_all.emit([], [("", describe_error(exc))])
 
     def _emit_progress(self, current: int, total: int, title: str) -> None:
         self.progress.emit(current, total, title)
@@ -132,7 +133,7 @@ class _ConvertWorker(QThread):
         try:
             path = self._handler.handle(self._cmd, on_progress=self.progress.emit)
         except Exception as exc:
-            self.done.emit("", str(exc))
+            self.done.emit("", describe_error(exc))
             return
         self.done.emit(str(path), "")
 
@@ -226,7 +227,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
             try:
                 self._chapters = self._get_chapters.handle(GetChaptersQuery(video_id=video_id))
             except Exception as exc:
-                self.error_occurred.emit(str(exc))
+                self.error_occurred.emit(describe_error(exc))
         self.chapters_loaded.emit(self._chapters)
 
     @property
@@ -246,7 +247,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
                     GetHighlightsQuery(video_id=video_id, limit=limit)
                 )
             except Exception as exc:
-                self.error_occurred.emit(str(exc))
+                self.error_occurred.emit(describe_error(exc))
         self.highlights_loaded.emit(picks)
 
     def extract_chapters(
@@ -282,7 +283,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
             self._clips = self._get_clips.handle(GetClipsQuery(source_video_id=video_id))
             self.clips_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def extract_clip(
         self,
@@ -312,7 +313,7 @@ class ClipViewModel(WorkerOwnerMixin, QObject):
             self._clips = [c for c in self._clips if c.id != clip_id]
             self.clips_changed.emit()
         except Exception as exc:
-            self.error_occurred.emit(str(exc))
+            self.error_occurred.emit(describe_error(exc))
 
     def _on_extract_ok(self, dto: ClipDTO) -> None:
         self._clips.append(dto)

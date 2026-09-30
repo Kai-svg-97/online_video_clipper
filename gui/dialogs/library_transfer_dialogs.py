@@ -27,6 +27,8 @@ from PyQt6.QtWidgets import (
 
 from application.transfer.dtos import ImportConflictDTO, ImportFieldDiffDTO
 from gui.text import tr
+from gui.text.labels import transfer_field_label
+from gui.text.messages import render
 
 
 class CategorySelectDialog(QDialog):
@@ -129,7 +131,7 @@ class _FieldChoiceRow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(2)
-        layout.addWidget(QLabel(f"<b>{diff.label}</b>"))
+        layout.addWidget(QLabel(f"<b>{transfer_field_label(diff.field)}</b>"))
 
         self._existing_radio = QRadioButton(
             self._describe(False, diff.existing_value, diff.existing_filled)
@@ -150,8 +152,8 @@ class _FieldChoiceRow(QWidget):
         layout.addWidget(self._incoming_radio)
 
     @staticmethod
-    def _describe(incoming: bool, value: str, filled: bool) -> str:
-        shown = value if filled else tr("(비어있음)")
+    def _describe(incoming: bool, value, filled: bool) -> str:
+        shown = render(value) if filled else tr("(비어있음)")
         if incoming:
             return tr("가져올 값: {value}").format(value=shown)
         return tr("기존값: {value}").format(value=shown)

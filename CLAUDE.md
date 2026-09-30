@@ -212,8 +212,15 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
   도메인은 **영어 키**를 갖고(`STATUS_OK = "ok"`) 표시 이름은 `gui/text/labels.py`가
   갖는다. 예외는 **언어 데이터**뿐이다 — 불용어·토크나이저 정규식처럼 한국어 텍스트를
   *처리하기 위한* 값. 그건 위 테스트의 허용 목록에 이름을 적는다.
+  이 규칙은 `domain/`뿐 아니라 **`application/`·`infrastructure/`에도 시험으로 강제된다**
+  (로그 호출 인자는 세지 않는다). DB에 저장되는 이름·한국어 처리용 데이터는 허용 목록에
+  **이유와 함께** 적는다.
 - **문장을 만들어야 하면 `Message`(키+파라미터)를 돌려준다**(`domain/shared/messages.py`).
   `gui/text/messages.py`의 `render()`가 문장으로 바꾼다.
+- **사용자에게 보이는 예외는 `DisplayError`(사유가 `Message`)로 낸다.** 기존 계층은 다중
+  상속으로 지킨다(`class XError(DisplayError, RuntimeError)`). 화면은 `str(exc)` 대신
+  `describe_error(exc)`로 받는다 — `DisplayError`의 `str()`은 로그용 키일 뿐이다. 오류 **종류**를
+  판정해야 하면 문장이 아니라 **키**로 한다(`msg == COOKIE_DECRYPT_FAILED`).
 - **키 하나가 완성된 문장 하나를 고른다. 조각을 파라미터로 넘기지 않는다.**
   `" (다음 날)"` 같은 조각을 f-string으로 끼워 넣으면 언어가 바뀔 때 꽂을 자리가 없다 —
   그런 경우는 **키를 둘로 쪼갠다**(`schedule.window` / `schedule.window_crossing`).

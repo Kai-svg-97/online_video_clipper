@@ -63,9 +63,10 @@ class TestCategorySelectDialog:
         assert dlg.selected_category_ids() == ["child"]
 
 
-def _diff(field, label, ex, inc, ex_filled, inc_filled, default) -> ImportFieldDiffDTO:
+def _diff(field, ex, inc, ex_filled, inc_filled, default) -> ImportFieldDiffDTO:
+    """필드 표시 이름은 DTO가 아니라 화면이 갖는다(`labels.transfer_field_label`)."""
     return ImportFieldDiffDTO(
-        field=field, label=label, existing_value=ex, incoming_value=inc,
+        field=field, existing_value=ex, incoming_value=inc,
         existing_filled=ex_filled, incoming_filled=inc_filled, default_choice=default,
     )
 
@@ -76,13 +77,13 @@ class TestImportConflictResolutionDialog:
             ImportConflictDTO(
                 url="u1", title="영상1",
                 fields=(
-                    _diff("title", "제목", "기존제목", "새제목", True, True, "existing"),
-                    _diff("notes", "메모", "", "새메모", False, True, "incoming"),
+                    _diff("title", "기존제목", "새제목", True, True, "existing"),
+                    _diff("notes", "", "새메모", False, True, "incoming"),
                 ),
             ),
             ImportConflictDTO(
                 url="u2", title="영상2",
-                fields=(_diff("artist", "가수", "가수A", "가수B", True, True, "existing"),),
+                fields=(_diff("artist", "가수A", "가수B", True, True, "existing"),),
             ),
         )
 

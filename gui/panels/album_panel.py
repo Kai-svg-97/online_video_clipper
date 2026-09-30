@@ -42,6 +42,7 @@ from gui.themes.manager import ThemeManager
 from gui.widgets.skeleton import ShimmerEffect, SkeletonRow
 from gui.text.formats import format_duration_minutes
 from gui.text import tr
+from gui.text.messages import render_all
 
 logger = logging.getLogger(__name__)
 
@@ -649,7 +650,7 @@ class AlbumDetailPanel(QWidget):
             return
         self._title_lbl.setText(detail.album_title)
         self._artist_lbl.setText(detail.artist)
-        self._desc_lbl.setText(detail.description)
+        self._desc_lbl.setText(detail.description or render_all(detail.summary_parts, "  ·  "))
         self._btn_play.setEnabled(any(t.playable for t in detail.tracks))
         # 담을 대상은 '자동 매핑'된 곡뿐이다(내 등록은 이미 있고, 없음은 주소가 없다).
         self._btn_add_all.setEnabled(
@@ -705,6 +706,7 @@ class AlbumDetailPanel(QWidget):
             artwork_path=self._detail.artwork_path,
             fallback_thumb_path=self._detail.fallback_thumb_path,
             description=self._detail.description,
+            summary_parts=self._detail.summary_parts,
             release_date=self._detail.release_date,
             genre=self._detail.genre,
             source_name=self._detail.source_name,

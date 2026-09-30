@@ -24,11 +24,6 @@ _SKIP_CALLS = {"tr", "debug", "info", "warning", "error", "exception", "critical
 
 # (gui/ 기준 경로, 문자열에 들어 있는 조각) — 이유
 _ALLOWED: set[tuple[str, str]] = {
-    # 인프라(yt-dlp 어댑터)가 만든 한국어 오류 문구를 판정한다. 그 문구가 번역되지 않는
-    # 동안은 이 비교가 맞다 — 어댑터를 Message로 바꿀 때 함께 걷어낸다.
-    ("panels/library/mixins/feed.py", "복호화"),
-    ("panels/library/mixins/feed.py", "쿠키"),
-    ("panels/library/mixins/feed.py", "로그인"),
     # 로그에만 쓰이는 기본 인자(화면에 나가지 않는다).
     ("view_models/base.py", "백그라운드 작업 실패"),
     # 글꼴 이름.

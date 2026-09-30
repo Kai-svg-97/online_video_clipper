@@ -10,6 +10,7 @@ from application.updater.commands import DownloadUpdateCommand, DownloadUpdateHa
 from application.updater.dtos import UpdateDTO
 from application.updater.queries import CheckForUpdateHandler, CheckForUpdateQuery
 from domain.shared.ports import UpdateInfo
+from gui.text.messages import describe_error
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class UpdateCheckWorker(QThread):
                 self.none_found.emit()
         except Exception as exc:
             logger.exception("업데이트 확인 워커 오류")
-            self.failed.emit(str(exc))
+            self.failed.emit(describe_error(exc))
 
 
 class UpdateDownloadWorker(QThread):
@@ -69,4 +70,4 @@ class UpdateDownloadWorker(QThread):
             self.done.emit(str(path))
         except Exception as exc:
             logger.exception("업데이트 다운로드 워커 오류")
-            self.failed.emit(str(exc))
+            self.failed.emit(describe_error(exc))

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from domain.shared.messages import Message
 from domain.sync.services import SyncSchemaError, schema_ids_supported
 from domain.sync.value_objects import SnapshotManifest
 
@@ -80,9 +81,7 @@ class PullHandler:
         # 스키마 게이트: 로컬이 모르는 스키마의 op가 있으면 차단(앱 업데이트 필요)
         for op in all_ops:
             if not schema_ids_supported(op.schema_ids, self.local_migration_ids):
-                raise SyncSchemaError(
-                    "원격 변경이 더 최신 스키마를 요구합니다 — 앱 업데이트가 필요합니다."
-                )
+                raise SyncSchemaError(Message.of("sync.schema_newer"))
 
         if all_ops:
             self.applier.apply(all_ops)

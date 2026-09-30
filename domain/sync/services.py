@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Any, Iterable
 
 from domain.library.value_objects import normalize_video_url
+from domain.shared.messages import DisplayError
 from domain.sync.value_objects import ClockEntry, EntityKey, FileEntry, Op
 
 
@@ -106,8 +107,11 @@ def topo_order(entities: Iterable[str]) -> list[str]:
 # 스키마 게이트
 # ---------------------------------------------------------------------------
 
-class SyncSchemaError(RuntimeError):
-    """원격 데이터가 로컬 코드가 모르는 스키마(더 최신)라 적용 불가 — 앱 업데이트 필요."""
+class SyncSchemaError(DisplayError, RuntimeError):
+    """원격 데이터가 로컬 코드가 모르는 스키마(더 최신)라 적용 불가 — 앱 업데이트 필요.
+
+    사유는 `Message`로 싣는다(화면이 번역한다). `RuntimeError`를 잡던 자리는 그대로 동작한다.
+    """
 
 
 def schema_ids_supported(remote_ids: Iterable[str], local_ids: Iterable[str]) -> bool:

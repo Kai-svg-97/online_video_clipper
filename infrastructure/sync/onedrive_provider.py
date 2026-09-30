@@ -15,7 +15,8 @@ import logging
 from pathlib import Path
 from urllib.parse import quote
 
-from application.sync.ports import ProgressCb, RemoteFile
+from application.sync.ports import CloudAuthRequiredError, ProgressCb, RemoteFile
+from domain.shared.messages import Message
 from infrastructure.sync.rest_client import RestClient
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ class OneDriveProvider:
             return self._token
         token = self._acquire_silent()
         if not token:
-            raise RuntimeError("OneDrive 인증 필요 — 먼저 연결하세요")
+            raise CloudAuthRequiredError(Message.of("sync.onedrive_auth_required"))
         return token
 
     def _force_refresh(self) -> None:

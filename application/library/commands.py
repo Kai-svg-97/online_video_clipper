@@ -10,9 +10,13 @@ from uuid import UUID
 from domain.library.aggregates import VideoAggregate
 from domain.library.repositories import IVideoRepository, SearchQuery
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
+from domain.shared.messages import Message, error_message
 from domain.shared.ports import IEventBus, IMediaSource, ISummarySource
 
 logger = logging.getLogger(__name__)
+
+# 설명의 해시태그(#태그) — 한글 태그도 잡는다. 표시 문구가 아니라 텍스트 처리용 정규식이다.
+_HASHTAG_RE = re.compile(r"#([\w가-힣]{2,})")
 
 
 @dataclass
@@ -66,10 +70,11 @@ class EnrichVideoResult:
     """보강 결과 — GUI 상태바 표시용.
 
     kind: "song"(가사 조회) | "summary"(요약 추출) | "skipped"(대상 아님·이미 있음)
+    detail: 화면에 붙일 사유·요약 — 문장이 아니라 `Message`다(`gui/text/messages.py`가 만든다).
     """
     kind: str
     ok: bool
-    detail: str = ""
+    detail: Message | None = None
 
 
 @dataclass
@@ -150,7 +155,7 @@ class AddVideoHandler:
                 # Extract #hashtags from description; cap at 10 to prevent tag explosion.
                 # Require ≥2 chars to filter single-letter noise.
                 description = info.get("description") or ""
-                desc_tags = re.findall(r"#([\w가-힣]{2,})", description)
+                desc_tags = _HASHTAG_RE.findall(description)
                 raw_tags += desc_tags[:10]
                 meta_tags = list(dict.fromkeys(
                     t.strip() for t in raw_tags if isinstance(t, str) and t.strip()
@@ -301,7 +306,7 @@ class EnrichVideoHandler:
     def handle(self, cmd: EnrichVideoCommand) -> EnrichVideoResult:
         video_agg = self._repo.get_by_id(cmd.video_id)
         if video_agg is None:
-            return EnrichVideoResult("skipped", False, "영상을 찾을 수 없습니다")
+            return EnrichVideoResult("skipped", False, Message.of("enrich.video_not_found"))
 
         try:
             song_agg = self._songs.get(cmd.video_id)
@@ -316,9 +321,9 @@ class EnrichVideoHandler:
     # ------------------------------------------------------------------
     def _enrich_lyrics(self, video_id: UUID, song_agg) -> EnrichVideoResult:
         if song_agg.info.lyrics_lines:
-            return EnrichVideoResult("song", True, "가사가 이미 있습니다")
+            return EnrichVideoResult("song", True, Message.of("enrich.lyrics_exists"))
         if self._song_fetch is None:
-            return EnrichVideoResult("skipped", False, "가사 조회기가 설정되지 않았습니다")
+            return EnrichVideoResult("skipped", False, Message.of("enrich.no_lyrics_fetcher"))
 
         try:
             from application.song.commands import FetchSongInfoCommand  # noqa: PLC0415
@@ -327,21 +332,21 @@ class EnrichVideoHandler:
             )
         except Exception as exc:
             logger.exception("가사 자동 조회 실패: %s", video_id)
-            return EnrichVideoResult("song", False, str(exc))
+            return EnrichVideoResult("song", False, error_message(exc))
 
         lines = list(result.info.lyrics_lines) if result is not None else []
         if not lines:
             # 폴백 없음 — 요약으로 넘어가지 않는다(확정된 정책).
             logger.warning("가사를 찾지 못했습니다: %s", video_id)
-            return EnrichVideoResult("song", False, "가사를 찾지 못했습니다")
-        return EnrichVideoResult("song", True, f"{len(lines)}줄")
+            return EnrichVideoResult("song", False, Message.of("enrich.lyrics_not_found"))
+        return EnrichVideoResult("song", True, Message.of("enrich.lyrics_lines", n=len(lines)))
 
     def _enrich_summary(self, video_agg) -> EnrichVideoResult:
         # "이미 있다"는 **그 언어** 기준이다 — 한국어 요약이 있어도 영어 요약은 새로 받는다.
         if self._repo.get_summaries(video_agg.id).get(self._lang):
-            return EnrichVideoResult("skipped", True, "요약이 이미 있습니다")
+            return EnrichVideoResult("skipped", True, Message.of("enrich.summary_exists"))
         if self._summary is None:
-            return EnrichVideoResult("skipped", False, "요약 추출기가 설정되지 않았습니다")
+            return EnrichVideoResult("skipped", False, Message.of("enrich.no_summary_source"))
 
         url = str(video_agg.video.url)
         # 실패 사유까지 받아 저장한다 — 상세 화면이 "질문하기 버튼이 없어 실패"와
@@ -356,25 +361,25 @@ class EnrichVideoHandler:
         except Exception as exc:
             logger.exception("요약 자동 추출 실패: %s", url)
             self._record_summary_status(video_agg.id, "error")
-            return EnrichVideoResult("summary", False, str(exc))
+            return EnrichVideoResult("summary", False, error_message(exc))
 
         if not summary:
             # 정상 실패가 두 가지다: ① YouTube가 그 영상에 요약 기능을 제공하지 않음
             # (조회수가 적거나 최근 업로드인 영상에서 관측됨) ② 쿠키 미설정·만료.
             self._record_summary_status(video_agg.id, reason or "error")
             if reason == "no_button":
-                detail = "이 영상에는 '질문하기' 버튼이 없어 요약을 가져올 수 없습니다"
+                detail = Message.of("enrich.summary_no_button")
             elif reason == "not_signed_in":
-                detail = "YouTube 로그인이 필요합니다(설정에서 쿠키 등록)"
+                detail = Message.of("enrich.summary_needs_login")
             else:
-                detail = "요약을 가져오지 못했습니다"
-            logger.warning("%s: %s", detail, url)
+                detail = Message.of("enrich.summary_failed")
+            logger.warning("요약 자동 추출 실패(%s): %s", detail.key, url)
             return EnrichVideoResult("summary", False, detail)
 
         self._repo.save_summary(video_agg.id, self._lang, summary)
         # 성공했으니 이전 실패 사유는 지운다(상세 안내 문구가 남지 않게).
         self._record_summary_status(video_agg.id, "")
-        return EnrichVideoResult("summary", True, f"{len(summary)}자")
+        return EnrichVideoResult("summary", True, Message.of("enrich.summary_chars", n=len(summary)))
 
     def _record_summary_status(self, video_id: UUID, status: str) -> None:
         """요약 실패 사유를 저장한다(빈 문자열이면 삭제). 실패는 격리한다."""
@@ -656,7 +661,7 @@ def _refetch_video_metadata(
 
     raw_tags: list[str] = list(info.get("tags") or [])
     raw_tags += list(info.get("categories") or [])
-    desc_tags = re.findall(r"#([\w가-힣]{2,})", desc)
+    desc_tags = _HASHTAG_RE.findall(desc)
     raw_tags += desc_tags[:10]
     tag_names = list(dict.fromkeys(
         t.strip() for t in raw_tags if isinstance(t, str) and t.strip()

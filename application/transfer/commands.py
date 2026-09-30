@@ -27,6 +27,7 @@ from domain.library.aggregates import VideoAggregate
 from domain.library.entities import Category
 from domain.library.repositories import IVideoRepository, SearchQuery
 from domain.library.value_objects import ChannelInfo, Duration, VideoUrl
+from domain.shared.messages import Message
 from domain.shared.ports import IEventBus, ILibraryPackageReader, ILibraryPackageWriter
 from domain.song.aggregates import SongInfoAggregate
 from domain.song.repositories import ISongRepository
@@ -44,19 +45,7 @@ from application.transfer.dtos import (
 
 logger = logging.getLogger(__name__)
 
-_FIELD_LABELS = {
-    "title": "제목",
-    "notes": "메모",
-    "description": "설명",
-    "category": "카테고리",
-    "artist": "가수",
-    "album": "앨범",
-    "song_title": "노래 제목",
-    "release_year": "발매년도",
-    "lyrics": "가사",
-    "lyrics_offset_ms": "가사 싱크 오프셋",
-}
-
+# 필드 표시 이름은 화면이 갖는다(`gui/text/labels.py:transfer_field_label`) — 여기는 키만.
 _SONG_TEXT_FIELDS = ("artist", "album", "song_title", "release_year")
 
 
@@ -288,7 +277,7 @@ class DetectImportConflictsHandler:
                 continue
             default = "incoming" if (not ex_filled and in_filled) else "existing"
             result.append(ImportFieldDiffDTO(
-                field=key, label=_FIELD_LABELS[key],
+                field=key,
                 existing_value=ex_val, incoming_value=in_val,
                 existing_filled=ex_filled, incoming_filled=in_filled,
                 default_choice=default,
@@ -318,20 +307,22 @@ def _package_category_path(cat_id, pkg_cats: dict) -> str:
     return " > ".join(reversed(parts))
 
 
-def _lyrics_preview(lines: list[LyricsLine]) -> str:
+def _lyrics_preview(lines: list[LyricsLine]) -> Message | str:
     texts = [ln.original for ln in lines if ln.original.strip()]
-    if not texts:
-        return ""
-    preview = " / ".join(texts[:2])
-    return f"{len(lines)}줄 · {preview}" + ("…" if len(texts) > 2 else "")
+    return _preview_message(len(lines), texts)
 
 
-def _lyrics_preview_from_dicts(lines: list[dict]) -> str:
+def _lyrics_preview_from_dicts(lines: list[dict]) -> Message | str:
     texts = [ln.get("original", "") for ln in lines if (ln.get("original") or "").strip()]
+    return _preview_message(len(lines), texts)
+
+
+def _preview_message(total: int, texts: list[str]) -> Message | str:
+    """가사 미리보기 — 줄 수는 문장(`Message`)으로, 앞 두 줄은 값으로 싣는다."""
     if not texts:
         return ""
-    preview = " / ".join(texts[:2])
-    return f"{len(lines)}줄 · {preview}" + ("…" if len(texts) > 2 else "")
+    preview = " / ".join(texts[:2]) + ("…" if len(texts) > 2 else "")
+    return Message.of("transfer.lyrics_preview", lines=total, preview=preview)
 
 
 # ── 가져오기: 실행 ────────────────────────────────────────────────────────

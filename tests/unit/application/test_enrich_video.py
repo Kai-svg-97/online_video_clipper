@@ -13,6 +13,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+from domain.shared.messages import Message
+
 from application.library.commands import (
     EnrichVideoCommand,
     EnrichVideoHandler,
@@ -124,7 +126,9 @@ class TestSongBranch:
 
         assert result.kind == "song"
         assert result.ok is False
-        assert "네트워크 실패" in result.detail
+        # 예외 사유는 `Message`의 값으로 실린다(문장은 화면이 만든다).
+        assert result.detail.key == "error.raw"
+        assert "네트워크 실패" in result.detail.as_dict()["reason"]
 
 
 class TestSummaryBranch:
@@ -244,7 +248,7 @@ class TestFailureReasonHandling:
         result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
 
         assert result.ok is False
-        assert "질문하기" in result.detail
+        assert result.detail == Message.of("enrich.summary_no_button")
 
     def test_no_button_status_is_persisted(self):
         """상세 화면이 재시작 후에도 문구를 바꿀 수 있도록 저장해야 한다."""
@@ -279,7 +283,7 @@ class TestFailureReasonHandling:
 
         result = handler.handle(EnrichVideoCommand(video_id=uuid4()))
 
-        assert "로그인" in result.detail
+        assert result.detail == Message.of("enrich.summary_needs_login")
 
     def test_success_clears_previous_status(self):
         """성공하면 이전 실패 사유를 지워 안내 문구가 사라져야 한다."""

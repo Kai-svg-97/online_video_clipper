@@ -31,6 +31,7 @@ from typing import Any
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from gui.text.messages import describe_error
 from gui.workers import retire_thread, track_thread
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ class CallWorker(QThread):
         except Exception as exc:
             # 조용히 삼키지 않는다 — 폴백 경로의 흔적을 남기는 것이 프로젝트 규칙이다.
             logger.exception("%s", self._error_label)
-            self.failed.emit(str(exc), self._context)
+            self.failed.emit(describe_error(exc), self._context)
         else:
             self.done.emit(result, self._context)
 

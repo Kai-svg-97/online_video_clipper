@@ -13,8 +13,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from domain.clip.presets import ConvertPreset, find_preset
+from domain.shared.messages import DisplayError, Message
 
 logger = logging.getLogger(__name__)
+
+
+class UnknownPresetError(DisplayError, ValueError):
+    """모르는 변환 프리셋 — `ValueError`를 잡던 자리가 그대로 동작한다."""
+
+
+class SourceFileMissingError(DisplayError, FileNotFoundError):
+    """변환할 원본 파일이 없다 — `FileNotFoundError`를 잡던 자리가 그대로 동작한다."""
 
 
 @dataclass
@@ -37,11 +46,11 @@ class ConvertMediaHandler:
     ) -> Path:
         preset = find_preset(cmd.preset_key)
         if preset is None:
-            raise ValueError(f"알 수 없는 변환 프리셋: {cmd.preset_key}")
+            raise UnknownPresetError(Message.of("convert.unknown_preset", preset=cmd.preset_key))
 
         source = Path(cmd.source_file_path)
         if not source.exists():
-            raise FileNotFoundError(f"원본 파일이 없습니다: {source}")
+            raise SourceFileMissingError(Message.of("convert.source_missing", path=str(source)))
 
         out_dir = Path(cmd.output_dir) if cmd.output_dir else source.parent
         output = out_dir / preset.output_name(source.stem)

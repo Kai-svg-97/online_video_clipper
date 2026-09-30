@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from gui.text.messages import describe_error
 from gui.view_models.base import WorkerOwnerMixin
 
 from application.library.dtos import FeedVideoDTO
@@ -49,7 +50,7 @@ class _RecommendWorker(QThread):
             self.finished_ok.emit(result)
         except Exception as exc:
             logger.exception("추천 영상 조회 실패")
-            self.finished_err.emit(str(exc))
+            self.finished_err.emit(describe_error(exc))
 
 
 class RecommendViewModel(WorkerOwnerMixin, QObject):

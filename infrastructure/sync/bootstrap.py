@@ -17,6 +17,7 @@ import json
 import logging
 from pathlib import Path
 
+from domain.shared.messages import Message
 from domain.sync.services import SyncSchemaError
 from domain.sync.value_objects import SnapshotManifest
 
@@ -68,9 +69,9 @@ def bootstrap_if_fresh(
     actual = _sha256(tmp)
     if manifest.db_sha256 and actual != manifest.db_sha256:
         tmp.unlink(missing_ok=True)
-        raise SyncSchemaError(
-            f"스냅샷 sha256 불일치 — 손상/불완전 다운로드: {actual} != {manifest.db_sha256}"
-        )
+        raise SyncSchemaError(Message.of(
+            "sync.snapshot_sha_mismatch", actual=actual, expected=manifest.db_sha256,
+        ))
 
     # integrity_check + 스키마 게이트 + (기존 DB 없으므로 백업 없이) os.replace 로 교체.
     snapshot_store.import_snapshot(tmp, backup_dir)

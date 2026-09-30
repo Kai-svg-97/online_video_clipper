@@ -186,7 +186,7 @@ class _BarChart(QWidget):
             y = 4 + i * (bar_h + 6)
             # Label
             p.setPen(text_color)
-            p.drawText(0, y, label_w - 4, bar_h, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, item.name)
+            p.drawText(0, y, label_w - 4, bar_h, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, item.name or tr("미분류"))
             # Bar
             bar_w = int(bar_area_w * item.count / max_cnt)
             p.fillRect(label_w, y, bar_w, bar_h, accent)
@@ -337,7 +337,7 @@ class StatsPanel(QWidget):
         name_row.setSpacing(6)
         url = ch.channel_url or ""
         if url:
-            name_btn = QPushButton(ch.channel_name)
+            name_btn = QPushButton(ch.channel_name or tr("(채널 없음)"))
             name_btn.setFlat(True)
             name_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             name_btn.setToolTip(tr("브라우저에서 채널 열기\n{url}").format(url=url))
@@ -363,7 +363,7 @@ class StatsPanel(QWidget):
             copy_btn.clicked.connect(lambda _=False, u=url, b=copy_btn: self._copy_url(u, b))
             name_row.addWidget(copy_btn)
         else:
-            plain = QLabel(ch.channel_name)
+            plain = QLabel(ch.channel_name or tr("(채널 없음)"))
             plain.setStyleSheet(
                 "font-weight:600; background:transparent; border:none;"
                 f" color:{tokens.text_primary};"
@@ -390,7 +390,7 @@ class StatsPanel(QWidget):
             f" color:{tokens.text_on_accent}; border-color:{tokens.accent}; }}"
         )
         for cat in ch.categories:
-            link = QPushButton(f"{cat.category_path} ({cat.count})")
+            link = QPushButton(f"{cat.category_path or tr('미분류')} ({cat.count})")
             link.setFlat(True)
             link.setCursor(Qt.CursorShape.PointingHandCursor)
             link.setStyleSheet(link_qss)

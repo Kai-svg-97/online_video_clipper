@@ -821,7 +821,8 @@ class UpdateLyricsSourceHandler:
         sources = {s.id: s for s in self._songs.list_lyrics_sources()}
         src = sources.get(cmd.source_id)
         if src is None:
-            raise KeyError(f"가사 출처 {cmd.source_id} 없음")
+            # 개발자용 — 화면의 출처 목록에서 고른 id라 사용자에게는 닿지 않는다.
+            raise KeyError(f"lyrics source not found: {cmd.source_id}")
         if cmd.name is not None:
             src.name = cmd.name.strip()
         if cmd.enabled is not None:

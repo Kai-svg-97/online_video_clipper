@@ -1759,7 +1759,10 @@ class SettingsPanel(QWidget):
                     self.done.emit(name)
                 except Exception as exc:
                     logger.exception("YouTube OAuth 인증 실패")
-                    self.err.emit(str(exc))
+                    # 설정 오류는 `DisplayError`로 온다 — 문장은 화면 언어로 만든다.
+                    from gui.text.messages import describe_error  # noqa: PLC0415
+
+                    self.err.emit(describe_error(exc))
 
         self._yt_auth_btn.setEnabled(False)
         self._yt_auth_btn.setText(self._yt_btn_working())
