@@ -30,8 +30,10 @@
 - **`architecture/file-map.md`는 코드와 함께 고친다** — 파일을 추가·삭제·이름 변경하면
   즉시 반영한다(CLAUDE.md의 필수 갱신 규칙). 코드보다 먼저 낡는 문서가 되면 세션 시작
   시 1차 참조로 쓸 수 없다.
-- **`architecture/design-decisions.md`에는 "왜"와 "실제로 밟은 함정"을 남긴다** —
+- **"왜"와 "실제로 밟은 함정"은 `architecture/decisions/<주제>.md`에 남긴다** —
   실측으로 확인한 사실은 반드시 기록한다(같은 함정을 다시 밟지 않기 위한 문서다).
+  `architecture/design-decisions.md`는 **목차**다: 새 절을 만들면 거기에도 한 줄 더하고,
+  맞는 주제가 없으면 새 주제 파일을 만들어 목차 표에 올린다.
 - `superpowers/` 내 플랜·스펙 파일은 AI 에이전트가 자동 생성 — 수동 편집 시 주의.
 
 <!-- MANUAL: -->

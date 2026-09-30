@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 무엇을 찾나 | 어디 |
 | --- | --- |
 | 파일별 책임, 레이어 구조, `gui/` 파일 맵 | [`docs/architecture/file-map.md`](docs/architecture/file-map.md) |
-| 왜 이렇게 만들었나, 실제로 밟은 함정 | [`docs/architecture/design-decisions.md`](docs/architecture/design-decisions.md) |
+| 왜 이렇게 만들었나, 실제로 밟은 함정 | [`docs/architecture/design-decisions.md`](docs/architecture/design-decisions.md)(목차) → `docs/architecture/decisions/<주제>.md` |
 | 메모리 프로파일링 실측값 | [`docs/architecture/memory-profiling.md`](docs/architecture/memory-profiling.md) |
 | 사용자용 상세 설명서(F1이 여는 문서) | [`docs/manual.md`](docs/manual.md) |
 | 기능 요구사항 | `planning/youtube_content_manager_prd.md` |
@@ -468,7 +468,7 @@ These are **mandatory coding constraints**, not suggestions.
 | Build / packaging change | `planning/packaging_plan.md` |
 | 화면·사용법 변경 | `docs/manual.md` 수정 후 `python scripts/build_manual.py` |
 | 레이어 구조 변경 · 파일 추가/삭제/이름 변경 | `docs/architecture/file-map.md` **즉시** 수정 |
-| 설계 근거, 실제로 밟은 함정, 버그 수정 배경 | `docs/architecture/design-decisions.md` |
+| 설계 근거, 실제로 밟은 함정, 버그 수정 배경 | `docs/architecture/decisions/<주제>.md` + 목차 `design-decisions.md`에 한 줄 |
 | 조립(`bootstrap/`) 규약 변경 | This file (`CLAUDE.md`)의 "조립 루트" 항목 |
 
 > Instructions that only live in the conversation are lost across sessions. Record them here **before or alongside** implementation — not as follow-up cleanup.

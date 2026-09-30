@@ -46,7 +46,8 @@ YouTube 및 1000+ 사이트의 온라인 영상을 다운로드·스크랩·관�
 - **`main.py` 상단에서 `bootstrap`을 임포트하지 말 것** — 스플래시를 띄운 뒤에
   임포트해야 시작 체감 성능이 유지된다(무거운 인프라·GUI 임포트가 그 뒤에 있다).
 - 파일별 책임은 `docs/architecture/file-map.md`, 설계 근거는
-  `docs/architecture/design-decisions.md`에 있다(예전에는 CLAUDE.md 안에 있었다).
+  `docs/architecture/decisions/<주제>.md`에 있다 — 목차는 `design-decisions.md`
+  (예전에는 CLAUDE.md 안에, 그다음엔 한 파일에 있었다).
 - 레이어 경계를 절대 무너뜨리지 말 것: `domain/`은 외부 라이브러리 import 금지, `application/`은 infrastructure 직접 import 금지.
 - GUI 파일 수정 후 반드시 `/verify` 스킬로 앱 실행 확인.
 - 새 기능·컨텍스트 추가 시 `CLAUDE.md`의 문서 업데이트 규칙 테이블을 따를 것.
