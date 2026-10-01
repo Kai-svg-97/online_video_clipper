@@ -49,6 +49,8 @@ The central screen for collecting, organizing, finding and playing videos.
 
 You can change the order and nesting of categories by **dragging and dropping** them, and you can move videos by dragging them onto a category.
 
+When you scroll through an expanded category, its **parent category names stay pinned at the top**, so you always know which category you are in (up to three levels are stacked). When the category's last item scrolls up, the pinned row slides up with it. Click a pinned row to jump to that category.
+
 ### Top — search and filters
 
 - **Search box**: full-text search across titles, descriptions and notes. `Ctrl+F` jumps to it, `Enter` searches immediately, and `Esc` clears it.

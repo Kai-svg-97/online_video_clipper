@@ -41,6 +41,7 @@ from gui.view_models.feed_vm import CHANNELS_ROOT_KEY, FEED_ALL_KEY
 from gui.panels.library.constants import _CAT_ID_ROLE, _CHANNEL_URL_ROLE, _FOLDER_ID_ROLE, _ITEM_TYPE_ROLE, _ITYPE_CATEGORY, _ITYPE_CHANNEL, _ITYPE_FEED_ALL, _ITYPE_FOLDER, _ITYPE_PLAYLIST, _ITYPE_ROOT, _PLAYLIST_ID_ROLE, _SECTION_ROLE
 from gui.panels.library.delegates import _TreeRowDelegate
 from gui.panels.library.formatting import _t, tag_color
+from gui.panels.library.sticky_header import StickyHeader
 from gui.panels.library.tree_mixins import (
     _TreeContextMenuMixin,
     _TreeDragDropMixin,
@@ -119,6 +120,8 @@ class _PlaylistTree(
         self._spinner_timer = QTimer(self)
         self._spinner_timer.setInterval(120)
         self._spinner_timer.timeout.connect(self._tick_spinner)
+        # 펼친 폴더를 스크롤하는 동안 조상 폴더를 맨 위에 고정한다(sticky scroll)
+        self._sticky = StickyHeader(self)
 
     def drawBranches(self, painter, rect, index) -> None:  # noqa: N802
         """셰브론과 들여쓰기 가이드를 branch 영역에 직접 그린다.
