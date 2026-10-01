@@ -475,6 +475,30 @@ These are **mandatory coding constraints**, not suggestions.
 
 ---
 
+## 작업별 모델 규칙 (mandatory)
+
+작업 종류마다 맡는 에이전트와 모델이 정해져 있다. 에이전트 정의(`.claude/agents/*.md`)의
+`model:`은 **계열 별칭**(`sonnet`·`opus`·`haiku`)으로 적는다 — 그 계열의 최신 모델로
+해석되므로 버전 번호를 적지 않아야 새 모델이 나와도 따라간다.
+
+| 작업 | 에이전트 | 모델 |
+| --- | --- | --- |
+| 코딩 — 코드 작성·수정·리팩터·버그 수정 | `implementer` | Sonnet 최신 |
+| 테스트 계획 — 무엇을 어떤 사례로 증명할지 | `test-planner` | Opus 최신 |
+| 테스트 작성·실행 — 계획대로 쓰고 돌리고 보고 | `tester` | Sonnet 최신 |
+| git — 커밋·푸시·태그·브랜치 정리 | `git-operator` | Haiku |
+
+- **메인 세션은 코드를 직접 쓰지 않는다.** 조율·설계 결정·결과 검토·사용자 보고를 맡고,
+  코드 변경은 `implementer`에 위임한다. 문서·설정(`CLAUDE.md`, `docs/`, `planning/`,
+  `.claude/`) 편집은 메인 세션이 해도 된다.
+- **다른 범용 에이전트를 코딩에 쓸 때도 모델은 Sonnet이다** — `oh-my-claudecode:executor` 같은
+  에이전트를 띄우면 `model: "sonnet"`을 지정한다(예전엔 큰 분할 작업에 Opus를 썼다).
+- **순서**: `test-planner`(계획) → `tester`(실패하는 시험 작성·실패 확인) → `implementer`(구현)
+  → `tester`(통과·관련 시험·전체 스위트·ruff) → 메인 세션 검토. 시험이 필요 없는 문서·설정
+  변경은 이 순서를 건너뛴다.
+- 계획이 틀렸거나 실행할 수 없으면 `tester`는 계획을 바꾸지 말고 보고한다 — 계획은
+  `test-planner`가 고친다.
+
 ## 커밋 규칙 (mandatory)
 
 - **코드 수정이 생기면 항상 적절한 커밋 메시지와 함께 커밋한다.** 작업(기능/버그픽스/리팩터)이 끝나 검증까지 마치면 사용자가 따로 요청하지 않아도 변경을 커밋한다.
