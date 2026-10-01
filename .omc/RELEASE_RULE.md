@@ -40,7 +40,7 @@ version.py does not contain 'X.Y.Z' — update version.py before tagging
   **`test.yml`이 main push·PR마다 `ruff check .`와 `pytest`를 돌린다**(2026-09-30~).
   태그를 붙이기 전에 **태그할 커밋의 Test 워크플로가 초록인지** 확인한다
   (`gh run list --workflow test.yml --limit 1`). 로컬 전체 테스트는 여전히 권장:
-  `pytest` (2026-09-30 기준 3,364건, 약 5~7분)
+  `pytest` (2026-10-01 기준 3,382건, 약 5~7분)
 - 린트: `ruff check .` — **위반 0건이 기준이다**(`ruff.toml`, 2026-09-30에 E402 10건을
   고쳐 0으로 만들었다). 한 건이라도 있으면 CI가 실패한다. `ruff format`은 저장소
   전체에 돌리지 않는다(적용된 적 없는 저장소라 거의 모든 파일이 바뀐다).
