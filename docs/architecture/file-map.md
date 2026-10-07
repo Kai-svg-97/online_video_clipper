@@ -11,7 +11,8 @@ online_video_clipper/
 ├── main.py                          # 진입점 — **조립 목록이 아니라 순서만** 있다(127줄). 상단 임포트는 가벼운 것만 두고, 인프라·GUI를 끌어오는 `bootstrap`은 **스플래시를 띄운 뒤** 임포트한다(시작 체감 성능). 순서: Qt로그억제 → QApplication → 스플래시 → 데이터디렉터리·로깅 → 중복실행가드(**DB 열기 전**) → 클라우드 스냅샷 부트스트랩(**DB 열기 전**) → DB → `build_app_graph` → MainWindow → 업데이트 컨트롤러 → exec → **종료 후** 업데이트 설치
 │
 ├── bootstrap/                       # 조립 루트(composition root) — 예전 609줄 `main()`의 내용물
-│   ├── __init__.py                  # `build_app_graph(db) -> AppGraph`. `db`를 **인자로 받는다**(테스트가 임시 DB로 그래프 전체를 만들어 볼 수 있어야 한다). 스냅샷 부트스트랩은 DB 열기 전이라 여기 포함되지 않는다
+│   ├── __init__.py                  # **지연 `__getattr__`(PEP 562)만 둔다** — `AppGraph`·`build_app_graph`·`bootstrap_cloud_snapshot`·`open_database`를 처음 접근할 때 해당 서브모듈에서 가져온다. 모듈 수준 임포트가 없어서 `bootstrap.runtime`을 스플래시 전에 임포트해도 조립 본체가 딸려 오지 않는다(`tests/unit/test_main_startup_order.py`가 강제). 무거운 모듈 수준 임포트를 추가하지 말 것
+│   ├── graph.py                     # `build_app_graph(db) -> AppGraph`. `db`를 **인자로 받는다**(테스트가 임시 DB로 그래프 전체를 만들어 볼 수 있어야 한다). 스냅샷 부트스트랩은 DB 열기 전이라 여기 포함되지 않는다
 │   ├── context.py                   # frozen dataclass — `Repositories`·`Services`·컨텍스트별 `*Handlers`·`Handlers`·`AppGraph`. `ViewModels`는 GUI가 소유하므로 `gui/view_models/bundle.py`에서 재수출만 한다(조립 루트가 GUI를 의존하는 건 정상, 반대는 레이어 역전)
 │   ├── runtime.py                   # 시작·종료 **절차**(조립이 아니다) — `create_qt_app`·`show_splash`(프레임 없는 `QLabel` — `QSplashScreen`은 show가 1초. `processEvents` 필수: 없으면 이어지는 무거운 임포트가 이벤트 루프를 막아 빈 창만 남는다)·`finish_splash`(`window.show()` **뒤**에 부른다 — 창의 첫 Paint 후 닫고 `SPLASH_TIMEOUT_MS`=10초 상한)·`build_splash_pixmap`·`suppress_av_log`·`install_qt_message_filter`·`install_pending_update`(실행 중엔 설치 불가라 배치로 5초 지연 → 무인 설치 → 재실행. **재실행 주체는 배치 하나로 고정**)
 │   ├── persistence.py               # `bootstrap_cloud_snapshot()`(DB 열기 전)·`open_database()`·`build_repositories(db, sync_service)`. 동기화 연결 시 `Recording*`로 교체하는 판단이 **여기 한 곳**에만 있다(`album`은 파생 캐시라 감싸지 않는다)

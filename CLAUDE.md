@@ -124,7 +124,8 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
 
 | 파일 | 책임 |
 | --- | --- |
-| `bootstrap/__init__.py` | `build_app_graph(db)` — 그래프 전체 조립 |
+| `bootstrap/__init__.py` | 공개 이름만 지연 `__getattr__`로 노출(임포트 비용 0) |
+| `bootstrap/graph.py` | `build_app_graph(db)` — 그래프 전체 조립 |
 | `bootstrap/context.py` | 조립 결과 컨텍스트(frozen dataclass) |
 | `bootstrap/runtime.py` | 시작·종료 절차(Qt 앱·스플래시·중복 실행 가드·업데이트 설치) |
 | `bootstrap/persistence.py` | DB 열기 + 리포지토리(동기화 연결 시 캡처 데코레이터로 교체) |
@@ -136,6 +137,9 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
 
 1. **`main.py` 상단에서 `bootstrap`을 임포트하지 않는다.** 스플래시를 띄운 **뒤에**
    임포트해야 시작 체감 성능이 유지된다(인프라·GUI를 끌어오는 무거운 임포트다).
+   `bootstrap/__init__.py`가 지연 `__getattr__`(PEP 562)로 공개 이름을 처음 접근할 때만
+   조립 본체를 임포트하게 해 이를 강제하며, `tests/unit/test_main_startup_order.py`가 지킨다
+   (`bootstrap.runtime`은 가볍게 유지 — 무거운 모듈 수준 임포트 금지).
 2. **조립 순서 제약은 함수 경계로 표현한다.** 클라우드 스냅샷 부트스트랩은 DB 열기
    전, 중복 실행 가드는 DB 열기 전, 업데이트 설치는 앱 종료 후다.
 3. **핸들러 사이 의존은 함수 인자로 드러낸다.** `song → library → {download,
