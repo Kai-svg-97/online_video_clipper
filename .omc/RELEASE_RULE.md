@@ -12,6 +12,15 @@
   diff를 보고, 네이티브 확장(PyQt6·ctranslate2·onnxruntime·av)이 바뀌었으면 아래
   "네이티브 의존이 늘었을 때의 추가 게이트"대로 로컬 빌드 + 실행으로 확인한다.
 
+## deno 고정 버전 (2026-10-07~)
+- Windows 번들의 JS 런타임 deno는 `scripts/deno_version.txt`(`version`·`sha256`)에 고정돼
+  있다. 로컬 빌드(`build_windows.ps1`)와 CI(`release.yml`) 모두 `scripts/ensure_deno.ps1`로
+  같은 값을 읽는다 — 해시가 다르면 빌드가 실패한다.
+- 올리는 절차: ① https://github.com/denoland/deno/releases 에서 새 2.x 안정판 확인 →
+  ② `deno-x86_64-pc-windows-msvc.zip.sha256sum` 자산의 Hash를 `sha256`에, 버전을 `version`에
+  기록 → ③ `pwsh -File scripts/build_windows.ps1`로 받기·번들 확인(`_internal\bin\deno.exe
+  --version`) → ④ 같은 커밋에 넣는다. 로컬 `bin\deno.exe`가 다른 버전이면 스크립트가 알아서 다시 받는다.
+
 ## Version Sources
 - `version.py` — `__version__ = "X.Y.Z"` (단일 출처)
 - `installer.iss` 는 CI에서 `/DAppVersion=` 파라미터로 주입되므로 수동 수정 불필요
@@ -40,7 +49,7 @@ version.py does not contain 'X.Y.Z' — update version.py before tagging
   **`test.yml`이 main push·PR마다 `ruff check .`와 `pytest`를 돌린다**(2026-09-30~).
   태그를 붙이기 전에 **태그할 커밋의 Test 워크플로가 초록인지** 확인한다
   (`gh run list --workflow test.yml --limit 1`). 로컬 전체 테스트는 여전히 권장:
-  `pytest` (2026-10-01 기준 3,382건, 약 5~7분)
+  `pytest` (2026-10-07 기준 3,433건, 약 5~7분)
 - 린트: `ruff check .` — **위반 0건이 기준이다**(`ruff.toml`, 2026-09-30에 E402 10건을
   고쳐 0으로 만들었다). 한 건이라도 있으면 CI가 실패한다. `ruff format`은 저장소
   전체에 돌리지 않는다(적용된 적 없는 저장소라 거의 모든 파일이 바뀐다).
