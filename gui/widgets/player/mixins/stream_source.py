@@ -12,7 +12,9 @@ from PyQt6.QtCore import QTimer, QUrl
 from PyQt6.QtMultimedia import QMediaPlayer
 
 from gui.text import tr
+from gui.toast import show_toast
 from gui.widgets.player.constants import _MAX_STREAM_RETRIES
+from gui.widgets.player.quality_notice import should_notify_downgrade
 from gui.widgets.player.stream import _StreamWorker
 from gui.workers import retire_thread, track_thread
 
@@ -25,6 +27,7 @@ class StreamSourceMixin:
     def _reset_stream_mode(self) -> None:
         """새 영상 — 실시간 remux를 다시 처음부터 시도한다(영상마다 다르다)."""
         self._prefer_remux = True
+        self._downgrade_notified = False
 
     def _find_local_for_quality(self, short: str) -> str | None:
         """선택 품질과 일치하는 다운로드 파일 경로 반환.
@@ -182,7 +185,21 @@ class StreamSourceMixin:
         self._bar.raise_()
         self._stream_quality_label = quality  # metadata 업데이트 기준으로 사용
         self._bar.set_quality(quality or "")
+        self._notify_quality_downgrade(quality, is_local)
         QTimer.singleShot(50, self._do_play_start)
+
+    def _notify_quality_downgrade(self, quality: str, is_local: bool) -> None:
+        """병합 폴백 결과가 요청 화질보다 낮으면 이유를 토스트로 한 번 알린다."""
+        if self._prefer_remux or not is_local or getattr(self, "_downgrade_notified", False):
+            return
+        if not should_notify_downgrade(self._current_quality_short, quality):
+            return
+        self._downgrade_notified = True
+        show_toast(
+            self,
+            tr("먼 위치로 이동하면서 원본이 고화질 접근을 막아 {quality}로 재생합니다.")
+            .format(quality=quality),
+        )
 
     def _on_stream_failed(self, err: str) -> None:
         self._status_lbl.hide()

@@ -327,6 +327,7 @@ online_video_clipper/
 │   │   │   │   ├── lyrics.py        # `LyricsSubtitleMixin` — 싱크 가사·오프셋(`[`/`]`/`\`)·자막 크기/위치 설정(디바운스 저장)·조절 값 임시 안내(`_show_transient`)
 │   │   │   │   ├── video_subtitles.py # `VideoSubtitleMixin` — 영상 자막(YouTube 캡션) 두 칸의 목록·선택·자동 번역·내려받기(QThread)·선호 언어 복원
 │   │   │   │   └── detached.py      # `DetachedWindowsMixin` — 전체화면·PiP 진입/종료, 새 바 배선과 초기 상태 1회 반영, PiP 자리 안내
+│   │   │   ├── quality_notice.py    # 병합 폴백으로 화질이 요청 상한보다 낮아졌는지 판정하는 순수 함수(`should_notify_downgrade`) — PyQt 의존 없음. 먼 seek이 원본에 막혀 360p로 내려가면 `stream_source.py`가 토스트로 알린다
 │   │   │   ├── constants.py         # `_STREAM_CLIENTS`·`_PROBE_*`(ffmpeg와 동일한 검증 요청)·화질 목록
 │   │   │   ├── stream.py            # `_StreamWorker`·`_stream_playable`·`_FormatProbeWorker` — URL 확보와 사전 검증
 │   │   │   ├── controls.py          # `_ControlBar`·`_TrackSlider`(영상 위에서는 QSS가 안 먹어 직접 그린다)

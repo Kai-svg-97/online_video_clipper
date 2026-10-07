@@ -347,6 +347,7 @@
   "로컬 파일이 있어야 클립 추출이 가능합니다.\n다운로드 후 다시 시도해 주세요.": "Clip extraction needs a local file.\nDownload the video and try again.",
   "로컬로 복사": "Copy to local",
   "많이 줄이기 (480p mp4)": "Much smaller (480p mp4)",
+  "먼 위치로 이동하면서 원본이 고화질 접근을 막아 {quality}로 재생합니다.": "The source blocked high-quality access after jumping to a distant position, so playback is at {quality}.",
   "메모": "Notes",
   "메모를 입력하세요…": "Enter a note…",
   "메타데이터 갱신 중...": "Refreshing metadata...",
