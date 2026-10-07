@@ -176,7 +176,10 @@ def fetch_tracks_for_url(url: str, cookie_opts: dict | None = None) -> list[Subt
     """영상 URL에서 자막 트랙 목록을 조회한다(yt-dlp). QThread에서만 호출한다."""
     from yt_dlp import YoutubeDL  # noqa: PLC0415 (무거운 import는 호출 시점에)
 
+    from utils.ytdlp_runtime import js_runtime_opts  # noqa: PLC0415
+
     opts = {
+        **js_runtime_opts(),
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,

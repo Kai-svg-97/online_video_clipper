@@ -809,7 +809,10 @@ class GeminiExtractor:
             f.write("# Netscape HTTP Cookie File\n\n")
 
         try:
+            from utils.ytdlp_runtime import js_runtime_opts  # noqa: PLC0415
+
             with yt_dlp.YoutubeDL({
+                **js_runtime_opts(),
                 "cookiesfrombrowser": (browser, profile),
                 "cookiefile": tmp_path,
                 "quiet": True,

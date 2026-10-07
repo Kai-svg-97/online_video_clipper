@@ -256,6 +256,13 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(end - start + 1))
         if rng:
             self.send_header("Content-Range", f"bytes {start}-{end}/{src.size}")
+        # keep-alive로 두면 remux ffmpeg(8.x)가 -ss 입력 seek마다 새 Range 요청을 열지
+        # 않고 연결을 재사용하려고 현재 응답의 남은 바이트를 전부 읽어 비운다
+        # ("Soft-seeking ... by draining N remaining byte(s)" — 1080p는 나머지 77MB).
+        # 그 사이 연결은 이미 닫혀 EOF 후 재연결까지 겹쳐 seek 한 번에 20초+ 걸렸다
+        # (실측). 매 응답을 close로 못 박으면 ffmpeg가 바로 새 Range 요청을 연다(2초대).
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
         if body:
             self._pump_source(session, src, start, end)

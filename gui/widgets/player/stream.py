@@ -16,6 +16,7 @@ from PyQt6.QtCore import (
 )
 
 from gui.text import tr
+from utils.ytdlp_runtime import js_runtime_opts
 from gui.widgets.player.constants import _FALLBACK_STREAM_FMT, _PROBE_RANGE, _PROBE_TIMEOUT, _PROBE_UA, _STREAM_CLIENTS
 
 logger = logging.getLogger(__name__)
@@ -219,7 +220,7 @@ class _StreamWorker(QThread):
 
     def _extract(self, yt_dlp, client: str | None) -> dict:
         """지정 클라이언트로 현재 화질 포맷을 해석한다(내려받지 않는다)."""
-        opts = {"quiet": True, "no_warnings": True,
+        opts = {**js_runtime_opts(), "quiet": True, "no_warnings": True,
                 "format": self._quality_fmt, "noplaylist": True}
         if client:
             opts["extractor_args"] = {"youtube": {"player_client": [client]}}
@@ -296,6 +297,7 @@ class _StreamWorker(QThread):
         for client in clients:
             tmpdir = tempfile.mkdtemp(prefix="ovc_stream_")
             opts = {
+                **js_runtime_opts(),
                 "quiet": True, "no_warnings": True, "noplaylist": True,
                 "format": self._quality_fmt,
                 "merge_output_format": "mp4",
@@ -359,7 +361,7 @@ class _FormatProbeWorker(QThread):
         try:
             import yt_dlp  # noqa: PLC0415
 
-            opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
+            opts = {**js_runtime_opts(), "quiet": True, "no_warnings": True, "noplaylist": True}
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(self._url, download=False) or {}
             heights = sorted(

@@ -140,7 +140,10 @@ class YouTubeAuthService:
 
     def _wl_ydl_opts(self, cookie_opts: dict) -> dict:
         """Watch Later 조회용 공통 yt-dlp 옵션."""
+        from utils.ytdlp_runtime import js_runtime_opts  # noqa: PLC0415
+
         return {
+            **js_runtime_opts(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,

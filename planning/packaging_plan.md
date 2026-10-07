@@ -9,6 +9,13 @@
 
 사용자는 Python, ffmpeg, yt-dlp를 별도 설치할 필요 없음 — 모두 패키지에 포함.
 
+> **JS 런타임(2026-10)**: YouTube 고화질·seek에는 yt-dlp가 JS 챌린지를 풀어야 한다.
+> 풀이 스크립트(`yt_dlp_ejs`)는 spec이 번들하지만(`collect_data_files("yt_dlp_ejs")`),
+> 이를 실행할 **런타임(deno/node/bun/quickjs)은 아직 번들하지 않는다** — 사용자 PC에 없으면
+> `utils/ytdlp_runtime.py`가 경고를 남기고 대체 클라이언트(1분 상한·360p)로 밀린다.
+> 번들하려면 빌드 스크립트가 `bin/deno(.exe)`를 내려받게 하면 된다(헬퍼가 그 경로를 먼저 본다).
+> `yt-dlp-ejs`는 yt-dlp가 정확한 버전을 요구하므로 `scripts/lock_deps.py`의 `UNPINNED`에 둔다.
+
 ---
 
 ## 핵심 코드 패턴 (개발 시 반드시 준수)

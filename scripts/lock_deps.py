@@ -32,7 +32,9 @@ PYTHON_VERSION = "3.12"
 PLATFORM = "win_amd64"
 
 # 고정하지 않는 패키지 — 이유는 모듈 설명 참조.
-UNPINNED = {"yt-dlp"}
+# yt-dlp-ejs 는 yt-dlp 가 정확한 버전을 요구하며 그 버전은 yt-dlp 와 함께 바뀐다 —
+# 고정하면 최신 yt-dlp 설치와 충돌한다.
+UNPINNED = {"yt-dlp", "yt-dlp-ejs"}
 
 _HEADER = """\
 # 자동 생성 — 손으로 고치지 말고 `python scripts/lock_deps.py` 로 다시 만든다.

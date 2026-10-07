@@ -35,6 +35,7 @@ online_video_clipper/
 │   └── settings.py                  # 사용자 설정과 데이터 경로 상수. **`OVC_DATA_DIR` 로 데이터 디렉터리를 통째로 갈아끼울 수 있다** — "사용자의 실제 설정을 절대 읽으면 안 되는 실행"(설명서 갈무리)을 위한 단일 스위치다. 경로 상수는 **모듈을 불러올 때** 정해지므로 그 변수는 `config.settings` 임포트보다 먼저 세워야 한다. `application/library/favorites.py`도 같은 변수를 본다(그 파일만 `DATA_DIR` 밖, OS 사용자 데이터 경로를 쓴다 — 이것 때문에 v1.32.0 갈무리에 사용자 즐겨찾기가 찍혔다). 계약: `tests/unit/test_capture_isolation.py`
 ├── utils/
 │   ├── resources.py                 # get_resource_path() — handles dev vs. PyInstaller bundle
+│   ├── ytdlp_runtime.py             # `js_runtime_opts()` — yt-dlp가 YouTube JS 챌린지를 풀 런타임(deno→node→bun→quickjs, 번들 `bin/` 우선)을 찾아 `js_runtimes` 옵션으로 준다. **모든 `YoutubeDL(...)` 호출이 이걸 합친다**(빠지면 기본 클라이언트가 실패해 대체 클라이언트의 1분 상한·360p로 밀린다). 계약: `tests/unit/test_ytdlp_runtime.py`
 │   └── logging_config.py            # setup_logging() — 회전 파일(LOG_DIR/app.log)+콘솔 로거 (진입점에서 1회 호출)
 │
 ├── bin/                             # Bundled binaries (not in VCS — downloaded by build script)

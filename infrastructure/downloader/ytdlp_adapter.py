@@ -12,6 +12,7 @@ from domain.download.value_objects import DownloadProgress, DownloadSettings, Me
 from domain.shared.messages import DisplayError, Message
 from domain.shared.ports import COOKIE_DECRYPT_FAILED
 from utils.resources import get_ffmpeg_path
+from utils.ytdlp_runtime import js_runtime_opts
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,7 @@ class YtDlpAdapter:
         """Return video metadata without downloading."""
         import yt_dlp  # noqa: PLC0415
         opts = {
+            **js_runtime_opts(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -304,6 +306,7 @@ class YtDlpAdapter:
         )
 
         base_opts: dict = {
+            **js_runtime_opts(),
             "format": format_spec,
             "outtmpl": str(out_dir / "%(title)s.%(ext)s"),
             "quiet": True,
@@ -403,6 +406,7 @@ class YtDlpAdapter:
             return []
 
         base_opts = {
+            **js_runtime_opts(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -461,6 +465,7 @@ class YtDlpAdapter:
         import yt_dlp  # noqa: PLC0415
         url = f"https://www.youtube.com/playlist?list={playlist_id}"
         base_opts = {
+            **js_runtime_opts(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -538,6 +543,7 @@ class YtDlpAdapter:
         """
         import yt_dlp  # noqa: PLC0415
         opts = {
+            **js_runtime_opts(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -592,6 +598,7 @@ class YtDlpAdapter:
         """
         import yt_dlp  # noqa: PLC0415
         opts = {
+            **js_runtime_opts(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -635,6 +642,7 @@ class YtDlpAdapter:
         if not url.endswith("/videos"):
             url = f"{url}/videos"
         opts = {
+            **js_runtime_opts(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -696,6 +704,7 @@ class YtDlpAdapter:
         if not query or limit <= 0:
             return []
         opts = {
+            **js_runtime_opts(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,

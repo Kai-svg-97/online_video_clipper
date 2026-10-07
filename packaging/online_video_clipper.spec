@@ -31,10 +31,13 @@ a = Analysis(
         ("../gui/text/locales", "gui/text/locales"),
         (_oauth_src,   "config"),
         *collect_data_files("yt_dlp"),
+        # YouTube JS 챌린지 해결 스크립트(yt-dlp-ejs). 빠지면 고화질·seek가 막힌다.
+        *collect_data_files("yt_dlp_ejs"),
         *collect_data_files("PyQt6"),
     ],
     hiddenimports=[
         *collect_submodules("yt_dlp"),
+        *collect_submodules("yt_dlp_ejs"),
         "PyQt6.sip",
         "sqlite3",
         # 프레임리스 타이틀바: `gui.frameless.win32_hook`은 **함수 안에서** 임포트되고

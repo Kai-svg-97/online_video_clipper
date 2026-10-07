@@ -174,6 +174,14 @@ class TestRelayFillsBoundedChunks:
         assert resp.content == _PAYLOAD[100_000:150_001]
         assert resp.headers["Content-Range"] == f"bytes 100000-150000/{len(_PAYLOAD)}"
 
+    def test_원본_응답은_연결을_닫는다(self, relay, upstream):
+        """keep-alive면 ffmpeg가 seek마다 남은 응답을 전부 읽어 비운다(실측 20초+)."""
+        base = self._play_base(relay, upstream)
+        # 가짜 원본이 큰 요청을 403하므로 둘 다 작은 범위로 묻는다(206 경로 확인).
+        for rng in ("bytes=0-1000", "bytes=2000-3000"):
+            resp = requests.get(f"{base}/v", headers={"Range": rng}, timeout=30)
+            assert resp.headers.get("Connection", "").lower() == "close"
+
     def test_세션을_닫으면_더는_흘리지_않는다(self, relay, upstream):
         play_url = relay.open_session(
             StreamSource(url=upstream, size=len(_PAYLOAD)), None,
