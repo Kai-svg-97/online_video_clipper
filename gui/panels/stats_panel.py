@@ -133,27 +133,32 @@ class _SummaryCard(QWidget):
         layout.setSpacing(4)
         self.setFrameShape = lambda _: None  # noqa
         self.setAutoFillBackground(True)
-        self.setStyleSheet(_card_qss(tokens))
 
         val_lbl = QLabel(value)
-        val_lbl.setStyleSheet(
-            "font-size: 20pt; font-weight: 700; background: transparent;"
-            f" border: none; color: {tokens.text_primary};"
-        )
         val_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(val_lbl)
 
         lbl = QLabel(label)
-        lbl.setStyleSheet(
-            "font-size: 9pt; background: transparent; border: none;"
-            f" color: {tokens.text_secondary};"
-        )
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(lbl)
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(80)
         self._value_lbl = val_lbl
+        self._label_lbl = lbl
+        self.restyle(tokens)
+
+    def restyle(self, tokens) -> None:
+        """테마 토큰으로 다시 칠한다(위젯은 그대로)."""
+        self.setStyleSheet(_card_qss(tokens))
+        self._value_lbl.setStyleSheet(
+            "font-size: 20pt; font-weight: 700; background: transparent;"
+            f" border: none; color: {tokens.text_primary};"
+        )
+        self._label_lbl.setStyleSheet(
+            "font-size: 9pt; background: transparent; border: none;"
+            f" color: {tokens.text_secondary};"
+        )
 
     def set_value(self, value: str) -> None:
         self._value_lbl.setText(value)
@@ -167,6 +172,10 @@ class _BarChart(QWidget):
         self._data = data
         self._tokens = tokens
         self.setMinimumHeight(max(len(data) * 28 + 8, 40))
+
+    def set_tokens(self, tokens) -> None:
+        self._tokens = tokens
+        self.update()
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         if not self._data:
@@ -200,16 +209,52 @@ class StatsPanel(QWidget):
     # 채널 섹션에서 카테고리를 클릭하면 해당 category_id로 방출 → 라이브러리로 이동
     category_selected = pyqtSignal(object)   # category UUID
 
+    # 채널 행을 한 번에 만드는 수. 행 하나가 위젯 약 10개(카드·버튼·흐름 레이아웃)라
+    # 채널 400개면 행 생성만 ~2.3초(합성 5k 실측)였다. 화면에 한꺼번에 읽히는 양도
+    # 50줄 안팎이라, 처음엔 이만큼만 만들고 "더 보기"로 다음 묶음을 붙인다.
+    CHANNEL_ROWS_MAX = 50
+
     def __init__(self, stats_handler: LibraryStatsHandler, parent=None) -> None:
         super().__init__(parent)
         self._handler = stats_handler
+        self._loaded = False          # 첫 표시에서 1회 집계했는가
+        self._theme_dirty = False     # 숨은 사이 테마가 바뀌었는가
+        self._themed: list = []       # 테마 토큰으로 다시 칠할 부품들(tokens → None)
+        self._stats: LibraryStatsDTO | None = None
+        self._channel_shown = 0
+        self._channel_layout: QVBoxLayout | None = None
+        self._more_btn: QPushButton | None = None
         self._build_ui()
-        self._refresh()
+        # 생성자에서 집계하지 않는다 — 통계는 숨은 화면이라 시작 때 만들면 낭비다
+        # (첫 showEvent에서 1회). 집계 핸들러 자체는 44ms 수준이고 비싼 건 행 위젯
+        # 생성이라, 워커로 옮기지 않고 동기 유지한다(행 상한으로 이미 상쇄).
         # 카드·차트 색은 위젯 스타일시트/QPainter로 직접 칠하므로 전역 QSS 교체만으로는
-        # 갱신되지 않는다. 테마가 바뀌면 다시 그린다.
+        # 갱신되지 않는다. 테마가 바뀌면 다시 칠한다(재집계·재생성 없음).
         # 바운드 메서드로 연결한다 — 람다로 self를 캡처하면 위젯이 파괴돼도 연결이
         # 안 끊긴다(gui/widgets/player/controls.py에서 실제로 겪은 크래시와 같은 이유).
-        ThemeManager.instance().theme_changed.connect(self._refresh)
+        ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if not self._loaded:
+            self._loaded = True
+            self._theme_dirty = False
+            self._refresh()
+        elif self._theme_dirty:
+            self._repaint_theme()
+
+    def _on_theme_changed(self, tokens=None) -> None:
+        """테마 변경 — 숨은 상태면 표시만 해 두고, 보일 때 현재 테마로 칠한다."""
+        if not self.isVisible():
+            self._theme_dirty = True
+            return
+        self._repaint_theme()
+
+    def _repaint_theme(self) -> None:
+        self._theme_dirty = False
+        tokens = ThemeManager.instance().current()
+        for fn in self._themed:
+            fn(tokens)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -255,6 +300,7 @@ class StatsPanel(QWidget):
         tokens = ThemeManager.instance().current()
         # 기존 콘텐츠 제거 — 레이아웃(카드 행)도 함께 지워야 재구성 시 겹치지 않는다.
         self._clear_content()
+        self._stats = stats
 
         # 요약 카드 4개
         cards_row = QHBoxLayout()
@@ -266,33 +312,41 @@ class StatsPanel(QWidget):
             (tr("즐겨찾기"), tr("{n:,}개").format(n=stats.favorite_count)),
         ]
         for label, value in cards:
-            cards_row.addWidget(_SummaryCard(label, value, tokens))
+            card = _SummaryCard(label, value, tokens)
+            self._themed.append(card.restyle)
+            cards_row.addWidget(card)
         self._content_layout.addLayout(cards_row)
-
-        section_qss = (
-            f"font-size: 10pt; font-weight: 600; color: {tokens.text_primary};"
-        )
 
         # 카테고리별 차트
         if stats.category_stats:
-            chart_lbl = QLabel(tr("카테고리별 영상 수"))
-            chart_lbl.setStyleSheet(section_qss)
-            self._content_layout.addWidget(chart_lbl)
+            self._content_layout.addWidget(self._section_label(tr("카테고리별 영상 수"), tokens))
             chart = _BarChart(stats.category_stats, tokens)
+            self._themed.append(chart.set_tokens)
             self._content_layout.addWidget(chart)
 
-        # 채널별 카테고리 섹션
+        # 채널별 카테고리 섹션 — 행은 CHANNEL_ROWS_MAX개씩만 만든다.
         if stats.channel_stats:
-            ch_lbl = QLabel(tr("채널별 카테고리"))
-            ch_lbl.setStyleSheet(section_qss)
-            self._content_layout.addWidget(ch_lbl)
-            for ch in stats.channel_stats:
-                self._content_layout.addWidget(self._make_channel_row(ch, tokens))
+            # "더 보기"는 행 목록 끝이 아니라 섹션 머리줄에 둔다 — 행이 수십 줄 쌓이면 목록 끝은
+            # 한참 아래로 밀려 눈에 띄지 않고, 누를 때마다 버튼이 움직이는 것도 피한다.
+            head = QHBoxLayout()
+            head.addWidget(self._section_label(tr("채널별 카테고리"), tokens))
+            head.addStretch()
+            self._more_btn = QPushButton()
+            self._more_btn.setObjectName("statsMoreChannels")
+            # 전역 QSS가 걸린 상태에서 처음 보일 때 높이가 0으로 계산되는 경우가 있어 최소 높이를 준다(폭은 번역 길이에 맡긴다).
+            self._more_btn.setMinimumHeight(28)
+            self._more_btn.clicked.connect(self._show_more_channels)
+            head.addWidget(self._more_btn)
+            self._content_layout.addLayout(head)
+            host = QWidget()
+            self._channel_layout = QVBoxLayout(host)
+            self._channel_layout.setContentsMargins(0, 0, 0, 0)
+            self._channel_layout.setSpacing(16)
+            self._content_layout.addWidget(host)
+            self._show_more_channels()
 
         # 다운로드 요약
-        dl_lbl = QLabel(tr("다운로드 통계"))
-        dl_lbl.setStyleSheet(section_qss)
-        self._content_layout.addWidget(dl_lbl)
+        self._content_layout.addWidget(self._section_label(tr("다운로드 통계"), tokens))
 
         dl_row = QHBoxLayout()
         dl_row.setSpacing(12)
@@ -301,14 +355,49 @@ class StatsPanel(QWidget):
             (tr("총 파일 용량"), _fmt_bytes(stats.total_download_bytes)),
         ]
         for label, value in dl_cards:
-            dl_row.addWidget(_SummaryCard(label, value, tokens))
+            card = _SummaryCard(label, value, tokens)
+            self._themed.append(card.restyle)
+            dl_row.addWidget(card)
         dl_row.addStretch()
         self._content_layout.addLayout(dl_row)
 
         self._content_layout.addStretch()
+        # 표시 중에 채워지므로 레이아웃을 즉시 확정한다(버튼 등의 지오메트리가 0으로 남지 않게).
+        self._content_layout.activate()
+
+    def _section_label(self, text: str, tokens) -> QLabel:
+        lbl = QLabel(text)
+
+        def restyle(t) -> None:
+            lbl.setStyleSheet(f"font-size: 10pt; font-weight: 600; color: {t.text_primary};")
+
+        restyle(tokens)
+        self._themed.append(restyle)
+        return lbl
+
+    def _show_more_channels(self) -> None:
+        """다음 묶음(CHANNEL_ROWS_MAX개)의 채널 행만 덧붙인다. 다 보이면 버튼을 숨긴다."""
+        if self._stats is None or self._channel_layout is None or self._more_btn is None:
+            return
+        channels = self._stats.channel_stats
+        tokens = ThemeManager.instance().current()
+        end = min(self._channel_shown + self.CHANNEL_ROWS_MAX, len(channels))
+        for ch in channels[self._channel_shown:end]:
+            row = self._make_channel_row(ch, tokens)
+            self._channel_layout.addWidget(row)
+        self._channel_shown = end
+        remaining = len(channels) - end
+        self._more_btn.setVisible(remaining > 0)
+        if remaining > 0:
+            self._more_btn.setText(tr("더 보기 ({n}개 남음)").format(n=remaining))
 
     def _clear_content(self) -> None:
         """콘텐츠 영역을 비운다 — 중첩 레이아웃까지 재귀적으로 제거한다."""
+        self._themed = []
+        self._stats = None
+        self._channel_shown = 0
+        self._channel_layout = None
+        self._more_btn = None
 
         def _drop(layout) -> None:
             while layout.count():
@@ -327,10 +416,11 @@ class StatsPanel(QWidget):
     def _make_channel_row(self, ch: ChannelStatDTO, tokens) -> QWidget:
         """채널 하나 — 이름 + 카테고리 경로 링크(클릭 시 해당 카테고리로 이동)."""
         card = QWidget()
-        card.setStyleSheet(_card_qss(tokens))
+        card.setObjectName("statsChannelRow")
         v = QVBoxLayout(card)
         v.setContentsMargins(12, 8, 12, 8)
         v.setSpacing(6)
+        restylers: list = [lambda t: card.setStyleSheet(_card_qss(t))]
 
         # 채널명 줄: URL이 있으면 클릭 시 브라우저로 열고, URL 복사 버튼을 둔다.
         name_row = QHBoxLayout()
@@ -341,13 +431,13 @@ class StatsPanel(QWidget):
             name_btn.setFlat(True)
             name_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             name_btn.setToolTip(tr("브라우저에서 채널 열기\n{url}").format(url=url))
-            name_btn.setStyleSheet(
+            restylers.append(lambda t, b=name_btn: b.setStyleSheet(
                 "QPushButton { font-weight:600; background:transparent;"
-                f" color:{tokens.accent};"
+                f" color:{t.accent};"
                 " border:none; text-align:left; padding:0; }"
-                f"QPushButton:hover {{ color:{tokens.accent_hover};"
+                f"QPushButton:hover {{ color:{t.accent_hover};"
                 " text-decoration:underline; }"
-            )
+            ))
             name_btn.clicked.connect(lambda _=False, u=url: self._open_url(u))
             name_row.addWidget(name_btn)
 
@@ -356,24 +446,24 @@ class StatsPanel(QWidget):
             copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             copy_btn.setToolTip(tr("채널 URL 복사"))
             copy_btn.setAutoRaise(True)
-            copy_btn.setStyleSheet(
+            restylers.append(lambda t, b=copy_btn: b.setStyleSheet(
                 "QToolButton { background:transparent; border:none; padding:0 2px;"
-                f" color:{tokens.text_secondary}; }}"
-            )
+                f" color:{t.text_secondary}; }}"
+            ))
             copy_btn.clicked.connect(lambda _=False, u=url, b=copy_btn: self._copy_url(u, b))
             name_row.addWidget(copy_btn)
         else:
             plain = QLabel(ch.channel_name or tr("(채널 없음)"))
-            plain.setStyleSheet(
+            restylers.append(lambda t, b=plain: b.setStyleSheet(
                 "font-weight:600; background:transparent; border:none;"
-                f" color:{tokens.text_primary};"
-            )
+                f" color:{t.text_primary};"
+            ))
             name_row.addWidget(plain)
 
         total_lbl = QLabel("·  " + tr("{n:,}개").format(n=ch.total))
-        total_lbl.setStyleSheet(
-            f"color:{tokens.text_secondary}; background:transparent; border:none;"
-        )
+        restylers.append(lambda t, b=total_lbl: b.setStyleSheet(
+            f"color:{t.text_secondary}; background:transparent; border:none;"
+        ))
         name_row.addWidget(total_lbl)
         name_row.addStretch()
         v.addLayout(name_row)
@@ -381,23 +471,37 @@ class StatsPanel(QWidget):
         links_host = QWidget()
         links_host.setStyleSheet("background: transparent; border: none;")
         flow = _FlowLayout(links_host, hspacing=6, vspacing=6)
-        link_qss = (
-            "QPushButton {"
-            f" color:{tokens.accent}; background:{tokens.bg_overlay};"
-            f" border:1px solid {tokens.border};"
-            " border-radius:6px; padding:2px 8px; font-size:9pt; text-align:left; }"
-            f"QPushButton:hover {{ background:{tokens.accent};"
-            f" color:{tokens.text_on_accent}; border-color:{tokens.accent}; }}"
-        )
+        links: list[QPushButton] = []
         for cat in ch.categories:
             link = QPushButton(f"{cat.category_path or tr('미분류')} ({cat.count})")
             link.setFlat(True)
             link.setCursor(Qt.CursorShape.PointingHandCursor)
-            link.setStyleSheet(link_qss)
             link.clicked.connect(
                 lambda _checked=False, cid=cat.category_id: self.category_selected.emit(cid)
             )
             flow.addWidget(link)
+            links.append(link)
+
+        def restyle_links(t) -> None:
+            qss = (
+                "QPushButton {"
+                f" color:{t.accent}; background:{t.bg_overlay};"
+                f" border:1px solid {t.border};"
+                " border-radius:6px; padding:2px 8px; font-size:9pt; text-align:left; }"
+                f"QPushButton:hover {{ background:{t.accent};"
+                f" color:{t.text_on_accent}; border-color:{t.accent}; }}"
+            )
+            for b in links:
+                b.setStyleSheet(qss)
+
+        restylers.append(restyle_links)
+
+        def restyle_row(t) -> None:
+            for fn in restylers:
+                fn(t)
+
+        restyle_row(tokens)
+        self._themed.append(restyle_row)
         v.addWidget(links_host)
         return card
 

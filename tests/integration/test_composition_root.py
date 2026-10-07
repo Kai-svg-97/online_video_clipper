@@ -214,6 +214,30 @@ class TestMainWindowWiring:
         finally:
             window.close()
 
+    def test_stats_category_selected_is_wired(
+        self, graph, qapp_instance, isolated_theme_manager
+    ):
+        """통계 → 라이브러리 이동 배선(`category_selected`)이 유지되는가(A6 지연 표시 후에도)."""
+        from uuid import uuid4
+
+        from gui.main_window import MainWindow
+        from gui.shell.pages import _PAGE_STATS
+
+        window = MainWindow(
+            graph.view_models,
+            stats_handler=graph.handlers.library.stats,
+            auth_service=graph.services.auth_service,
+            yt_oauth=graph.services.youtube_oauth,
+            cleanup_fns=graph.handlers.library.cleanup_fns,
+            watch_folder_scan=graph.services.watch_folder_scan,
+            media=graph.media,
+        )
+        try:
+            window._stats_panel.category_selected.emit(uuid4())
+            assert window._return_to_page == _PAGE_STATS
+        finally:
+            window.close()
+
     def test_close_event_shuts_down_every_view_model(
         self, graph, qapp_instance, isolated_theme_manager
     ):
