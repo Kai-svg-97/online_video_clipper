@@ -21,6 +21,9 @@ if (-not (Test-Path $ffmpegExe)) {
     Write-Host "ffmpeg placed at $ffmpegExe"
 }
 
+# 1b. deno(yt-dlp JS 챌린지 런타임) — 고정 버전·체크섬 검증은 ensure_deno.ps1 이 맡는다
+& (Join-Path $PSScriptRoot "ensure_deno.ps1")
+
 # 2. YouTube OAuth Desktop 클라이언트 설정 검증 (값은 절대 출력하지 않음)
 $oauthConfig = $env:OVC_YOUTUBE_OAUTH_CONFIG
 if (-not $oauthConfig) {

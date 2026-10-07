@@ -62,6 +62,7 @@ pip install -r requirements-dev.txt
 스크립트가 순서대로 처리하는 작업:
 
 1. **ffmpeg 자동 다운로드** — `bin\ffmpeg.exe`가 없으면 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 에서 릴리스 빌드를 받아 배치합니다.
+   - **deno 번들** — `scripts\ensure_deno.ps1`이 `bin\deno.exe`를 `scripts\deno_version.txt`의 고정 버전으로 맞춥니다(없거나 버전이 다르면 GitHub 릴리즈에서 받아 SHA256 검증, 불일치 시 빌드 실패). yt-dlp가 YouTube JS 챌린지를 풀어 고화질·먼 seek을 쓰기 위한 런타임입니다. spec이 `bin\deno.exe`가 없으면 빌드를 실패시킵니다.
 2. **PyInstaller 실행** — `packaging\online_video_clipper.spec`을 사용해 단일 `.exe`를 생성합니다.
 3. **Inno Setup 실행** — `packaging\installer.iss`로 설치 마법사를 생성합니다. (설치된 경우에만)
 

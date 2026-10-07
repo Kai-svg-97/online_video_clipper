@@ -8,6 +8,12 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 _win = platform.system() == "Windows"
 # spec 파일은 packaging/ 기준이므로 루트 bin/으로 한 단계 올라간다
 _ffmpeg_src = "../bin/ffmpeg.exe" if _win else "../bin/ffmpeg"
+# JS 런타임(deno): Windows 만 번들한다(scripts/ensure_deno.ps1 이 내려받는다). 빠진 채 빌드되면
+# 고화질·먼 seek 이 조용히 막히므로 파일이 없으면 빌드를 실패시킨다.
+# Linux/macOS 는 아직 빌드 스크립트가 deno 를 받지 않아 번들하지 않는다(PATH 의 런타임 사용).
+_deno_src = "../bin/deno.exe"
+if _win and not (Path(SPECPATH) / _deno_src).resolve().is_file():
+    raise SystemExit("bin/deno.exe 가 없습니다 — scripts/ensure_deno.ps1 을 먼저 실행하세요")
 _icon = "assets/icon.ico" if _win else "assets/icon.png"
 
 # YouTube Desktop OAuth 클라이언트 설정 — 빌드 스크립트가 검증 후 주입한다.
@@ -19,7 +25,7 @@ if not _oauth_src or not Path(_oauth_src).is_file():
 a = Analysis(
     ["../main.py"],
     pathex=[".."],
-    binaries=[(_ffmpeg_src, "bin")],
+    binaries=[(_ffmpeg_src, "bin"), *([(_deno_src, "bin")] if _win else [])],
     datas=[
         ("../assets",  "assets"),
         ("../db",      "db"),

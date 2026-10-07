@@ -77,6 +77,8 @@ jobs:
             New-Item -ItemType Directory -Force -Path "bin" | Out-Null
             Copy-Item $bin.FullName $ffmpegExe
           }
+          # deno(yt-dlp JS 챌린지 런타임) — 버전·SHA256 은 scripts/deno_version.txt 에 고정
+          ./scripts/ensure_deno.ps1
           # PyInstaller
           python -m PyInstaller packaging/online_video_clipper.spec --distpath dist/windows --workpath build/tmp --noconfirm
 

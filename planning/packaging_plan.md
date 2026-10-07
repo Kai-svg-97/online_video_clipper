@@ -10,10 +10,17 @@
 사용자는 Python, ffmpeg, yt-dlp를 별도 설치할 필요 없음 — 모두 패키지에 포함.
 
 > **JS 런타임(2026-10)**: YouTube 고화질·seek에는 yt-dlp가 JS 챌린지를 풀어야 한다.
-> 풀이 스크립트(`yt_dlp_ejs`)는 spec이 번들하지만(`collect_data_files("yt_dlp_ejs")`),
-> 이를 실행할 **런타임(deno/node/bun/quickjs)은 아직 번들하지 않는다** — 사용자 PC에 없으면
-> `utils/ytdlp_runtime.py`가 경고를 남기고 대체 클라이언트(1분 상한·360p)로 밀린다.
-> 번들하려면 빌드 스크립트가 `bin/deno(.exe)`를 내려받게 하면 된다(헬퍼가 그 경로를 먼저 본다).
+> 풀이 스크립트(`yt_dlp_ejs`)는 spec이 번들하고(`collect_data_files("yt_dlp_ejs")`),
+> 이를 실행할 런타임 **deno는 Windows 배포본에 번들한다**(`bin/deno.exe` → 번들 `_internal/bin/`).
+> - **버전 고정**: `scripts/deno_version.txt`(`version`·`sha256`) 한 곳. 현재 2.9.7. 로컬
+>   `build_windows.ps1`과 CI `release.yml`이 같은 `scripts/ensure_deno.ps1`을 호출한다.
+> - **검증**: 내려받은 zip의 SHA256을 고정 해시(GitHub 릴리즈 `.zip.sha256sum` 자산 값)와 비교해
+>   다르면 빌드 실패. 로컬 `bin\deno.exe`가 다른 버전이면 다시 받는다. spec은 파일이 없으면
+>   빌드를 실패시킨다(조용히 빠진 번들 방지). 올리는 절차는 `.omc/RELEASE_RULE.md`.
+> - **크기 영향**: 번들 폴더 약 +100MB(802→902MB, deno.exe 93MiB).
+> - **탐지**: `utils/ytdlp_runtime.py`가 `bin/deno.exe`를 먼저 본다(없으면 PATH). 번들 deno로
+>   1080p(format 399) 추출 확인.
+> - Linux/macOS는 아직 deno를 받지 않는다(PATH의 런타임 사용). 번들하려면 같은 관례 `bin/deno`.
 > `yt-dlp-ejs`는 yt-dlp가 정확한 버전을 요구하므로 `scripts/lock_deps.py`의 `UNPINNED`에 둔다.
 
 ---
