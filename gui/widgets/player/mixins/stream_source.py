@@ -206,6 +206,17 @@ class StreamSourceMixin:
     def _on_error(self, error, error_string: str) -> None:
         if error == QMediaPlayer.Error.NoError:
             return
+        # seek으로 먼 지점(offset > 0)에서 연 remux 스트림의 오류는 원본이 먼 오프셋 Range를
+        # 거부한 경우가 대부분이다. 일반 재시도는 ?ss=0부터 다시 시작해 사용자가 옮긴 위치를
+        # 잃고 같은 실패를 되풀이하므로, 재시도 없이 현재 위치를 유지한 채 병합으로 간다.
+        # position_ms는 인자로 먼저 평가되고, _close_remux가 offset을 지우는 것은 그 뒤다.
+        if self._remux_url and self._stream_offset_ms > 0:
+            logger.warning(
+                "remux 먼 오프셋(%dms) 스트림 오류 — 위치를 유지해 병합 방식으로: %s",
+                self._stream_offset_ms, error_string,
+            )
+            self._fall_back_to_merge(self.position_ms)
+            return
         # remux 스트림이 오류를 내면 다시 받아도 같은 원본이다 — 방식을 바꾼다.
         if self._remux_url and self._stream_retries >= _MAX_STREAM_RETRIES:
             logger.warning("remux 스트림 재생 오류 — 병합 방식으로: %s", error_string)

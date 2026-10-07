@@ -184,6 +184,128 @@ class TestRelayFillsBoundedChunks:
         assert requests.get(f"{base}/v", timeout=10).status_code == 404
 
 
+class _FakeProc:
+    """Popen 흉내 — poll()/kill()/wait() 호출만 기록한다."""
+
+    def __init__(self, finished: bool = False) -> None:
+        self.finished = finished
+        self.killed = False
+
+    def poll(self):
+        return 0 if (self.finished or self.killed) else None
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def wait(self, timeout=None) -> int:
+        return 0
+
+
+class TestPeerConnected:
+    """ffmpeg→중계 연결이 아직 살아 있는지 — abort 여부를 가르는 판정."""
+
+    def test_열린_소켓쌍은_살아_있다(self):
+        import socket
+
+        from infrastructure.streaming.relay import is_peer_connected
+
+        a, b = socket.socketpair()
+        try:
+            assert is_peer_connected(a) is True
+        finally:
+            a.close()
+            b.close()
+
+    def test_상대가_닫으면_죽었다(self):
+        import socket
+
+        from infrastructure.streaming.relay import is_peer_connected
+
+        a, b = socket.socketpair()
+        b.close()
+        try:
+            assert is_peer_connected(a) is False
+        finally:
+            a.close()
+
+    def test_판단_불가면_살아_있다고_보지_않는다(self):
+        """닫힌 소켓 객체처럼 검사 자체가 실패하면 abort 하지 않는 쪽이 안전하다."""
+        import socket
+
+        from infrastructure.streaming.relay import is_peer_connected
+
+        a, b = socket.socketpair()
+        a.close()
+        b.close()
+        assert is_peer_connected(a) is False
+
+
+class TestAbortRemux:
+    def test_등록된_프로세스를_죽인다(self):
+        from infrastructure.streaming.relay import RelaySession
+
+        s = RelaySession(sid="x", video=StreamSource(url="http://v"))
+        running, done = _FakeProc(), _FakeProc(finished=True)
+        s.register_proc(running)
+        s.register_proc(done)
+        s.abort_remux()
+        assert running.killed is True
+        assert done.killed is False
+
+    def test_해제한_프로세스는_건드리지_않는다(self):
+        from infrastructure.streaming.relay import RelaySession
+
+        s = RelaySession(sid="x", video=StreamSource(url="http://v"))
+        p = _FakeProc()
+        s.register_proc(p)
+        s.unregister_proc(p)
+        s.abort_remux()
+        assert p.killed is False
+
+
+class TestRelayAbortsRemuxOnRejection:
+    """원본이 영구 거부하면 반쪽 스트림이 남지 않도록 remux를 끝낸다."""
+
+    def test_영구_거부되면_세션의_ffmpeg를_죽인다(self, relay, upstream, monkeypatch):
+        import infrastructure.streaming.relay as relay_mod
+
+        monkeypatch.setattr(relay_mod, "_RETRY_DELAYS", (0.0, 0.0))
+        dead = upstream.replace("/media", "/dead")   # 항상 403
+        play_url = relay.open_session(
+            StreamSource(url=dead, size=len(_PAYLOAD)), None,
+            duration_ms=1000, ffmpeg="",
+        )
+        sid = relay.sid_of(play_url)
+        proc = _FakeProc()
+        relay.session(sid).register_proc(proc)
+        base = play_url.rsplit("/", 1)[0]
+        try:
+            requests.get(f"{base}/v", headers={"Range": "bytes=0-1000"}, timeout=30)
+        except requests.RequestException:
+            pass    # 약속한 길이를 못 채우고 끊긴다 — 정상
+        assert proc.killed is True
+
+    def test_클라이언트가_이미_끊겼으면_죽이지_않는다(self, relay, upstream, monkeypatch):
+        """seek으로 끊긴 옛 연결의 펌프가 새 ffmpeg를 죽이면 안 된다."""
+        import infrastructure.streaming.relay as relay_mod
+
+        monkeypatch.setattr(relay_mod, "_RETRY_DELAYS", (0.0, 0.0))
+        monkeypatch.setattr(relay_mod, "is_peer_connected", lambda sock: False)
+        dead = upstream.replace("/media", "/dead")
+        play_url = relay.open_session(
+            StreamSource(url=dead, size=len(_PAYLOAD)), None,
+            duration_ms=1000, ffmpeg="",
+        )
+        proc = _FakeProc()
+        relay.session(relay.sid_of(play_url)).register_proc(proc)
+        base = play_url.rsplit("/", 1)[0]
+        try:
+            requests.get(f"{base}/v", headers={"Range": "bytes=0-1000"}, timeout=30)
+        except requests.RequestException:
+            pass
+        assert proc.killed is False
+
+
 class TestRelayRefresh:
     """URL 만료 — 바닥 조각 크기에서도 거부되면 새 URL을 받아 이어 간다."""
 

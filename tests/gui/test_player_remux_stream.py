@@ -154,6 +154,30 @@ class TestFallbackToMerge:
         assert player._prefer_remux is False
         assert calls
 
+    def test_먼_오프셋_스트림의_오류는_재시도_없이_위치를_유지해_병합으로_간다(
+        self, player, monkeypatch
+    ):
+        """원본이 먼 오프셋을 거부하면 같은 실패가 반복된다 — 0부터 재시도하지 않는다."""
+        _ready(player)
+        player._stream_offset_ms = 20_000
+        fetches, merges = [], []
+        monkeypatch.setattr(player, "_fetch_stream", lambda: fetches.append(True))
+        monkeypatch.setattr(player, "_fall_back_to_merge", lambda ms: merges.append(ms))
+        player._on_error(QMediaPlayer.Error.ResourceError, "x")
+        assert merges and 20_000 <= merges[0] < 20_000 + 5_000
+        assert fetches == []
+        assert player._stream_retries == 0
+
+    def test_오프셋_0의_remux_오류는_먼저_재시도한다(self, player, monkeypatch):
+        _ready(player)
+        assert player._stream_offset_ms == 0
+        fetches, merges = [], []
+        monkeypatch.setattr(player, "_fetch_stream", lambda: fetches.append(True))
+        monkeypatch.setattr(player, "_fall_back_to_merge", lambda ms: merges.append(ms))
+        player._on_error(QMediaPlayer.Error.ResourceError, "x")
+        assert fetches and merges == []
+        assert player._stream_retries == 1
+
     def test_끝까지_봤으면_정상_보고한다(self, player):
         _ready(player)
         player._stream_offset_ms = _DURATION

@@ -136,6 +136,25 @@ class StreamSource:
             self.size = other.size
 
 
+def is_peer_connected(sock) -> bool:
+    """상대가 아직 연결을 쥐고 있는가. 판단할 수 없으면 False(= 죽였다고 보지 않는다).
+
+    읽을 거리가 없으면 살아 있고, 읽을 수 있는데 `recv(1, MSG_PEEK)`가 빈 값이면
+    상대가 닫은 것이다. 예외(이미 닫힌 소켓 등)는 '알 수 없음'이므로 False.
+    """
+    import select  # noqa: PLC0415
+    import socket  # noqa: PLC0415
+
+    try:
+        readable, _, _ = select.select([sock], [], [], 0)
+        if not readable:
+            return True
+        return sock.recv(1, socket.MSG_PEEK) != b""
+    except Exception:
+        logger.debug("연결 생존 판정 실패", exc_info=True)
+        return False
+
+
 @dataclass
 class RelaySession:
     """한 편의 영상 재생에 필요한 원본들과 길이."""
@@ -149,6 +168,25 @@ class RelaySession:
     # yt-dlp 호출이라 인프라 계층에 두지 않고 호출측(gui 워커)이 주입한다.
     refresh: Callable[[], tuple[StreamSource, StreamSource | None]] | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # 이 세션이 띄운 remux ffmpeg들. 원본 하나가 영구 거부되면 반쪽 스트림이 되므로
+    # 한꺼번에 끝낼 수 있게 들고 있는다(try_refresh의 잠금과 섞지 않으려고 따로 둔다).
+    _procs: set = field(default_factory=set, repr=False)
+    _procs_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def register_proc(self, proc: subprocess.Popen) -> None:
+        with self._procs_lock:
+            self._procs.add(proc)
+
+    def unregister_proc(self, proc: subprocess.Popen) -> None:
+        with self._procs_lock:
+            self._procs.discard(proc)
+
+    def abort_remux(self) -> None:
+        """등록된 remux ffmpeg를 죽여 재생기 쪽 연결을 끝낸다."""
+        with self._procs_lock:
+            procs = list(self._procs)
+        for proc in procs:
+            StreamRelay._terminate(proc)
 
     def source(self, kind: str) -> StreamSource | None:
         return self.video if kind == "v" else self.audio
@@ -270,6 +308,16 @@ class _Handler(BaseHTTPRequestHandler):
                     # 남은 바이트를 **영원히 기다린다**(실측: 요청이 타임아웃까지 멈춤).
                     # 연결을 끊어 "끊겼다"를 즉시 알린다 — 그래야 상위가 재시도한다.
                     self.close_connection = True
+                    # 원본 하나만 포기하면 ffmpeg는 나머지 입력으로 계속 돌아 영상 또는
+                    # 소리만 나오는 반쪽 스트림이 된다(재생기는 오류도 끝도 못 받아 복구가
+                    # 발동하지 않는다). remux를 끝내 기존 복구 경로(재시도→병합)를 태운다.
+                    # 단, ffmpeg가 아직 이 연결에 붙어 있을 때만 — seek으로 끊긴 옛 연결의
+                    # 펌프가 뒤늦게 포기하며 새 seek의 멀쩡한 ffmpeg를 죽이면 안 된다.
+                    if is_peer_connected(self.connection):
+                        logger.warning(
+                            "원본 거부로 remux 중단(sid=%s, pos=%d)", session.sid, pos
+                        )
+                        session.abort_remux()
                     return
                 try:
                     for block in resp.iter_content(64 * 1024):
@@ -313,6 +361,7 @@ class _Handler(BaseHTTPRequestHandler):
         )
         relay: StreamRelay = self.server.relay  # type: ignore[attr-defined]
         relay.track_process(proc)
+        session.register_proc(proc)
         # stderr를 읽어 주지 않으면 ffmpeg가 파이프를 채우고 멈춘다.
         errbuf: list[bytes] = []
         threading.Thread(
@@ -327,6 +376,7 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             pass    # 재생기가 끊었다 — seek이나 정지. 아래에서 ffmpeg를 정리한다.
         finally:
+            session.unregister_proc(proc)
             relay.kill_process(proc)
             err = (errbuf[0] if errbuf else b"").decode("utf-8", "replace").strip()
             if err:
