@@ -126,3 +126,38 @@ class TestAreaHeightRule:
         qtbot.waitExposed(window)
 
         assert area.heightForWidth(100) >= _VideoArea._MIN_H
+
+
+@pytest.fixture
+def detail(qtbot):
+    """실제 상세 화면 — 플레이어 아래에 제목·메타·탭이 최소 높이를 차지하는 구성."""
+    from gui.panels.video_detail_panel import VideoDetailWidget
+
+    widget = VideoDetailWidget()
+    qtbot.addWidget(widget)
+    return widget
+
+
+class TestBarVisibleInRealDetail:
+    """영역 높이는 고정이 아니라 범위다 — 공간이 모자라면 줄고, 바는 늘 보인다."""
+
+    @pytest.mark.parametrize(
+        "size",
+        [(1400, 700), (1400, 600), (1400, 500), (2200, 600), (800, 450)],
+        ids=["1400x700", "1400x600", "1400x500", "2200x600", "800x450"],
+    )
+    def test_바가_완전히_보인다(self, detail, qtbot, size):
+        _fix_size(detail, *size, qtbot)
+
+        player = detail._player
+        bar = player._bar
+
+        assert bar.visibleRegion().boundingRect().height() == bar.height()
+        bottom = bar.mapTo(player, bar.rect().bottomLeft()).y()
+        assert bottom < player.height()
+
+    def test_공간이_넉넉하면_선호_높이를_받는다(self, detail, qtbot):
+        _fix_size(detail, 1400, 900, qtbot)
+
+        area = detail._player._video_area
+        assert area.height() == area.heightForWidth(area.width())

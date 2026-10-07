@@ -68,6 +68,11 @@ class _VideoArea(QWidget):
         stack.setParent(self)
         self._window_watched = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # 높이는 **고정이 아니라 범위**다. 선호(최대)는 heightForWidth, 최소는 컨트롤바 한 줄.
+        # 상세 화면처럼 아래에 제목·메타·탭이 최소 높이를 차지해 공간이 모자랄 때, 레이아웃이
+        # 영역을 선호보다 작게 줄 수 있어야 바가 영역 안에 남는다(고정이면 영역만 크고
+        # 배정이 작아 바닥에 붙은 바가 잘려 나갔다). 이보다 작으면 바 자체가 안 들어간다.
+        self.setMinimumHeight(self._BAR_H)
 
     def set_overlay_bar(self, bar: QWidget) -> None:
         self._bar = bar
@@ -122,14 +127,15 @@ class _VideoArea(QWidget):
         return False
 
     def _apply_geometry(self) -> None:
-        self.setFixedHeight(self.heightForWidth(self.width()))
+        # 창 높이가 바뀌면 선호 높이도 바뀐다 — 레이아웃이 다시 묻도록 알린다.
+        self.updateGeometry()
         self._layout_children()
 
     def _layout_children(self) -> None:
-        # self.height() 대신 heightForWidth 를 직접 계산:
-        # resizeEvent 안에서 setFixedHeight() 직후에는 self.height()가 이전 값을 반환하므로
-        # 컨트롤바 Y 좌표가 위젯 바깥으로 밀리는 버그가 발생함.
-        h = self.heightForWidth(self.width())
+        # 높이를 고정하지 않으므로 self.height()가 레이아웃이 **실제로 배정한** 값이다
+        # (resizeEvent 안에서도 새 값). 바는 영역 바닥에 붙이되, 영역이 바보다 낮아도
+        # 바 위쪽(진행 막대·버튼)부터 보이도록 y를 0 아래로 내리지 않는다.
+        h = self.height()
         self._stack.setGeometry(0, 0, self.width(), h)
         if self._subtitle is not None:
             # 영역 전체를 덮는다 — 글자를 키우거나 위치를 올려도 잘리지 않는다.
@@ -137,7 +143,7 @@ class _VideoArea(QWidget):
             self._subtitle.setGeometry(0, 0, self.width(), h)
             self._subtitle.raise_()
         if self._bar is not None:
-            self._bar.setGeometry(0, h - self._BAR_H, self.width(), self._BAR_H)
+            self._bar.setGeometry(0, max(0, h - self._BAR_H), self.width(), self._BAR_H)
             self._bar.raise_()
 
 class _VideoView(QGraphicsView):
