@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import datetime
 from uuid import UUID
 
@@ -23,6 +25,9 @@ logger = logging.getLogger(__name__)
 # 예약 시간대가 열렸는지 확인하는 주기. 창 경계는 '시' 단위라 1분이면 충분하고,
 # 더 촘촘히 깨우면 유휴 상태에서 쓸데없이 돈다.
 _WINDOW_POLL_MS = 60_000
+
+# 진행률 시계. 시험이 가짜로 바꿀 수 있게 모듈 수준 이름으로 둔다.
+_now = time.monotonic
 
 
 class _DownloadWorker(QThread):
@@ -71,6 +76,14 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
     # 말하지 않아 알림 문구를 만들 수 없다.
     job_finished = pyqtSignal(bool, str)   # 성공 여부, 설명(제목 또는 오류)
     error_occurred = pyqtSignal(str)
+    # 워커 스레드에서 '진행 신호를 미뤘다'를 GUI 스레드에 알린다 — QTimer는 GUI
+    # 스레드에서만 시작할 수 있어, 큐잉되는 이 신호를 거쳐 `_arm_progress_timer`가 돈다.
+    _progress_deferred = pyqtSignal()
+
+    # 진행률 `queue_changed`를 작업 전체 기준으로 합치는 최소 간격(ms). yt-dlp 진행 콜백은
+    # 초당 수십 번이고 그때마다 화면이 DB(`queue`)를 읽고 모델을 갱신한다. 150ms(≈7Hz)면
+    # 눈에는 연속으로 보이고, 라이브 카드의 1Hz 갱신 요건도 넉넉히 만족한다.
+    PROGRESS_MIN_INTERVAL_MS = 150
 
     def __init__(
         self,
@@ -103,6 +116,17 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
         self._window_timer = QTimer(self)
         self._window_timer.setInterval(_WINDOW_POLL_MS)
         self._window_timer.timeout.connect(self._pump)
+
+        # 진행률 합치기 상태 — `_on_progress`는 다운로드 워커 스레드에서 불리므로 잠금으로 지킨다.
+        self._progress_lock = threading.Lock()
+        self._progress_last_emit: float | None = None
+        self._progress_dirty = False
+        self._progress_closed = False
+        # 마지막 진행 상태를 반드시 한 번 보내는 trailing 타이머(GUI 스레드 전용).
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setSingleShot(True)
+        self._progress_timer.timeout.connect(self._flush_progress)
+        self._progress_deferred.connect(self._arm_progress_timer)
 
         event_bridge.add_progress_listener(self._on_progress)
         event_bridge.add_completed_listener(self._on_completed)
@@ -290,14 +314,64 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
             self.error_occurred.emit(describe_error(exc))
 
     def _on_progress(self) -> None:
+        """진행 신호를 `PROGRESS_MIN_INTERVAL_MS` 간격으로 합쳐 보낸다(어느 스레드에서든 호출).
+
+        간격이 지났으면 즉시 내보내고, 아니면 '보낼 것이 남았다'만 표시한 뒤 trailing
+        타이머가 마지막 상태를 한 번 내보낸다 — 마지막 값을 버리지 않는다.
+        """
+        with self._progress_lock:
+            if self._progress_closed:
+                return
+            now = _now()
+            last = self._progress_last_emit
+            if last is None or (now - last) * 1000 >= self.PROGRESS_MIN_INTERVAL_MS:
+                self._progress_last_emit = now
+                self._progress_dirty = False
+                emit_now = True
+            else:
+                self._progress_dirty = True
+                emit_now = False
+        if emit_now:
+            self.queue_changed.emit()
+        else:
+            self._progress_deferred.emit()
+
+    def _arm_progress_timer(self) -> None:
+        """(GUI 스레드) 남은 간격 뒤에 trailing 을 걸어 둔다. 이미 걸려 있으면 그대로 둔다."""
+        if self._progress_timer.isActive():
+            return
+        with self._progress_lock:
+            if self._progress_closed or not self._progress_dirty:
+                return
+            last = self._progress_last_emit
+            remaining = self.PROGRESS_MIN_INTERVAL_MS
+            if last is not None:
+                remaining -= int((_now() - last) * 1000)
+        self._progress_timer.start(max(1, remaining))
+
+    def _flush_progress(self) -> None:
+        """(GUI 스레드) trailing — 미뤄 둔 마지막 진행 상태를 내보낸다."""
+        with self._progress_lock:
+            if self._progress_closed or not self._progress_dirty:
+                return
+            self._progress_dirty = False
+            self._progress_last_emit = _now()
         self.queue_changed.emit()
 
+    def _mark_progress_emitted(self) -> None:
+        """완료·실패가 `queue_changed`를 즉시 내보낼 때 — 미뤄 둔 진행분은 그 갱신에 포함된다."""
+        with self._progress_lock:
+            self._progress_dirty = False
+            self._progress_last_emit = _now()
+
     def _on_completed(self) -> None:
+        self._mark_progress_emitted()
         self.queue_changed.emit()
         self.history_changed.emit()
         self.job_finished.emit(True, self._last_finished_title())
 
     def _on_failed(self, error: str) -> None:
+        self._mark_progress_emitted()
         self.queue_changed.emit()
         self.error_occurred.emit(f"Download failed: {error}")
         self.job_finished.emit(False, error)
@@ -328,6 +402,10 @@ class DownloadViewModel(WorkerOwnerMixin, QObject):
         wait()로 스레드 종료를 보장한다. 죽은 객체로 시그널이 가는 것을 막는다.
         """
         self._window_timer.stop()
+        with self._progress_lock:
+            self._progress_closed = True
+            self._progress_dirty = False
+        self._progress_timer.stop()
         self._pending.clear()
         self._recordings.clear()
         self._probed.clear()

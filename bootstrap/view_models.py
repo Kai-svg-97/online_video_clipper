@@ -59,6 +59,7 @@ def build_view_models(handlers: Handlers, services: Services) -> ViewModels:
             import_yt_to_category=lib.import_youtube_playlist_to_category,
             refresh_thumbnail=lib.refresh_thumbnail,
             get_video_id_by_url=lib.get_video_id_by_url,
+            get_video_briefs_by_urls=lib.get_video_briefs_by_urls,
             refresh_video_metadata=lib.refresh_video_metadata,
             find_song_videos=song.find_video_ids,
             enrich_video=lib.enrich_video,

@@ -209,3 +209,109 @@ class TestCancel:
         panel._show_card_menu(QPoint(1, 1))
 
         assert called == []
+
+
+class TestLiveProgressRow:
+    """C5 — 라이브 녹화(percent 0 고정)의 진행 입력에도 그 카드가 다시 그려져야 한다.
+
+    예전에는 `percent` 만 비교해 총량을 모르는 녹화는 경과·용량이 바뀌어도 카드가
+    갱신되지 않았다. 반대로 값이 완전히 같으면 헛 다시 그리기를 하지 않는다.
+    """
+
+    @staticmethod
+    def _active(job_id, *, percent=0.0, total=0, downloaded=0, elapsed=0.0):
+        from application.download.dtos import DownloadJobDTO, DownloadProgressDTO
+
+        return DownloadJobDTO(
+            id=job_id, url=f"https://youtu.be/{str(job_id)[:11]}", title="방송",
+            status="downloading",
+            progress=DownloadProgressDTO(
+                percent=percent, total_bytes=total,
+                downloaded_bytes=downloaded, elapsed_sec=elapsed,
+            ),
+        )
+
+    @staticmethod
+    def _collect(model):
+        changed: list = []
+        model.dataChanged.connect(lambda a, b, roles: changed.append((a.row(), b.row(), list(roles))))
+        return changed
+
+    def _live_model(self):
+        job_id = uuid4()
+        model = _HistoryModel()
+        model.set_all([self._active(job_id, downloaded=1_000_000, elapsed=10.0)], [])
+        return job_id, model
+
+    def test_받은_용량이_바뀌면_그_행이_갱신된다(self, qapp_instance):
+        job_id, model = self._live_model()
+        changed = self._collect(model)
+
+        ok = model.update_active_progress(
+            [self._active(job_id, downloaded=2_000_000, elapsed=11.0)]
+        )
+
+        assert ok is True
+        assert len(changed) == 1
+        assert changed[0][0] == 0
+        job = model.data(model.index(0, 0), _HistoryModel.JobRole)
+        assert job.progress.downloaded_bytes == 2_000_000
+
+    def test_경과_시간만_바뀌어도_갱신된다(self, qapp_instance):
+        job_id, model = self._live_model()
+        changed = self._collect(model)
+
+        model.update_active_progress(
+            [self._active(job_id, downloaded=1_000_000, elapsed=12.5)]
+        )
+
+        assert len(changed) == 1
+        job = model.data(model.index(0, 0), _HistoryModel.JobRole)
+        assert job.progress.elapsed_sec == 12.5
+
+    def test_값이_완전히_같으면_다시_그리지_않는다(self, qapp_instance):
+        job_id, model = self._live_model()
+        changed = self._collect(model)
+
+        ok = model.update_active_progress(
+            [self._active(job_id, downloaded=1_000_000, elapsed=10.0)]
+        )
+
+        assert ok is True
+        assert changed == []
+
+    def test_일반_작업은_퍼센트가_바뀌면_갱신된다(self, qapp_instance):
+        """회귀 — 기존 동작."""
+        job_id = uuid4()
+        model = _HistoryModel()
+        model.set_all(
+            [self._active(job_id, percent=10.0, total=1000, downloaded=100)], []
+        )
+        changed = self._collect(model)
+
+        model.update_active_progress(
+            [self._active(job_id, percent=20.0, total=1000, downloaded=200)]
+        )
+
+        assert len(changed) == 1
+
+    def test_활성_작업_구성이_다르면_False로_전체_갱신을_요청한다(self, qapp_instance):
+        job_id, model = self._live_model()
+        changed = self._collect(model)
+
+        ok = model.update_active_progress(
+            [self._active(job_id, downloaded=2_000_000), self._active(uuid4())]
+        )
+
+        assert ok is False
+        assert changed == []
+
+    def test_갱신된_라이브_카드를_실제로_그려도_죽지_않는다(self, qapp_instance):
+        from tests.gui.test_download_card_paint import _paint
+
+        job_id, model = self._live_model()
+        model.update_active_progress(
+            [self._active(job_id, downloaded=2_000_000, elapsed=11.0)]
+        )
+
+        _paint(model)

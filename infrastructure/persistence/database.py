@@ -39,6 +39,11 @@ MIGRATION_IDS: tuple[str, ...] = (
 class Database:
     """Manages the SQLite connection lifecycle."""
 
+    # 쓰기 잠금 경합(동기화·워커·메인 스레드) 때 기다리는 최대 시간(ms). `sqlite3.connect`의
+    # 기본 대기(5초)에만 기대면 값이 코드에 드러나지 않아 얼마나 멈추는지 알 수 없다.
+    # 메인 스레드가 쓰기를 할 수 있으므로 길게 잡지 않는다.
+    BUSY_TIMEOUT_MS = 5000
+
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or DATABASE_PATH
 
@@ -543,6 +548,7 @@ class Database:
     def connection(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self._path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout={int(self.BUSY_TIMEOUT_MS)}")
         conn.execute("PRAGMA foreign_keys=ON")
         try:
             yield conn

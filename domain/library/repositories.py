@@ -125,6 +125,18 @@ class IVideoRepository(ABC):
     @abstractmethod
     def get_by_url(self, url: str) -> VideoAggregate | None: ...
 
+    @abstractmethod
+    def find_briefs_by_urls(self, urls: list[str]) -> dict[str, tuple[str, str | None]]:
+        """URL 묶음 → `{넘긴 URL: (제목, 썸네일 상대 경로|None)}`을 연결 1회로 읽는다.
+
+        `get_by_url`과 같은 정규화로 같은 영상을 찾되, 키는 **호출자가 넘긴 URL 그대로**다.
+        라이브러리에 없는 URL은 키를 생략한다. 화면 목록(다운로드 카드)용 경량 조회다.
+        """
+
+    @abstractmethod
+    def tag_names_for(self, video_id: UUID) -> list[str]:
+        """그 영상에 붙은 태그명만 읽는다(전체 태그 목록을 읽지 않는다). 순서는 정의되지 않는다."""
+
     # Category management
     @abstractmethod
     def list_categories(self) -> list[Category]: ...

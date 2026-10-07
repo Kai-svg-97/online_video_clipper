@@ -350,6 +350,7 @@
   "먼 위치로 이동하면서 원본이 고화질 접근을 막아 {quality}로 재생합니다.": "The source blocked high-quality access after jumping to a distant position, so playback is at {quality}.",
   "메모": "Notes",
   "메모를 입력하세요…": "Enter a note…",
+  "메모를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.": "Could not save the note. Please try again in a moment.",
   "메타데이터 갱신 중...": "Refreshing metadata...",
   "메타데이터 일괄 갱신": "Refresh metadata in bulk",
   "모니터링 규칙": "Monitoring rules",

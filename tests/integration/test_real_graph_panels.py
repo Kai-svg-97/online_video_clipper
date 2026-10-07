@@ -285,3 +285,140 @@ class TestDownloadPanelFirstShowWithRealGraph:
         panel.show()
         qtbot.waitExposed(panel)
         qtbot.waitUntil(lambda: panel._model.rowCount() == 2, timeout=5000)
+
+
+# ──────────────────────────────────────────────────────────────────
+# 다운로드 화면 refresh — DB 연결 수 (성능 배치 4, A3-b)
+# ──────────────────────────────────────────────────────────────────
+class TestDownloadRefreshConnections:
+    """이력 50행 `refresh()`가 URL마다 `GetVideoDetail`(연결 6개)을 타던 회귀.
+
+    제공자 경로가 URL 단위로 남아 있으면 연결이 수백 회가 된다(실측 169/505).
+    """
+
+    N = 50
+
+    @pytest.fixture
+    def vm(self, graph, monkeypatch):
+        v = graph.view_models.download
+        monkeypatch.setattr(v, "_launch", lambda jid: None)
+        monkeypatch.setattr(v, "_live_status_fn", None, raising=False)
+        return v
+
+    @pytest.fixture
+    def connections(self, monkeypatch):
+        from contextlib import contextmanager  # noqa: PLC0415
+
+        calls: list[int] = []
+        original = Database.connection
+
+        @contextmanager
+        def counting(self):
+            calls.append(1)
+            with original(self) as conn:
+                yield conn
+
+        monkeypatch.setattr(Database, "connection", counting)
+        return calls
+
+    @pytest.fixture
+    def world(self, db, graph, tmp_path, monkeypatch):
+        """영상 50개 + 각 URL의 completed 이력 50건.
+
+        이력 제목의 절반은 URL과 같게 해서 제목 대체 경로를 밟게 한다.
+        라이브러리 썸네일은 짝수 번째만 실제 파일이 있다.
+        """
+        from domain.download.entities import DownloadJob, JobStatus  # noqa: PLC0415
+
+        thumbs = tmp_path / "thumbs"
+        thumbs.mkdir()
+        # 쓰는 쪽 모듈의 이름을 패치한다. 함수 안 임포트(`from config.settings import ...`)와
+        # 모듈 수준 임포트 어느 쪽 구현이든 이 둘 중 하나가 쓰는 쪽이다.
+        monkeypatch.setattr("config.settings.THUMBNAIL_DIR", thumbs)
+        monkeypatch.setattr(
+            "gui.view_models.library.videos.THUMBNAIL_DIR", thumbs, raising=False
+        )
+
+        repo = SqliteVideoRepository(db)
+        rows = []
+        for i in range(self.N):
+            url = f"https://youtu.be/dl{i:09d}"
+            agg = VideoAggregate.create(VideoUrl(url), f"라이브러리 제목 {i}")
+            agg.update_metadata(thumbnail_path=f"t{i}.jpg")
+            repo.save(agg)
+            if i % 2 == 0:
+                (thumbs / f"t{i}.jpg").write_bytes(b"x")
+            job = DownloadJob.create(url, url if i % 2 == 0 else f"이력 제목 {i}")
+            job.status = JobStatus.COMPLETED
+            job.file_path = f"C:/videos/dl{i}.mp4"
+            graph.repositories.download.save(job)
+            rows.append((url, i))
+        return rows
+
+    @pytest.fixture
+    def panel(self, vm, graph, world, qtbot):
+        """실제 MainWindow(`gui/main_window.py`)와 같은 방식으로 라이브러리 VM의 조회 수단을 준다."""
+        import inspect  # noqa: PLC0415
+
+        from gui.panels.download_panel import DownloadPanel  # noqa: PLC0415
+
+        lib = graph.view_models.library
+        params = inspect.signature(DownloadPanel).parameters
+        kwargs: dict = {}
+        if "briefs_provider" in params:
+            # 일괄화 뒤의 배선 — URL 묶음 하나를 한 번에 해석하는 VM 메서드.
+            kwargs["briefs_provider"] = lib.find_briefs_by_urls
+        else:
+            kwargs["thumb_provider"] = lib.find_thumbnail_by_url
+            kwargs["title_provider"] = lib.find_title_by_url
+        p = DownloadPanel(vm, library_vm=lib, **kwargs)
+        qtbot.addWidget(p)
+        # 이 시험은 썸네일 워커(QThread)가 아니라 조회 경로를 본다.
+        p._start_thumb_worker = lambda: None
+        return p
+
+    def test_이력_50행_refresh의_연결_수가_상한_이하다(self, panel, connections):
+        connections.clear()
+
+        panel.refresh()
+
+        assert panel._model.rowCount() == self.N       # 0 이 아님 — 화면이 실제로 채워졌다
+        assert 0 < len(connections) <= 4, f"연결 {len(connections)}회 — URL마다 조회하고 있다"
+
+    def test_URL과_같던_제목은_라이브러리_제목으로_바뀐다(self, panel):
+        from PyQt6.QtCore import Qt  # noqa: PLC0415
+
+        from gui.panels.download_panel import _HistoryModel  # noqa: PLC0415
+
+        panel.refresh()
+
+        m = panel._model
+        by_url = {
+            m.data(m.index(r, 0), _HistoryModel.JobRole).url:
+                m.data(m.index(r, 0), Qt.ItemDataRole.DisplayRole)
+            for r in range(m.rowCount())
+        }
+        for url, i in [(f"https://youtu.be/dl{i:09d}", i) for i in range(self.N)]:
+            if i % 2 == 0:
+                assert by_url[url] == f"라이브러리 제목 {i}"       # URL과 같아서 대체됨
+            else:
+                assert by_url[url] == f"이력 제목 {i}"              # 이미 제목이 있어 그대로
+
+    def test_썸네일은_파일이_있는_행만_채워진다(self, panel):
+        from gui.panels.download_panel import _HistoryModel  # noqa: PLC0415
+
+        panel.refresh()
+
+        m = panel._model
+        filled, empty = 0, 0
+        for r in range(m.rowCount()):
+            job = m.data(m.index(r, 0), _HistoryModel.JobRole)
+            thumb = m.data(m.index(r, 0), _HistoryModel.ThumbRole)
+            i = int(job.url[-9:])
+            if i % 2 == 0:
+                assert thumb and thumb.endswith(f"t{i}.jpg")
+                filled += 1
+            else:
+                assert thumb is None             # DB 에는 있어도 파일이 없다
+                empty += 1
+        assert (filled, empty) == (self.N // 2, self.N // 2)

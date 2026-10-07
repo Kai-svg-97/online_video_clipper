@@ -213,3 +213,54 @@ DWM 속성을 메모장과 전부 대조했지만 의미 있는 차이가 없었
 채움 위 `text_primary`가 AA 미달이었다(zinc 2.56:1). 채워진 쪽은 `text_on_accent`,
 나머지는 `text_primary`로 각각 자기 영역에 잘라 그린다
 (`test_badge_label_on_progress_fill`이 고정).
+
+## 다운로드 화면 성능 — 성능 배치 4
+
+### N+1: 카드마다 상세 조회를 타던 refresh
+
+`DownloadPanel.refresh`가 제목·썸네일을 채우려고 URL마다 `find_title_by_url`/
+`find_thumbnail_by_url`을 불렀고, 각각이 `GetVideoIdByUrl` + `GetVideoDetail`(연결 6개,
+게다가 상세는 **전체 태그 목록**을 읽었다)을 탔다. 실측: 실데이터(카드 14장) refresh 519ms·
+DB 연결 169번, 5k 라이브러리·이력 50행 3,156ms·연결 701번.
+
+- `IVideoRepository.find_briefs_by_urls(urls)`가 URL 묶음을 **연결 1회**로 읽는다(`IN` 청크 400개,
+  청크는 한 연결 안에서). 키는 호출자가 넘긴 URL 그대로, 조회는 `normalize_video_url`로 하므로
+  `youtu.be` 표기도 단건 조회와 같은 영상을 찾는다.
+- `GetVideoBriefsByUrlsHandler` → `LibraryViewModel.find_briefs_by_urls`(제목 대체 판단·썸네일
+  `Path.exists`는 여기서, 존재하는 파일만 채운다) → `DownloadPanel(briefs_provider=...)`.
+- `GetVideoDetailHandler`는 `tag_names_for(video_id)`(`video_tags JOIN tags`)로 그 영상의
+  태그명만 읽는다. DTO 필드 `tags`는 그대로다.
+- `RecordingVideoRepository`는 `SqliteVideoRepository`의 하위 클래스라 읽기 메서드가 그대로 통한다.
+
+### 라이브 카드가 멈춰 보이던 결함
+
+`_HistoryModel.update_active_progress`가 `percent`만 비교했다. 라이브 녹화는 총량을 몰라
+`percent`가 늘 0이라, 받은 용량·경과 시간이 바뀌어도 `dataChanged`가 나가지 않았다.
+이제 카드가 읽는 값(`percent`·`downloaded_bytes`·`total_bytes`·`elapsed_sec`) 중 하나라도
+바뀌면 보내고, 전부 같으면 헛 다시 그리기를 하지 않는다.
+
+### 이벤트 유실
+
+`DownloadQueueAggregate.pull_events`는 `list(self._events)` 복사 뒤 `clear()`였다. 그 사이에
+다른 워커 스레드의 `_raise`가 끼면 복사본에는 없는데 `clear()`로 지워져 **영원히 유실**됐다
+(반대로 두 스레드가 같은 이벤트를 가져가는 중복도 가능했다). `threading.Lock`으로 `_raise`와
+`pull_events`를 직렬화하고, 비우는 대신 목록을 **통째로 교체**한다. 잠금은 표준 라이브러리라
+도메인 순수성이 유지되고, 구간이 리스트 연산뿐이라 경합 비용이 없다(8스레드×2000 시험이
+발행 건수 == 회수 건수를 지킨다).
+
+### 진행률 합치기
+
+yt-dlp 진행 콜백은 초당 수십 번이고 그때마다 `queue_changed` → 화면의 `vm.queue`(DB) +
+모델 갱신이 돌았다(동시 5개 다운로드 중 5초에 refresh 14번, 최대 정지 3.5~4.8초).
+`DownloadViewModel._on_progress`가 `PROGRESS_MIN_INTERVAL_MS`(150ms) 간격으로 합친다. 간격이
+지났으면 즉시, 아니면 '보낼 것이 남음' 표시만 하고 GUI 스레드의 trailing 타이머가 **마지막
+상태를 한 번** 보낸다(워커 스레드에서는 `QTimer`를 못 켜므로 큐잉 신호 `_progress_deferred`
+를 거친다). 완료·실패·취소는 합치지 않고 즉시 보낸다. 타이머는 `shutdown()`에서 멈춘다.
+시계는 모듈 수준 `_now`(= `time.monotonic`)라 시험이 바꿔 끼운다.
+
+### 메모 저장 실패와 `busy_timeout`
+
+`save_notes`가 실패해도 로그만 남아 사용자는 저장됐다고 믿은 채 내용을 잃었다 — 이제
+`error_occurred`로도 알린다. `Database.BUSY_TIMEOUT_MS`를 명시하고 연결마다
+`PRAGMA busy_timeout`을 건다(쓰기 잠금 경합 때 기다리는 최대 시간이 코드에 드러난다).
+

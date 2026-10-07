@@ -133,6 +133,7 @@ class LibraryViewModel(
         import_yt_to_category: ImportYouTubePlaylistToCategoryHandler | None = None,
         refresh_thumbnail: RefreshVideoThumbnailHandler | None = None,
         get_video_id_by_url: GetVideoIdByUrlHandler | None = None,
+        get_video_briefs_by_urls=None,   # GetVideoBriefsByUrlsHandler | None — 다운로드 카드 일괄 보강
         refresh_video_metadata: RefreshVideoMetadataHandler | None = None,
         find_song_videos=None,   # FindSongVideoIdsHandler | None — 같은 가수/앨범 필터
         update_position=None,    # UpdatePlaybackPositionHandler | None — 이어보기
@@ -147,6 +148,7 @@ class LibraryViewModel(
         super().__init__(parent)
         self._get_downloaded_formats = get_downloaded_formats
         self._get_video_id_by_url = get_video_id_by_url
+        self._get_video_briefs_by_urls = get_video_briefs_by_urls
         self._get_videos = get_videos
         self._search_videos = search_videos
         self._get_categories = get_categories

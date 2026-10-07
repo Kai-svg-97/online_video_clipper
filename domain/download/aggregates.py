@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -27,6 +28,12 @@ class DownloadQueueAggregate:
     def __init__(self) -> None:
         self._jobs: dict[UUID, DownloadJob] = {}
         self._events: list = []
+        # 다운로드 워커 스레드 여럿이 같은 큐에서 `_raise`/`pull_events`를 부른다.
+        # 예전의 `list(...)` 복사 + `clear()`는 그 사이에 끼어든 이벤트를 복사본에도
+        # 없이 지워 **영원히 유실**시켰고, 두 스레드가 같은 이벤트를 둘 다 가져가기도
+        # 했다. 표준 라이브러리 잠금 하나로 '넣기'와 '비우며 가져가기'를 직렬화한다 —
+        # 외부 의존이 없어 도메인 순수성은 유지된다(잠금 구간은 리스트 연산뿐이다).
+        self._events_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Commands
@@ -103,9 +110,11 @@ class DownloadQueueAggregate:
         return job
 
     def _raise(self, event: object) -> None:
-        self._events.append(event)
+        with self._events_lock:
+            self._events.append(event)
 
     def pull_events(self) -> list:
-        events = list(self._events)
-        self._events.clear()
+        # 비우지 않고 **통째로 교체**한다 — 가져간 목록과 남는 목록이 겹치지 않는다.
+        with self._events_lock:
+            events, self._events = self._events, []
         return events

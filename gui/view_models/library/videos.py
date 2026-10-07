@@ -16,6 +16,7 @@ from application.library.commands import (
 from application.library.dtos import VideoDetailDTO
 from application.library.playlist_queries import GetPlaylistItemsQuery
 from application.library.queries import GetDownloadedFormatsQuery, GetVideosQuery
+from gui.text import tr
 from gui.text.messages import describe_error
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,34 @@ class VideoQueryMixin:
             logger.exception("URL로 영상 ID 조회 실패: %s", url)
             return None
 
+    def find_briefs_by_urls(self, urls: list[str]) -> dict[str, tuple[str, str | None]]:
+        """URL 묶음 → `{URL: (제목, 썸네일 절대 경로|None)}`를 DB 연결 1회로 조회한다.
+
+        다운로드 카드의 제목·썸네일 보강용이다. 라이브러리에 없는 URL은 키가 없다.
+        제목이 비었거나 URL 그대로면 빈 문자열로 준다(쓸 만한 제목이 아니다).
+        썸네일은 **파일이 실제로 있는 것만** 채운다(없으면 None).
+        """
+        if self._get_video_briefs_by_urls is None or not urls:
+            return {}
+        try:
+            briefs = self._get_video_briefs_by_urls.handle(list(urls))
+            from pathlib import Path  # noqa: PLC0415
+
+            from config.settings import THUMBNAIL_DIR  # noqa: PLC0415
+
+            result: dict[str, tuple[str, str | None]] = {}
+            for url, brief in briefs.items():
+                title = brief.title if brief.title and brief.title != url else ""
+                thumb: str | None = None
+                if brief.thumbnail_path:
+                    p = Path(THUMBNAIL_DIR) / brief.thumbnail_path
+                    thumb = str(p) if p.exists() else None
+                result[url] = (title, thumb)
+            return result
+        except Exception:
+            logger.exception("URL 묶음 제목·썸네일 조회 실패")
+            return {}
+
     def find_thumbnail_by_url(self, url: str) -> str | None:
         """URL로 라이브러리 영상의 로컬 썸네일 절대 경로 반환. 없으면 None."""
         try:
@@ -213,6 +242,8 @@ class VideoQueryMixin:
             self._update_video.handle(UpdateVideoCommand(video_id=video_id, notes=notes))
         except Exception:
             logger.exception("메모 저장 실패: %s", video_id)
+            # 로그만 남기면 사용자는 저장됐다고 믿은 채 내용을 잃는다(DB 잠금 등).
+            self.error_occurred.emit(tr("메모를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."))
 
     def save_gemini_summary(self, video_id: UUID, lang: str, summary: str) -> None:
         """Gemini AI 요약 저장 — 그 언어의 칸에(빈 문자열이면 그 언어의 요약을 지운다)."""

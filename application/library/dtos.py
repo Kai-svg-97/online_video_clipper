@@ -156,6 +156,14 @@ class FailedDownloadInfoDTO:
 
 
 @dataclass(frozen=True)
+class VideoBriefDTO:
+    """목록 카드용 경량 조회 결과 — 제목과 썸네일 상대 경로(없으면 None)만 든다."""
+
+    title: str
+    thumbnail_path: str | None = None
+
+
+@dataclass(frozen=True)
 class VideoDetailDTO:
     id: UUID
     url: str

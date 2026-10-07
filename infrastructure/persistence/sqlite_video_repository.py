@@ -307,6 +307,41 @@ class SqliteVideoRepository(IVideoRepository):
             cat_id = UUID(row["category_id"]) if row["category_id"] else None
             return VideoAggregate(video, category_id=cat_id, tag_ids=tag_ids)
 
+    # `IN (?, ...)` 한 문장에 넣을 URL 수 — SQLite 변수 상한(기본 999) 아래로 둔다.
+    _BRIEF_CHUNK = 400
+
+    def find_briefs_by_urls(self, urls: list[str]) -> dict[str, tuple[str, str | None]]:
+        wanted: dict[str, list[str]] = {}      # 정규화 URL → 호출자가 넘긴 URL들
+        for u in urls:
+            wanted.setdefault(normalize_video_url(u), []).append(u)
+        if not wanted:
+            return {}
+        keys = list(wanted)
+        result: dict[str, tuple[str, str | None]] = {}
+        # 청크가 여럿이어도 연결은 하나다 — 연결 비용이 쿼리보다 크다.
+        with self._db.connection() as conn:
+            for i in range(0, len(keys), self._BRIEF_CHUNK):
+                chunk = keys[i : i + self._BRIEF_CHUNK]
+                ph = ",".join("?" * len(chunk))
+                cur = conn.execute(
+                    f"SELECT url, title, thumbnail_path FROM videos WHERE url IN ({ph})",
+                    chunk,
+                )
+                for row in cur:
+                    brief = (row["title"] or "", row["thumbnail_path"] or None)
+                    for original in wanted.get(row["url"], ()):
+                        result[original] = brief
+        return result
+
+    def tag_names_for(self, video_id: UUID) -> list[str]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT t.name FROM video_tags vt JOIN tags t ON t.id = vt.tag_id "
+                "WHERE vt.video_id = ?",
+                (str(video_id),),
+            ).fetchall()
+        return [r["name"] for r in rows]
+
     # ------------------------------------------------------------------
     # Categories
     # ------------------------------------------------------------------

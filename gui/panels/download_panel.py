@@ -94,6 +94,20 @@ def _dedupe_by_url(jobs: list[DownloadJobDTO]) -> list[DownloadJobDTO]:
     return list(seen.values())
 
 
+def _progress_changed(old, new) -> bool:
+    """카드가 읽는 진행 값이 바뀌었는가.
+
+    라이브 녹화는 총량을 몰라 `percent`가 늘 0이다 — 그것만 비교하면 받은 용량·경과
+    시간이 바뀌어도 카드가 영영 갱신되지 않는다. 화면에 쓰이는 값 전부를 본다.
+    """
+    return (
+        old.percent != new.percent
+        or old.downloaded_bytes != new.downloaded_bytes
+        or old.total_bytes != new.total_bytes
+        or old.elapsed_sec != new.elapsed_sec
+    )
+
+
 def _resolve_thumb(job: DownloadJobDTO) -> str | None:
     """yt-dlp가 영상 옆에 생성하는 동행 썸네일 파일 경로를 반환한다."""
     if not job.file_path:
@@ -201,40 +215,50 @@ class _HistoryModel(QAbstractListModel):
         self,
         active: list[DownloadJobDTO],
         history: list[DownloadJobDTO],
-        thumb_provider: Callable[[str], str | None] | None = None,
-        title_provider: Callable[[str], str | None] | None = None,
+        briefs_provider: Callable[[list[str]], dict[str, tuple[str, str | None]]] | None = None,
         waiting_ids: set[UUID] | None = None,
     ) -> None:
         import dataclasses  # noqa: PLC0415
 
+        active_urls = {j.url for j in active}
+
+        # 이력에서 활성 URL 제외(중복 방지) 후 병합
+        unique_history = [j for j in _dedupe_by_url(history) if j.url not in active_urls]
+        jobs = [*active, *unique_history]
+
+        # 제목·썸네일 보강은 URL 묶음 하나로 **한 번에** 조회한다. 카드마다 부르면
+        # 이력 50행에서 DB 연결이 수백 번 열린다(성능 배치 4, A3-b).
+        briefs: dict[str, tuple[str, str | None]] = {}
+        if briefs_provider:
+            needed = [
+                j.url for j in jobs
+                if j.url and (not j.title or j.title == j.url or _resolve_thumb(j) is None)
+            ]
+            if needed:
+                try:
+                    briefs = briefs_provider(list(dict.fromkeys(needed)))
+                except Exception:
+                    logger.exception("제목·썸네일 일괄 조회 실패")
+                    briefs = {}
+
         def _fix_title(job: DownloadJobDTO) -> DownloadJobDTO:
-            if (not job.title or job.title == job.url) and title_provider:
-                t = title_provider(job.url)
+            if not job.title or job.title == job.url:
+                t = briefs.get(job.url, ("", None))[0]
                 if t:
                     return dataclasses.replace(job, title=t)
             return job
 
         self.beginResetModel()
 
-        resolved_active = [_fix_title(j) for j in active]
-        active_urls = {j.url for j in active}
-
-        # 이력에서 활성 URL 제외(중복 방지) 후 병합
-        unique_history = [j for j in _dedupe_by_url(history) if j.url not in active_urls]
-        resolved_history = [_fix_title(j) for j in unique_history]
-
-        self._jobs = resolved_active + resolved_history
+        self._jobs = [_fix_title(j) for j in jobs]
         self._active_ids = {j.id for j in active}
         self._waiting_ids = set(waiting_ids or ())
 
         self._thumbs = {}
         for j in self._jobs:
             p = _resolve_thumb(j)
-            if p is None and thumb_provider and j.url:
-                try:
-                    p = thumb_provider(j.url)
-                except Exception:
-                    p = None
+            if p is None and j.url:
+                p = briefs.get(j.url, ("", None))[1]
             if p:
                 self._thumbs[str(j.id)] = p
 
@@ -250,7 +274,7 @@ class _HistoryModel(QAbstractListModel):
             if job.id not in self._active_ids:
                 continue
             new_job = active_by_id.get(job.id)
-            if new_job and new_job.progress.percent != job.progress.percent:
+            if new_job and _progress_changed(job.progress, new_job.progress):
                 self._jobs[row] = new_job
                 idx = self.index(row, 0)
                 self.dataChanged.emit(idx, idx, [self.JobRole])
@@ -542,16 +566,14 @@ class DownloadPanel(QWidget):
     def __init__(
         self,
         vm: DownloadViewModel,
-        thumb_provider: Callable[[str], str | None] | None = None,
-        title_provider: Callable[[str], str | None] | None = None,
+        briefs_provider: Callable[[list[str]], dict[str, tuple[str, str | None]]] | None = None,
         library_vm=None,
         media=None,      # MediaServices | None — 상세 화면·플레이어용 인프라 기능
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._vm = vm
-        self._thumb_provider = thumb_provider
-        self._title_provider = title_provider
+        self._briefs_provider = briefs_provider
         self._library_vm = library_vm
         self._media = media
         self._worker: _ThumbWorker | None = None
@@ -693,7 +715,7 @@ class DownloadPanel(QWidget):
         history = self._vm.load_history()
         filtered = [j for j in history if _is_listable_history(j)]
         self._model.set_all(
-            active, filtered, self._thumb_provider, self._title_provider,
+            active, filtered, self._briefs_provider,
             waiting_ids=self._vm.waiting_ids,
         )
         self._refresh_waiting_notice()

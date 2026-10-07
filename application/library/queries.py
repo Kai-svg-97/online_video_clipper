@@ -16,6 +16,7 @@ from application.library.dtos import (
     FailedDownloadInfoDTO,
     LibraryStatsDTO,
     TagDTO,
+    VideoBriefDTO,
     VideoDTO,
     VideoDetailDTO,
 )
@@ -233,9 +234,8 @@ class GetVideoDetailHandler:
             return None
         v = agg.video
 
-        # Resolve tag names
-        all_tags = {t.id: t for t in self._video_repo.list_tags()}
-        tag_names = [all_tags[tid].name for tid in agg.tag_ids if tid in all_tags]
+        # 이 영상의 태그명만 읽는다 — 전체 태그 목록(수백~수천 개)을 읽어 거르지 않는다.
+        tag_names = self._video_repo.tag_names_for(agg.id)
 
         # Download history for this URL
         completed = self._dl_repo.find_completed_by_url(v.url.value)
@@ -322,6 +322,26 @@ class GetVideoIdByUrlHandler:
     def handle(self, url: str) -> UUID | None:
         agg = self._repo.get_by_url(url)
         return agg.id if agg else None
+
+
+class GetVideoBriefsByUrlsHandler:
+    """URL 묶음 → `{URL: VideoBriefDTO}` — 다운로드 화면 카드의 제목·썸네일 보강용.
+
+    URL마다 상세 조회(연결 6개)를 타던 N+1을 연결 1회로 줄인다. 원값을 그대로 준다 —
+    빈 제목을 대체할지, 썸네일 파일이 있는지는 화면 쪽 뷰모델이 정한다.
+    """
+
+    def __init__(self, repo: IVideoRepository) -> None:
+        self._repo = repo
+
+    def handle(self, urls: list[str]) -> dict[str, VideoBriefDTO]:
+        if not urls:
+            return {}
+        briefs = self._repo.find_briefs_by_urls(list(urls))
+        return {
+            url: VideoBriefDTO(title=title, thumbnail_path=thumb)
+            for url, (title, thumb) in briefs.items()
+        }
 
 
 class GetCategoriesHandler:

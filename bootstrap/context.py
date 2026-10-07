@@ -134,6 +134,7 @@ class LibraryHandlers:
     get_video_detail: Any
     get_downloaded_formats: Any
     get_video_id_by_url: Any
+    get_video_briefs_by_urls: Any
     get_category_order: Any
     set_category_order: Any
     stats: Any

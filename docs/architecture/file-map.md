@@ -123,7 +123,7 @@ online_video_clipper/
 ├── application/                     # Application layer — use cases (commands & queries)
 │   ├── library/
 │   │   ├── commands.py              # AddVideo, UpdateVideo, DeleteVideo, ImportYouTubePlaylistToCategory
-│   │   └── queries.py               # GetVideos, SearchVideos, GetVideoDetail
+│   │   └── queries.py               # GetVideos, SearchVideos, GetVideoDetail(태그는 `tag_names_for`로 그 영상 것만), **GetVideoBriefsByUrls**(URL 묶음 → 제목·썸네일을 연결 1회로 — 다운로드 카드용)
 │   │   (도메인) backup.py            # DB 백업 보관 규칙(하루 1회·최근 7개·남의 파일 제외)
 │   │   (도메인) bookmarks.py         # 브라우저 북마크 HTML 파싱 + '영상일 법한 호스트' 판정
 │   │   (도메인) filters.py           # 복합 필터 프리셋 ↔ 값 변환(날짜·길이·다운로드·시청)
@@ -174,8 +174,8 @@ online_video_clipper/
 │   │   ├── gateway.py               # `StreamRelayGateway` — `IStreamRelay` 구현. 플레이어가 주입받아 쓰는 창구(`source`·`open_session`·`close_session`). 중계 서버는 **첫 재생 때** 뜨고 `relay` 모듈도 쓸 때 임포트한다
 │   │   └── relay.py                 # **재생용 로컬 중계 + 실시간 remux**(Qt 없음 → 단위 테스트 가능). 존재 이유는 실측 제약 둘 — ① googlevideo는 **열린 Range**(`bytes=0-`)에 403, 경계 있는 범위에 206을 주는데 ffmpeg는 파일을 열 때 정확히 열린 범위를 보낸다 → 고화질 URL을 Qt에 그냥 넘기면 **항상** 403. ② **요청당 허용 바이트 상한이 포맷마다 다르다**(1080p 2MB 허용 / 오디오 2MB 거부·128KB 허용). 그래서 재생기의 열린 범위 요청을 받아 상위로는 작은 조각으로 되묻어 이어 붙인다. `/s/<sid>/v`·`/a`가 원본 중계, `/s/<sid>/play.mp4?ss=N`이 ffmpeg를 띄워 fragmented mp4를 흘린다(연결이 끊기면 그 ffmpeg도 죽는다 — 수명이 HTTP 연결에 묶여 있다). 403 대응은 **두 갈래**다: 아직 성공한 적 없는 크기면 절반으로 줄이고(`shrink_chunk`, 바닥 16KB), 통하던 크기가 거부되면 **일시적 거부로 보고 쉬었다 같은 크기로 재시도**한다(`_RETRY_DELAYS`) — 줄이면 요청이 잦아져 악화된다(실측: seek 첫 바이트 1초대 → 22초). 그래도 안 되면 `refresh` 콜백으로 URL을 갱신한다(만료 대응). 조각을 못 채우면 **연결을 끊는다** — Content-Length를 약속해 놓고 조용히 돌아가면 재생기가 영원히 기다린다(실측). ffmpeg 입력에는 `-reconnect*`를 걸어 끊긴 자리에서 스스로 다시 붙게 한다. `atexit`로 남은 ffmpeg를 정리한다
 │   ├── persistence/
-│   │   ├── database.py              # SQLite 연결 + WAL 설정 + 스키마 마이그레이션
-│   │   ├── sqlite_video_repository.py   # 요약은 `video_summaries(video_id, lang)` — `get_summaries`/`save_summary`(빈 값=삭제), 실패 사유도 언어별. 요약 검색은 언어 무관
+│   │   ├── database.py              # SQLite 연결 + WAL 설정 + 스키마 마이그레이션 + `BUSY_TIMEOUT_MS`(연결마다 `PRAGMA busy_timeout`)
+│   │   ├── sqlite_video_repository.py   # `find_briefs_by_urls`(URL 묶음 일괄 조회, IN 청크 400)·`tag_names_for`(영상 한 건의 태그명 JOIN). 요약은 `video_summaries(video_id, lang)` — `get_summaries`/`save_summary`(빈 값=삭제), 실패 사유도 언어별. 요약 검색은 언어 무관
 │   │   ├── sqlite_download_repository.py
 │   │   ├── sqlite_clip_repository.py
 │   │   ├── sqlite_channel_repository.py
@@ -282,7 +282,7 @@ online_video_clipper/
 │   │   │       ├── video_list.py    # 검색·정렬·뷰 전환·태그 패널·썸네일 프리로드. **목록 로딩 스켈레톤**: `_on_list_loading_any`(`vm.loading_changed` 전용, 검색 포함)와 `_on_list_loading`(노드 키 트리 스피너와 짝을 이루던 기존 경로)이 같은 스켈레톤 표시 로직을 공유한다 — 자세한 배경은 아래 "목록·검색 로딩 스켈레톤" 항목 참고
 │   │   │       ├── context_menu.py  # 영상 우클릭 메뉴(단일·다중)·삭제 확인
 │   │   │       └── shortcuts.py     # 키보드 단축키 — Ctrl+F(검색)·Esc(덮인 화면부터 걷기)·Alt+←/→(히스토리)·F5(새로고침)·Ctrl+1~4(보기 전환). 범위는 `WidgetWithChildrenShortcut`이라 다른 페이지에서는 발동하지 않는다
-│   │   ├── download_panel.py        # 다운로드 큐 + 완료 이력 탭 (**첫 `showEvent`에서야 갱신** — 숨은 동안 `queue_changed`·`history_changed`는 `_refresh_dirty`만 켜고, 명시 `refresh()`는 숨어도 실행. 영상 파일만 표시·완료/실패 배지). **이 패널의 상세 위젯에는 song_vm이 배선돼 있지 않아** 노래 탭·가사 자막이 동작하지 않는다(기존 상태 — 가사 자막 기능은 라이브러리 패널로 범위가 한정됨)
+│   │   ├── download_panel.py        # 다운로드 큐 + 완료 이력 탭 (**제목·썸네일은 `briefs_provider` 일괄 조회 1회**, 라이브 카드는 용량·경과 변화에도 갱신) (**첫 `showEvent`에서야 갱신** — 숨은 동안 `queue_changed`·`history_changed`는 `_refresh_dirty`만 켜고, 명시 `refresh()`는 숨어도 실행. 영상 파일만 표시·완료/실패 배지). **이 패널의 상세 위젯에는 song_vm이 배선돼 있지 않아** 노래 탭·가사 자막이 동작하지 않는다(기존 상태 — 가사 자막 기능은 라이브러리 패널로 범위가 한정됨)
 │   │   ├── feed_panel.py            # 피드 카드 부품(_FeedGrid·_FeedCard: 썸네일 좌하단 채널 배지·리사이즈 reflow, **단일 클릭→`video_clicked`(FeedVideoDTO) 방출**, 인라인 추가버튼 제거·우클릭 메뉴로 일원화) + 채널 카드 부품(_ChannelGrid·_ChannelCard: 아바타·구독자/영상수에 더해 **"최근 영상 N일 전"** 라벨=`latest_video_published_at`) + 연관영상 행에서 재사용하는 `_RoundedThumbLabel`·`_ThumbLoader` 정의 — library_panel/video_detail_panel이 재사용. `_FeedCard`·`_ChannelCard`는 `_relative_time`(YYYYMMDD·ISO·`Z` 처리)로 등록 시점을 상대시간 표기. **`_FeedCard`는 `thumb_size`(작은 카드)·`draggable`(URL 드래그) 옵션을 받는다** — 드래그는 `text/uri-list`+`text/plain`으로 브라우저 URL 드래그와 **완전히 같은 MIME**을 만들어 카테고리 트리의 기존 URL 드롭 경로를 그대로 재사용한다(받는 쪽에 추천 전용 처리가 없다). 드래그가 시작되면 `_dragged` 플래그로 릴리스 시 클릭(상세 진입)을 억제한다. 카드가 드래그 이벤트를 받으려면 `mousePressEvent`가 `event.accept()`해야 한다(수락하지 않으면 move/release가 부모로 전파돼 드래그가 조용히 죽는다). + **`RecommendStrip`(추천 영상 스트립)**: 헤더 바(▾/▸ 접기 토글 + '추천 영상' + 상태 라벨 + ⟳ 다시 받기)와 가로 스크롤 카드 행. `set_items`/`append_items`/`set_loading`/`set_status`/`set_expanded(notify=False)`/`count()` 제공. 접으면 본문(`_scroll`)만 숨기고 헤더는 남긴다(= 다시 펼칠 수 있는 split bar). library_panel이 수직 `QSplitter`의 아래쪽 자식으로 넣는다. (구버전 FeedPanel 컨테이너는 더 이상 사이드바 메뉴로 노출되지 않음)
 │   │   ├── monitoring_panel.py      # 채널 구독 & 모니터링 규칙 관리
 │   │   ├── stats_panel.py           # 라이브러리 통계 대시보드 + **채널별 카테고리 섹션**(`_make_channel_row`: 채널명·총 영상수 + 카테고리 경로 링크를 `_FlowLayout`으로 흐름 배치, 예 "IT > News (3)"). 링크 클릭 시 `category_selected(category_id)` 방출 → `MainWindow._on_stats_category_selected`가 라이브러리 해당 카테고리로 전환. **채널명은 URL이 있으면 클릭 시 브라우저로 열리는 링크(`_open_url`→`QDesktopServices`) + `📋` URL 복사 버튼(`_copy_url`, 복사 후 ✓ 잠깐 표시)**을 둔다. 데이터는 `LibraryStatsDTO.channel_stats`(list[`ChannelStatDTO`]→`ChannelCategoryStatDTO`); `ChannelStatDTO.channel_url`은 리포지토리 `get_channel_category_stats`가 반환한 channel_url 대표값(없으면 channel_id로 `youtube.com/channel/{id}` 구성). **모든 색은 테마 토큰에서 온다**(`_card_qss`·`_BarChart(tokens)`·`_danger_color`) — 예전엔 카드 배경이 `#1e1e2e`로 박혀 있어 밝은 테마에서 어두운 카드 위에 어두운 글씨가 얹혀 아무것도 안 보였다. 카드·차트는 위젯 스타일시트/QPainter로 직접 칠하므로 전역 QSS 교체만으로는 안 바뀐다 → `theme_changed`에 `_refresh()`를 연결해 다시 그린다(`_clear_content`가 중첩 레이아웃까지 재귀 제거)
@@ -364,7 +364,7 @@ online_video_clipper/
 │       │   ├── videos.py            # `VideoQueryMixin` — 영상 한 건 조회·저장(메인 스레드 동기): 상세·URL→ID/썸네일/제목·빠른 이동 검색·다운로드 배지 일괄 조회·같은 가수/앨범·이어보기 위치·메모·요약 저장·삭제·시청 표시
 │       │   ├── registration.py      # `RegistrationMixin` — `add_video` + 등록 직후 자동 보강(동시 1건 큐)
 │       │   └── refresh.py           # `RefreshMixin` — 카테고리 메타데이터 갱신·YouTube 재생목록 → 카테고리 가져오기·썸네일 갱신·단일 영상 메타 재수집(전부 워커)
-│       ├── download_vm.py           # DownloadViewModel — 다운로드 큐/이력 + 진행률
+│       ├── download_vm.py           # DownloadViewModel — 다운로드 큐/이력 + 진행률(`queue_changed`를 `PROGRESS_MIN_INTERVAL_MS`로 합치고 trailing 타이머가 마지막 값을 보낸다. 완료·실패는 즉시)
 │       ├── feed_vm.py               # FeedViewModel — 전체 구독 피드(refresh) + 채널별 영상(load_channel) + 구독 채널 카드 정보(load_channel_infos) 로딩, shutdown() 워커 정리
 │       ├── monitoring_vm.py         # MonitoringViewModel — 채널 구독 목록
 │       ├── clip_vm.py               # ClipViewModel — 클립 목록 + 추출 작업

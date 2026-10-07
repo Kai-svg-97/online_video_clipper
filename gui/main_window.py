@@ -204,8 +204,7 @@ class MainWindow(QMainWindow):
         # 페이지 1: 다운로드
         self._download_panel = DownloadPanel(
             self._download_vm,
-            thumb_provider=self._library_vm.find_thumbnail_by_url,
-            title_provider=self._library_vm.find_title_by_url,
+            briefs_provider=self._library_vm.find_briefs_by_urls,
             library_vm=self._library_vm,
             media=self._media,
         )
