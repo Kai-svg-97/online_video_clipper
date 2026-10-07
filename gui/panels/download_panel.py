@@ -14,7 +14,6 @@ from PyQt6.QtCore import (
     QSize,
     Qt,
     QThread,
-    QTimer,
     pyqtSignal,
 )
 from PyQt6.QtGui import (
@@ -316,6 +315,13 @@ class _HistoryCardDelegate(QStyledItemDelegate):
         return QSize(CARD_W + CARD_PAD * 2, CARD_H + CARD_PAD * 2)
 
     def paint(self, painter: QPainter, option, index: QModelIndex) -> None:
+        # paint() 안의 예외는 PyQt 가 프로세스 종료로 처리한다 — 막아서 로그만 남긴다.
+        try:
+            self._paint_card(painter, option, index)
+        except Exception:
+            logger.exception("다운로드 카드 그리기 실패")
+
+    def _paint_card(self, painter: QPainter, option, index: QModelIndex) -> None:
         from PyQt6.QtWidgets import QApplication, QStyle  # noqa: PLC0415
         QApplication.style().drawPrimitive(
             QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget
@@ -548,12 +554,24 @@ class DownloadPanel(QWidget):
         self._library_vm = library_vm
         self._media = media
         self._worker: _ThumbWorker | None = None
+        # 숨어 있는 동안 신호가 와서 아직 반영하지 못한 변경이 있는가.
+        # 처음에는 True — 첫 showEvent 에서 처음 채운다.
+        self._refresh_dirty = True
         self._setup_ui()
 
         vm.queue_changed.connect(self._on_queue_changed)
-        vm.history_changed.connect(self.refresh)
+        vm.history_changed.connect(self._on_history_changed)
 
-        QTimer.singleShot(0, self.refresh)
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if self._refresh_dirty:
+            self.refresh()
+
+    def _on_history_changed(self) -> None:
+        if not self.isVisible():
+            self._refresh_dirty = True
+            return
+        self.refresh()
 
     def _setup_ui(self) -> None:
         outer = QVBoxLayout(self)
@@ -668,7 +686,8 @@ class DownloadPanel(QWidget):
     # ── 데이터 갱신 ─────────────────────────────────────────────────
 
     def refresh(self) -> None:
-        """완전 갱신: 활성 다운로드 + 이력 병합."""
+        """완전 갱신: 활성 다운로드 + 이력 병합. 숨어 있어도 명시 호출은 실행한다."""
+        self._refresh_dirty = False
         active  = self._vm.queue
         history = self._vm.load_history()
         filtered = [j for j in history if _is_listable_history(j)]
@@ -681,6 +700,9 @@ class DownloadPanel(QWidget):
 
     def _on_queue_changed(self) -> None:
         """progress 경량 갱신. 구조 변경(새 다운로드 시작·종료) 시에만 full refresh."""
+        if not self.isVisible():
+            self._refresh_dirty = True
+            return
         active = self._vm.queue
         if not self._model.update_active_progress(active):
             self.refresh()

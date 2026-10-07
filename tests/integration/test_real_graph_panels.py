@@ -246,3 +246,42 @@ class TestLibraryPaginationWithRealGraph:
 
         qtbot.waitUntil(lambda: len(vm.videos) >= self.TOTAL, timeout=5000)
         assert vm.videos[0].id == first
+
+
+# ──────────────────────────────────────────────────────────────────
+# 다운로드 화면 — 처음 보일 때 DB 이력을 읽어 온다 (성능 배치 1, A2)
+# ──────────────────────────────────────────────────────────────────
+class TestDownloadPanelFirstShowWithRealGraph:
+    @pytest.fixture
+    def vm(self, graph, monkeypatch):
+        v = graph.view_models.download
+        monkeypatch.setattr(v, "_launch", lambda jid: None)
+        monkeypatch.setattr(v, "_live_status_fn", None, raising=False)
+        return v
+
+    @pytest.fixture
+    def history(self, graph):
+        from domain.download.entities import DownloadJob, JobStatus  # noqa: PLC0415
+
+        for i in range(2):
+            job = DownloadJob.create(f"https://youtu.be/hist{i:07d}", f"이력 {i}")
+            job.status = JobStatus.COMPLETED
+            job.file_path = f"C:/videos/hist{i}.mp4"
+            graph.repositories.download.save(job)
+
+    def test_숨은_채로는_이력을_읽지_않고_처음_보일_때_채운다(
+        self, vm, history, qtbot
+    ):
+        from PyQt6.QtCore import QCoreApplication  # noqa: PLC0415
+
+        from gui.panels.download_panel import DownloadPanel  # noqa: PLC0415
+
+        panel = DownloadPanel(vm)
+        qtbot.addWidget(panel)
+        QCoreApplication.processEvents()
+        QCoreApplication.processEvents()
+        assert panel._model.rowCount() == 0  # 숨어 있어 아직 안 읽었다
+
+        panel.show()
+        qtbot.waitExposed(panel)
+        qtbot.waitUntil(lambda: panel._model.rowCount() == 2, timeout=5000)

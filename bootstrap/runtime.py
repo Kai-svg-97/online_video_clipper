@@ -6,6 +6,9 @@
 
 이 모듈은 **가볍게 유지한다** — `main.py`가 스플래시를 띄우기 전에 임포트하기
 때문이다. 인프라·GUI 패널을 여기서 임포트하면 스플래시가 늦게 뜬다.
+
+스플래시는 `QSplashScreen`이 아니라 프레임 없는 `QLabel`이다(`show_splash`).
+`finish_splash`는 `window.show()` **다음에** 불러 창이 그려진 뒤 닫는다.
 """
 
 from __future__ import annotations
@@ -17,9 +20,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QEvent, QObject, QRect, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QPixmapCache
-from PyQt6.QtWidgets import QApplication, QSplashScreen
+from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
 from utils.resources import get_resource_path
 
@@ -145,16 +148,85 @@ def create_qt_app(argv: list[str]) -> QApplication:
     return app
 
 
-def show_splash(app: QApplication) -> QSplashScreen:
+SPLASH_TIMEOUT_MS = 10_000   # 창이 끝내 안 떠도 스플래시가 영영 남지 않게 하는 상한
+
+
+def show_splash(app: QApplication) -> QLabel:
     """스플래시를 띄우고 **즉시 그린다**.
+
+    `QSplashScreen`을 쓰지 않는다 — `show()`만 약 1초가 걸린다(같은 플래그의 `QLabel`은
+    약 50ms). 프레임 없는 가벼운 위젯으로 같은 그림을 보인다.
 
     `processEvents()`가 없으면 이어지는 무거운 임포트가 이벤트 루프를 막아 스플래시가
     빈 창으로만 남는다(띄운 의미가 없어진다).
     """
-    splash = QSplashScreen(build_splash_pixmap())
+    pix = build_splash_pixmap()
+    splash = QLabel()
+    splash.setWindowFlags(
+        Qt.WindowType.Tool
+        | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.WindowStaysOnTopHint
+    )
+    splash.setPixmap(pix)
+    splash.setFixedSize(pix.size())
+    screen = app.primaryScreen()
+    if screen is not None:
+        splash.move(screen.availableGeometry().center() - splash.rect().center())
     splash.show()
     app.processEvents()
     return splash
+
+
+class _SplashCloser(QObject):
+    """메인 창이 **화면에 그려진 뒤** 스플래시를 닫는다.
+
+    `QSplashScreen.finish(window)`는 창이 그려지기를 기다리지 않아, 이어지는 무거운
+    첫 그리기 동안 빈 화면이 났다. 여기서는 창의 첫 Paint 이벤트(또는 이미 노출된
+    상태)를 확인한 뒤에야 닫고, 끝내 안 뜨면 `SPLASH_TIMEOUT_MS` 뒤에 닫는다.
+    스플래시를 부모로 삼아 함께 산다 — 신호는 바운드 메서드로만 잇는다.
+    """
+
+    def __init__(self, splash: QWidget, window: QWidget) -> None:
+        super().__init__(splash)
+        self._splash = splash
+        self._window = window
+        self._done = False
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._close_splash)
+        self._timer.start(SPLASH_TIMEOUT_MS)
+        window.installEventFilter(self)
+        if self._is_exposed():
+            self._schedule_close()
+
+    def _is_exposed(self) -> bool:
+        handle = self._window.windowHandle()
+        return bool(self._window.isVisible() and handle is not None and handle.isExposed())
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if not self._done and event.type() == QEvent.Type.Paint and obj is self._window:
+            self._schedule_close()
+        return False
+
+    def _schedule_close(self) -> None:
+        # 지금 처리 중인 paint 가 끝난 뒤에 닫는다.
+        if not self._done:
+            self._done = True
+            QTimer.singleShot(0, self._close_splash)
+
+    def _close_splash(self) -> None:
+        self._done = True
+        self._timer.stop()
+        try:
+            self._window.removeEventFilter(self)
+            self._splash.close()
+        except RuntimeError:
+            logger.debug("스플래시 닫기 — 이미 파괴된 위젯")
+
+
+def finish_splash(splash: QWidget, window: QWidget) -> None:
+    """`window.show()` **다음에** 부른다. 창이 화면에 나타난 뒤 스플래시를 닫는다."""
+    _SplashCloser(splash, window)
 
 
 def install_pending_update() -> None:

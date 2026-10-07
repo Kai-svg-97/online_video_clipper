@@ -15,6 +15,13 @@
 스플래시를 띄운 **뒤에** 임포트한다 — 그래야 사용자가 아이콘을 누른 직후 창을 본다
 (프로젝트가 명시적으로 최적화한 항목이다). 이 순서를 바꾸면 시작이 눈에 띄게
 느려진다.
+
+## 스플래시는 창이 뜬 **뒤에** 닫는다
+
+`window.show()` → `finish_splash(splash, window)` 순서다. 스플래시는 `QSplashScreen`이
+아니라 프레임 없는 `QLabel`이고(`QSplashScreen.show()`는 약 1초), 창이 실제로 그려진
+뒤에 닫힌다. 순서를 거꾸로 하면 첫 그리기 동안 빈 화면이 난다
+(`tests/unit/test_main_startup_order.py`).
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ def main() -> int:
     # 1. Qt 로그 억제 — Qt를 쓰기 전에 걸어야 초기 메시지까지 잡힌다.
     from bootstrap.runtime import (
         create_qt_app,
+        finish_splash,
         install_pending_update,
         install_qt_message_filter,
         show_splash,
@@ -101,9 +109,11 @@ def main() -> int:
         UpdateController(graph.handlers.updater.check, graph.handlers.updater.download, window)
     )
 
-    # 10. 스플래시 닫고 창 표시.
-    splash.finish(window)
+    # 10. 창을 **먼저** 보이고, 창이 화면에 그려진 뒤 스플래시를 닫는다.
+    #     `QSplashScreen.finish(window)`를 show 전에 부르면 창이 그려지기 전에
+    #     스플래시가 사라져 빈 화면이 난다.
     window.show()
+    finish_splash(splash, window)
 
     # 두 번째 인스턴스가 실행되면 이 창을 앞으로 부른다(그쪽은 즉시 종료된다).
     guard.set_activate_callback(_make_activator(window))

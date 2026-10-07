@@ -644,7 +644,8 @@ class LibraryPanel(
             self._monitoring_vm.subscriptions_changed.connect(self._refresh_unified_tree)
             self._monitoring_vm.import_yt_finished.connect(self._on_subs_synced)
             self._monitoring_vm.error_occurred.connect(self._on_subs_sync_error)
-            QTimer.singleShot(0, self._monitoring_vm.load)
+            # load 는 MonitoringPanel 이 한 번만 예약한다 — 둘 다 부르면 구독 조회가
+            # 두 번 돈다. 결과는 subscriptions_changed 신호로 이 트리에도 전달된다.
         self._vm.yt_import_finished.connect(self._on_yt_import_finished)
 
         self._view_group.idClicked.connect(self._on_view_button_clicked)

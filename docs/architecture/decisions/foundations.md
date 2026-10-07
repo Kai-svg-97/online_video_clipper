@@ -25,6 +25,18 @@
   - **`last_played_at` race condition**: 재생 위치 저장 시 **단조 증가 쿼리**(`UPDATE … SET last_played_at = MAX(last_played_at, ?), last_position_ms = ?, watched = ?`)로 지난 시간이 덮어쓰이지 않게 한다. 동시 저장이 일어나도 더 큰 타임스탐프만 유지된다.
   - **예외 로그 누락**: 네트워크 실패 경로(`infrastructure/browser/gemini_extractor.py`, `infrastructure/song/lyrics_providers.py`)에서 각 출처별 실패를 `logger.debug` 대신 **`logger.warning`("자동화 브라우저 감지", exc_info=True)** 등으로 명시적으로 기록해, 사후 진단이 가능하게 함. 격리된 예외(계속 다음 출처로 진행)는 `logger.debug`에 그치지만, 전체 경로가 폐기될 수 있는 판단에는 최소 `logger.info` 수준으로 의사결정 근거를 남긴다.
 
+## 스플래시는 창이 뜬 뒤에 닫는다 — 시작 체감 (2026-10, 성능 배치 1)
+
+`QSplashScreen.show()`가 약 1초 걸렸다(같은 플래그의 `QLabel`은 약 50ms) → 프레임 없는
+`QLabel`로 교체(`bootstrap.runtime.show_splash`). `finish`를 `window.show()` 전에 부르면
+창이 그려지기 전에 스플래시가 사라져 약 1초 빈 화면이 났다 → `finish_splash`를 show **뒤**에
+불러 창의 첫 Paint를 확인한 뒤 닫는다(안전 상한 `SPLASH_TIMEOUT_MS` 10초). 다만 **순서만 바꾸면
+그동안 가려져 있던 `DownloadPanel`의 생성자 `refresh`(이력 50건, 약 0.4~0.6초)가 화면에
+드러난다** — 그래서 같은 변경에서 첫 갱신을 첫 `showEvent`로 미뤘다(숨은 동안 신호는
+dirty 표시만). 같은 이유로 `MonitoringVM.load` 중복 예약(라이브러리·모니터링 패널 각자)도
+모니터링 패널 한 곳으로 합쳤다. 계약: `tests/unit/test_main_startup_order.py`,
+`tests/gui/test_splash.py`, `tests/gui/test_download_panel_lazy_refresh.py`.
+
 ## DB 백업은 파일을 복사하는 일이 아니다 (v1.28)
 
 라이브러리 DB는 WAL 모드로 열린다. `.db` 파일 하나만 복사하면 `-wal` 사이드카에 아직
