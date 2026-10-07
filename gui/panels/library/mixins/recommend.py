@@ -10,7 +10,9 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import (
+    QCoreApplication,
     QEasingCurve,
+    QEvent,
     QVariantAnimation,
 )
 
@@ -352,24 +354,41 @@ class RecommendStripMixin:
         if strip.isHidden():
             return
         # 사용자가 핸들로 맞춰 둔 높이를 기억했다가 다시 올라올 때 그대로 복원한다.
+        # 연출 도중에는 저장하지 않는다 — 연출 중의 높이는 사용자가 맞춘 값이 아니다
+        # (예전에는 연출 중간 높이가 사용자 높이로 저장돼 다음 등장이 짧아졌다).
         sizes = self._centre_splitter.sizes()
-        if len(sizes) == 2 and strip.is_expanded and sizes[1] > strip.HEADER_H + 20:
+        if (
+            self._recommend_anim is None
+            and len(sizes) == 2
+            and strip.is_expanded
+            and sizes[1] > strip.HEADER_H + 20
+        ):
             self._recommend_height = sizes[1]
         self._animate_recommend_out()
 
-    def _animate_recommend_in(self, target: int) -> None:
-        """스트립 높이를 0→target으로 늘려 아래에서 올라오는 것처럼 보이게 한다.
+    def _recommend_visible_height(self) -> int:
+        """스트립이 지금 화면에 드러나 있는 높이(연출 중이면 중간 값)."""
+        strip = self._recommend_strip
+        if strip.isHidden():
+            return 0
+        splitter = self._centre_splitter
+        offset = max(strip.y() - (splitter.height() - strip.height()), 0)
+        return max(strip.height() - offset, 0)
 
-        스플리터는 자식의 ``maximumHeight``를 존중하므로(그리고 그 값이
-        ``qSmartMinSize``의 상한이 되어 최소 높이도 함께 눌린다) ``setSizes``만으로는
-        0에서 시작할 수 없다. 그래서 maximumHeight를 애니메이션하고, 끝나면 원래
-        값(_QWIDGET_MAX_H)으로 되돌려 사용자가 핸들로 다시 조절할 수 있게 한다.
+    def _animate_recommend_in(self, target: int) -> None:
+        """스트립이 아래에서 올라오는 것처럼 보이게 한다.
+
+        스플리터 배분은 **시작할 때 한 번만** 최종 높이로 정하고(목록 재배치 1회), 연출
+        동안은 스트립을 **위치만** 옮긴다 — 최종 자리보다 아래로 밀어 두면 스플리터 영역
+        밖은 잘려 보이지 않고, 위로 올리면 올라오는 것처럼 보인다. 예전에는 매 프레임
+        ``setMaximumHeight`` + ``setSizes``라 라이브러리 목록이 프레임마다 다시 배치되고
+        그려졌다(실측: 프레임당 22~48ms, 약 10fps). 끝에서 한 번 더 자리를 맞춘다.
         """
         strip = self._recommend_strip
         splitter = self._centre_splitter
         target = max(int(target), strip.HEADER_H)
         # 접히는 중이었다면 그 높이에서 이어 올라간다(0으로 튀지 않게).
-        start = 0 if strip.isHidden() else min(max(strip.height(), 0), target)
+        start = min(self._recommend_visible_height(), target)
         self._stop_recommend_anim()
         total = sum(splitter.sizes()) or splitter.height()
         if total <= target + 80:
@@ -377,29 +396,43 @@ class RecommendStripMixin:
             strip.setVisible(True)
             self._sync_recommend_sizes(strip.is_expanded, save=False)
             return
-        strip.setMaximumHeight(start)
         strip.setVisible(True)
+        splitter.setSizes([max(total - target, 0), target])
+        # 보이게 만든 일이 남긴 레이아웃 요청을 지금 처리한다 — 남겨 두면 첫 프레임 뒤에
+        # 스트립이 최종 자리로 튀었다가 다시 내려가는 깜빡임이 생긴다.
+        # (레이아웃이 다시 요청을 남기는 경우가 있어 몇 번 비운다.)
+        for _ in range(3):
+            QCoreApplication.sendPostedEvents(splitter, QEvent.Type.LayoutRequest)
+            QCoreApplication.sendPostedEvents(strip, QEvent.Type.LayoutRequest)
+
+        def _place(value: int) -> None:
+            slot_y = splitter.height() - strip.height()
+            strip.move(strip.x(), slot_y + strip.height() - int(value))
 
         def _done() -> None:
             try:
+                now =sum(splitter.sizes()) or splitter.height()
                 strip.setMaximumHeight(_QWIDGET_MAX_H)
-                splitter.setSizes([max(total - target, 0), target])
+                splitter.setSizes([max(now - target, 0), target])
             except RuntimeError:
                 logger.debug("추천 스트립이 이미 정리됨 — 등장 마무리 생략")
-            self._recommend_anim = None
 
-        self._start_recommend_anim(start, target, total, _done)
+        self._start_recommend_anim(start, target, _place, _done)
 
     def _animate_recommend_out(self) -> None:
-        """스트립을 아래로 접으며 감춘다(등장 연출의 역순)."""
+        """스트립을 아래로 내려 감춘다(등장 연출의 역순). 목록 재배치는 끝에서 1회뿐이다."""
         strip = self._recommend_strip
         splitter = self._centre_splitter
-        start = max(strip.height(), 0)
+        start = self._recommend_visible_height()
         self._stop_recommend_anim()
         total = sum(splitter.sizes()) or splitter.height()
         if start <= 0 or total <= start:
             strip.setVisible(False)      # 아직 배치 전 — 연출할 높이가 없다
             return
+
+        def _place(value: int) -> None:
+            slot_y = splitter.height() - strip.height()
+            strip.move(strip.x(), slot_y + strip.height() - int(value))
 
         def _done() -> None:
             try:
@@ -407,17 +440,12 @@ class RecommendStripMixin:
                 strip.setMaximumHeight(_QWIDGET_MAX_H)
             except RuntimeError:
                 logger.debug("추천 스트립이 이미 정리됨 — 퇴장 마무리 생략")
-            self._recommend_anim = None
 
-        self._start_recommend_anim(start, 0, total, _done)
+        self._start_recommend_anim(start, 0, _place, _done)
 
-    def _start_recommend_anim(self, start: int, end: int, total: int, on_done) -> None:
-        """스트립 높이(maximumHeight + 스플리터 배분)를 start→end로 움직인다."""
-        strip = self._recommend_strip
-        splitter = self._centre_splitter
-
-        # 아래 클로저가 참조할 애니메이션 — 생성 뒤에 채운다. `self`를 캡처하지 않으려고
-        # 한 칸짜리 목록을 쓴다(패널을 붙드는 클로저를 늘리지 않는다).
+    def _start_recommend_anim(self, start: int, end: int, place, on_done) -> None:
+        """스트립 노출 높이를 start→end로 움직인다(``place``가 위치만 옮긴다)."""
+        # 아래 클로저가 참조할 애니메이션 — 생성 뒤에 채운다.
         holder: list = []
 
         def _step(value) -> None:
@@ -425,13 +453,18 @@ class RecommendStripMixin:
             # 파괴로 프로세스가 죽지 않는다 — `gui/anim.py:track_animation` 참고).
             # 그 대가로 대상 위젯이 먼저 사라질 수 있으므로 여기서 막는다. 이건
             # 잡을 수 있는 RuntimeError이고, 대안(실행 중 파괴)은 access violation이다.
-            h = int(value)
             try:
-                strip.setMaximumHeight(h)
-                splitter.setSizes([max(total - h, 0), h])
+                place(int(value))
             except RuntimeError:
                 if holder:
                     holder[0].stop()   # 대상이 사라졌으니 더 돌 이유가 없다
+
+        def _finished() -> None:
+            # 중간에 멈추거나 새 연출로 바뀐 애니메이션의 마무리는 건너뛴다.
+            if not holder or self._recommend_anim is not holder[0]:
+                return
+            on_done()
+            self._recommend_anim = None
 
         # **부모를 주지 않는다.** 실행 중인 애니메이션을 패널의 자식으로 두면, 패널이
         # 파괴될 때 C++ 소멸자가 자식 애니메이션까지 지우면서 프로세스가 죽는다
@@ -443,10 +476,14 @@ class RecommendStripMixin:
         anim.setDuration(_RECOMMEND_REVEAL_MS)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         anim.valueChanged.connect(_step)
-        anim.finished.connect(on_done)
+        anim.finished.connect(_finished)
         self._recommend_anim = anim
         holder.append(anim)
         track_animation(anim)
+        try:
+            place(int(start))   # 첫 프레임을 기다리지 않고 시작 위치부터 맞춘다
+        except RuntimeError:
+            logger.debug("추천 스트립이 이미 정리됨 — 시작 위치 생략")
         anim.start()
 
     def _stop_recommend_anim(self) -> None:
@@ -456,6 +493,9 @@ class RecommendStripMixin:
             anim.stop()
             try:
                 self._recommend_strip.setMaximumHeight(_QWIDGET_MAX_H)
+                # 옮겨 둔 스트립을 스플리터가 정한 자리로 되돌린다(배분은 그대로).
+                sizes = self._centre_splitter.sizes()
+                self._centre_splitter.setSizes(sizes)
             except RuntimeError:
                 logger.debug("추천 스트립이 이미 정리됨 — 높이 복원 생략")
 

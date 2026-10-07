@@ -372,3 +372,43 @@
 - **피드 세대(C3).** 전역 `_gen`이면 배경 감시(`__watch__`)가 끼는 순간 진행 중이던 사용자 조회 결과가
   통째로 버려졌다. 세대를 키별(`_gens`)로 두어 같은 키의 새 요청만 옛 요청을 대체한다. 다른 키 결과는 그 키의
   캐시와 `feed_key_changed`만 갱신하고, `feed`·`feed_changed`는 마지막으로 요청한 키만 반영한다.
+
+## 연관 썸네일과 추천 띠 — 성능 배치 8 (2026-10)
+
+실측 근거: `.omc/research/perf/batch8/findings.md`. 시험: `test_related_row_thumb.py`·
+`test_recommend_strip_update.py`·`test_recommend_reveal_layout.py`·`test_panel_teardown.py::TestRecommendRevealTeardown`.
+
+- **연관 행이 라이브러리 썸네일을 한 번도 쓰지 못했다(경로 결함).** `VideoDTO.thumbnail_path`는
+  상대 파일명인데 `_RelatedRow._load_thumb`가 `THUMBNAIL_DIR`과 합치지 않아 30개 중 0개가
+  존재로 판정됐다. 그래서 늘 `feed_` 사본, 그것도 없으면 행마다 네트워크로 떨어졌다(`feed_` 파일이
+  3,064개 쌓인 이유). 지금은 `Path(THUMBNAIL_DIR) / thumb_path`(절대 경로는 그대로)로 푼다.
+  **경로만 고치면 더 느렸을 것이다** — 1280×720이 섞여 30장 전체 디코드가 119ms(축소 디코드 44ms).
+  그래서 디코드를 메인 스레드에서 워커(`_ThumbLoader`)로 옮기고 `_decode_scaled`로 축소한다.
+  원천 순서는 라이브러리 → `feed_` 사본 → URL이며 **앞 원천이 깨졌으면 다음으로 내려간다**
+  (옛 코드는 깨진 라이브러리 파일에서 `return`해 영구히 빈칸이었다). 원천이 없으면 스레드를 띄우지
+  않는다. 도착은 `fade_in`, 캐시 `put`은 메인 스레드(슬롯)에서만 한다. 실측: 첫 진입
+  `row._load_thumb` 53ms → 목표 ≤10ms.
+- **추천 띠가 부분 → 최종 결과마다 카드를 지우고 다시 만들었다.** 18장이 2번 생성되어 썸네일 로더가
+  36개(네트워크 요청 2배)였다. `RecommendStrip.set_items`가 URL 키로 카드를 재사용해 제자리에서
+  갱신한다(`_FeedCard.update_dto`). 순서·줄어듦·새 영상 혼입을 처리하고, 같은 URL이 여러 번이면
+  버킷으로 대응한다. 라이브러리 포함 여부가 달라지면(배지 구성이 바뀜) 그 카드만 새로 만든다.
+  로더 36 → 18.
+- **디스크(`feed_`) 적중 썸네일이 메모리 캐시에 안 들어갔다.** 네트워크 경로(`_on_thumb_loaded`)에서만
+  `put`해서 재조회·재생성마다 디스크 디코드(카드당 약 1.7ms × 18)를 반복했다. 이제 표시 크기로 축소
+  디코드해 `_feed_thumb_cache`(`"{vid}@{W}x{H}"`)에 넣는다. 깨진 파일은 캐시를 오염시키지 않고
+  URL로 내려간다.
+- **등장·퇴장 연출이 매 프레임 목록 전체를 다시 배치했다.** 프레임마다 `setMaximumHeight` +
+  `splitter.setSizes`라 라이브러리 목록이 22~48ms씩 다시 그려졌다(약 10fps, 20ms 이상
+  `processEvents` 합 631ms). 지금은 시작할 때 스플리터 배분을 최종 높이로 **한 번** 정하고, 연출 동안은
+  스트립 **위치만** 옮긴다(스플리터 영역 밖은 잘려 보이지 않는다). 시작 직후 남는 레이아웃 요청은
+  `sendPostedEvents`로 미리 비운다 — 안 비우면 첫 프레임 뒤 스트립이 최종 자리로 튀었다 내려간다.
+  퇴장은 끝에서 숨기는 1회만 목록을 배치한다. `panel._recommend_anim` 계약과 `track_animation`은 그대로다.
+  **대가:** 목록이 연출 시작 시점에 한 번에 줄어들고(연출 중 목록과 띠 사이는 빈 바탕), 퇴장 때는
+  끝에서 한 번에 늘어난다.
+- **연출 도중 `_hide_recommend_strip`이 중간 높이를 사용자 높이로 저장했다(결함).** 연출 중의 높이는
+  사용자가 핸들로 맞춘 값이 아닌데 `_recommend_height`에 들어가 다음 등장이 짧아졌다. 연출 중
+  (`_recommend_anim`이 있을 때)에는 저장하지 않는다. 새 방식에서는 스플리터 높이가 연출 내내 최종값이라
+  이 결함이 구조적으로도 사라진다.
+- **보류:** 몰려 도착하는 썸네일 페이드 합치기(D5-d). CLAUDE.md의 `fade_in` 규칙은 그대로다.
+
+**연관 행 썸네일 로더는 동시에 3개까지만 돌린다.** 행마다 로더를 즉시 띄우면(최대 30개) 로더들이 `_decode_scaled`에서 GIL을 다퉈 메인 스레드 시간을 잠식했다 — 상세 첫 진입 중앙값 +41ms 중 `related.set_items`가 +28ms(`.omc/research/perf/batch8/outlier_ab.md`). 그래서 `gui/panels/detail/related.py`의 `_ThumbScheduler`가 `RELATED_THUMB_CONCURRENCY = 3`개까지만 동시에 돌리고 나머지는 위에서 아래 순으로 대기시킨다(보이는 행 먼저). 3은 디스크 디코드가 CPU 바운드라 더 늘려도 처리량은 그대로고 GIL 경쟁만 커지는 점과, 30개가 모두 도착하기까지의 체감 지연 사이의 절충이다. 슬롯 반환은 행이 아니라 스케줄러의 바운드 메서드가 로더 `finished`로 받는다(행이 먼저 죽어도 대기열이 멈추지 않는다). 목록을 다시 채우면 대기 중 항목은 버리고 실행 중 로더는 `retire_thread`로 정리하며, 메모리 캐시 적중·원천 없음은 지금처럼 로더를 띄우지 않는다. `tests/gui/test_related_row_thumb.py::TestLoaderConcurrency`가 고정한다.

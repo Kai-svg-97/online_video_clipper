@@ -204,19 +204,34 @@ class TestStripVisibility:
 class TestRevealAnimation:
     """숨어 있던 스트립이 0에서 목표 높이까지 자라며 올라온다."""
 
-    def test_준비되면_높이가_0에서_목표까지_자란다(self, panel, qtbot):
+    def test_준비되면_띠가_아래에서_목표_위치까지_올라온다(self, panel, qtbot):
+        # 스플리터 배분은 시작할 때 최종 높이로 한 번 정하고, 연출 중에는 띠 위치만
+        # move()로 옮긴다 — 그래서 높이가 아니라 위쪽 가장자리 y로 판정한다.
+        from PyQt6.QtCore import QPoint
+
         panel.resize(1280, 800)
         panel.show()
         qtbot.waitExposed(panel)
+        strip = panel._recommend_strip
 
         panel._on_recommend_items([_feed_dto()])
 
-        # 시작 프레임 — 아직 목표 높이에 한참 못 미친다(= 아래에서 올라오는 중)
         assert panel._recommend_anim is not None
-        assert panel._recommend_strip.maximumHeight() < panel._recommend_height
+        ys: list[int] = [strip.mapTo(panel, QPoint(0, 0)).y()]
+        panel._recommend_anim.valueChanged.connect(
+            lambda *_: ys.append(strip.mapTo(panel, QPoint(0, 0)).y())
+        )
 
-        qtbot.wait(_RECOMMEND_REVEAL_MS + 300)
+        qtbot.waitUntil(lambda: panel._recommend_anim is None, timeout=3000)
+        qtbot.wait(50)
 
+        final_y = strip.mapTo(panel, QPoint(0, 0)).y()
+        # 연출이 실제로 돌았다 — 프레임이 여러 번, 서로 다른 중간 값이 존재.
+        assert len(ys) >= 5, f"프레임 {len(ys)}회뿐: {ys}"
+        assert len(set(ys)) >= 3, f"위쪽 가장자리가 {len(set(ys))}단계뿐: {ys}"
+        # 시작 직후엔 최종 자리보다 아래, 끝나면 최종 자리.
+        assert ys[0] > final_y, f"시작 y={ys[0]}, 최종 y={final_y}"
+        assert max(ys) > final_y
         assert panel._recommend_anim is None
         assert panel._centre_splitter.sizes()[1] == panel._recommend_height
         # 끝난 뒤엔 사용자가 스플리터 핸들로 다시 늘릴 수 있어야 한다.

@@ -33,6 +33,7 @@ from application.library.dtos import CategoryDTO, ChannelInfoDTO, FeedVideoDTO
 from config.settings import THUMBNAIL_DIR
 from gui.anim import fade_in
 from gui.themes.manager import ThemeManager
+from gui.panels.library.thumbnails import _decode_scaled
 from gui.workers import track_thread
 
 from gui.themes.colors import sem, tok
@@ -118,6 +119,8 @@ def start_thumb_loader(
     on_loaded,
     prefix: str = "feed",
     size: tuple[int, int] = (640, 360),
+    local_paths: tuple[str, ...] = (),
+    on_finished=None,
 ) -> "_ThumbLoader":
     """썸네일 로더를 안전하게 띄운다.
 
@@ -125,10 +128,16 @@ def start_thumb_loader(
     프로세스를 죽인다. 그래서 **부모를 주지 않고** ``track_thread``가 끝날 때까지 붙든다.
     ``on_loaded``는 반드시 **QObject의 바운드 메서드**여야 한다 — 수신 위젯이 사라지면
     Qt가 연결을 자동으로 끊어 죽은 위젯을 건드리지 않는다(람다는 그 보호를 못 받는다).
+
+    ``local_paths``는 URL보다 먼저 시도할 디스크 파일이다(예: 라이브러리 썸네일). 깨졌거나
+    없으면 ``{prefix}_{vid_id}`` 사본, 그다음 URL 순으로 내려간다. 디코드는 워커에서 한다.
     """
-    loader = _ThumbLoader(url, vid_id, None, prefix=prefix, size=size)
+    loader = _ThumbLoader(url, vid_id, None, prefix=prefix, size=size, local_paths=local_paths)
     track_thread(loader)
     loader.loaded.connect(on_loaded)
+    if on_finished is not None:
+        # 시작 전에 연결해야 아주 빨리 끝나는 워커의 finished를 놓치지 않는다.
+        loader.finished.connect(on_finished)
     loader.start()
     return loader
 
@@ -143,27 +152,38 @@ class _ThumbLoader(QThread):
         parent=None,
         prefix: str = "feed",
         size: tuple[int, int] = (640, 360),
+        local_paths: tuple[str, ...] = (),
     ) -> None:
         super().__init__(parent)
         self._url = url
         self._vid = vid_id
         self._prefix = prefix
         self._size = size
+        self._local_paths = tuple(local_paths)
+
+    def _emit_disk(self, path: str) -> bool:
+        """디스크 파일을 표시 크기로 디코드해 내보낸다. 깨졌으면 False(다음 원천으로)."""
+        sw, sh = self._size
+        img = _decode_scaled(path, sw, sh)
+        if img is None or img.isNull():
+            return False
+        self.loaded.emit(self._vid, img.scaled(
+            sw, sh,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+        return True
 
     def run(self) -> None:
         sw, sh = self._size
         with _THUMB_SEMA:
+            for path in self._local_paths:
+                if self._emit_disk(path):
+                    return
             for ext in ("jpg", "jpeg", "webp", "png"):
                 cached = THUMBNAIL_DIR / f"{self._prefix}_{self._vid}.{ext}"
-                if cached.exists():
-                    img = QImage(str(cached))
-                    if not img.isNull():
-                        self.loaded.emit(self._vid, img.scaled(
-                            sw, sh,
-                            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                            Qt.TransformationMode.SmoothTransformation,
-                        ))
-                        return
+                if cached.exists() and self._emit_disk(str(cached)):
+                    return
             if not self._url:
                 return
             try:
@@ -399,13 +419,7 @@ class _FeedCard(QFrame):
 
         # 하단 행: 메타 (조회수·업로드일). 카테고리/재생목록 추가는 우클릭 메뉴로 일원화해
         # 라이브러리 아이콘 카드와 외형을 통일한다.
-        meta_parts = []
-        if self._dto.view_count:
-            meta_parts.append(_fmt_views(self._dto.view_count))
-        rel = _relative_time(self._dto.published_at)
-        if rel:
-            meta_parts.append(rel)
-        self._meta_lbl = QLabel("  •  ".join(meta_parts))
+        self._meta_lbl = QLabel(self._meta_text())
         f3 = QFont()
         f3.setPointSize(8)
         self._meta_lbl.setFont(f3)
@@ -418,6 +432,29 @@ class _FeedCard(QFrame):
             badge.setFont(f4)
             badge.setStyleSheet(f"color: {sem('success')};")
             layout.addWidget(badge)
+
+    def _meta_text(self) -> str:
+        meta_parts = []
+        if self._dto.view_count:
+            meta_parts.append(_fmt_views(self._dto.view_count))
+        rel = _relative_time(self._dto.published_at)
+        if rel:
+            meta_parts.append(rel)
+        return "  •  ".join(meta_parts)
+
+    def update_dto(self, dto: FeedVideoDTO) -> None:
+        """같은 영상의 새 DTO(부분 → 최종 결과)로 카드를 제자리에서 갱신한다.
+
+        썸네일 라벨과 로더는 건드리지 않는다 — 이미 받은 그림이 깜빡이지 않고 로더도
+        늘지 않는다. 라이브러리 포함 여부처럼 구성이 달라지는 경우는 호출부가 새로 만든다.
+        """
+        self._dto = dto
+        self._title_lbl.setText(dto.title)
+        self._channel_lbl.setText(dto.channel_name)
+        if self._show_channel:
+            self._thumb_lbl.set_channel(dto.channel_name)
+        self._meta_lbl.setText(self._meta_text())
+        self._thumb_lbl.set_duration(_fmt_duration(dto.duration_sec) if dto.duration_sec else "")
 
     def _start_thumb_load(self) -> None:
         vid_id = self._dto.yt_video_id or self._dto.url.split("v=")[-1].split("&")[0][:11]
@@ -432,9 +469,12 @@ class _FeedCard(QFrame):
         for ext in ("jpg", "jpeg", "webp", "png"):
             cached = THUMBNAIL_DIR / f"feed_{vid_id}.{ext}"
             if cached.exists():
-                img = QImage(str(cached))
-                if not img.isNull():
+                # 표시 크기로 축소 디코드하고 메모리 캐시에도 넣는다(put은 메인 스레드에서만).
+                # 깨진 파일은 None이라 캐시를 오염시키지 않고 다음 원천(URL)으로 내려간다.
+                img = _decode_scaled(str(cached), self._TW * 2, self._TH * 2)
+                if img is not None and not img.isNull():
                     self._thumb_lbl.set_image(img)
+                    _feed_thumb_cache.put(cache_key, self._thumb_lbl._pixmap)
                     return
         url = self._dto.thumbnail_url
         if not url:
@@ -847,27 +887,62 @@ class RecommendStrip(QWidget):
         self._empty_lbl.setVisible(self._expanded)
 
     def set_items(self, items: list[FeedVideoDTO]) -> None:
-        self.clear()
+        """목록을 통째로 바꾼다 — 같은 영상(URL)의 카드는 **제자리에서 갱신**한다.
+
+        부분 결과(조회수·게시일 없음) 뒤에 최종 결과가 같은 영상으로 오므로, 매번 지우고
+        다시 만들면 카드 생성·썸네일 로더가 2배가 된다(실측: 로더 36개 대 18개).
+        """
         self._more_exhausted = False   # 씨앗이 바뀌면 다시 더 받을 수 있다
-        self.append_items(items)
+        if not items:
+            self.clear()
+            return
+        old: dict[str, list[_FeedCard]] = {}
+        for c in self._cards:
+            old.setdefault(c._dto.url, []).append(c)
+        new_cards: list[_FeedCard] = []
+        for dto in items:
+            bucket = old.get(dto.url)
+            if bucket and bucket[0]._dto.in_library == dto.in_library:
+                card = bucket.pop(0)
+                card.update_dto(dto)
+            else:
+                card = self._make_card(dto)
+            new_cards.append(card)
+        for bucket in old.values():
+            for gone in bucket:
+                self._row.removeWidget(gone)
+                gone.setParent(None)
+                gone.deleteLater()
+        # 마지막 stretch 앞에서 입력 순서대로 맞춘다(이미 맞는 자리는 건드리지 않는다).
+        for i, card in enumerate(new_cards):
+            if self._row.indexOf(card) == i:
+                continue
+            self._row.removeWidget(card)
+            self._row.insertWidget(i, card)
+        self._cards = new_cards
+        self._empty_lbl.hide()
+
+    def _make_card(self, dto: FeedVideoDTO) -> "_FeedCard":
+        card = _FeedCard(
+            dto,
+            show_channel=True,
+            thumb_size=self.THUMB_SIZE,
+            draggable=True,
+        )
+        card.video_clicked.connect(self.video_clicked)
+        card.download_requested.connect(self.download_requested)
+        card.add_to_category_requested.connect(self.add_to_category_requested)
+        card.add_to_playlist_requested.connect(self.add_to_playlist_requested)
+        if dto.duration_sec:
+            card._thumb_lbl.set_duration(_fmt_duration(dto.duration_sec))
+        return card
 
     def append_items(self, items: list[FeedVideoDTO]) -> None:
         if not items:
             self._empty_lbl.setVisible(self._expanded and not self._cards)
             return
         for dto in items:
-            card = _FeedCard(
-                dto,
-                show_channel=True,
-                thumb_size=self.THUMB_SIZE,
-                draggable=True,
-            )
-            card.video_clicked.connect(self.video_clicked)
-            card.download_requested.connect(self.download_requested)
-            card.add_to_category_requested.connect(self.add_to_category_requested)
-            card.add_to_playlist_requested.connect(self.add_to_playlist_requested)
-            if dto.duration_sec:
-                card._thumb_lbl.set_duration(_fmt_duration(dto.duration_sec))
+            card = self._make_card(dto)
             # 마지막 stretch 앞에 삽입해 카드가 왼쪽부터 채워지게 한다.
             self._row.insertWidget(self._row.count() - 1, card)
             self._cards.append(card)

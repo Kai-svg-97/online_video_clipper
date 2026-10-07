@@ -311,3 +311,88 @@ class TestThemeSignalAfterDestroy:
             f"그것을 연결할 것.\n--- 자식 출력 ---\n{combined[-2500:]}"
         )
         _assert_no_crash(result, "패널 파괴 후 테마 변경")
+
+
+# 추천 띠 연출 파괴 시험의 공통 준비 — `_run`이 str.format을 하므로 중괄호를 쓰지 않는다.
+_REVEAL_PREP = """
+import time
+from application.library.dtos import FeedVideoDTO
+from gui.anim import running_animation_count
+settings.RECOMMEND_STRIP_EXPANDED = True
+settings.RECOMMEND_STRIP_HEIGHT = 250
+from gui.panels.library_panel import LibraryPanel
+
+def pump(ms):
+    end = time.monotonic() + ms / 1000
+    while time.monotonic() < end:
+        app.processEvents()
+        app.sendPostedEvents(None, _DD)
+
+def feed_dto():
+    return FeedVideoDTO(
+        url="https://www.youtube.com/watch?v=rec00000001",
+        title="추천", channel_name="채널", channel_id="UC0",
+        thumbnail_url="", thumbnail_path="", published_at="",
+        view_count=None, duration_sec=100, in_library=False,
+        yt_video_id="rec00000001",
+    )
+
+vm = make_library_vm()
+p = LibraryPanel(vm=vm)
+p.resize(1280, 800)
+p.show()
+pump(150)
+"""
+
+
+class TestRecommendRevealTeardown:
+    """등장·퇴장 연출 도중 패널이 파괴돼도 프로세스가 살아남는다(배치 8 D5-c)."""
+
+    @staticmethod
+    def _check(result, what: str) -> None:
+        _assert_no_crash(result, what)
+        assert "Traceback" not in _out(result), (
+            f"{what}: 자식 출력에 Traceback이 있다 — 연출 콜백이 죽은 위젯을 건드렸다.\n"
+            f"{_out(result)[-2500:]}"
+        )
+
+    def test_recommend_reveal_destroyed_mid_animation(self):
+        result = _run(
+            _REVEAL_PREP
+            + """
+p._on_recommend_items([feed_dto()])
+pump(80)
+assert p._recommend_anim is not None, "ANIM-NOT-RUNNING"
+p.deleteLater()
+drain()
+del p
+drain()
+pump(400)
+vm.shutdown()
+assert running_animation_count() == 0, "ANIM-LEAK"
+print("HARNESS-OK", flush=True)
+"""
+        )
+        self._check(result, "추천 띠 등장 연출 중 파괴")
+
+    def test_recommend_hide_destroyed_mid_animation(self):
+        result = _run(
+            _REVEAL_PREP
+            + """
+p._on_recommend_items([feed_dto()])
+pump(700)
+assert p._recommend_anim is None, "REVEAL-NOT-FINISHED"
+p._hide_recommend_strip()
+pump(80)
+assert p._recommend_anim is not None, "ANIM-NOT-RUNNING"
+p.deleteLater()
+drain()
+del p
+drain()
+pump(400)
+vm.shutdown()
+assert running_animation_count() == 0, "ANIM-LEAK"
+print("HARNESS-OK", flush=True)
+"""
+        )
+        self._check(result, "추천 띠 퇴장 연출 중 파괴")
