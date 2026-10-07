@@ -98,6 +98,7 @@ class Services:
     summary_languages: tuple[str, ...]   # 요약 추출기가 만들 수 있는 언어
     stream_relay: Any            # StreamRelayGateway — IStreamRelay
     subtitle_source: Any         # YouTubeSubtitleSource — IVideoSubtitleSource
+    video_info: Any              # VideoInfoCache — IVideoInfoSource
     watch_folder_scan: Callable[[str], Any]   # 폴더 → ScanResult
     album_provider: Any
     sync_service: Any

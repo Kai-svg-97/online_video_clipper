@@ -18,6 +18,11 @@ class YouTubeSubtitleSource:
 
         return fetch_tracks_for_url(url, cookie_opts)
 
+    def tracks_from_info(self, info: dict) -> list:
+        from infrastructure.subtitle.youtube_subtitles import list_tracks  # noqa: PLC0415
+
+        return list_tracks(info or {})
+
     def fetch_cues(self, track) -> list:
         from infrastructure.subtitle.youtube_subtitles import fetch_cues  # noqa: PLC0415
 

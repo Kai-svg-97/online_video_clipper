@@ -341,6 +341,8 @@ Infrastructure (SQLite Repositories, yt-dlp, ffmpeg adapters)
 | `IEventBus` | 인프로세스 도메인 이벤트 디스패처 | `infrastructure.event_bus.EventBus` |
 | `IMediaSource` | 동영상 메타데이터·다운로드·재생목록/구독 조회 | `infrastructure.downloader.ytdlp_adapter.YtDlpAdapter` |
 | `IClipExtractor` | ffmpeg 클립/썸네일 추출 | `infrastructure.ffmpeg.ffmpeg_adapter.FfmpegAdapter` |
+| `IVideoInfoSource` | 영상 원본 info 조회·캐시(`info(url, client, fresh)`·`invalidate`). 재생 화면의 자막 목록·스트림·화질 목록이 같은 추출을 공유한다 | `infrastructure.media.video_info_cache.VideoInfoCache` |
+| `IVideoSubtitleSource` | 영상 자막 트랙 조회·내려받기. `tracks_from_info(info)`는 받아 둔 원본 info에서 네트워크 없이 트랙을 뽑는다 | `infrastructure.subtitle.gateway.YouTubeSubtitleSource` |
 
 `MediaSourceFactory`(진행률 콜백→`IMediaSource`)는 작업별 진행률 훅이 필요한 다운로드용 팩토리 타입이다.
 

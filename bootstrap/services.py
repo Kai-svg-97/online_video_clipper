@@ -18,6 +18,7 @@ from infrastructure.browser.gemini_extractor import (
 )
 from infrastructure.downloader.ytdlp_adapter import YtDlpAdapter
 from infrastructure.event_bus import EventBus
+from infrastructure.media.video_info_cache import VideoInfoCache
 from infrastructure.persistence.db_backup import DbBackup
 from infrastructure.ffmpeg.ffmpeg_adapter import FfmpegAdapter
 from infrastructure.song.audio_tagger import MutagenAudioTagger
@@ -125,6 +126,8 @@ def build_services(db) -> Services:
         # 중계 서버는 첫 재생 때 뜬다 — 이 객체는 포트를 열지 않는다.
         stream_relay=StreamRelayGateway(),
         subtitle_source=YouTubeSubtitleSource(),
+        # 영상 원본 info 캐시 — 상세 화면의 자막·스트림·화질 목록이 공유한다(첫 조회 때 yt-dlp).
+        video_info=VideoInfoCache(),
         watch_folder_scan=scan_watch_folder,
         album_provider=build_default_album_provider(),
         sync_service=SyncService(db),

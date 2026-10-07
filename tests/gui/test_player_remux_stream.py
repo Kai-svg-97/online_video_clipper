@@ -11,6 +11,7 @@ seek은 ffmpeg를 그 지점에서 새로 띄우는 방식이라, 재생기의 �
 from __future__ import annotations
 
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtMultimedia import QMediaPlayer
 
 from gui.widgets.video_player import InlinePlayer
@@ -32,6 +33,20 @@ def player(qapp_instance, qtbot):
 def _ready(player: InlinePlayer) -> None:
     """워커가 remux 스트림을 넘겨준 상태를 만든다."""
     player._on_stream_ready(_PLAY_URL, "1080p", False, _DURATION)
+
+
+@pytest.fixture()
+def clock(monkeypatch):
+    """seek 쿨다운 시계 — 쓰는 쪽 모듈(timeline)의 시계를 가변 셀로 바꾼다(ms)."""
+    cell = [0]
+    monkeypatch.setattr(
+        "gui.widgets.player.mixins.timeline._monotonic_ms", lambda: cell[0]
+    )
+    return cell
+
+
+def _source(player: InlinePlayer) -> str:
+    return player._player.source().toString()
 
 
 class TestRemuxStreamSetup:
@@ -70,13 +85,25 @@ class TestRemuxPosition:
 
 
 class TestRemuxSeek:
-    def test_seek은_바로_반영되지_않고_모였다_나간다(self, player, qtbot):
-        """J/L 연타마다 ffmpeg를 새로 띄우면 화면이 멎는다."""
+    def test_직전_커밋_직후의_seek은_바로_반영되지_않고_모였다_나간다(
+        self, player, qtbot, clock
+    ):
+        """J/L 연타마다 ffmpeg를 새로 띄우면 화면이 멎는다.
+
+        배치 6(A8)으로 바뀐 기대값: 첫 seek은 즉시 나가고(쿨다운 밖), **그 직후(600ms
+        이내)** 의 seek만 모인다.
+        """
         _ready(player)
+        clock[0] = 0
+        player._seek_to(10_000)                  # 이력 없음 → 즉시 커밋
+        assert player._pending_seek_ms is None
+        assert _source(player).endswith("?ss=10.000")
+
+        clock[0] = 100
         player._seek_to(30_000)
         player._seek_to(60_000)
         assert player._pending_seek_ms == 60_000
-        assert player._player.source().toString().endswith("?ss=0.000")
+        assert _source(player).endswith("?ss=10.000")
 
         qtbot.waitUntil(lambda: player._pending_seek_ms is None, timeout=3000)
         assert player._stream_offset_ms == 60_000
@@ -94,10 +121,20 @@ class TestRemuxSeek:
         player._seek_relative(10)
         assert player._pending_seek_ms == 55_000
 
-    def test_길이를_넘겨_seek_하지_않는다(self, player):
+    def test_길이를_넘겨_seek_하지_않는다(self, player, clock):
         _ready(player)
+        clock[0] = 0
+        player._seek_to(1_000)                   # 쿨다운을 시작시킨다(즉시 커밋)
+        clock[0] = 100
         player._seek_to(_DURATION + 60_000)
         assert player._pending_seek_ms == _DURATION
+
+    def test_길이를_넘긴_첫_seek도_길이로_제한되어_즉시_나간다(self, player, clock):
+        _ready(player)
+        clock[0] = 0
+        player._seek_to(_DURATION + 60_000)
+        assert player._pending_seek_ms is None
+        assert _source(player).endswith(f"?ss={_DURATION / 1000:.3f}")
 
     def test_일반_소스는_재생기에게_그대로_맡긴다(self, player):
         player._on_stream_ready("http://direct/video.mp4", "360p", False, 0)
@@ -185,3 +222,178 @@ class TestFallbackToMerge:
         player.playback_finished.connect(lambda: finished.append(True))
         player._on_media_status(QMediaPlayer.MediaStatus.EndOfMedia)
         assert finished == [True]
+
+
+class TestSeekCooldown:
+    """A8 — 직전 커밋 뒤 600ms 이상 지났으면 즉시 커밋하고, 아니면 모아서 뒤에서 커밋한다.
+
+    단발 seek은 300ms 디바운스를 기다릴 이유가 없고(첫 반응이 늦어 보인다), 연타는
+    여전히 합쳐야 한다(ffmpeg를 매번 띄우면 화면이 멎는다). 모든 seek은 `_seek_to` 하나를
+    거치고, 대기 중이면 `position_ms`는 목표를 답한다(재생 스트림 규칙).
+    """
+
+    @pytest.fixture()
+    def sources(self, player, monkeypatch):
+        """커밋이 실제로 소스를 바꿀 때마다 URL을 기록한다(setSource 횟수 = 커밋 횟수)."""
+        # 실제 재생·오류가 상태(_close_remux 등)를 바꾸지 않게 한다 — 시험은 커밋 시점만 본다.
+        monkeypatch.setattr(player, "_do_play_start", lambda: None)
+        monkeypatch.setattr(player, "_fetch_stream", lambda: None)
+        _ready(player)
+        seen: list[str] = []
+        player._player.sourceChanged.connect(lambda url: seen.append(url.toString()))
+        return seen
+
+    def test_쿨다운_상수는_600ms다(self):
+        from gui.widgets.player.mixins import timeline
+
+        assert timeline.SEEK_IMMEDIATE_GAP_MS == 600
+
+    def test_첫_seek은_즉시_커밋된다(self, player, clock, sources):
+        """커밋 이력이 없는 첫 seek이 시계 0에서도 쿨다운에 걸리면 안 된다."""
+        clock[0] = 0
+        player._seek_to(30_000)
+
+        assert player._pending_seek_ms is None
+        assert _source(player).endswith("?ss=30.000")
+        assert player._seek_commit.isActive() is False
+        assert player.position_ms == 30_000
+        assert sources == [_source(player)]
+
+    def test_경계_600ms면_즉시_커밋된다(self, player, clock, sources):
+        clock[0] = 0
+        player._seek_to(10_000)
+        clock[0] = 600
+        player._seek_to(40_000)
+
+        assert player._pending_seek_ms is None
+        assert _source(player).endswith("?ss=40.000")
+        assert len(sources) == 2
+
+    def test_경계_599ms면_모은다(self, player, clock, sources, qtbot):
+        clock[0] = 0
+        player._seek_to(10_000)
+        clock[0] = 599
+        player._seek_to(40_000)
+
+        assert player._pending_seek_ms == 40_000
+        assert player._seek_commit.isActive() is True
+        assert _source(player).endswith("?ss=10.000")
+        assert player.position_ms == 40_000, "대기 중에는 목표를 답해야 한다"
+
+        qtbot.waitUntil(lambda: player._pending_seek_ms is None, timeout=2000)
+        assert _source(player).endswith("?ss=40.000")
+        assert len(sources) == 2
+
+    def test_JL_5연타는_커밋이_정확히_2회다(self, player, clock, sources, qtbot):
+        assert player._stream_duration_ms == _DURATION
+
+        for t in (0, 50, 100, 150, 200):
+            clock[0] = t
+            player._seek_relative(+10)
+        assert player._pending_seek_ms == 50_000
+        qtbot.waitUntil(lambda: player._pending_seek_ms is None, timeout=2000)
+
+        assert len(sources) == 2, sources     # 앞 1 + 뒤 1
+        assert sources[0].endswith("?ss=10.000")
+        assert sources[-1].endswith("?ss=50.000")
+
+    def test_키_입력_L_5연타도_커밋이_2회다(self, player, clock, sources, qtbot):
+        player.show()
+        qtbot.waitExposed(player)
+        player.activateWindow()
+        player.setFocus()
+        qtbot.waitUntil(player.isActiveWindow, timeout=3000)
+
+        for t in (0, 50, 100, 150, 200):
+            clock[0] = t
+            qtbot.keyClick(player, Qt.Key.Key_L)
+        qtbot.waitUntil(lambda: player._pending_seek_ms is None, timeout=2000)
+
+        assert len(sources) == 2, sources
+        assert sources[0].endswith("?ss=10.000")
+        assert sources[-1].endswith("?ss=50.000")
+
+    def test_뒤쪽_커밋도_쿨다운_시각을_갱신한다(self, player, clock, sources, qtbot):
+        clock[0] = 0
+        player._seek_to(10_000)                  # 즉시 커밋(t=0)
+        clock[0] = 100
+        player._seek_to(20_000)                  # 모은다
+        clock[0] = 250                           # 타이머가 나가는 시각
+        qtbot.waitUntil(lambda: player._pending_seek_ms is None, timeout=2000)
+        assert player._last_seek_commit_ms == 250, "타이머 커밋이 시각을 갱신하지 않았다"
+
+        clock[0] = 250 + 599
+        player._seek_to(30_000)
+        assert player._pending_seek_ms == 30_000, "직전 커밋 기준이어야 한다(첫 커밋 기준 아님)"
+
+        qtbot.waitUntil(lambda: player._pending_seek_ms is None, timeout=2000)
+        assert player._last_seek_commit_ms == 250 + 599
+        clock[0] = 250 + 599 + 600
+        player._seek_to(40_000)
+        assert player._pending_seek_ms is None
+        assert _source(player).endswith("?ss=40.000")
+
+    def test_즉시_커밋도_쿨다운_시각을_갱신한다(self, player, clock, sources):
+        clock[0] = 1_000
+        player._seek_to(10_000)
+        assert player._last_seek_commit_ms == 1_000
+
+    def test_대기_중에_쿨다운이_지나면_최신_목표를_즉시_커밋하고_타이머를_끈다(
+        self, player, clock, sources
+    ):
+        """늦은 타이머가 한 번 더 setSource 하면 같은 지점을 두 번 여는 낭비다."""
+        clock[0] = 0
+        player._seek_to(10_000)
+        clock[0] = 100
+        player._seek_to(20_000)                  # 모은다
+        assert player._seek_commit.isActive() is True
+
+        clock[0] = 700
+        player._seek_to(30_000)                  # 직전 커밋(0) 기준 700ms → 즉시
+
+        assert player._pending_seek_ms is None
+        assert player._seek_commit.isActive() is False
+        assert _source(player).endswith("?ss=30.000")
+        assert len(sources) == 2
+
+    def test_remux가_아닌_소스는_재생기에_맡기고_타이머를_쓰지_않는다(
+        self, player, clock, monkeypatch
+    ):
+        monkeypatch.setattr(player, "_do_play_start", lambda: None)
+        player._on_stream_ready("http://direct/video.mp4", "360p", False, 0)
+        seen: list[str] = []
+        player._player.sourceChanged.connect(lambda url: seen.append(url.toString()))
+
+        clock[0] = 0
+        player._seek_to(5_000)
+
+        assert player._pending_seek_ms is None
+        assert player._seek_commit.isActive() is False
+        assert seen == [], "일반 소스의 seek이 소스를 갈아 끼우면 안 된다"
+
+    def test_소스를_닫으면_다음_스트림의_첫_seek은_다시_즉시다(
+        self, player, clock, sources
+    ):
+        clock[0] = 0
+        player._seek_to(10_000)                  # 즉시 커밋(t=0)
+        player._close_remux()
+        _ready(player)
+
+        clock[0] = 100                           # 쿨다운이 이어졌다면 모았을 시각
+        player._seek_to(5_000)
+
+        assert player._pending_seek_ms is None, "새 스트림의 첫 seek이 쿨다운에 걸렸다"
+        assert _source(player).endswith("?ss=5.000")
+
+    def test_상대_seek은_즉시_커밋_뒤에도_목표에서_이어_계산한다(
+        self, player, clock, sources
+    ):
+        clock[0] = 0
+        player._seek_to(10_000)
+        clock[0] = 10
+        player._seek_relative(+10)
+        clock[0] = 20
+        player._seek_relative(+10)
+
+        assert player._pending_seek_ms == 30_000
+        assert player.position_ms == 30_000

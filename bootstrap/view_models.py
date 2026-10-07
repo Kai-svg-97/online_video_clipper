@@ -27,6 +27,7 @@ def build_media_services(services: Services) -> MediaServices:
         summary_languages=services.summary_languages,
         stream_relay=services.stream_relay,
         subtitles=services.subtitle_source,
+        video_info=services.video_info,
     )
 
 

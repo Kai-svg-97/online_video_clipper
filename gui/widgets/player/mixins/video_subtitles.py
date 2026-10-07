@@ -42,7 +42,10 @@ class VideoSubtitleMixin:
         if cached is not None:
             self._on_video_subtitle_list(url, cached)
             return
-        worker = _SubtitleListWorker(self._subtitles, url, self._cookie_opts_for_subtitles())
+        worker = _SubtitleListWorker(
+            self._subtitles, url, self._cookie_opts_for_subtitles(),
+            info_source=self._info_source,
+        )
         worker.done.connect(self._on_video_subtitle_list)
         worker.finished.connect(lambda w=worker: retire_thread(w, "done"))
         track_thread(worker)

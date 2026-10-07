@@ -383,6 +383,7 @@ class VideoDetailWidget(
             left_w,
             stream_relay=self._media.stream_relay,
             subtitles=self._media.subtitles,
+            info_source=self._media.video_info,
         )
         self._player.playback_failed.connect(self._on_play_failed)
         self._player.download_requested.connect(self.download_requested.emit)

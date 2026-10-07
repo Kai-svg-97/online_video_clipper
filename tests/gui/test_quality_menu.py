@@ -122,3 +122,148 @@ class TestDownloadBusyState:
         assert not bar._btn_dl.isEnabled()
         bar.set_download_busy(False)
         assert bar._btn_dl.isEnabled()
+
+
+# ── 배치 6: ⬇ 화질 목록은 캐시된 원본 info에서 만든다(추가 extract 0회) ─────────
+_PROBE_URL = "https://www.youtube.com/watch?v=abc"
+
+
+class _FakeInfoSource:
+    def __init__(self, info=None, error: Exception | None = None) -> None:
+        self.calls: list[tuple[str, str | None, bool]] = []
+        self._info = info
+        self._error = error
+
+    def info(self, url, *, client=None, fresh=False):
+        self.calls.append((url, client, fresh))
+        if self._error is not None:
+            raise self._error
+        return self._info
+
+
+def _raw_with_heights() -> dict:
+    return {
+        "id": "abc",
+        "stream_url": "http://good",
+        "formats": [
+            {"format_id": "18", "height": 360, "vcodec": "avc1"},
+            {"format_id": "22", "height": 720, "vcodec": "avc1"},
+            {"format_id": "137", "height": 1080, "vcodec": "avc1"},
+            {"format_id": "139", "height": None, "vcodec": "avc1"},
+            {"format_id": "140", "height": 480, "vcodec": "none"},   # 오디오 전용은 뺀다
+        ],
+    }
+
+
+def _run_probe(worker) -> tuple[list, list]:
+    ready: list = []
+    failed: list = []
+    worker.heights_ready.connect(lambda url, heights: ready.append((url, heights)))
+    worker.failed.connect(failed.append)
+    worker.run()
+    return ready, failed
+
+
+class TestFormatProbeUsesInfoSource:
+    def test_높이_목록을_원본_formats에서_만든다(self, qapp_instance):
+        from gui.widgets.player.stream import _FormatProbeWorker
+
+        src = _FakeInfoSource(_raw_with_heights())
+
+        ready, failed = _run_probe(_FormatProbeWorker(_PROBE_URL, info_source=src))
+
+        assert failed == []
+        assert ready == [(_PROBE_URL, [1080, 720, 360])]
+        assert src.calls == [(_PROBE_URL, None, False)], "화질 목록은 캐시를 써야 한다"
+
+    def test_스트림_워커가_먼저_물었으면_추가_extract가_없다(self, qapp_instance, monkeypatch):
+        """load+▶ 뒤에 ⬇를 눌러도 yt-dlp를 다시 부르지 않는다(수용 기준 ⬇ 0회)."""
+        from types import SimpleNamespace
+
+        from gui.widgets.player import stream as stream_mod
+        from gui.widgets.player.stream import _FormatProbeWorker, _StreamWorker
+        from infrastructure.media.video_info_cache import VideoInfoCache
+
+        monkeypatch.setattr(stream_mod, "_stream_playable", lambda u: True)
+        extracts: list = []
+
+        def extract(url, client=None):
+            extracts.append((url, client))
+            return _raw_with_heights()
+
+        cache = VideoInfoCache(extract)
+
+        class _YDL:
+            def __init__(self, opts):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def process_ie_result(self, ie, download=False):
+                return {"url": ie["stream_url"], "height": 360}
+
+        module = SimpleNamespace(YoutubeDL=_YDL)
+        stream = _StreamWorker(_PROBE_URL, "fmt", False, info_source=cache)
+        stream.stream_ready.connect(lambda *a: None)
+        stream._run_stream(module)
+        assert len(extracts) == 1
+
+        ready, failed = _run_probe(_FormatProbeWorker(_PROBE_URL, info_source=cache))
+
+        assert failed == []
+        assert ready == [(_PROBE_URL, [1080, 720, 360])]
+        assert len(extracts) == 1, "⬇가 다시 extract 했다"
+
+    def test_조회가_실패하면_실패_신호를_낸다(self, qapp_instance):
+        from gui.widgets.player.stream import _FormatProbeWorker
+
+        src = _FakeInfoSource(error=RuntimeError("boom"))
+
+        ready, failed = _run_probe(_FormatProbeWorker(_PROBE_URL, info_source=src))
+
+        assert ready == []
+        assert failed == ["boom"], "호출측이 전체 목록으로 폴백하려면 실패 신호가 필요하다"
+
+    def test_높이가_하나도_없으면_최상위_height를_쓴다(self, qapp_instance):
+        from gui.widgets.player.stream import _FormatProbeWorker
+
+        src = _FakeInfoSource({"id": "abc", "height": 480, "formats": []})
+
+        ready, _ = _run_probe(_FormatProbeWorker(_PROBE_URL, info_source=src))
+
+        assert ready == [(_PROBE_URL, [480])]
+
+
+class TestPlayerWiresInfoSourceToProbe:
+    def test_다운로드_메뉴의_화질_조회가_info_source를_받는다(self, qapp_instance, monkeypatch):
+        from gui.widgets.player.stream import _FormatProbeWorker
+        from gui.widgets.video_player import InlinePlayer
+
+        created: list = []
+
+        class _Spy(_FormatProbeWorker):
+            def __init__(self, *args, **kwargs):
+                created.append((args, kwargs))
+                super().__init__(*args, **kwargs)
+
+            def start(self, *a, **k):
+                pass
+
+        monkeypatch.setattr("gui.widgets.player.mixins.playback._FormatProbeWorker", _Spy)
+        src = _FakeInfoSource(_raw_with_heights())
+        _HEIGHT_CACHE.clear()
+        player = InlinePlayer(info_source=src)
+        try:
+            player._video_url = _PROBE_URL
+            player._on_download_menu_requested()
+
+            assert len(created) == 1
+            args, kwargs = created[0]
+            assert (args[1:] and args[1] is src) or kwargs.get("info_source") is src
+        finally:
+            _HEIGHT_CACHE.clear()
+            player.deleteLater()

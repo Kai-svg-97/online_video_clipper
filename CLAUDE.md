@@ -292,6 +292,14 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
   없는 크기면 조각을 줄이고, **통하던 크기가 거부되면 쉬었다 같은 크기로 재시도**한다.
   둘을 섞으면 일시적 거부에서 조각이 계속 작아지고 요청이 잦아져 더 나빠진다(실측:
   seek 첫 바이트 1초대 → 22초).
+- **영상 추출 결과는 `IVideoInfoSource` 캐시를 거친다**(`MediaServices.video_info`). 워커가
+  `YoutubeDL.extract_info`를 직접 부르지 말고 캐시의 원본을 `deepcopy`해
+  `process_ie_result`로 화질만 고른다. **403·대체 클라이언트·중계 refresh·재생 오류 재시도
+  경로는 반드시 `fresh=True`로 우회**한다(캐시를 타면 만료·거부된 URL을 되풀이해 받는다).
+  병합(`download=True`)은 캐시 대상이 아니다.
+- **remux seek은 쿨다운(`SEEK_IMMEDIATE_GAP_MS` = 600ms)이 지났으면 즉시 커밋한다.** 직전 커밋
+  뒤 600ms 안의 연타만 300ms 타이머로 합친다. 즉시·타이머 커밋 모두 `_last_seek_commit_ms`를
+  갱신하고, `_close_remux`가 지운다. 이 모두가 `_seek_to` 하나를 거친다.
 - **`Content-Length`를 약속한 뒤 조용히 돌아가지 않는다.** 재생기가 남은 바이트를 영원히
   기다린다(실측: 요청이 타임아웃까지 멈춤). 못 채우면 연결을 끊어 즉시 알린다.
 

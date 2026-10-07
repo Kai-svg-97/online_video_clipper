@@ -24,7 +24,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from domain.shared.ports import ISummarySource, IStreamRelay, IVideoSubtitleSource
+from domain.shared.ports import (
+    ISummarySource,
+    IStreamRelay,
+    IVideoInfoSource,
+    IVideoSubtitleSource,
+)
 
 # 요약 추출기가 아는 언어를 모를 때의 기본값 — 이 앱의 원문 언어.
 DEFAULT_SUMMARY_LANGUAGES: tuple[str, ...] = ("ko",)
@@ -37,3 +42,5 @@ class MediaServices:
     summary_languages: tuple[str, ...] = DEFAULT_SUMMARY_LANGUAGES
     stream_relay: IStreamRelay | None = None
     subtitles: IVideoSubtitleSource | None = None
+    # 영상 원본 info 캐시 — 자막 목록·스트림·화질 목록이 같은 추출을 공유한다.
+    video_info: IVideoInfoSource | None = None

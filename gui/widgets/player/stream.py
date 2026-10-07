@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from collections import OrderedDict
 
@@ -136,9 +137,17 @@ class _StreamWorker(QThread):
         parent=None,
         prefer_remux: bool = True,
         relay=None,
+        info_source=None,
+        fresh: bool = False,
     ) -> None:
         super().__init__(parent)
         self._url = url
+        # `IVideoInfoSource` — 있으면 원본 info를 공유 캐시에서 받아 화질만 다시 고른다.
+        # 없으면 예전처럼 직접 추출한다.
+        self._info_source = info_source
+        # True면 **첫 조회부터** 캐시를 우회한다(재생 오류 재시도 — 방금 실패한 URL이
+        # 캐시에 남아 있다).
+        self._fresh = fresh
         # `IStreamRelay` — 조립 루트가 준 중계. 없으면 실시간 remux를 하지 않는다.
         self._relay = relay
         self._quality_fmt = quality_fmt
@@ -182,24 +191,30 @@ class _StreamWorker(QThread):
             return
 
         clients = _STREAM_CLIENTS if _is_youtube(self._url) else (None,)
+        fresh = self._fresh
         for client in clients:
             try:
-                info = self._extract(yt_dlp, client)
+                info = self._extract(yt_dlp, client, fresh=fresh)
                 video, audio = _to_sources(info, self._relay)
             except Exception as exc:
                 logger.warning(
                     "remux 정보 추출 실패(client=%s): %s", client or "기본", str(exc)[:200]
                 )
+                self._invalidate(client)
+                fresh = True    # 실패한 뒤의 조회는 캐시를 타지 않는다
                 continue
             if video is None:
                 logger.warning("remux 가능한 포맷 없음(client=%s)", client or "기본")
+                self._invalidate(client)
+                fresh = True
                 continue
             # 재생이 길어지면 googlevideo URL이 만료된다. 중계가 바닥 조각 크기에서도
             # 403을 맞으면 이 콜백으로 새 URL을 받아 이어 간다 — 그렇지 않으면 한
             # 시간쯤 뒤부터 스트림이 조용히 끊긴다.
             def refresh(_client=client):
-                fresh = self._extract(yt_dlp, _client)
-                return _to_sources(fresh, self._relay)
+                # 만료·403 뒤에 불린다 — 캐시를 타면 같은 낡은 URL을 또 받는다.
+                renewed = self._extract(yt_dlp, _client, fresh=True)
+                return _to_sources(renewed, self._relay)
 
             play_url = self._relay.open_session(
                 video, audio,
@@ -218,14 +233,32 @@ class _StreamWorker(QThread):
         logger.warning("실시간 remux 전부 실패 — 병합 경로로 폴백: %s", self._url)
         self._run_merge(yt_dlp)
 
-    def _extract(self, yt_dlp, client: str | None) -> dict:
-        """지정 클라이언트로 현재 화질 포맷을 해석한다(내려받지 않는다)."""
+    def _extract(self, yt_dlp, client: str | None, fresh: bool = False) -> dict:
+        """지정 클라이언트로 현재 화질 포맷을 해석한다(내려받지 않는다).
+
+        `info_source`가 있으면 공유 원본을 받아 **화질만 다시 고른다**(네트워크 0건).
+        원본은 캐시와 공유하므로 `deepcopy`해서 처리한다 — 처리는 입력을 고친다.
+        `fresh`는 캐시를 우회한다(403·대체 클라이언트·만료 갱신·오류 재시도).
+        """
         opts = {**js_runtime_opts(), "quiet": True, "no_warnings": True,
                 "format": self._quality_fmt, "noplaylist": True}
+        if self._info_source is not None:
+            raw = self._info_source.info(self._url, client=client, fresh=fresh)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.process_ie_result(copy.deepcopy(raw), download=False) or {}
         if client:
             opts["extractor_args"] = {"youtube": {"player_client": [client]}}
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(self._url, download=False) or {}
+
+    def _invalidate(self, client: str | None) -> None:
+        """실패한 키를 캐시에서 버린다 — 다음 재생이 같은 낡은 결과를 받지 않게."""
+        invalidate = getattr(self._info_source, "invalidate", None)
+        if callable(invalidate):
+            try:
+                invalidate(self._url, client)
+            except Exception:
+                logger.debug("정보 캐시 무효화 실패", exc_info=True)
 
     # ── 즉시 스트리밍: 단일 muxed URL을 그대로 QMediaPlayer에 전달 ──
     def _run_stream(self, yt_dlp) -> None:
@@ -237,24 +270,32 @@ class _StreamWorker(QThread):
         clients = _STREAM_CLIENTS if _is_youtube(self._url) else (None,)
         last_err = ""
         unverified: tuple[str, str] | None = None   # 검증만 실패한 첫 URL
+        fresh = self._fresh
         for client in clients:
             try:
-                stream, label = self._extract_stream(yt_dlp, client)
+                stream, label = self._extract_stream(yt_dlp, client, fresh=fresh)
             except Exception as exc:
                 last_err = str(exc)
                 logger.warning(
                     "스트림 추출 실패(client=%s): %s", client or "기본", last_err[:200]
                 )
+                self._invalidate(client)
+                fresh = True    # 실패한 뒤의 조회는 캐시를 타지 않는다
                 continue
             if not stream:
                 last_err = tr("스트림 URL을 가져올 수 없습니다.")
                 logger.warning("재생 가능한 포맷 없음(client=%s)", client or "기본")
+                self._invalidate(client)
+                fresh = True
                 continue
             if not _stream_playable(stream):
                 last_err = tr("스트림 URL이 거부되었습니다(재생 서버 403).")
                 logger.warning(
                     "스트림 URL 거부됨(client=%s) — 다음 클라이언트로 재시도", client or "기본"
                 )
+                # 403을 낸 URL이 캐시에 남으면 다음 재생이 또 받는다.
+                self._invalidate(client)
+                fresh = True
                 if unverified is None:
                     unverified = (stream, label)
                 continue
@@ -272,9 +313,11 @@ class _StreamWorker(QThread):
         logger.warning("모든 클라이언트에서 스트림 확보 실패: %s", self._url)
         self.failed.emit(last_err or tr("스트림 URL을 가져올 수 없습니다."))
 
-    def _extract_stream(self, yt_dlp, client: str | None) -> tuple[str, str]:
+    def _extract_stream(
+        self, yt_dlp, client: str | None, fresh: bool = False
+    ) -> tuple[str, str]:
         """지정 클라이언트로 정보를 뽑아 (재생 URL, 화질 라벨)을 돌려준다."""
-        info = self._extract(yt_dlp, client)
+        info = self._extract(yt_dlp, client, fresh=fresh)
         stream, fmt_info = _pick_stream_url(info)
         h = fmt_info.get("height") or info.get("height")
         return stream, (f"{h}p" if h else "")
@@ -353,17 +396,22 @@ class _FormatProbeWorker(QThread):
     heights_ready = pyqtSignal(str, list)   # (url, 내림차순 높이 목록)
     failed        = pyqtSignal(str)
 
-    def __init__(self, url: str, parent=None) -> None:
+    def __init__(self, url: str, parent=None, info_source=None) -> None:
         super().__init__(parent)
         self._url = url
+        self._info_source = info_source   # IVideoInfoSource | None
 
     def run(self) -> None:
         try:
-            import yt_dlp  # noqa: PLC0415
+            if self._info_source is not None:
+                # 스트림·자막 워커가 이미 받아 둔 원본을 쓴다 — 추가 추출 0회.
+                info = self._info_source.info(self._url, client=None, fresh=False) or {}
+            else:
+                import yt_dlp  # noqa: PLC0415
 
-            opts = {**js_runtime_opts(), "quiet": True, "no_warnings": True, "noplaylist": True}
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(self._url, download=False) or {}
+                opts = {**js_runtime_opts(), "quiet": True, "no_warnings": True, "noplaylist": True}
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(self._url, download=False) or {}
             heights = sorted(
                 {
                     int(f["height"])
@@ -405,16 +453,24 @@ class _SubtitleListWorker(QThread):
     done = pyqtSignal(str, list)   # (video_url, tracks)
 
     def __init__(
-        self, source, url: str, cookie_opts: dict | None = None, parent=None
+        self, source, url: str, cookie_opts: dict | None = None, parent=None,
+        info_source=None,
     ) -> None:
         super().__init__(parent)
         self._source = source          # IVideoSubtitleSource
         self._url = url
         self._cookie_opts = cookie_opts or {}
+        self._info_source = info_source   # IVideoInfoSource | None
 
     def run(self) -> None:
         try:
-            tracks = self._source.list_tracks(self._url, self._cookie_opts)
+            if self._info_source is not None and not self._cookie_opts:
+                # 스트림 워커와 같은 원본을 공유한다(쿠키 사용자는 로그인 상태 자막이
+                # 보일 수 있어 익명 캐시로 대신하지 않는다 — 기존 경로).
+                info = self._info_source.info(self._url, client=None, fresh=False)
+                tracks = self._source.tracks_from_info(info)
+            else:
+                tracks = self._source.list_tracks(self._url, self._cookie_opts)
         except Exception as exc:
             logger.warning("자막 목록 조회 실패: %s", exc)
             tracks = []

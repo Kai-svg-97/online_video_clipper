@@ -84,6 +84,12 @@ class TestGraphBuilds:
         for f in dataclasses.fields(graph.media):
             assert getattr(graph.media, f.name), f"MediaServices.{f.name}이 비었다"
 
+    def test_media_services_video_info_wired(self, graph):
+        """배치 6 — 영상 info 캐시가 조립되어 플레이어까지 내려갈 수 있어야 한다."""
+        video_info = graph.media.video_info
+        assert video_info is not None, "MediaServices.video_info가 조립되지 않았다"
+        assert callable(getattr(video_info, "info", None))
+
     def test_every_handler_group_fully_wired(self, graph):
         """핸들러 묶음의 모든 필드가 채워졌는지 — 빈 칸은 런타임 AttributeError가 된다."""
         missing: list[str] = []

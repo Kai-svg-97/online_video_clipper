@@ -6,12 +6,23 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from PyQt6.QtCore import QTimer, QUrl
 
 from gui.text.labels import sponsor_category_label
 
 logger = logging.getLogger(__name__)
+
+# 직전 seek 커밋 뒤 이 시간이 지났으면 새 seek을 **기다리지 않고** 바로 커밋한다.
+# 단발 seek이 300ms 디바운스를 기다릴 이유는 없고, 연타(J/L)는 이 안에 들어오므로
+# 여전히 한 번으로 합쳐진다(ffmpeg를 매번 띄우면 화면이 멎는다).
+SEEK_IMMEDIATE_GAP_MS = 600
+
+
+def _monotonic_ms() -> int:
+    """쿨다운 시계(ms). 시험이 이 함수를 패치한다."""
+    return int(time.monotonic() * 1000)
 
 
 class TimelineMixin:
@@ -96,8 +107,13 @@ class TimelineMixin:
         if self._pip_win:
             self._pip_win.bar.update_duration(dur)
 
-    def _seek_to(self, ms: int) -> None:
-        """모든 seek의 단일 진입점. 일반 소스는 재생기에게, remux는 우리가 처리한다."""
+    def _seek_to(self, ms: int, *, debounce: bool = False) -> None:
+        """모든 seek의 단일 진입점. 일반 소스는 재생기에게, remux는 우리가 처리한다.
+
+        remux는 직전 커밋 뒤 `SEEK_IMMEDIATE_GAP_MS`가 지났으면 즉시 커밋하고, 아니면
+        타이머로 모은다. `debounce=True`는 쿨다운과 무관하게 항상 모은다 — 끊긴
+        스트림을 다시 여는 자동 재연결이 곧바로 되풀이되지 않게 한다.
+        """
         ms = max(0, int(ms))
         dur = self._effective_duration()
         if dur > 0:
@@ -105,10 +121,15 @@ class TimelineMixin:
         if not self._remux_url:
             self._player.setPosition(ms)
             return
-        # 실제 반영은 타이머가 한다. 화면은 먼저 옮겨 둔다 — 300ms 동안 막대가
-        # 옛 위치에 머물면 "눌러도 안 움직인다"로 보인다.
+        # 화면은 먼저 옮겨 둔다 — 막대가 옛 위치에 머물면 "눌러도 안 움직인다"로 보인다.
         self._pending_seek_ms = ms
         self._update_bars(ms, dur)
+        last = self._last_seek_commit_ms
+        if not debounce and (last is None or _monotonic_ms() - last >= SEEK_IMMEDIATE_GAP_MS):
+            # 쿨다운이 지났다(대기 중이던 목표가 있어도 이 최신 목표가 이긴다) — 즉시 커밋.
+            self._seek_commit.stop()
+            self._commit_pending_seek()
+            return
         self._seek_commit.start()
 
     def _commit_pending_seek(self) -> None:
@@ -116,6 +137,7 @@ class TimelineMixin:
         ms, self._pending_seek_ms = self._pending_seek_ms, None
         if ms is None or not self._remux_url:
             return
+        self._last_seek_commit_ms = _monotonic_ms()
         self._stream_offset_ms = ms
         self._player.stop()
         self._player.setSource(QUrl(f"{self._remux_url}?ss={ms / 1000:.3f}"))

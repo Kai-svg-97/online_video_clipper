@@ -51,6 +51,7 @@ class StreamSourceMixin:
         self._stream_offset_ms = 0
         self._stream_duration_ms = 0
         self._pending_seek_ms = None
+        self._last_seek_commit_ms = None   # 새 스트림의 첫 seek은 쿨다운 없이 즉시
         self._seek_commit.stop()
         if not url or self._stream_relay is None:
             return
@@ -99,7 +100,7 @@ class StreamSourceMixin:
                 logger.warning(
                     "remux 스트림이 중간에서 끊김(%d/%d ms) — 다시 받아 이어 간다", pos, dur
                 )
-                self._seek_to(pos)
+                self._seek_to(pos, debounce=True)
                 return
             self._last_truncation_ms = -1
             self.playback_finished.emit()
@@ -138,10 +139,14 @@ class StreamSourceMixin:
         # 신호를 끊고 끝날 때까지 대신 붙들어 준다(gui/workers.py).
         retire_thread(self._worker, "stream_ready", "progress", "failed")
         # 부모를 주지 않는다 — 플레이어가 사라져도 스레드가 함께 파괴되지 않게.
+        # 오류 재시도는 방금 실패한 URL이 캐시에 남아 있으므로 **한 번만** 캐시를 우회한다.
+        fresh, self._fresh_next_fetch = self._fresh_next_fetch, False
         self._worker = track_thread(_StreamWorker(
             self._video_url, self._current_quality_fmt, self._current_merge,
             prefer_remux=self._prefer_remux,
             relay=self._stream_relay,
+            info_source=self._info_source,
+            fresh=fresh,
         ))
         # 끝나면 참조를 놓는다 — 끝난 워커를 계속 들고 있으면 뒤늦은 정리에서 헷갈린다.
         self._worker.finished.connect(lambda w=self._worker: self._forget_stream_worker(w))
@@ -254,6 +259,7 @@ class StreamSourceMixin:
             )
             self._player.stop()
             self._player.setSource(QUrl())
+            self._fresh_next_fetch = True
             self._fetch_stream()
             return
         logger.warning("재생 오류(재시도 소진): %s / url=%s", error_string, self._video_url)

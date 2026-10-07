@@ -317,3 +317,57 @@ JS 런타임을 켜자 먼 오프셋도 열렸지만 seek 한 번에 21~26초가
 이미 닫혀 있어 `Error reading HTTP response: End of file` 뒤 재연결까지 했다.
 `_serve_source` 응답에 `Connection: close`를 주자 같은 seek이 **2.1초**가 됐다
 (통계: 2 connections, 2 requests, 0 retries).
+
+## 재생 성능(배치 6) — 중복 추출 제거·영상 info 캐시·seek 쿨다운 (2026-10)
+
+### 실측한 중복
+- 상세 진입 + ▶ 동안 yt-dlp 추출이 **둘 동시에** 돈다(자막 목록·스트림, 각 3~4초). 화질
+  전환은 +1회, ⬇ 화질 메뉴는 +1회였다. 고화질 ▶ → 첫 프레임 3,057ms.
+- 추출 1회의 실체는 HTTP 4건 + JS 챌린지(deno/node) 프로세스다. 서명·n 파라미터는 추출
+  단계에서 URL에 이미 풀려 들어가므로, **화질만 다시 고르는 일은 네트워크가 필요 없다**
+  (원본에 `process_ie_result`: 약 0.1초, HTTP 0, 하위 프로세스 0, 선택 결과가 새 추출과 3/3 일치).
+
+### 캐시 설계 — 처리 전 원본을 들고, 화질은 처리 시점에 고른다
+- `VideoInfoCache`(`infrastructure/media/video_info_cache.py`)는 `extract_info(process=False)`
+  원본을 `(url, client)`로 캐시한다. 워커는 `copy.deepcopy(raw)`를 새 `YoutubeDL({"format": …})`
+  의 `process_ie_result`로 처리한다. 방법 (c)를 골랐다 — 공개 API만 쓰고 새 추출과 같은 처리
+  경로(`http_headers`·정렬·포맷 ID)를 타서 `_to_sources`·`_pick_stream_url`을 고치지 않는다.
+  처리는 입력을 고치므로 **원본은 절대 그대로 넘기지 않는다**(시험이 오염을 고정한다).
+- **자막 목록도 같은 원본에서 뽑는다**(`IVideoSubtitleSource.tracks_from_info`). 함정: yt-dlp
+  확장기는 `writesubtitles`/`writeautomaticsub`이 꺼져 있으면 `subtitles`·`automatic_captions`를
+  **채우지 않는다**. 그래서 원본 추출 옵션에 둘을 켠다(`skip_download`라 내려받지 않는다).
+  쿠키가 있는 사용자는 로그인 상태 자막이 보일 수 있어 기존 경로를 그대로 쓴다.
+- TTL = `min(googlevideo expire − 300초, 1800초)`. 실측 expire 여유가 6시간이라 사실상
+  30분이다. 남은 시간이 300초 이하면 캐시하지 않고, `expire`가 없거나 파싱되지 않으면 30분이다.
+  적중해도 TTL을 늘리지 않는다. 항목은 최대 6개(원본 JSON 영상당 ~600KB), LRU로 버린다.
+- **진행 중 요청을 합친다.** load와 ▶가 150ms 간격으로 같은 키를 묻는다 — 두 번째는 기다렸다
+  결과(또는 같은 예외)를 받는다. 끝난 요청은 바로 지우고 실패는 캐시하지 않는다.
+
+### 반드시 캐시를 우회하는 경로(`fresh=True`)
+캐시가 만료·거부된 URL을 되풀이해 주면 재생이 영영 안 살아나므로 다음은 항상 우회하고
+새 결과로 캐시를 갈아 끼운다(진행 중 요청에도 합류하지 않는다).
+- 중계 `refresh`(재생 중 URL 만료) — 원래 클라이언트로 `(url, client, True)`.
+- 대체 클라이언트 순회 — 실패(추출 오류·포맷 없음·검증 403) 뒤의 모든 조회는 fresh.
+  403을 낸 키는 `invalidate`로 캐시에서도 버린다(다음 ▶가 같은 URL을 받지 않게).
+- `_on_error` 재시도 — 방금 실패한 URL이 캐시에 남아 있으므로 **다음 워커 한 번만** fresh.
+- 병합(`_run_merge`, `download=True`)은 다운로드를 겸하는 추출이라 캐시 대상이 아니다.
+
+### seek 쿨다운(A8)
+- 단발 seek이 300ms 디바운스를 기다릴 이유는 없다. 직전 커밋 뒤 600ms(`SEEK_IMMEDIATE_GAP_MS`)
+  가 지났으면 즉시 커밋하고, 그 안의 연타만 300ms 타이머로 합친다(J/L 5연타 = 커밋 2회).
+  즉시 커밋의 메인 비용은 `stop()`+`setSource(?ss=)` 약 17ms(최대 37)다.
+- 즉시·타이머 커밋 모두 `_last_seek_commit_ms`를 갱신하고, `_close_remux`가 None으로 되돌려
+  새 스트림의 첫 seek은 즉시 나간다. 모든 seek은 `_seek_to` 하나를 거치고 대기 중 `position_ms`
+  는 목표를 답한다. **자동 재연결**(끊긴 remux를 같은 지점에서 다시 여는 `_on_media_status`)은
+  `_seek_to(pos, debounce=True)`로 쿨다운과 무관하게 모은다 — 즉시 되풀이되면 상위를 두드린다.
+- 비 remux 소스는 그대로 재생기에게 맡긴다.
+
+### D1 조사 결론 — 재생 중 0.2~0.5초 정지는 이 PC의 환경 현상이다
+- 정지는 길이로 뚜렷이 두 무리다. 환경형 467~578ms(파이썬 호출·Qt 로그 없음)와 앱형 50~82ms.
+- 앱 코드가 없는 순수 PyQt6(창 없음), Qt 없는 ctypes Win32 `PeekMessage` 루프에서도 재현된다
+  (`PeekMessage` 한 번이 140~480ms). 앱·Qt Multimedia 원인은 반박됐다. 전역 훅·창 감시 상주
+  프로그램(PowerToys 등)이 유력하나 특정하지 않았다.
+- 따라서 **'최대 메인 정지'를 수용 기준으로 쓰면 이 PC에서는 어떤 개선도 500ms 아래로 못
+  간다** — 환경형(≥350ms, 파이썬 호출 없음)을 제외하거나 앱 호출의 메인 소요로 잰다.
+  앱이 만드는 정지는 프레임 2~5개 수준이라 D1 개선 항목은 만들지 않았다. 원자료는
+  `.omc/research/perf/batch6/investigation.md`.

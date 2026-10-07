@@ -130,12 +130,17 @@ class InlinePlayer(
         "240p":  {"240p"},
     }
 
-    def __init__(self, parent=None, *, stream_relay=None, subtitles=None) -> None:
+    def __init__(
+        self, parent=None, *, stream_relay=None, subtitles=None, info_source=None
+    ) -> None:
         super().__init__(parent)
         # 조립 루트가 주는 인프라 기능(`gui/media_services.py`). 비어 있으면 그 기능만
         # 빠진다 — 중계가 없으면 고화질을 병합 방식으로, 자막 소스가 없으면 CC 목록 없이.
         self._stream_relay = stream_relay     # IStreamRelay | None
         self._subtitles = subtitles           # IVideoSubtitleSource | None
+        # 영상 원본 info 캐시 — 자막 목록·스트림·화질 목록이 같은 추출을 공유한다.
+        self._info_source = info_source       # IVideoInfoSource | None
+        self._fresh_next_fetch = False        # 다음 스트림 확보 한 번만 캐시를 우회한다
         self._downloads: list[DownloadInfoDTO] = []
         self._video_url: str    = ""
         self._video_title: str  = ""
@@ -161,6 +166,7 @@ class InlinePlayer(
         self._stream_offset_ms: int = 0       # 지금 흐르는 스트림이 시작한 지점
         self._stream_duration_ms: int = 0     # yt-dlp가 알려준 영상 길이
         self._pending_seek_ms: int | None = None   # 아직 스트림에 반영되지 않은 seek
+        self._last_seek_commit_ms: int | None = None   # 마지막 seek 커밋 시각(쿨다운 기준)
         self._last_truncation_ms: int = -1     # 스트림이 끊긴 마지막 지점(무한 재시도 차단)
         # 실시간 remux를 쓸지. 원본이 **먼 오프셋 요청을 거부**하는 일이 있어(실측:
         # 파일 중간 이후 바이트에 403) 그런 영상에서는 예전 방식으로 내려간다.

@@ -378,6 +378,10 @@ class IVideoSubtitleSource(Protocol):
     """
 
     def list_tracks(self, url: str, cookie_opts: dict | None = None) -> list: ...
+
+    def tracks_from_info(self, info: dict) -> list:
+        """이미 받아 둔 원본 info(`IVideoInfoSource.info`)에서 트랙을 뽑는다 — 네트워크 없음."""
+        ...
     def fetch_cues(self, track) -> list: ...
 
     def translated(self, track, target_lang: str):
@@ -386,4 +390,21 @@ class IVideoSubtitleSource(Protocol):
 
     def translate_targets(self) -> tuple[tuple[str, str], ...]:
         """자동 번역 메뉴에 올릴 (언어 코드, 그 언어로 쓴 이름) 목록."""
+        ...
+
+
+class IVideoInfoSource(Protocol):
+    """영상 원본 info(yt-dlp `process=False`) 조회 — 같은 영상을 여러 번 묻지 않게 캐시한다.
+
+    구현체: infrastructure.media.video_info_cache.VideoInfoCache (네트워크 — QThread에서만 부른다)
+
+    반환 dict는 **공유 객체**다 — 호출 쪽은 고치지 말고 `deepcopy` 뒤 처리한다.
+    `fresh=True`는 캐시·진행 중 요청을 건너뛰고 새로 받아 캐시를 갈아 끼운다 —
+    URL 만료·403·재시도처럼 낡은 URL이 문제인 경로가 쓴다.
+    """
+
+    def info(self, url: str, client: str | None = None, fresh: bool = False) -> dict: ...
+
+    def invalidate(self, url: str, client: str | None = None) -> None:
+        """이 키의 캐시를 버린다(403을 낸 URL이 다음 재생에 다시 나오지 않게)."""
         ...

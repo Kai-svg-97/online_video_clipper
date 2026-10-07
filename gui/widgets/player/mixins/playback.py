@@ -260,7 +260,7 @@ class PlaybackMixin:
             b.open_download_menu()
 
         # 조회 중 화면을 벗어나도 스레드가 파괴되지 않도록 부모 없이 만들어 등록한다.
-        self._probe = track_thread(_FormatProbeWorker(url))
+        self._probe = track_thread(_FormatProbeWorker(url, info_source=self._info_source))
         self._probe.heights_ready.connect(_ready)
         self._probe.failed.connect(_failed)
         self._probe.start()
