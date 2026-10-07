@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 from application.library.dtos import VideoDTO
 
 from gui.toast import show_toast
-from gui.workers import track_thread
+from gui.workers import retire_thread, track_thread
 
 # ── 분할된 부품 (gui/panels/library/*) ──────────────────────────────
 # 화면 조립과 흐름 제어만 이 파일에 남기고, 위젯·모델·상수는 패키지로 옮겼다.
@@ -414,46 +414,67 @@ class VideoListMixin:
         self._schedule_recommend_refresh()
 
     def _start_thumb_preload(self, videos: list) -> None:
-        """현재 뷰 모드에 맞는 크기로 썸네일을 bg에서 프리로드한다."""
+        """현재 뷰 모드에 맞는 크기로 썸네일을 bg에서 프리로드한다.
+
+        **새로 생긴 항목만** 넘긴다: 같은 목록 객체에 다음 쪽이 이어 붙었으면 이전
+        개수 뒤의 항목만, 목록이 교체됐거나 표시 크기(아이콘/리스트)가 바뀌었으면 전체.
+        """
         # isVisible()은 위젯이 표시되기 전 False를 반환할 수 있으므로
         # currentWidget() 기준으로 활성 뷰를 판단한다.
         is_icon = self._view_stack.currentWidget() is not self._list_view
         w, h = (_TW_ICON, _TH_ICON) if is_icon else (_TW_LIST, _TH_LIST)
-        items = [(dto.thumbnail_path, w, h) for dto in videos if dto.thumbnail_path]
+        appended = (
+            videos is self._thumb_pre_list
+            and (w, h) == self._thumb_pre_size
+            and len(videos) >= self._thumb_pre_count
+        )
+        fresh = videos[self._thumb_pre_count:] if appended else videos
+        items = [(dto.thumbnail_path, w, h) for dto in fresh if dto.thumbnail_path]
         if not items:
+            # 비어 있으면 기억을 건드리지 않는다 — 목록이 잠깐 비었다 같은 목록으로
+            # 이어 붙는 경우에도 앞서 프리로드한 개수를 그대로 쓸 수 있다.
             return
+        self._thumb_pre_list = videos
+        self._thumb_pre_size = (w, h)
+        self._thumb_pre_count = len(videos)
         self._thumb_load_gen += 1
         gen = self._thumb_load_gen
         # 이전 목록의 로더는 취소한다 — 이미 지나간 결과의 썸네일을 계속 디코딩하면
         # 검색어 입력 중 CPU를 붙잡아 키 입력이 밀린다(캐시된 배치는 이미 반영됨).
-        for old in self._active_thumb_loaders:
-            old.cancel()
+        # 다만 같은 목록에 쪽이 이어 붙은 경우(appended)는 앞쪽 로더도 여전히 유효하다.
+        if not appended:
+            for old in self._active_thumb_loaders:
+                old.cancel()
         loader = _ThumbBgLoader(items)
+        loader._thumb_gen = gen   # 결과 슬롯이 sender로 세대를 읽는다(람다 연결 금지)
         self._active_thumb_loaders.append(loader)
-        # `_active_thumb_loaders`는 새 로더 시작 시 이전 로더를 cancel()하기 위한
-        # 목록일 뿐 `gui.workers.wait_all()`이 알지 못한다 — 앱 종료
-        # 시점에 이 로더가 아직 도는 채로 LibraryPanel이 파괴되면 실행 중인
-        # QThread 파괴로 프로세스가 죽는다(gui/workers.py). track_thread로도
-        # 등록해 closeEvent의 wait_all(3000)이 이 로더도 기다리게 한다.
+        # `_active_thumb_loaders`는 이전 로더를 cancel()하기 위한 목록일 뿐
+        # `gui.workers.wait_all()`이 알지 못한다 — 앱 종료 시점에 이 로더가 아직 도는
+        # 채로 LibraryPanel이 파괴되면 실행 중인 QThread 파괴로 프로세스가 죽는다
+        # (gui/workers.py). track_thread로도 등록해 closeEvent의 wait_all(3000)이
+        # 이 로더도 기다리게 한다.
         track_thread(loader)
-
-        def _on_loader_done(done=loader) -> None:
-            try:
-                self._active_thumb_loaders.remove(done)
-            except ValueError:
-                logger.debug("썸네일 로더가 이미 목록에서 제거됨 — 무시")
-            done.deleteLater()
-
-        loader.batch_ready.connect(lambda b, g=gen: self._on_thumb_batch(b, g))
-        loader.finished.connect(_on_loader_done)
+        # 슬롯은 패널의 바운드 메서드 — 패널이 먼저 죽으면 Qt가 연결을 끊어 준다.
+        loader.batch_ready.connect(self._on_thumb_batch)
+        loader.finished.connect(self._on_thumb_loader_done)
         loader.start()
 
-    def _on_thumb_batch(self, batch: list, gen: int) -> None:
+    def _on_thumb_loader_done(self) -> None:
+        """로더 종료 — 목록에서 빼고 놓아 준다(deleteLater 금지: workers.py 참조)."""
+        done = self.sender()
+        try:
+            self._active_thumb_loaders.remove(done)
+        except ValueError:
+            logger.debug("썸네일 로더가 이미 목록에서 제거됨 — 무시")
+        retire_thread(done, "batch_ready")
+
+    def _on_thumb_batch(self, batch: list) -> None:
         """_ThumbBgLoader 배치 완료 처리: 항상 캐시에 저장, 현재 gen만 UI 갱신."""
+        gen = getattr(self.sender(), "_thumb_gen", None)
         paths_updated: set[str] = set()
         for path, w, h, img in batch:
             key = f"{path}@{w}x{h}"
-            if _thumb_cache.get(key) is None:  # 중복 방어 (main thread에서만 write)
+            if _thumb_cache.peek(key) is None:  # 중복 방어 (main thread에서만 write)
                 _thumb_cache.put(key, QPixmap.fromImage(img))
             paths_updated.add(path)
         if gen == self._thumb_load_gen:
@@ -622,6 +643,11 @@ class VideoListMixin:
             # 앨범 보기에서 빠져나올 때 되돌아갈 목록 뷰를 기억한다.
             self._last_list_view = view_id
         self._view_stack.setCurrentIndex(view_id)
+        if view_id in (_VIEW_ICON, _VIEW_LIST):
+            # 뷰마다 썸네일 표시 크기가 다르다 — 크기가 바뀌었으면 그 크기로 프리로드한다
+            # (같은 크기·같은 목록이면 아무것도 하지 않는다).
+            # (목록이 잠깐 비어 있으면 마지막으로 프리로드한 목록을 쓴다.)
+            self._start_thumb_preload(self._vm.videos or self._thumb_pre_list or [])
         btn = self._view_group.button(view_id)
         if btn is not None and not btn.isChecked():
             btn.setChecked(True)

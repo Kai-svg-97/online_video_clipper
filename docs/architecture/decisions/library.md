@@ -343,3 +343,32 @@
   크기·굵기만 정한다. 말줄임·배치를 계산하는 `QFontMetrics`도 같은 헬퍼를 써야 그리기와 측정이 일치한다.
 - **캐시하지 않는다.** `lru_cache`나 모듈 상수는 `create_qt_app`이 앱 글꼴을 정하기 전에 평가되면
   같은 결함이 돌아온다. 가드 `tests/gui/test_app_font_guard.py`가 `QFont("")`와 모듈 수준 `app_font()`를 막는다.
+
+## 라이브러리 마무리 — 성능 배치 7 (2026-10)
+
+- **재생목록 항목 조회(A5).** `GetPlaylistItemsHandler`가 전체 항목을 읽고 항목마다
+  `video_repo.get_by_id`를 불러 119개 목록에서 280ms였다. 조회 전용 포트
+  `domain/library/repositories.py:IPlaylistItemQuery`(값 `PlaylistItemRow`)를 두고
+  `SqlitePlaylistItemQuery`가 `playlist_items JOIN videos` + LIMIT/OFFSET 한 번으로 읽는다
+  (`bootstrap/persistence.py`가 `Repositories.playlist_items`로 주입 — 동기화 캡처 대상 아님).
+  삭제돼 JOIN에서 빠진 영상은 쪽 계산에도 들어가지 않는다. 폴더 카드 첫 항목도 같은 핸들러(`limit=1`)다.
+- **썸네일 디코드(A7).** 전체 디코드 후 `scaled()`는 장당 약 3.4ms. `setScaledSize` 단독은 1ms지만
+  비정수배 축소(320→213)에서 계단이 생긴다(MSE 19~25). `_decode_scaled`는 원본이 목표의 2·4·8배면
+  목표로 바로 디코드(DCT 축소가 정확, MSE 0.3), 아니면 **2배 크기로 디코드한 뒤 Smooth로 줄인다**
+  (MSE 1.1~1.7, 장당 1.5~1.9ms).
+- **프리로드 범위(A7).** 다음 쪽이 붙을 때 누적 전체를 다시 요청하던 것을, 같은 목록 객체가 늘어난
+  경우 이전 개수 뒤만 넘기도록 했다(`_thumb_pre_*`). 목록이 비어 있는 호출은 기억을 건드리지 않는다.
+  뷰 전환(`_switch_view`)도 표시 크기가 바뀌면 그 크기로 프리로드한다.
+- **캐시 경합(C1).** 워커가 `_thumb_cache.get`(`move_to_end`)을 부르면 메인 스레드 `put`과 OrderedDict를
+  동시에 바꾼다. 워커는 순서를 바꾸지 않는 `peek`만 쓴다.
+- **QThread 규칙 위반(C2).** `_start_thumb_preload`가 `deleteLater`와 람다 연결을 썼다. 종료 슬롯·결과 슬롯을
+  패널의 바운드 메서드로 바꾸고(세대는 `sender()`의 속성), 정리는 `retire_thread`로 한다.
+  옛 세대 묶음은 캐시에는 저장하되 화면 갱신만 하지 않는다.
+- **노래 탭 지연 렌더(A9).** 상세를 열 때마다 가사 행 최대 190개를 만들어 131ms였다. `VideoDetailWidget`이
+  현재 탭이 노래 탭일 때만 `_SongTab.set_info`를 부르고, 숨어 있으면 정보를 들고 있다가 탭을 열 때
+  반영한다. `load()`는 `set_info(None)`로 렌더 키를 지우지 않는다(같은 영상을 다시 열 때 행 재사용).
+  숨은 동안 받은 강조 줄은 `_SongTab.wanted_line()`에 남겨 렌더 뒤에 적용한다.
+  **대가:** 노래 탭이 열린 채 다른 영상으로 넘어가면 새 정보가 도착할 때까지 이전 가사가 잠깐 남는다.
+- **피드 세대(C3).** 전역 `_gen`이면 배경 감시(`__watch__`)가 끼는 순간 진행 중이던 사용자 조회 결과가
+  통째로 버려졌다. 세대를 키별(`_gens`)로 두어 같은 키의 새 요청만 옛 요청을 대체한다. 다른 키 결과는 그 키의
+  캐시와 `feed_key_changed`만 갱신하고, `feed`·`feed_changed`는 마지막으로 요청한 키만 반영한다.

@@ -45,6 +45,11 @@
 - 언어 코드는 plain str. 도메인은 표시 언어를 모르고, 생성 언어(= 앱 언어)는 조립
   루트가 핸들러에 주입한다.
 
+**조회 전용 포트 `IPlaylistItemQuery` (CQRS 읽기 쪽):**
+- 재생목록 항목을 화면에 보이려면 항목마다 집합체를 불러올 필요가 없다. `list_page(playlist_id, limit, offset)`가
+  `playlist_items JOIN videos`를 한 번에 읽어 값 `PlaylistItemRow`(영상 ID·위치·제목·썸네일·채널명·길이)를 돌려준다.
+  쓰기는 계속 `IPlaylistRepository`·집합체를 거친다. 구현은 `SqlitePlaylistItemQuery`(infrastructure), 주입은 조립 루트.
+
 **Domain Events:**
 - `VideoAdded(video_id, url, title)`
 - `VideoUpdated(video_id, changed_fields)`

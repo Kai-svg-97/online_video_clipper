@@ -264,6 +264,10 @@ class LibraryPanel(
         self._current_feed_key: str = ""         # 현재 화면에 표시 중인 피드 key
         self._thumb_load_gen: int = 0  # 썸네일 bg 로더 세대 (구 로더 UI 반영 방지용)
         self._active_thumb_loaders: list = []  # GC 방지용 강한 참조 보관
+        # 마지막으로 프리로드한 목록·표시 크기·개수 — 이어 붙은 쪽만 프리로드하려고 기억한다.
+        self._thumb_pre_list: list | None = None
+        self._thumb_pre_size: tuple[int, int] = (0, 0)
+        self._thumb_pre_count: int = 0
         # 표(상세) 뷰가 숨겨진 동안 목록이 바뀌었는지 — 표시될 때 한 번만 채운다.
         self._table_dirty: bool = False
         # 앨범 보기에서 되돌아갈 목록 뷰(아이콘/리스트/표) — 보기 버튼 그룹에 앨범이

@@ -385,6 +385,9 @@ class _SongTab(QWidget):
         self._side_by_side = False   # 번역 배치: False=원문 아래, True=원문 오른쪽
         self._rows: list[_LyricRow] = []
         self._current_row: _LyricRow | None = None
+        # 마지막으로 요청받은 강조 줄 — 행이 아직 없을 때(지연 렌더) 받은 요청을 잃지
+        # 않도록 기억한다(`wanted_line()`). 가사를 새로 그리면 비운다.
+        self._wanted_line: int | None = None
         # 가사 위젯을 마지막으로 실제로 그렸을 때의 내용 키(원문·번역·타이밍).
         # None은 "아직 한 번도 그리지 않음"이라 첫 호출은 항상 그린다. 빈 튜플은
         # 실제 빈 가사 키와 겹칠 수 있지만, 빈 가사는 항상 다시 그리므로(아래
@@ -693,6 +696,7 @@ class _SongTab(QWidget):
         if not force and lines and key == self._lyrics_render_key:
             return
         self._lyrics_render_key = key
+        self._wanted_line = None   # 새로 그린 가사엔 이전 강조 요청이 맞지 않는다
 
         _clear_layout(self._lyrics_layout)
         self._rows = []
@@ -792,12 +796,17 @@ class _SongTab(QWidget):
     def _autoscroll_suppressed(self) -> bool:
         return time.monotonic() < self._scroll_hold_until
 
+    def wanted_line(self) -> int | None:
+        """마지막으로 요청받은 강조 줄(행이 없어 적용하지 못했어도 남아 있다)."""
+        return self._wanted_line
+
     def set_current_line(self, index: int | None) -> None:
         """재생 중인 가사 줄을 강조하고(필요하면) 보이도록 스크롤한다.
 
         ``index``는 ``SongInfoDTO.lyrics_lines`` 기준 인덱스다(빈 줄 때문에 화면 행
         순서와 다를 수 있어 ``_LyricRow.line_index``로 찾는다).
         """
+        self._wanted_line = index
         target = None
         if index is not None:
             target = next((r for r in self._rows if r.line_index == index), None)

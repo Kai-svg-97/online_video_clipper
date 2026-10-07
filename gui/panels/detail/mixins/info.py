@@ -344,7 +344,10 @@ class DetailInfoMixin:
     # ── 노래 탭 (외부=LibraryPanel/SongViewModel이 데이터 주입) ─────────
     def set_song_info(self, dto) -> None:
         """SongViewModel이 로드/갱신한 노래 정보를 노래 탭과 플레이어 자막에 반영한다."""
-        self._song_tab.set_info(dto)
+        self._song_info = dto
+        self._song_dirty = True
+        if self._song_tab_current():
+            self._flush_song_tab()   # 숨어 있으면 탭을 열 때 그린다(지연 렌더)
         # 스트리밍은 안정적 video_id가 없어 편집·자막 대상이 아니다.
         if dto is None or self._streaming or not dto.is_synced:
             self._player.set_lyrics(None)

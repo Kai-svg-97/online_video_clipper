@@ -8,7 +8,12 @@ from uuid import UUID
 from typing import TYPE_CHECKING, Callable
 
 from application.library.dtos import FeedVideoDTO, PlaylistDTO, PlaylistFolderDTO, PlaylistItemDTO
-from domain.library.repositories import IPlaylistFolderRepository, IPlaylistRepository, IVideoRepository
+from domain.library.repositories import (
+    IPlaylistFolderRepository,
+    IPlaylistItemQuery,
+    IPlaylistRepository,
+    IVideoRepository,
+)
 from domain.shared.ports import IMediaSource
 
 if TYPE_CHECKING:
@@ -107,35 +112,25 @@ class GetPlaylistsHandler:
 
 
 class GetPlaylistItemsHandler:
-    def __init__(
-        self,
-        playlist_repo: IPlaylistRepository,
-        video_repo: IVideoRepository,
-    ) -> None:
-        self._playlist_repo = playlist_repo
-        self._video_repo = video_repo
+    """재생목록 한 쪽을 읽는다 — 조회 전용 포트의 JOIN 한 번(N+1 없음)."""
+
+    def __init__(self, item_query: IPlaylistItemQuery) -> None:
+        self._item_query = item_query
 
     def handle(self, query: GetPlaylistItemsQuery) -> list[PlaylistItemDTO]:
-        all_items = self._playlist_repo.get_items(query.playlist_id)
-        page = all_items[query.offset : query.offset + query.limit]
-        result: list[PlaylistItemDTO] = []
-        for video_id, position in page:
-            agg = self._video_repo.get_by_id(video_id)
-            if agg is None:
-                continue
-            v = agg.video
-            result.append(
-                PlaylistItemDTO(
-                    playlist_id=query.playlist_id,
-                    video_id=v.id,
-                    position=position,
-                    video_title=v.title,
-                    thumbnail_path=v.thumbnail_path,
-                    channel_name=v.channel.name if v.channel else "",
-                    duration_sec=v.duration.seconds if v.duration else None,
-                )
+        rows = self._item_query.list_page(query.playlist_id, query.limit, query.offset)
+        return [
+            PlaylistItemDTO(
+                playlist_id=query.playlist_id,
+                video_id=r.video_id,
+                position=r.position,
+                video_title=r.title,
+                thumbnail_path=r.thumbnail_path,
+                channel_name=r.channel_name,
+                duration_sec=r.duration_sec,
             )
-        return result
+            for r in rows
+        ]
 
 
 @dataclass

@@ -278,3 +278,27 @@ class ISavedSearchRepository(ABC):
 
     @abstractmethod
     def rename(self, search_id: UUID, name: str) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PlaylistItemRow:
+    """재생목록 한 줄 — 항목과 영상 요약을 JOIN 한 읽기 전용 값."""
+
+    video_id: UUID
+    position: int
+    title: str
+    thumbnail_path: str
+    channel_name: str
+    duration_sec: int | None
+
+
+class IPlaylistItemQuery(ABC):
+    """재생목록 항목 조회 전용 포트(CQRS 읽기 쪽) — 집합체를 거치지 않는다.
+
+    ``playlist_items JOIN videos`` 한 번으로 LIMIT/OFFSET 한 쪽만 읽는다.
+    삭제돼 JOIN 에서 빠진 영상은 쪽 계산에도 들어가지 않는다.
+    """
+
+    @abstractmethod
+    def list_page(self, playlist_id: UUID, limit: int, offset: int) -> list[PlaylistItemRow]: ...
+

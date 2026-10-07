@@ -12,12 +12,13 @@ from collections import OrderedDict
 from pathlib import Path
 
 from PyQt6.QtCore import (
+    QSize,
     QThread,
     Qt,
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QColor, QImage, QPixmap,
+    QColor, QImage, QImageReader, QPixmap,
 )
 
 from config.settings import LRU_THUMBNAIL_MAX, THUMBNAIL_DIR
@@ -39,6 +40,14 @@ class _ThumbnailCache:
             return self._cache[key]
         return None
 
+    def peek(self, key: str) -> QPixmap | None:
+        """최근 사용 순서를 바꾸지 않고 확인만 한다.
+
+        워커 스레드는 ``get``(``move_to_end``)을 부르면 안 된다 — 메인 스레드의
+        ``put``과 OrderedDict를 동시에 변경하게 된다. 읽기만 하는 ``peek``을 쓴다.
+        """
+        return self._cache.get(key)
+
     def put(self, key: str, pixmap: QPixmap) -> None:
         self._cache[key] = pixmap
         self._cache.move_to_end(key)
@@ -47,6 +56,53 @@ class _ThumbnailCache:
 
 
 _thumb_cache = _ThumbnailCache(LRU_THUMBNAIL_MAX * _THUMB_RENDER_SIZE_KINDS)
+
+
+def _decode_scaled(path_str: str, w: int, h: int) -> QImage | None:
+    """파일을 (w, h)에 맞춰(KeepAspectRatio) 디코드한다. 실패하면 None.
+
+    원본을 전부 디코드한 뒤 ``scaled()``로 줄이면 장당 약 3.4ms, 디코드 시점에
+    줄이면(``setScaledSize``) 약 1ms다. 다만 ``setScaledSize`` 단독은 비정수배 축소에서
+    Fast 변환이라 계단이 생긴다(213x120 실측 MSE 19, SmoothTransformation 대비).
+    그래서 원본이 목표의 **정확한 2의 거듭제곱 배**(1280→320 등, 디코더가 DCT 축소로
+    정확히 처리해 계단이 없다)면 목표로 바로 디코드하고(320x180 MSE 0.3, 장당 약 1.2ms),
+    그렇지 않으면 **목표의 2배 크기로 디코드한 뒤 Smooth로 줄인다**(213x120 MSE 1.1~1.7,
+    장당 약 1.5~1.9ms). 원본이 이미 목표 크기면 변환 없이 그대로 쓴다.
+    예외를 내지 않는다 — 워커 스레드와 그리기 경로 양쪽에서 부른다.
+    """
+    try:
+        reader = QImageReader(path_str)
+        src = reader.size()
+        if not src.isValid() or src.isEmpty():
+            img = QImage(path_str)
+            if img.isNull():
+                return None
+            return img.scaled(
+                w, h,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        target = src.scaled(QSize(w, h), Qt.AspectRatioMode.KeepAspectRatio)
+        ratio = src.width() / max(target.width(), 1)
+        if ratio > 1.0 and abs(ratio - round(ratio)) < 0.02 and round(ratio) in (2, 4, 8):
+            reader.setScaledSize(target)   # 디코더 DCT 축소가 정확히 맞는 경우
+        else:
+            double = QSize(target.width() * 2, target.height() * 2)
+            if double.width() < src.width():
+                reader.setScaledSize(double)   # 실제로 줄어드는 경우만 디코더에 맡긴다
+        img = reader.read()
+        if img.isNull():
+            return None
+        if img.size() == target:
+            return img
+        return img.scaled(
+            target,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    except Exception:
+        logger.exception("썸네일 디코드 실패: %s", path_str)
+        return None
 
 
 def _load_thumb(thumbnail_path: str, w: int, h: int) -> QPixmap:
@@ -59,13 +115,9 @@ def _load_thumb(thumbnail_path: str, w: int, h: int) -> QPixmap:
     if thumbnail_path:
         full = Path(THUMBNAIL_DIR) / thumbnail_path
         if full.exists():
-            src = QPixmap(str(full))
-            if not src.isNull():
-                scaled = src.scaled(
-                    w, h,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+            img = _decode_scaled(str(full), w, h)
+            if img is not None:
+                scaled = QPixmap.fromImage(img)
                 _thumb_cache.put(key, scaled)
                 return scaled
 
@@ -116,20 +168,16 @@ class _ThumbBgLoader(QThread):
             if self._cancelled:
                 return
             key = f"{path}@{w}x{h}"
-            if _thumb_cache.get(key) is not None:
-                continue  # 이미 캐시에 있으면 스킵 (읽기만이므로 스레드 안전)
+            # peek: 순서를 바꾸는 get은 메인 스레드 put과 경합한다(C1).
+            if _thumb_cache.peek(key) is not None:
+                continue
             full = Path(THUMBNAIL_DIR) / path
             if not full.exists():
                 continue
             with self._IO_SEMA:
-                img = QImage(str(full))
-            if img.isNull():
+                scaled = _decode_scaled(str(full), w, h)
+            if scaled is None:
                 continue
-            scaled = img.scaled(
-                w, h,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
             batch.append((path, w, h, scaled))
             if len(batch) >= 8:
                 self.batch_ready.emit(list(batch))

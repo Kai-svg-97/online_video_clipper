@@ -128,7 +128,7 @@ class PlayerControlMixin:
         # 노래 탭 — 스트리밍은 편집/조회 불가(카테고리에 담으면 풀린다)
         self._song_tab.set_editable(False)
         self._song_tab.set_busy(False)
-        self._song_tab.set_info(None)
+        self._reset_song_info()
         self._summary_raw = ""
 
         self._btn_refresh.setEnabled(False)  # 스트리밍은 안정적 id 없음

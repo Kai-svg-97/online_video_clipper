@@ -98,7 +98,12 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
             self._max_workers: int = getattr(_s, "MAX_CONCURRENT_FEED_WORKERS", 4)
         except Exception:
             self._max_workers = 4
-        self._gen: int = 0
+        # 세대 번호는 **키별**이다 — 전역이면 배경 감시가 끼는 순간 진행 중이던 사용자
+        # 조회 결과가 불일치로 통째로 버려진다. 같은 키의 새 요청만 옛 요청을 대체한다.
+        self._gen_counter: int = 0
+        self._gens: dict[str, int] = {}
+        # 화면이 보고 있는(가장 최근에 요청한) 피드 키 — `feed`·`feed_changed`는 이 키만 반영한다.
+        self._selected_key: str = ""
         # 새 영상 배경 감시 타이머(꺼져 있으면 None).
         self._watch_timer = None
 
@@ -122,8 +127,9 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
         return self._auth.get_ytdlp_opts() if self._auth else {}
 
     def _start(self, fetch: Callable[[], list], on_ok, key: str, silent: bool = False) -> None:
-        self._gen += 1
-        gen = self._gen
+        self._gen_counter += 1
+        gen = self._gen_counter
+        self._gens[key] = gen
         if len(self._workers) < self._max_workers:
             self._run(fetch, on_ok, gen, key, silent)
         else:
@@ -141,7 +147,7 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
         worker.finished_ok.connect(
             lambda items, _g=gen, _ok=on_ok, _k=key: self._finish_ok(items, _ok, _g, _k)
         )
-        worker.finished_err.connect(lambda msg, _g=gen: self._finish_err(msg, _g))
+        worker.finished_err.connect(lambda msg, _g=gen, _k=key: self._finish_err(msg, _g, _k))
         worker.finished.connect(lambda w=worker, _k=key, _s=silent: self._drain(w, _k, _s))
         worker.partial_ready.connect(
             lambda batch, _g=gen, _k=key, _s=silent: self._on_partial(batch, _g, _k, _s)
@@ -150,12 +156,12 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
         self._start_worker(worker)
 
     def _finish_ok(self, items, on_ok, gen: int, key: str) -> None:
-        if gen == self._gen:
+        if gen == self._gens.get(key):
             self._cache[key] = items
             on_ok(items, key)
 
-    def _finish_err(self, msg: str, gen: int) -> None:
-        if gen == self._gen:
+    def _finish_err(self, msg: str, gen: int, key: str) -> None:
+        if gen == self._gens.get(key):
             self.error_occurred.emit(msg)
 
     def _drain(self, worker, key: str, silent: bool = False) -> None:
@@ -236,6 +242,7 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
     def refresh(self, limit: int = 100, silent: bool = False) -> None:
         """전체 구독 피드를 가져온다. silent=True면 스피너 없이 조용히 갱신한다."""
         cookie_opts = self._cookie_opts()
+        self._selected_key = FEED_ALL_KEY
         self._start(
             lambda on_progress=None: self._handler.handle(
                 GetSubscriptionFeedQuery(limit=limit, cookie_opts=cookie_opts),
@@ -252,6 +259,7 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
             self.error_occurred.emit(tr("채널 영상 조회 기능을 사용할 수 없습니다."))
             return
         cookie_opts = self._cookie_opts()
+        self._selected_key = channel_url
         self._start(
             lambda on_progress=None: self._channel_handler.handle(
                 GetChannelVideosQuery(
@@ -285,15 +293,20 @@ class FeedViewModel(WorkerOwnerMixin, QObject):
     def _on_partial(self, batch: list, gen: int, key: str, silent: bool = False) -> None:
         """부분 결과 배치 수신 — gen 일치 시만 UI에 방출.
         silent(재방문 갱신)일 땐 이미 캐시를 표시 중이므로 부분 배치를 흘리지 않는다."""
-        if gen != self._gen or silent:
+        if gen != self._gens.get(key) or silent:
             return
         self.feed_batch_appended.emit(batch)   # 하위 호환
         self.feed_batch_ready.emit(key, batch)
 
     def _on_ok(self, items: list[FeedVideoDTO], key: str) -> None:
-        self._feed = items
+        # 다른 키의 결과는 그 키의 캐시와 feed_key_changed만 갱신한다 — 화면이 보고 있는
+        # 키가 아니면 `feed`·`feed_changed`를 건드리지 않는다.
+        current = not self._selected_key or key == self._selected_key
+        if current:
+            self._feed = items
         self.feed_key_changed.emit(key, items)
-        self.feed_changed.emit()   # 하위 호환
+        if current:
+            self.feed_changed.emit()   # 하위 호환
 
     def _on_infos_ok(self, items: list[ChannelInfoDTO], key: str) -> None:
         self._channel_infos = items

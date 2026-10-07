@@ -68,6 +68,8 @@ class Repositories:
     subtitle: Any
     # 저장된 검색은 **동기화 캡처 대상이 아니다** — 기기마다 쓰는 조건이 다르다.
     saved_search: Any
+    # 재생목록 항목 조회 전용 포트(읽기 전용) — 동기화 캡처 대상이 아니다.
+    playlist_items: Any
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,10 +16,12 @@ CLAUDE.md "Memory Optimization Rules"가 요구하는 세 가지를 코드로 �
 """
 from __future__ import annotations
 
+import dataclasses
 import gc
 import weakref
 from uuid import uuid4
 
+import pytest
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QApplication
@@ -53,6 +55,18 @@ def _make_dto(i: int) -> VideoDTO:
         watched=False,
         category_id=None,
     )
+
+
+def _thread_done(thread: QThread) -> bool:
+    """이미 정리돼 접근이 안 되는 객체도 '끝났다'로 본다(뒷정리 전용)."""
+    try:
+        return thread.isFinished()
+    except RuntimeError:
+        return True
+
+
+def _make_dto_with_thumb(path: str) -> VideoDTO:
+    return dataclasses.replace(_make_dto(0), thumbnail_path=path)
 
 
 class TestThumbnailCacheEviction:
@@ -119,6 +133,104 @@ class TestThumbnailCacheEviction:
         assert cache.get("victim") is None   # 캐시에서 빠졌다
         gc.collect()
         assert ref() is None                  # 그리고 실제로 회수됐다
+
+    def test_peek는_최근사용_순서를_바꾸지_않는다(self, qapp_instance):
+        """워커 스레드가 `get`(move_to_end)을 부르면 메인 스레드 `put`과 OrderedDict를
+        동시에 변경한다 — 워커는 순서를 바꾸지 않는 `peek`만 써야 한다(성능 배치 7, C1)."""
+        from gui.panels.library.thumbnails import _ThumbnailCache
+
+        cache = _ThumbnailCache(maxsize=3)
+        for k in ("a", "b", "c"):
+            pm = QPixmap(4, 4)
+            pm.fill()
+            cache.put(k, pm)
+
+        assert cache.peek("a") is not None   # 보기만 한다 — 최근 사용으로 올리지 않는다
+        pm = QPixmap(4, 4)
+        pm.fill()
+        cache.put("d", pm)
+
+        assert cache.peek("a") is None        # a가 가장 오래된 채라 쫓겨났다
+        assert cache.peek("b") is not None
+
+    def test_peek의_미스는_None이다(self, qapp_instance):
+        from gui.panels.library.thumbnails import _ThumbnailCache
+
+        assert _ThumbnailCache(maxsize=3).peek("없음") is None
+
+    def test_메인_put과_워커_peek를_동시에_돌려도_안전하다(self, qapp_instance):
+        import threading
+
+        from gui.panels.library.thumbnails import _ThumbnailCache
+
+        cache = _ThumbnailCache(maxsize=50)
+        pm = QPixmap(2, 2)
+        pm.fill()
+        errors: list[BaseException] = []
+
+        def reader() -> None:
+            try:
+                for i in range(5000):
+                    cache.peek(f"k{i % 200}")
+            except BaseException as exc:   # noqa: BLE001 - 스레드 예외를 모아 단언한다
+                errors.append(exc)
+
+        t = threading.Thread(target=reader)
+        t.start()
+        for i in range(5000):
+            cache.put(f"k{i % 200}", pm)
+        t.join(10)
+
+        assert not t.is_alive()
+        assert errors == []
+        assert len(cache._cache) <= 50
+
+
+def _calls_get_on_thumb_cache(source: str, class_name: str, method: str) -> list[int]:
+    """`class_name.method` 본문에서 `_thumb_cache.get(...)` 호출의 줄 번호."""
+    import ast
+
+    tree = ast.parse(source)
+    hits: list[int] = []
+    for cls in ast.walk(tree):
+        if not (isinstance(cls, ast.ClassDef) and cls.name == class_name):
+            continue
+        for fn in cls.body:
+            if not (isinstance(fn, ast.FunctionDef) and fn.name == method):
+                continue
+            for node in ast.walk(fn):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get"
+                ):
+                    target = node.func.value
+                    name = target.id if isinstance(target, ast.Name) else getattr(target, "attr", "")
+                    if name == "_thumb_cache":
+                        hits.append(node.lineno)
+    return hits
+
+
+class TestLoaderDoesNotTouchLru:
+    """워커(`_ThumbBgLoader.run`)는 캐시 순서를 바꾸는 `get`을 부르지 않는다(C1)."""
+
+    def test_스캐너가_위반을_찾는다(self):
+        src = (
+            "class _ThumbBgLoader:\n"
+            "    def run(self):\n"
+            "        if _thumb_cache.get(k) is not None:\n"
+            "            pass\n"
+        )
+        assert _calls_get_on_thumb_cache(src, "_ThumbBgLoader", "run") == [3]
+
+    def test_run은_thumb_cache_get을_부르지_않는다(self):
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[2] / "gui" / "panels" / "library" / "thumbnails.py"
+        hits = _calls_get_on_thumb_cache(
+            path.read_text(encoding="utf-8"), "_ThumbBgLoader", "run"
+        )
+        assert hits == [], f"워커가 LRU 순서를 바꾼다(thumbnails.py:{hits}) — peek를 쓴다"
 
 
 class TestThumbnailCacheMemoryBudget:
@@ -264,3 +376,108 @@ class TestWorkerReferenceRelease:
 
         assert not loader.isRunning()
         QApplication.processEvents()
+
+    # ── 성능 배치 7, C2 — 실제 `_start_thumb_preload` 경로 ───────────────────
+
+    @pytest.fixture
+    def preload_panel(self, qtbot, library_vm, download_vm, clip_vm, tmp_path, monkeypatch):
+        from PyQt6.QtGui import QColor, QImage
+
+        from gui.panels.library import thumbnails
+        from gui.panels.library_panel import LibraryPanel
+
+        img = QImage(64, 36, QImage.Format.Format_RGB32)
+        img.fill(QColor("#336699"))
+        assert img.save(str(tmp_path / "t.jpg"), "JPG")
+        monkeypatch.setattr(thumbnails, "THUMBNAIL_DIR", str(tmp_path))
+        thumbnails._thumb_cache._cache.clear()
+
+        panel = LibraryPanel(vm=library_vm, clip_vm=clip_vm, download_vm=download_vm)
+        qtbot.addWidget(panel)
+        monkeypatch.setattr(panel, "_maybe_fill_viewport", lambda: None)
+        yield panel
+        for worker in list(library_vm._list_workers):
+            worker.wait(3000)
+        library_vm.shutdown()
+        thumbnails._thumb_cache._cache.clear()
+
+    def test_끝난_로더는_deleteLater_뒤에도_접근이_안전하다(self, qtbot, preload_panel):
+        from PyQt6.QtCore import QCoreApplication, QEvent
+
+        panel = preload_panel
+        panel._active_thumb_loaders.clear()
+        panel._start_thumb_preload([_make_dto_with_thumb("t.jpg")])
+        loader = panel._active_thumb_loaders[-1]
+
+        qtbot.waitUntil(loader.isFinished, timeout=3000)
+        qtbot.waitUntil(lambda: loader not in panel._active_thumb_loaders, timeout=3000)
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+        # `deleteLater`를 불렀다면 여기서 "wrapped C/C++ object ... has been deleted".
+        assert loader.isFinished() is True
+
+    def test_실제_프리로드_경로의_로더가_레지스트리에_잡힌다(self, qtbot, preload_panel):
+        from gui import workers
+
+        panel = preload_panel
+        panel._active_thumb_loaders.clear()
+        panel._start_thumb_preload([_make_dto_with_thumb("t.jpg")])
+        loader = panel._active_thumb_loaders[-1]
+
+        assert loader in workers._RUNNING
+
+        qtbot.waitUntil(lambda: loader not in workers._RUNNING, timeout=3000)
+
+    def test_옛_세대_배치는_화면에_반영되지_않는다(
+        self, qtbot, preload_panel, monkeypatch
+    ):
+        """세대 판정이 람다 기본값이든 바운드 메서드든 성질은 같다."""
+        import threading
+
+        from PyQt6.QtGui import QColor, QImage
+
+        from gui.panels.library import thumbnails
+        from gui.panels.library.mixins import video_list
+
+        release = threading.Event()
+
+        class _HeldLoader(QThread):
+            batch_ready = pyqtSignal(list)
+            made: list = []
+
+            def __init__(self, items, parent=None) -> None:
+                super().__init__(parent)
+                self.items = list(items)
+                _HeldLoader.made.append(self)
+
+            def cancel(self) -> None:
+                pass
+
+            def run(self) -> None:
+                release.wait(5)
+
+        monkeypatch.setattr(video_list, "_ThumbBgLoader", _HeldLoader)
+        panel = preload_panel
+        notified: list = []
+        monkeypatch.setattr(panel._model, "notify_thumb_cached", lambda paths: notified.append(set(paths)))
+        panel._active_thumb_loaders.clear()
+        _HeldLoader.made = []
+        try:
+            panel._start_thumb_preload([_make_dto_with_thumb("old.jpg")])
+            panel._start_thumb_preload([_make_dto_with_thumb("new.jpg")])
+            l1, l2 = _HeldLoader.made
+            img = QImage(4, 4, QImage.Format.Format_RGB32)
+            img.fill(QColor("#000000"))
+
+            l1.batch_ready.emit([("old.jpg", 320, 180, img)])
+            # 캐시 저장은 현재 동작대로 유지한다(받은 썸네일은 유효하고 LRU 상한이 있다).
+            # 여기서는 화면 갱신(notify)만 현재 세대로 제한되는지 본다.
+            assert notified == []
+
+            l2.batch_ready.emit([("new.jpg", 320, 180, img)])
+            assert "new.jpg@320x180" in thumbnails._thumb_cache._cache
+            assert notified == [{"new.jpg"}]
+        finally:
+            release.set()
+            for loader in _HeldLoader.made:
+                qtbot.waitUntil(lambda ld=loader: _thread_done(ld), timeout=3000)

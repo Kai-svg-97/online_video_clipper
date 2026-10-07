@@ -75,7 +75,7 @@ def build(
         # 시점에 인증 유무를 미리 알 필요가 없다(lazy binding).
         push_to_youtube=PushPlaylistToYouTubeHandler(playlist, video, yt_api_provider=yt_api),
         get_playlists=GetPlaylistsHandler(playlist),
-        get_items=GetPlaylistItemsHandler(playlist, video),
+        get_items=GetPlaylistItemsHandler(repos.playlist_items),
         get_youtube_playlists=GetYouTubePlaylistsHandler(media, yt_api_provider=yt_api),
         create_folder=CreatePlaylistFolderHandler(folder),
         rename_folder=RenamePlaylistFolderHandler(folder),

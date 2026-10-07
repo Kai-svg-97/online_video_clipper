@@ -199,6 +199,11 @@ class VideoDetailWidget(
     _TAB_SONG = 3       # 노래(가수·앨범·제목·가사)
     _TAB_SUBTITLE = 4   # 자막(대사 찾기 → 그 시점으로 점프)
 
+    # 노래 탭 지연 렌더 상태 — 숨은 탭의 가사 행(최대 190개)을 만들지 않으려고
+    # 정보를 들고 있다가 탭이 열릴 때 반영한다(성능 배치 7, A9).
+    _song_info = None
+    _song_dirty = False
+
     # 요약 탭 스택 인덱스
     _SUMMARY_VIEW = 0
     _SUMMARY_EDIT = 1
@@ -325,6 +330,8 @@ class VideoDetailWidget(
         self._summary_edit.document().setDefaultFont(font)
         self._summary_editor.setFont(font)
         self._summary_zoom_btn.setText(scale_label(self._text_scale))
+        # 숨은 노래 탭에도 바로 적용한다(표시 상태를 맞춘다). 아직 한 번도 열지 않았다면
+        # 그릴 가사가 없어 비용이 없다 — 가사 행은 `_flush_song_tab`이 탭을 열 때 만든다.
         self._song_tab.set_font_scale(self._text_scale)
         # 이미 렌더된 HTML은 기본 글꼴이 바뀌어도 다시 그려야 반영된다.
         if self._summary_raw:
@@ -729,7 +736,7 @@ class VideoDetailWidget(
         # set_song_info로 채운다. 여기선 잠정적으로 비운다(이전 영상 잔상 방지).
         self._song_tab.set_editable(True)
         self._song_tab.set_busy(False)
-        self._song_tab.set_info(None)
+        self._reset_song_info()
 
         self._btn_refresh.setEnabled(True)
         self.set_related(related or [], header=related_header)
@@ -815,7 +822,33 @@ class VideoDetailWidget(
     # ── Clip tab ───────────────────────────────────────────────────
 
 
+    def _song_tab_current(self) -> bool:
+        return self._tabs.currentIndex() == self._TAB_SONG
+
+    def _flush_song_tab(self) -> None:
+        """노래 탭에 밀려 있던 노래 정보를 반영한다(탭이 열릴 때)."""
+        if self._song_dirty:
+            self._song_dirty = False
+            # 숨은 동안 받은 강조 줄은 새로 그린 뒤에 다시 적용한다.
+            wanted = self._song_tab.wanted_line()
+            self._song_tab.set_info(self._song_info)
+            if wanted is not None:
+                self._song_tab.set_current_line(wanted)
+
+    def _reset_song_info(self) -> None:
+        """영상이 바뀔 때 노래 정보를 '아직 모름'으로 돌린다.
+
+        노래 탭이 열려 있으면 지금 비우지 않는다 — 곧이어 `set_song_info`가 새 정보를
+        주고, 같은 가사면 렌더 키가 같아 행 위젯을 그대로 쓴다(여기서 비우면 키가 지워져
+        같은 영상을 다시 열 때마다 최대 190개 행을 다시 만든다). 숨어 있으면 그릴 필요가
+        없으니 탭을 여는 때 한 번만 그린다.
+        """
+        self._song_info = None
+        self._song_dirty = True
+
     def _on_tab_changed(self, index: int) -> None:
+        if index == self._TAB_SONG:
+            self._flush_song_tab()
         if (
             index == self._TAB_FILES
             and not self._streaming

@@ -4,7 +4,12 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from domain.library.entities import Playlist, PlaylistFolder
-from domain.library.repositories import IPlaylistFolderRepository, IPlaylistRepository
+from domain.library.repositories import (
+    IPlaylistFolderRepository,
+    IPlaylistItemQuery,
+    IPlaylistRepository,
+    PlaylistItemRow,
+)
 from infrastructure.persistence.database import Database
 
 
@@ -236,3 +241,34 @@ class SqlitePlaylistRepository(IPlaylistRepository):
                 "UPDATE playlist_items SET yt_item_id=? WHERE playlist_id=? AND video_id=?",
                 (yt_item_id, str(playlist_id), str(video_id)),
             )
+
+
+class SqlitePlaylistItemQuery(IPlaylistItemQuery):
+    """재생목록 항목 조회 — ``playlist_items JOIN videos`` + LIMIT/OFFSET 한 번."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def list_page(self, playlist_id: UUID, limit: int, offset: int) -> list[PlaylistItemRow]:
+        if limit <= 0:
+            return []
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT pi.video_id, pi.position, v.title, v.thumbnail_path, "
+                "v.channel_name, v.duration_sec "
+                "FROM playlist_items pi JOIN videos v ON v.id = pi.video_id "
+                "WHERE pi.playlist_id=? ORDER BY pi.position LIMIT ? OFFSET ?",
+                (str(playlist_id), limit, max(offset, 0)),
+            ).fetchall()
+        return [
+            PlaylistItemRow(
+                video_id=UUID(r["video_id"]),
+                position=r["position"],
+                title=r["title"] or "",
+                thumbnail_path=r["thumbnail_path"] or "",
+                channel_name=r["channel_name"] or "",
+                duration_sec=r["duration_sec"],
+            )
+            for r in rows
+        ]
+

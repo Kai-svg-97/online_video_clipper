@@ -179,7 +179,7 @@ online_video_clipper/
 │   │   ├── sqlite_download_repository.py
 │   │   ├── sqlite_clip_repository.py
 │   │   ├── sqlite_channel_repository.py
-│   │   ├── sqlite_playlist_repository.py  # 재생목록 + 폴더 저장소
+│   │   ├── sqlite_playlist_repository.py  # 재생목록 + 폴더 저장소 + `SqlitePlaylistItemQuery`(조회 전용 포트 `IPlaylistItemQuery` 구현 — `playlist_items JOIN videos` + LIMIT/OFFSET 한 번, 집합체를 거치지 않는다)
 │   │   ├── sqlite_subtitle_repository.py  # 자막 색인 저장·조회. 검색은 **LIKE 부분 일치**다 — 앱의 다른 검색과 규칙을 맞춘다(FTS5 기본 토크나이저는 한국어 부분 일치를 못 해, 섞으면 "제목은 찾는데 자막은 못 찾는" 결과가 된다). 말뭉치가 커져 느려지면 trigram 토크나이저 FTS로 옮긴다
 │   │   ├── sqlite_song_repository.py      # song_info(가사 JSON) + lyrics_sources 저장소
 │   │   └── sqlite_album_repository.py     # album_cache·album_track_links·album_lookup_state (앨범 파생 캐시 — 동기화 대상 아님)
@@ -256,7 +256,7 @@ online_video_clipper/
 │   │   ├── library/                 # ⬆ library_panel의 부품·동작 (분할 결과)
 │   │   │   ├── constants.py         # 뷰 인덱스(_VIEW_*)·MIME·아이템 롤·썸네일 크기·의미 색. **로직 없음**(부품끼리 서로 임포트하지 않게 하는 허브)
 │   │   │   ├── formatting.py        # `_relative_time`·`_fmt_views`·`tag_color`(zlib.crc32 — 실행마다 색이 바뀌지 않게)·`chip_colors`·`_url_from_mime`(브라우저별 URL MIME 흡수)
-│   │   │   ├── thumbnails.py        # `_ThumbnailCache`(표시 크기별 LRU)·`_load_thumb`·`_ThumbBgLoader`. 전역 캐시 인스턴스가 여기 있다
+│   │   │   ├── thumbnails.py        # `_ThumbnailCache`(표시 크기별 LRU, 워커용 `peek`)·`_decode_scaled`(`QImageReader.setScaledSize` 디코드)·`_load_thumb`·`_ThumbBgLoader`. 전역 캐시 인스턴스가 여기 있다
 │   │   │   ├── models.py            # `VideoListModel`(가상 스크롤)·`_VideoListView`
 │   │   │   ├── delegates.py         # 그리드·리스트·트리 행·태그 칩 페인팅(`_IconDelegate`·`_ListDelegate`·`_TreeRowDelegate`·`_paint_match_badges`)
 │   │   │   ├── tag_widgets.py       # 인기 태그 버튼·즐겨찾기 바·태그 목록·활성 태그 바
@@ -279,7 +279,7 @@ online_video_clipper/
 │   │   │       ├── detail.py        # 상세 진입/이탈·재생목록(자동 다음곡)
 │   │   │       ├── sidebar.py       # 좌측 트리 조작(카테고리·재생목록·폴더·즐겨찾기). **즐겨찾기 바 클릭은 트리 선택까지 동기화한다** — `_on_favorite_clicked`가 필터를 걸고 나서 `_playlist_panel.select_snapshot({"kind":…})`으로 대응 노드를 선택 표시한다(뒤로가기 복원과 **같은 경로**를 재사용하므로 강조·스크롤 규칙이 한 곳에만 있다). 예전엔 목록만 바뀌고 트리는 반응이 없어 지금 어느 카테고리를 보는지 트리에서 알 수 없었다(실제 신고). 태그 즐겨찾기는 트리 노드가 없고 현재 카테고리 안에서 거는 필터라 트리 선택을 건드리지 않는다
 │   │   │       ├── feed.py          # 구독 피드/채널 화면·YouTube 동기화
-│   │   │       ├── video_list.py    # 검색·정렬·뷰 전환·태그 패널·썸네일 프리로드. **목록 로딩 스켈레톤**: `_on_list_loading_any`(`vm.loading_changed` 전용, 검색 포함)와 `_on_list_loading`(노드 키 트리 스피너와 짝을 이루던 기존 경로)이 같은 스켈레톤 표시 로직을 공유한다 — 자세한 배경은 아래 "목록·검색 로딩 스켈레톤" 항목 참고
+│   │   │       ├── video_list.py    # 검색·정렬·뷰 전환·태그 패널·썸네일 프리로드(새로 붙은 쪽·바뀐 표시 크기만 — `_thumb_pre_*`. 로더 결과 슬롯은 바운드 메서드 + `sender()`의 세대). **목록 로딩 스켈레톤**: `_on_list_loading_any`(`vm.loading_changed` 전용, 검색 포함)와 `_on_list_loading`(노드 키 트리 스피너와 짝을 이루던 기존 경로)이 같은 스켈레톤 표시 로직을 공유한다 — 자세한 배경은 아래 "목록·검색 로딩 스켈레톤" 항목 참고
 │   │   │       ├── context_menu.py  # 영상 우클릭 메뉴(단일·다중)·삭제 확인
 │   │   │       └── shortcuts.py     # 키보드 단축키 — Ctrl+F(검색)·Esc(덮인 화면부터 걷기)·Alt+←/→(히스토리)·F5(새로고침)·Ctrl+1~4(보기 전환). 범위는 `WidgetWithChildrenShortcut`이라 다른 페이지에서는 발동하지 않는다
 │   │   ├── download_panel.py        # 다운로드 큐 + 완료 이력 탭 (**제목·썸네일은 `briefs_provider` 일괄 조회 1회**, 라이브 카드는 용량·경과 변화에도 갱신) (**첫 `showEvent`에서야 갱신** — 숨은 동안 `queue_changed`·`history_changed`는 `_refresh_dirty`만 켜고, 명시 `refresh()`는 숨어도 실행. 영상 파일만 표시·완료/실패 배지). **이 패널의 상세 위젯에는 song_vm이 배선돼 있지 않아** 노래 탭·가사 자막이 동작하지 않는다(기존 상태 — 가사 자막 기능은 라이브러리 패널로 범위가 한정됨)
@@ -291,7 +291,7 @@ online_video_clipper/
 │   │   │   ├── widgets.py           # `_TagChip`·`_FlowLayout`·`_AutoHeight*`·`_EditableField`·`_LockedNotice` 등 소형 위젯
 │   │   │   ├── related.py           # `RelatedItem`·`_RelatedRow`·`_RelatedList`(연관 영상 + 그 아래 추천 구역)
 │   │   │   ├── subtitle_tab.py          # 상세화면 '자막' 탭 — 이 탭의 쓸모는 목록이 아니라 **점프**다(검색칸이 맨 위, 줄을 누르면 그 시점부터 재생). 빈 상태가 세 가지라 각각 다르게 알린다: 아직 안 받음(가져오기 버튼) / 자막이 없는 영상 / 검색어가 안 맞음(가져오기 버튼 숨김 — 엉뚱한 해결책을 권하지 않는다) / 스트리밍(담으면 쓸 수 있다고 안내)
-│   │   ├── song_tab.py          # `_SongTab`·`_LyricRow`·`_LyricsCandidateList`(가사 후보 표)
+│   │   ├── song_tab.py          # `_SongTab`·`_LyricRow`·`_LyricsCandidateList`(가사 후보 표). 지연 렌더 판단은 여기가 아니라 `VideoDetailWidget`(`_flush_song_tab`)이 한다
 │   │   │   ├── text_format.py       # 설명·요약 렌더링 정규식(마크다운·타임스탬프·URL)과 요약 실패 안내 문구
 │   │   │   ├── text_zoom.py         # 요약·가사 글자 배율 — clamp·pt 계산·설정 저장(`detail_text_scale`). 두 영역이 한 배율을 공유한다
 │   │   │   ├── workers.py           # `_GeminiSummaryWorker`
@@ -365,7 +365,7 @@ online_video_clipper/
 │       │   ├── registration.py      # `RegistrationMixin` — `add_video` + 등록 직후 자동 보강(동시 1건 큐)
 │       │   └── refresh.py           # `RefreshMixin` — 카테고리 메타데이터 갱신·YouTube 재생목록 → 카테고리 가져오기·썸네일 갱신·단일 영상 메타 재수집(전부 워커)
 │       ├── download_vm.py           # DownloadViewModel — 다운로드 큐/이력 + 진행률(`queue_changed`를 `PROGRESS_MIN_INTERVAL_MS`로 합치고 trailing 타이머가 마지막 값을 보낸다. 완료·실패는 즉시)
-│       ├── feed_vm.py               # FeedViewModel — 전체 구독 피드(refresh) + 채널별 영상(load_channel) + 구독 채널 카드 정보(load_channel_infos) 로딩, shutdown() 워커 정리
+│       ├── feed_vm.py               # FeedViewModel(세대 번호는 키별 `_gens`, `feed`·`feed_changed`는 마지막 요청 키만) — 전체 구독 피드(refresh) + 채널별 영상(load_channel) + 구독 채널 카드 정보(load_channel_infos) 로딩, shutdown() 워커 정리
 │       ├── monitoring_vm.py         # MonitoringViewModel — 채널 구독 목록
 │       ├── clip_vm.py               # ClipViewModel — 클립 목록 + 추출 작업
 │       ├── playlist_vm.py           # PlaylistViewModel — 재생목록 관리
