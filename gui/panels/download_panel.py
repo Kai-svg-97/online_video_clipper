@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 )
 
 from application.download.dtos import DownloadJobDTO
+from gui.fonts import app_font
 from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.text import tr
@@ -383,7 +384,7 @@ class _HistoryCardDelegate(QStyledItemDelegate):
             else:
                 painter.setClipPath(clip_path)
                 painter.fillPath(clip_path, QColor(tok.bg_overlay))
-                painter.setFont(QFont("", 22))
+                painter.setFont(app_font(22))
                 painter.setPen(QColor(tok.text_muted))
                 painter.drawText(
                     QRect(tx, ty, CARD_W, THUMB_H),
@@ -397,7 +398,7 @@ class _HistoryCardDelegate(QStyledItemDelegate):
                 painter.drawPixmap(tx, ty, color_pm)
             else:
                 painter.fillPath(clip_path, QColor(tok.bg_overlay))
-                painter.setFont(QFont("", 22))
+                painter.setFont(app_font(22))
                 painter.setPen(QColor(tok.text_muted))
                 painter.drawText(
                     QRect(tx, ty, CARD_W, THUMB_H),
@@ -431,7 +432,7 @@ class _HistoryCardDelegate(QStyledItemDelegate):
             # 진행률 글자 뒤 스크림 — 썸네일 이미지 위에 얹는 색이라 기준이 앱 테마가 아니라
             # '어떤 썸네일 위에서도 읽히는가'다(자막 오버레이와 같은 예외 계열).
             painter.fillRect(QRect(tx, mid_y, CARD_W, 28), QColor(0, 0, 0, 120))
-            painter.setFont(QFont("", pct_font_size, QFont.Weight.Bold))
+            painter.setFont(app_font(pct_font_size, QFont.Weight.Bold))
             painter.setPen(QColor("white"))
             painter.drawText(
                 QRect(tx, mid_y, CARD_W, 28),
@@ -460,7 +461,7 @@ class _HistoryCardDelegate(QStyledItemDelegate):
             painter.setBrush(badge_bg)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(bx, by, br * 2, br * 2)
-            painter.setFont(QFont("", 8, QFont.Weight.Bold))
+            painter.setFont(app_font(8, QFont.Weight.Bold))
             painter.setPen(QColor("white"))
             painter.drawText(
                 QRect(bx, by, br * 2, br * 2),
@@ -471,7 +472,7 @@ class _HistoryCardDelegate(QStyledItemDelegate):
 
         # ── 제목 텍스트 ───────────────────────────────────────────────
         painter.save()
-        painter.setFont(QFont("", 9))
+        painter.setFont(app_font(9))
         painter.setPen(QColor(tok.text_primary))
         painter.drawText(
             QRect(tx, ty + THUMB_H + 4, CARD_W, TEXT_H - 4),

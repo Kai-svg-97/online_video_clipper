@@ -20,7 +20,7 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QColor, QFont, QPen,
+    QColor, QPen,
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gui.fonts import app_font
 from gui.themes.manager import ThemeManager
 from gui.view_models.feed_vm import CHANNELS_ROOT_KEY, FEED_ALL_KEY
 
@@ -151,7 +152,7 @@ class _PlaylistTree(
         if item is not None and item.childCount() > 0:
             cx = rect.left() + indent * depth + indent // 2
             painter.setPen(QColor(tokens.text_muted))
-            painter.setFont(QFont("", 7))
+            painter.setFont(app_font(7))
             painter.drawText(
                 QRect(cx - 6, rect.top(), 14, rect.height()),
                 Qt.AlignmentFlag.AlignCenter,

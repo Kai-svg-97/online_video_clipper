@@ -355,6 +355,7 @@ tests/               unit(순수) · integration(SQLite·외부) · gui(pytest-q
 
 ## 색상 규칙 (mandatory)
 
+- **글꼴은 `gui/fonts.app_font()`로 만든다.** `QFont("", N)`은 Windows에서 비트맵 'MS Sans Serif'로 풀려 고배율에서 글자 그리기가 50배 느리다 — `tests/gui/test_app_font_guard.py`가 막는다.
 - **위젯 스타일시트에 색을 하드코딩하지 않는다.** `setStyleSheet`에 색이 필요하면
   `gui/themes/colors.py`의 `tok()`(테마 토큰)·`sem('success'|'danger'|'warning')`(의미 색)을 쓴다.
   하드코딩하면 테마를 바꿔도 그 색만 남아 밝은 테마에서 글자가 배경에 묻힌다(통계 화면이 그랬다).

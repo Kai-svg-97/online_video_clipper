@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QStyleOptionViewItem,
 )
 
+from gui.fonts import app_font
 from gui.themes.manager import ThemeManager
 
 from gui.panels.library.constants import match_field_labels, _BADGE_EMPTY_BG, _COLOR_ROLE, _COUNT_ROLE, _FAV_BADGE_W, _GLYPH_ROLE, _ICON_PAD, _ICON_TEXT_H, _MATCH_ROW_H, _NAME_ROLE, _STAR_ROLE, _TH_ICON, _TH_LIST, _TW_ICON, _TW_LIST
@@ -71,7 +72,7 @@ def _paint_duration_badge(painter: QPainter, dur: str, tx: int, ty: int, tw: int
     if not dur:
         return
     painter.save()
-    painter.setFont(QFont("", 8))
+    painter.setFont(app_font(8))
     fm = painter.fontMetrics()
     bw = fm.horizontalAdvance(dur) + 8
     bh = fm.height() + 4
@@ -96,7 +97,7 @@ def _paint_match_badges(painter, rect, keys: tuple[str, ...]) -> None:
     c = chip_colors(tokens, selected=False)
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setFont(QFont("", 7))
+    painter.setFont(app_font(7))
     fm = painter.fontMetrics()
     x = rect.left()
     h = 15
@@ -171,7 +172,7 @@ class _IconDelegate(QStyledItemDelegate):
 
         if fav:
             painter.save()
-            painter.setFont(QFont("", 11))
+            painter.setFont(app_font(11))
             painter.setPen(QColor(_t().star_color))
             painter.drawText(
                 QRect(tx + self._TW - 22, ty + 4, 20, 20),
@@ -188,7 +189,7 @@ class _IconDelegate(QStyledItemDelegate):
 
         # Title (2 lines, 10pt, elided)
         painter.save()
-        painter.setFont(QFont("", 10))
+        painter.setFont(app_font(10))
         painter.setPen(QColor(tok.text_primary))
         title_rect = QRect(text_x, title_top, text_w, 40)
         painter.drawText(title_rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignTop, title)
@@ -196,7 +197,7 @@ class _IconDelegate(QStyledItemDelegate):
 
         # Channel (8pt, secondary)
         painter.save()
-        painter.setFont(QFont("", 8))
+        painter.setFont(app_font(8))
         painter.setPen(QColor(tok.text_secondary))
         ch_rect = QRect(text_x, title_top + 42, text_w, 16)
         painter.drawText(ch_rect, Qt.TextFlag.TextSingleLine, channel)
@@ -215,7 +216,7 @@ class _IconDelegate(QStyledItemDelegate):
         matching_tags = [n for n in video_tag_names if n in active_set] if active_set else []
 
         painter.save()
-        painter.setFont(QFont("", 8))
+        painter.setFont(app_font(8))
         row3_rect = QRect(text_x, title_top + 60, text_w, 16)
         if matching_tags:
             tags_text = "  ".join(f"#{n}" for n in matching_tags[:3])
@@ -319,7 +320,7 @@ class _ListDelegate(QStyledItemDelegate):
 
         # Title (2 lines, 10pt, word-wrap + elide)
         painter.save()
-        painter.setFont(QFont("", 10))
+        painter.setFont(app_font(10))
         fg = option.palette.color(
             option.palette.ColorGroup.Normal, option.palette.ColorRole.Text
         )
@@ -332,7 +333,7 @@ class _ListDelegate(QStyledItemDelegate):
 
         # Channel (2nd row, 8pt, secondary)
         painter.save()
-        painter.setFont(QFont("", 8))
+        painter.setFont(app_font(8))
         painter.setPen(QColor(tok.text_secondary))
         ch_rect = QRect(text_x, text_top + 44, text_w, 16)
         painter.drawText(ch_rect, Qt.TextFlag.TextSingleLine, channel)
@@ -347,7 +348,7 @@ class _ListDelegate(QStyledItemDelegate):
         show_cat = bool(cat_name)
 
         painter.save()
-        painter.setFont(QFont("", 8))
+        painter.setFont(app_font(8))
         row3_rect = QRect(text_x, text_top + 62, text_w, 16)
         painter.setPen(QColor(tok.text_muted))
         if meta_left:
@@ -364,7 +365,7 @@ class _ListDelegate(QStyledItemDelegate):
         if matching_tags:
             tags_text = "  ".join(f"#{n}" for n in matching_tags)
             painter.save()
-            painter.setFont(QFont("", 8))
+            painter.setFont(app_font(8))
             painter.setPen(QColor(tok.accent))
             tag_rect = QRect(text_x, text_top + 82, text_w, 16)
             painter.drawText(tag_rect, Qt.TextFlag.TextSingleLine | Qt.AlignmentFlag.AlignLeft, tags_text)
@@ -380,7 +381,7 @@ class _ListDelegate(QStyledItemDelegate):
         # Favourite star
         if fav:
             painter.save()
-            painter.setFont(QFont("", 11))
+            painter.setFont(app_font(11))
             painter.setPen(QColor(tok.star_color))
             painter.drawText(
                 QRect(rect.right() - 22, rect.top() + 6, 20, 20),
@@ -417,7 +418,7 @@ class _FavChipDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index) -> QSize:
         text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        fm = QFontMetrics(QFont("", 8))
+        fm = QFontMetrics(app_font(8))
         text_w = fm.horizontalAdvance(text)
         # 좌우 패딩(14) + 텍스트 + 간격(6) + 배지
         return QSize(text_w + _FAV_BADGE_W + 20, 26)
@@ -441,7 +442,7 @@ class _FavChipDelegate(QStyledItemDelegate):
 
         # Count badge (right side)
         badge_text = str(count)
-        painter.setFont(QFont("", 7))
+        painter.setFont(app_font(7))
         fm = painter.fontMetrics()
         badge_w = max(fm.horizontalAdvance(badge_text) + 10, _FAV_BADGE_W - 4)
         badge_h = chip.height() - 6
@@ -456,12 +457,12 @@ class _FavChipDelegate(QStyledItemDelegate):
         painter.setBrush(QBrush(badge_bg))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(badge_rect, badge_h // 2, badge_h // 2)
-        painter.setFont(QFont("", 7))
+        painter.setFont(app_font(7))
         painter.setPen(badge_fg)
         painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge_text)
 
         # Name text
-        painter.setFont(QFont("", 8))
+        painter.setFont(app_font(8))
         painter.setPen(QColor(c["text"]))
         name_rect = QRect(chip.left() + 6, chip.top(), badge_x - chip.left() - 8, chip.height())
         painter.drawText(name_rect, Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine, text)
@@ -504,12 +505,12 @@ class _TagChipDelegate(QStyledItemDelegate):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(badge_rect, badge_h // 2, badge_h // 2)
 
-        painter.setFont(QFont("", 7))
+        painter.setFont(app_font(7))
         painter.setPen(QColor(c["badge_text"]))
         painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, str(count))
 
         # Tag text
-        painter.setFont(QFont("", 8))
+        painter.setFont(app_font(8))
         painter.setPen(QColor(c["text"]))
         painter.drawText(
             QRect(chip.left() + 8, chip.top(), badge_x - chip.left() - 10, chip.height()),
@@ -574,7 +575,7 @@ class _TreeRowDelegate(QStyledItemDelegate):
             x += 16
         elif glyph and self._EMOJI.get(glyph):
             painter.setPen(QColor(tokens.text_muted))
-            painter.setFont(QFont("", 8))
+            painter.setFont(app_font(8))
             painter.drawText(
                 QRect(x, row.top(), 16, row.height()),
                 Qt.AlignmentFlag.AlignVCenter,
@@ -586,7 +587,7 @@ class _TreeRowDelegate(QStyledItemDelegate):
         # (예전엔 ★이 최우측이라 즐겨찾기 행만 뱃지가 왼쪽으로 밀려 숫자 열이 들쑥날쑥했다.)
         right = row.right() - 6
         if count:
-            painter.setFont(QFont("", 7))
+            painter.setFont(app_font(7))
             fm = painter.fontMetrics()
             txt = str(count)
             bw = fm.horizontalAdvance(txt) + 12
@@ -602,7 +603,7 @@ class _TreeRowDelegate(QStyledItemDelegate):
         # 즐겨찾기 ★ — 뱃지 왼쪽
         if index.data(_STAR_ROLE):
             painter.setPen(QColor(tokens.star_color))
-            painter.setFont(QFont("", 8))
+            painter.setFont(app_font(8))
             star_rect = QRect(right - 14, row.top(), 14, row.height())
             painter.drawText(star_rect, Qt.AlignmentFlag.AlignCenter, "★")
             right = star_rect.left() - 4

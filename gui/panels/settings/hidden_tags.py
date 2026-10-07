@@ -7,7 +7,7 @@ import logging
 from typing import Callable
 
 from PyQt6.QtCore import QByteArray, QMimeData, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter
+from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 
+from gui.fonts import app_font
 from gui.panels.settings.helpers import _t
 from gui.text import tr
 
@@ -48,7 +49,7 @@ class _TagMoveDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # 태그명
-        painter.setFont(QFont("", 9))
+        painter.setFont(app_font(9))
         painter.setPen(QColor(tok.text_on_accent if selected else tok.text_primary))
         name_rect = option.rect.adjusted(8, 0, -44, 0)
         painter.drawText(
@@ -58,7 +59,7 @@ class _TagMoveDelegate(QStyledItemDelegate):
         )
 
         # 영상 수 뱃지
-        painter.setFont(QFont("", 8))
+        painter.setFont(app_font(8))
         painter.setPen(QColor(tok.text_on_accent if selected else tok.text_muted))
         count_rect = option.rect.adjusted(0, 0, -6, 0)
         painter.drawText(

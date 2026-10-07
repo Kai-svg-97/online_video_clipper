@@ -14,8 +14,8 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from PyQt6.QtCore import QRect, QSize
-from PyQt6.QtGui import QPainter, QPixmap
+from PyQt6.QtCore import QRect, QSize, Qt
+from PyQt6.QtGui import QFont, QPainter, QPixmap
 from PyQt6.QtWidgets import QStyleOptionViewItem
 
 from application.library.dtos import VideoDTO
@@ -99,3 +99,176 @@ class TestSelectedState:
     def test_빈_모델은_그릴_것이_없다(self, model):
         model.set_videos([])
         assert model.rowCount() == 0
+
+
+# ── 글꼴 헬퍼(배치 3) — 나머지 글꼴 사용처를 실제로 그려 본다 ──────────────────
+
+
+class _RecordingPainter(QPainter):
+    """`setFont`로 들어온 글꼴을 모은다 — 델리게이트가 실제로 쓴 글꼴을 본다."""
+
+    def __init__(self, device) -> None:
+        super().__init__(device)
+        self.fonts: list = []
+
+    def setFont(self, font) -> None:  # noqa: N802
+        self.fonts.append(QFont(font))
+        super().setFont(font)
+
+
+def _paint_recording(delegate, index, width=260, height=60):
+    pm = QPixmap(QSize(width, height))
+    pm.fill()
+    painter = _RecordingPainter(pm)
+    try:
+        option = QStyleOptionViewItem()
+        option.rect = QRect(0, 0, width, height)
+        delegate.paint(painter, option, index)
+    finally:
+        painter.end()
+    return painter.fonts
+
+
+def _paint_via(delegate, model):
+    """모델을 지역 변수로 붙든 채 그린다(모델이 먼저 죽으면 index가 허공을 본다)."""
+    return _paint_recording(delegate, model.index(0, 0))
+
+
+def _chip_model(name: str):
+    from PyQt6.QtGui import QStandardItem, QStandardItemModel
+
+    m = QStandardItemModel()
+    it = QStandardItem(name)
+    it.setData(3, Qt.ItemDataRole.UserRole + 1)
+    it.setData(name, Qt.ItemDataRole.UserRole + 2)
+    m.appendRow(it)
+    return m
+
+
+def _tree_model(name: str):
+    from PyQt6.QtGui import QStandardItem, QStandardItemModel
+
+    from gui.panels.library.constants import (
+        _COUNT_ROLE, _GLYPH_ROLE, _NAME_ROLE, _STAR_ROLE,
+    )
+
+    m = QStandardItemModel()
+    it = QStandardItem(name)
+    it.setData(name, _NAME_ROLE)
+    it.setData(7, _COUNT_ROLE)
+    it.setData("playlist", _GLYPH_ROLE)
+    it.setData(True, _STAR_ROLE)
+    m.appendRow(it)
+    return m
+
+
+_NAMES = {"기본": "음악", "빈_이름": "", "아주_김": "가" * 300}
+
+
+class TestOtherFontSites:
+    @pytest.mark.parametrize("name", list(_NAMES.values()), ids=list(_NAMES))
+    def test_즐겨찾기_칩을_그린다(self, qapp_instance, name):
+        from gui.panels.library.delegates import _FavChipDelegate
+
+        m = _chip_model(name)
+        _FavChipDelegate().sizeHint(QStyleOptionViewItem(), m.index(0, 0))
+        _paint_recording(_FavChipDelegate(), m.index(0, 0))
+
+    @pytest.mark.parametrize("name", list(_NAMES.values()), ids=list(_NAMES))
+    def test_태그_칩을_그린다(self, qapp_instance, name):
+        from gui.panels.library.delegates import _TagChipDelegate
+
+        _paint_via(_TagChipDelegate(), _chip_model(name))
+
+    @pytest.mark.parametrize("name", list(_NAMES.values()), ids=list(_NAMES))
+    def test_트리_행을_그린다(self, qapp_instance, name):
+        from gui.panels.library.delegates import _TreeRowDelegate
+
+        _paint_via(_TreeRowDelegate(), _tree_model(name))
+
+    def test_숨김_태그_델리게이트를_그린다(self, qapp_instance):
+        from gui.panels.settings.hidden_tags import _TagMoveDelegate
+
+        _paint_via(_TagMoveDelegate(), _chip_model("록"))
+
+    def test_인기_태그_버튼을_그린다(self, qtbot):
+        from gui.panels.library.tag_widgets import _PopularTagButton
+
+        btn = _PopularTagButton("록", 12, "#336699", False)
+        qtbot.addWidget(btn)
+        btn.resize(180, 26)
+        assert not btn.grab().isNull()
+
+    def test_플레이리스트_트리_셰브론을_그린다(self, qtbot):
+        from PyQt6.QtWidgets import QTreeWidgetItem
+
+        from gui.panels.library.tree import _PlaylistTree
+
+        tree = _PlaylistTree()
+        qtbot.addWidget(tree)
+        parent = QTreeWidgetItem(tree, ["부모"])
+        QTreeWidgetItem(parent, ["자식"])
+        parent.setExpanded(True)
+        tree.resize(240, 200)
+        tree.show()
+        qtbot.waitExposed(tree)
+        assert not tree.grab().isNull()
+
+
+class TestDelegateFontsAreAppFonts:
+    """델리게이트가 실제로 쓴 글꼴이 빈 패밀리(MS Sans Serif)로 풀리지 않는다."""
+
+    def _assert_fonts(self, fonts):
+        from PyQt6.QtGui import QFontInfo
+
+        assert fonts, "델리게이트가 글꼴을 한 번도 정하지 않았다"
+        for f in fonts:
+            assert QFontInfo(f).family() != "MS Sans Serif"  # Windows에서만 의미 있다
+
+    def test_즐겨찾기_칩(self, qapp_instance):
+        from gui.panels.library.delegates import _FavChipDelegate
+
+        self._assert_fonts(_paint_via(_FavChipDelegate(), _chip_model("a")))
+
+    def test_태그_칩(self, qapp_instance):
+        from gui.panels.library.delegates import _TagChipDelegate
+
+        self._assert_fonts(_paint_via(_TagChipDelegate(), _chip_model("a")))
+
+    def test_트리_행(self, qapp_instance):
+        from gui.panels.library.delegates import _TreeRowDelegate
+
+        self._assert_fonts(_paint_via(_TreeRowDelegate(), _tree_model("a")))
+
+    def test_아이콘_카드(self, model):
+        model.set_videos([CASES["기본"]])
+        self._assert_fonts(_paint_recording(_IconDelegate(), model.index(0, 0), 260, 220))
+
+    def test_다운로드_카드(self, qapp_instance):
+        from application.download.dtos import DownloadJobDTO, DownloadProgressDTO
+        from gui.panels.download_panel import _HistoryCardDelegate, _HistoryModel
+
+        m = _HistoryModel()
+        job = DownloadJobDTO(
+            id=uuid4(), url="https://youtu.be/abcdefghijk", title="영상",
+            status="downloading",
+            progress=DownloadProgressDTO(percent=37.0, total_bytes=4096, downloaded_bytes=1516),
+        )
+        m.set_all([job], [])
+        self._assert_fonts(_paint_recording(_HistoryCardDelegate(), m.index(0, 0), 400, 300))
+
+
+class TestAppFontFailureDoesNotKillPaint:
+    """헬퍼가 터져도 paint 안에서 예외가 나가면 안 된다(프로세스 사망 경로)."""
+
+    def test_헬퍼_실패_상황에서도_아이콘_카드를_그린다(self, model, monkeypatch):
+        import gui.fonts  # noqa: F401 — 없으면 여기서 실패한다
+
+        class _Boom:
+            @staticmethod
+            def font(*_a, **_k):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr("gui.fonts.QApplication", _Boom)
+        model.set_videos([CASES["기본"]])
+        _paint(_IconDelegate(), model)

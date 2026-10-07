@@ -10,7 +10,7 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QAction, QBrush, QColor, QFont, QPainter, QPen,
+    QAction, QBrush, QColor, QPainter, QPen,
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gui.fonts import app_font
 from gui.themes.colors import sem
 from gui.themes.manager import ThemeManager
 from gui.themes.tokens import ThemeTokens
@@ -63,7 +64,7 @@ class _PopularTagButton(QPushButton):
         painter.drawRoundedRect(rect, 10, 10)
 
         badge_text = str(self._count)
-        painter.setFont(QFont("", 7))
+        painter.setFont(app_font(7))
         fm = painter.fontMetrics()
         badge_w = fm.horizontalAdvance(badge_text) + 12
         badge_h = rect.height() - 8
@@ -78,7 +79,7 @@ class _PopularTagButton(QPushButton):
         painter.setPen(QColor(c["badge_text"]))
         painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge_text)
 
-        painter.setFont(QFont("", 9))
+        painter.setFont(app_font(9))
         painter.setPen(QColor(c["text"]))
         name_rect = QRect(rect.left() + 8, rect.top(), badge_x - rect.left() - 12, rect.height())
         painter.drawText(
